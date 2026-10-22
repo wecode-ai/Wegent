@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -16,6 +17,11 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
 from app.services.project_chat.service import project_chat_service
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture
@@ -28,6 +34,7 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
         created_by_user_id=owner.id,
         metadata_json={},
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     grant = ResourceMember(
@@ -47,6 +54,7 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
         status="active",
         metadata_json={"runtime": "codex", "visibility": "creator_admin"},
     )
+    authorize_project_agent(test_db, agent)
     issue = LoopItem(
         id="member-issue",
         cloud_project_id=str(project.id),
@@ -56,6 +64,17 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
         status="in_review",
         metadata_json={},
     )
+    device = Kind(
+        kind="Device",
+        name="admin-cloud",
+        namespace="default",
+        user_id=owner.id,
+        is_active=True,
+        json={"spec": {"deviceType": "cloud"}},
+    )
+    test_db.add(device)
+    test_db.flush()
+    authorize_resource(test_db, project, device)
     test_db.add_all([grant, agent, issue])
     test_db.flush()
     execution = LoopItemExecution(
@@ -106,7 +125,10 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
     test_db.commit()
     compiler = MagicMock(
         return_value=SimpleNamespace(
-            payload={"executionRequest": {"user": {"id": owner.id}, "model_config": {}}}
+            payload={
+                "executionRequest": {"user": {"id": owner.id}, "model_config": {}}
+            },
+            target=SimpleNamespace(device_id="admin-cloud"),
         )
     )
     rpc = AsyncMock(return_value={"accepted": True})
@@ -119,6 +141,9 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
     monkeypatch.setattr(
         "app.services.project_chat.comment_execution.push_project_chat_message",
         MagicMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.service.notify_project_chat_mentions", MagicMock()
     )
     return SimpleNamespace(
         db=test_db,
@@ -163,7 +188,7 @@ async def test_member_reply_uses_original_owner_and_session_once(scenario):
         project_chat_service.list_agents(
             s.db, user_id=s.member.id, project_id=str(s.project.id)
         )
-        == []
+        != []
     )
     request = comment(s)
     first = await execute_comment(s.db, user_id=s.member.id, request=request)
@@ -192,12 +217,11 @@ async def test_old_thread_survives_reassignment(scenario):
     "boundary",
     [
         "outsider",
-        "reporter",
+        "viewer",
         "other_author",
         "other_issue",
         "binding",
         "inactive",
-        "busy",
     ],
 )
 async def test_rejects_invalid_collaboration_without_runtime_dispatch(
@@ -207,8 +231,8 @@ async def test_rejects_invalid_collaboration_without_runtime_dispatch(
     request = comment(s)
     if boundary == "outsider":
         s.db.delete(s.grant)
-    elif boundary == "reporter":
-        s.grant.role = BaseRole.Reporter.value
+    elif boundary == "viewer":
+        s.grant.role = BaseRole.Viewer.value
     elif boundary == "other_author":
         s.db.query(ProjectChatMessage).filter_by(
             message_id=request.trigger_message_id
@@ -219,12 +243,30 @@ async def test_rejects_invalid_collaboration_without_runtime_dispatch(
         s.execution.cloud_project_id = "different-project"
     elif boundary == "inactive":
         s.agent.status = "archived"
-    elif boundary == "busy":
-        s.root.status = "streaming"
     s.db.commit()
     with pytest.raises(HTTPException):
         await execute_comment(s.db, user_id=s.member.id, request=request)
     s.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_busy_session_accepts_follow_up_into_runtime_queue(scenario):
+    s = scenario
+    s.root.status = "streaming"
+    s.rpc.return_value = {
+        "accepted": True,
+        "status": "queued",
+        "queuePosition": 2,
+    }
+    s.db.commit()
+
+    result = await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    assert result[0].status == "pending"
+    assert result[0].metadata["run_status"] == "queued"
+    assert result[0].metadata["queue_position"] == 2
+    assert s.issue.status == "in_progress"
+    assert s.rpc.call_args.kwargs["payload"]["queueIfBusy"] is True
 
 
 @pytest.mark.asyncio
@@ -299,16 +341,18 @@ async def test_new_comment_queues_hidden_agent_once_in_its_own_thread(
 
 
 @pytest.mark.asyncio
-async def test_cannot_mention_unassigned_hidden_agent(scenario):
+async def test_cannot_mention_unassigned_disabled_agent(scenario):
     s = scenario
     s.issue.assignee_agent_id = ""
+    s.agent.status = "archived"
     s.db.commit()
-    request = comment(
-        s, reply=False, mentions=[{"type": "agent", "id": s.agent.id, "label": "Codex"}]
-    )
     with pytest.raises(HTTPException) as exc:
-        await execute_comment(s.db, user_id=s.member.id, request=request)
-    assert exc.value.status_code == 403
+        comment(
+            s,
+            reply=False,
+            mentions=[{"type": "agent", "id": s.agent.id, "label": "Codex"}],
+        )
+    assert exc.value.status_code == 409
     s.rpc.assert_not_called()
 
 
@@ -380,6 +424,42 @@ async def test_manually_bound_session_uses_the_binding_owner(scenario):
 
 
 @pytest.mark.asyncio
+async def test_manually_bound_team_session_keeps_its_model_on_reply(scenario):
+    from app.models.delivery import LoopItemTaskBinding
+
+    s = scenario
+    s.db.delete(s.execution)
+    s.root.metadata_json = {}
+    s.db.add(
+        LoopItemTaskBinding(
+            cloud_project_id=str(s.project.id),
+            loop_item_id=s.issue.id,
+            device_id=s.root.runtime_device_id,
+            task_id=s.root.runtime_task_id,
+            task_user_id=s.owner.id,
+            linked_by_user_id=s.owner.id,
+            metadata_json={"wegent_team_id": 1880},
+        )
+    )
+    s.db.commit()
+
+    await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    intent = s.compiler.call_args.kwargs["request"]
+    assert intent.schema_version == 3
+    assert intent.wegent_team_id == 1880
+    assert intent.model_id is None
+    assert intent.new_session is False
+    assert intent.origin == {
+        "type": "board_comment",
+        "dispatchRole": "executor",
+        "cloudProjectId": s.project.id,
+        "loopItemId": s.issue.id,
+    }
+    assert s.compiler.call_args.kwargs["user_id"] == s.owner.id
+
+
+@pytest.mark.asyncio
 async def test_plain_comment_ack_retry_does_not_acquire_a_new_assignee(scenario):
     s = scenario
     s.issue.assignee_agent_id = ""
@@ -397,16 +477,6 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
     from app.models.kind import Kind
 
     s = scenario
-    s.db.add(
-        Kind(
-            kind="Device",
-            name="admin-cloud",
-            namespace="default",
-            user_id=s.owner.id,
-            is_active=True,
-            json={"spec": {"deviceType": "cloud"}, "metadata": {"name": "admin-cloud"}},
-        )
-    )
     s.agent.device_id = "admin-cloud"
     s.agent.metadata_json = {
         **s.agent.metadata_json,
@@ -423,7 +493,13 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
     assert execution.assigner_user_id == s.member.id
     assert execution.status == "queued"
     assert execution.automation_run_id == ""
-    assert execution.runtime_request["message"] == "Review this comment independently"
+    assert execution.runtime_request["message"].endswith(
+        "Review this comment independently"
+    )
+    assert (
+        f"cloud://projects/{s.project.id}/todos/{s.issue.id}"
+        in execution.runtime_request["message"]
+    )
     assert execution.runtime_request["modelId"] == "admin-model"
     assert (
         execution.runtime_request["origin"]["rootCommentId"]
@@ -434,7 +510,7 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Reporter])
+@pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Viewer])
 async def test_member_reads_bound_transcript_using_original_owner(scenario, role):
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
@@ -473,6 +549,82 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
         timeout_seconds=30,
         allow_app_device_task_reading=True,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "requested_task", ["original-session", "original-session-manager-initial"]
+)
+async def test_group_transcript_reads_manager_session_without_changing_dispatch_identity(
+    scenario, requested_task
+):
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.runtime_work_service import get_runtime_transcript
+
+    s = scenario
+    s.execution.execution_payload = json.dumps(
+        {
+            **s.execution.execution_intent,
+            "runtime_selection": {"executor_kind": "collaboration_group_dispatch"},
+        }
+    )
+    s.db.commit()
+    s.rpc.return_value = {
+        "taskId": "original-session-manager-initial",
+        "workspacePath": "/manager-session",
+        "runtime": "codex",
+        "messages": [
+            {"id": "planning", "role": "assistant", "content": "Planning work"}
+        ],
+        "turns": [],
+        "running": True,
+    }
+    response = await get_runtime_transcript(
+        db=s.db,
+        user_id=s.member.id,
+        address=RuntimeTranscriptRequest(
+            deviceId="admin-cloud",
+            taskId=requested_task,
+            runtimeHandle={"threadId": "unrelated-private-thread"},
+            projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        ),
+    )
+
+    assert response.local_task_id == "original-session-manager-initial"
+    assert response.messages[0].content == "Planning work"
+    assert s.execution.runtime_task_id == "original-session"
+    assert s.rpc.call_args.kwargs["payload"] == {
+        "deviceId": "admin-cloud",
+        "taskId": "original-session-manager-initial",
+    }
+    assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
+
+
+@pytest.mark.asyncio
+async def test_invalid_runtime_transcript_returns_explicit_gateway_error(scenario):
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.runtime_work_service import get_runtime_transcript
+
+    s = scenario
+    s.rpc.return_value = {
+        "taskId": "original-session",
+        "workspacePath": "",
+        "runtime": "runtime",
+        "messages": [],
+        "turns": [],
+    }
+    with pytest.raises(HTTPException) as error:
+        await get_runtime_transcript(
+            db=s.db,
+            user_id=s.member.id,
+            address=RuntimeTranscriptRequest(
+                deviceId="admin-cloud",
+                taskId="original-session",
+                projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+            ),
+        )
+    assert error.value.status_code == 502
+    assert error.value.detail == "Runtime returned an invalid conversation response"
 
 
 @pytest.mark.asyncio
@@ -592,3 +744,136 @@ async def test_project_transcript_websocket_uses_same_authorization(
         "deviceId": "admin-cloud",
         "taskId": "original-session",
     }
+
+
+@pytest.mark.asyncio
+async def test_routed_reply_queues_offline_and_keeps_the_original_session(
+    scenario, monkeypatch
+):
+    from app.models.kind import Kind
+    from app.schemas.runner_routing import RunnerCatalog
+    from app.services.loop_item_executions.service import loop_item_execution_service
+    from app.services.runner_routing import save_catalog
+
+    db = scenario.db
+    original = db.query(LoopItemExecution).first()
+    agent = db.get(ProjectChatAgent, original.agent_id)
+    original.execution_environment = "cloud"
+    model = {"runtime": "codex", "provider": "openai", "model_id": "native-model"}
+    device = (
+        db.query(Kind)
+        .filter_by(
+            kind="Device",
+            name="admin-cloud",
+            namespace="default",
+            user_id=original.executor_owner_user_id,
+        )
+        .one()
+    )
+    save_catalog(
+        db,
+        device,
+        RunnerCatalog(
+            models=[{**model, "label": "Native", "local_model_id": "native-model"}]
+        ),
+    )
+    agent.metadata_json = {
+        **agent.metadata_json,
+        "execution_policy": {"mode": "project_pool"},
+        "model_policy": {"mode": "fixed", "model": model},
+    }
+    intent = original.execution_intent
+    intent["runtime_selection"] = {
+        "runner_routing": {
+            "execution_policy": {"mode": "project_pool"},
+            "model": model,
+        },
+        "resolved_environment_id": str(device.id),
+    }
+    original.execution_payload = json.dumps(intent)
+    db.get(LoopItem, original.loop_item_id).metadata_json = {
+        "runner_binding": {"environment_id": str(device.id)}
+    }
+    monkeypatch.setattr(
+        "app.services.runner_routing.project_environment_ids", lambda *_: {device.id}
+    )
+    trigger = ProjectChatMessage(
+        message_id="queued-reply",
+        client_message_id="queued-reply",
+        project_id=original.cloud_project_id,
+        task_id=original.loop_item_id,
+        sender_type="user",
+        sender_id=str(scenario.member.id),
+        sender_name="Member",
+        content="Continue",
+        message_type="text",
+        status="completed",
+        reply_to_message_id="ai-result",
+        thread_root_message_id="ai-result",
+        metadata_json={},
+    )
+    db.add(trigger)
+    db.commit()
+    rows = await execute_comment(
+        db,
+        user_id=scenario.member.id,
+        request=ProjectChatCommentExecution(
+            project_id=original.cloud_project_id,
+            task_id=original.loop_item_id,
+            trigger_message_id=trigger.message_id,
+        ),
+    )
+    queued = db.query(LoopItemExecution).order_by(LoopItemExecution.id.desc()).first()
+    assert queued.id != original.id
+    assert queued.status == "queued"
+    assert queued.runtime_task_id == original.runtime_task_id
+    assert queued.runtime_request["newSession"] is False
+    assert rows[0].status == "pending"
+    next_request = comment(scenario, text="Another offline reply")
+    followups = await execute_comment(
+        db, user_id=scenario.member.id, request=next_request
+    )
+    assert followups[0].status == "pending"
+    second = db.query(LoopItemExecution).order_by(LoopItemExecution.id.desc()).first()
+    assert second.id != queued.id
+    assert second.runtime_task_id == "original-session"
+    scenario.rpc.assert_not_awaited()
+    claimed = loop_item_execution_service.claim_next_for_device(
+        db,
+        execution_device_id=device.name,
+        owner_user_id=device.user_id,
+        environment="cloud",
+        runtime_instance_id="runner",
+    )
+    assert claimed.id == queued.id
+    assert claimed.runtime_task_id == "original-session"
+    compiled = loop_item_execution_service.build_executor_runtime_payload(
+        db,
+        execution=claimed,
+        execution_target_id=device.name,
+        executor_device_id=device.name,
+    )
+    assert compiled["executionRequest"]["new_session"] is False
+    assert compiled["runtimeAction"] == "send"
+
+
+@pytest.mark.asyncio
+async def test_cp13_cp16_comment_continuation_rechecks_current_device_grants(scenario):
+    s = scenario
+    source = (
+        s.db.query(ResourceMember)
+        .filter_by(
+            resource_type="Device",
+            entity_type="workspace",
+            entity_id=str(s.project.workspace_id),
+        )
+        .one()
+    )
+    s.db.delete(source)
+    s.db.commit()
+    request = comment(s)
+    with pytest.raises(HTTPException) as denied:
+        await execute_comment(s.db, user_id=s.member.id, request=request)
+    assert denied.value.status_code == 403
+    s.rpc.assert_not_awaited()
+    s.compiler.assert_not_called()

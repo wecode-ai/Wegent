@@ -1,9 +1,46 @@
 import type { HTMLAttributes, ReactNode } from "react";
+import type { ProjectChatMessage } from "@wegent/chat-core";
 import { IssueActivityCard } from "./IssueActivityPresentation";
 
 export interface IssueActivityThreadModel<T> {
   root: T;
   replies: T[];
+  displayReplies?: T[];
+}
+
+/** Keep discussions in place while execution cards follow their own lifecycle. */
+export function groupIssueTimelineThreads(
+  messages: ProjectChatMessage[],
+): IssueActivityThreadModel<ProjectChatMessage>[] {
+  return groupIssueActivityThreads(messages).flatMap((thread) => {
+    if (thread.root.sender.type !== "user") return [thread];
+    const discussion = {
+      root: thread.root,
+      replies: thread.replies,
+      displayReplies: [] as ProjectChatMessage[],
+    };
+    const cards: IssueActivityThreadModel<ProjectChatMessage>[] = [discussion];
+    const parents = new Map<
+      string,
+      IssueActivityThreadModel<ProjectChatMessage>
+    >([[thread.root.messageId, discussion]]);
+    for (const message of thread.replies) {
+      const parent = parents.get(message.replyToMessageId ?? "") ?? discussion;
+      if (message.sender.type === "agent" && parent === discussion) {
+        const execution = {
+          root: message,
+          replies: [] as ProjectChatMessage[],
+        };
+        cards.push(execution);
+        parents.set(message.messageId, execution);
+      } else {
+        if (parent === discussion) discussion.displayReplies.push(message);
+        else parent.replies.push(message);
+        parents.set(message.messageId, parent);
+      }
+    }
+    return cards;
+  });
 }
 
 /** Resolve roots before replies so snapshot/event arrival order cannot split a thread. */
@@ -39,6 +76,7 @@ export function IssueActivityThread({
   message,
   replies,
   composer,
+  variant = "card",
   events,
   eventLabel,
   eventTestId,
@@ -48,6 +86,7 @@ export function IssueActivityThread({
   message: ReactNode;
   replies?: ReactNode;
   composer?: ReactNode;
+  variant?: "card" | "timeline";
   events?: ReactNode;
   eventLabel?: string;
   eventTestId?: string;
@@ -55,7 +94,13 @@ export function IssueActivityThread({
   cardAttributes?: HTMLAttributes<HTMLElement> & { "data-testid"?: string };
 }) {
   return (
-    <div className="task-detail-thread">
+    <div
+      className={
+        variant === "timeline"
+          ? "task-detail-thread is-timeline"
+          : "task-detail-thread"
+      }
+    >
       <IssueActivityCard {...cardAttributes}>
         {message}
         {replies ? (

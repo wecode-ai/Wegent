@@ -1,21 +1,11 @@
-import {
-  chmod,
-  cp,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
+import { copyManagedPlugin } from './managed-plugin-files.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
-export const CORE_DSH_VERSION = '0.1.1-rc.2'
+export const CORE_DSH_VERSION = '0.2.0-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [
@@ -43,6 +33,7 @@ const CORE_PLUGIN_PACKAGES = [
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
+  '@wework/dsh-browser-auth',
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
   '@wegent/dsh-browser-runtime',
@@ -70,13 +61,25 @@ const CORE_UI_BUNDLES = [
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
+// User plugin packages and their manifests must survive a runtime-only reset.
+export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
+  const profileRoot = join(dataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
+  const paths = [
+    join(profileRoot, PROFILE_STAMP),
+    ...CORE_PLUGIN_PACKAGES.map(([name]) => join(profileRoot, 'node_modules', name)),
+  ]
+  for (const path of paths) await rm(path, { recursive: true, force: true })
+}
+
 interface RuntimeIdentity {
   dshVersion: string
-  role: string
+  role?: string
+  roles?: string[]
   sourceFingerprint: string
 }
 
 interface ProfileStamp extends RuntimeIdentity {
+  managedPluginCopyVersion: number
   managedUiPlugins: boolean
   corePluginsFingerprint: string
 }
@@ -167,6 +170,7 @@ export async function prepareCoreDshRuntime(
         options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
         join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
+      WEWORK_DSH_BROWSER_AUTH: '1',
     },
     profile: PROFILE_NAME,
     version: runtime.version,
@@ -201,6 +205,7 @@ export async function selectCoreDshRuntime(
       join(pluginsRoot, directory),
     ])
   )
+  pluginRoots['@wework/dsh-browser-auth'] = join(runtime.pluginsRoot, 'wework-browser-auth')
   for (const plugin of internalPlugins) {
     if (plugin.name in pluginRoots) {
       throw new Error(`Duplicate core DSH plugin: ${plugin.name}`)
@@ -258,10 +263,11 @@ export async function selectBundledDshRuntimeMatching(
 ): Promise<BundledDshRuntime> {
   const absoluteRoot = resolve(root)
   const roots = await runtimeDirectories(absoluteRoot)
-  const candidates = (await Promise.all(roots.map(candidate => readRuntime(candidate)))).filter(
+  const candidates = (
+    await Promise.all(roots.map(candidate => readRuntime(candidate, role)))
+  ).filter(
     (runtime): runtime is BundledDshRuntime =>
       runtime !== null &&
-      runtime.role === role &&
       semver.satisfies(runtime.version, versionRequirement, { includePrerelease: true })
   )
   const selected = candidates.sort((left, right) => semver.rcompare(left.version, right.version))[0]
@@ -282,6 +288,7 @@ async function prepareProfile(options: {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const expectedStamp: ProfileStamp = {
+    managedPluginCopyVersion: 1,
     dshVersion: options.runtime.version,
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
@@ -309,6 +316,12 @@ async function prepareProfile(options: {
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
+  await mkdir(profileRoot, { recursive: true, mode: 0o700 })
+  // Package installation replaces client files even when their bytes are unchanged.
+  // Production plugin changes take effect on explicit restart, without remounting the UI.
+  await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
+    mode: 0o600,
+  })
   if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
     return
   }
@@ -319,7 +332,6 @@ async function prepareProfile(options: {
     currentBundles,
     new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
   )
-  await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   if (
     currentManifest &&
     (!coreDependenciesAreCurrent ||
@@ -365,7 +377,6 @@ async function prepareProfile(options: {
     { mode: 0o600 }
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
   await ensureCoreWorkspace(workspacePath)
   for (const packageName of managedDependencyNames) {
     const source = options.runtime.pluginRoots[packageName]
@@ -377,49 +388,6 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
-}
-
-export async function copyManagedPlugin(
-  source: string,
-  destination: string,
-  options: {
-    platform?: NodeJS.Platform
-    linkDirectory?: typeof symlink
-  } = {}
-): Promise<void> {
-  const platform = options.platform ?? process.platform
-  if (platform !== 'win32') {
-    await cp(source, destination, { recursive: true })
-    return
-  }
-  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
-}
-
-async function copyWindowsEntry(
-  source: string,
-  destination: string,
-  linkDirectory: typeof symlink
-): Promise<void> {
-  const metadata = await lstat(source)
-  if (metadata.isSymbolicLink()) {
-    const target = await realpath(source)
-    const targetMetadata = await lstat(target)
-    if (targetMetadata.isDirectory()) {
-      await linkDirectory(target, destination, 'junction')
-    } else {
-      await cp(target, destination)
-    }
-    return
-  }
-  if (!metadata.isDirectory()) {
-    await cp(source, destination)
-    return
-  }
-  await mkdir(destination, { recursive: true, mode: 0o700 })
-  const entries = await readdir(source)
-  for (const entry of entries) {
-    await copyWindowsEntry(join(source, entry), join(destination, entry), linkDirectory)
-  }
 }
 
 async function ensureCoreWorkspace(workspacePath: string): Promise<void> {
@@ -592,7 +560,7 @@ async function runtimeDirectories(root: string): Promise<string[]> {
         fingerprint => typeof fingerprint === 'string' && /^[0-9a-f]{64}$/i.test(fingerprint)
       )
     ) {
-      return fingerprints.map(fingerprint => join(root, fingerprint as string))
+      return [...new Set(fingerprints)].map(fingerprint => join(root, fingerprint as string))
     }
   } catch {
     // Fall back to direct-runtime metadata or directory discovery.
@@ -611,14 +579,17 @@ async function isRuntimeRoot(root: string): Promise<boolean> {
   }
 }
 
-async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
+async function readRuntime(root: string, role: string): Promise<BundledDshRuntime | null> {
   try {
     const identity = JSON.parse(
       await readFile(join(root, 'runtime.json'), 'utf8')
     ) as RuntimeIdentity
     if (
       typeof identity.dshVersion !== 'string' ||
-      typeof identity.role !== 'string' ||
+      !(
+        identity.role === role ||
+        (Array.isArray(identity.roles) && identity.roles.includes(role))
+      ) ||
       typeof identity.sourceFingerprint !== 'string' ||
       !/^[0-9a-f]{64}$/i.test(identity.sourceFingerprint)
     ) {
@@ -634,7 +605,7 @@ async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
     return {
       root,
       version: identity.dshVersion,
-      role: identity.role,
+      role,
       sourceFingerprint: identity.sourceFingerprint,
       entry,
       pluginsRoot: join(root, 'plugins'),
@@ -648,6 +619,7 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
   try {
     const current = JSON.parse(await readFile(path, 'utf8')) as ProfileStamp
     return (
+      current.managedPluginCopyVersion === expected.managedPluginCopyVersion &&
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
       current.managedUiPlugins === expected.managedUiPlugins &&

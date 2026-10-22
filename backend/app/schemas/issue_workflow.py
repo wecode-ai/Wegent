@@ -779,17 +779,7 @@ def instantiate_workflow(
             for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
     )
-    from app.services.workflow_loop_runtime import advance_loops, advance_root_branches
-
-    advanced = [node.model_dump(mode="json") for node in instance.nodes]
-    advance_loops(advanced)
-    advance_root_branches(advanced)
-    return IssueWorkflowInstance(
-        **{
-            **instance.model_dump(mode="json"),
-            "nodes": advanced,
-        }
-    )
+    return instance
 
 
 class WorkflowPlanItemCreate(BaseModel):
@@ -801,6 +791,7 @@ class WorkflowPlanItemCreate(BaseModel):
     stage_id: str = Field(default="", max_length=64)
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=100_000)
+    prompt: str = Field(default="", max_length=100_000)
     assignee_type: WorkflowPlanItemAssigneeType
     assignee_id: str = Field(min_length=1, max_length=128)
     assignee_name: str = Field(default="", max_length=255)
@@ -817,6 +808,16 @@ class WorkflowPlanSubmit(BaseModel):
         if len(keys) != len(set(keys)):
             raise ValueError("workflow plan item keys must be unique")
         return self
+
+
+class WorkflowReviewDecisionSubmit(BaseModel):
+    decision: Literal["in_review", "completed", "needs_rework"]
+    summary: str = Field(min_length=1, max_length=10_000)
+
+
+class WorkflowReviewFeedbackSubmit(BaseModel):
+    version: int
+    feedback: str = Field(min_length=1, max_length=10_000)
 
 
 class WorkflowPlanItemView(WorkflowPlanItemCreate):

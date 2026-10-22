@@ -51,7 +51,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["shared", "shared.models", "shared.models.db", "shared.db", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.testing", "shared.utils"]
+packages = ["shared", "shared.knowledge_contracts", "shared.knowledge_module", "shared.models", "shared.models.db", "shared.db", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.testing", "shared.utils"]
 
 [tool.setuptools.package-dir]
 shared = "."

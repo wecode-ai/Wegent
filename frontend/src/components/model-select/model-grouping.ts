@@ -9,6 +9,7 @@ export interface GroupableModel {
   displayName?: string | null
   provider?: string | null
   modelId?: string | null
+  capability?: string | null
   type?: string | null
   namespace?: string | null
   modelGroup?: string | null
@@ -55,6 +56,7 @@ export function getModelSearchText(model: GroupableModel): string {
     model.displayName,
     model.provider,
     model.modelId,
+    model.capability,
     model.type,
     model.namespace,
     model.modelGroup,

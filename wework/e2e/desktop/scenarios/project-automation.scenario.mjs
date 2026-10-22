@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
+import {
+  openDirectProjectCreation,
+  openProjectAgentCreator,
+  inProjectCreateDialog,
+  selectCollaborationDomain,
+  waitForTestIdByText,
+} from '../modules/workspace-flows.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import {
+  assertSavedCloudRouting,
+  readBasicCloudDefault,
+  verifyCloudSaveDuringNativeFaults,
+  verifyLocalBasicDefaultSave,
+} from '../modules/agent-catalog-regressions.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -46,24 +59,33 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
-async function createGroup(control, { name, leader }) {
+async function createGroup(control, { name, leader, autoSelectedLeader = false }) {
   const separatorIndex = leader.indexOf(':')
   const leaderKind = leader.slice(0, separatorIndex)
   const leaderId = leader.slice(separatorIndex + 1)
   await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
     value: name,
   })
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
-  )
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
-  )
+  if (autoSelectedLeader) {
+    // Workspace groups automatically include the authenticated creator as leader.
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`),
+      { visible: true }
+    )
+  } else {
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
+    )
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
+    await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
+    )
+  }
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: 10_000,
   })
@@ -72,9 +94,12 @@ async function createGroup(control, { name, leader }) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl = ''
   let authToken = ''
+  let cloudEnvironment
   let workspace = null
   let project = null
   let fixtureArchived = false
+  let proxy
+  const appEnvironment = {}
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -105,11 +130,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   return {
     requiresCloudEnvironment: true,
+    appEnvironment,
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
+      proxy = await new TransportFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+    },
+
+    setCloudEnvironment(value) {
+      cloudEnvironment = value
     },
 
     async verify(control) {
@@ -197,6 +229,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await createGroup(control, {
           name: WORKSPACE_GROUP_NAME,
           leader: `human:${workspace.created_by_user_id}`,
+          autoSelectedLeader: true,
         })
         const workspaceGroup = await waitForApiValue(
           () => request(`/api/v1/workspaces/${workspace.id}/collaboration-groups`),
@@ -230,25 +263,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped('[data-testid="collaboration-workspace-nav-projects"]')
         )
+        await openDirectProjectCreation(control, ACTIVE_WORKBENCH_SELECTOR)
+        await control.command('waitFor', inProjectCreateDialog(), { timeoutMs: uiTimeoutMs })
         await control.command(
-          'click',
-          scoped('[data-testid="collaboration-workspace-project-create"]')
+          'fill',
+          inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+          {
+            value: projectName,
+          }
         )
-        await control.command(
-          'click',
-          '[data-testid="collaboration-workspace-project-create-blank"]'
-        )
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-create-dialog"]'),
-          { timeoutMs: uiTimeoutMs }
-        )
-        await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-          value: projectName,
-        })
         await control.command(
           'clickWhenEnabled',
-          scoped('[data-testid="collaboration-project-create-confirm"]'),
+          inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
           { timeoutMs: uiTimeoutMs }
         )
         project = await waitForApiValue(
@@ -261,14 +287,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
 
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="collaboration-project-create-dialog"]'),
-          {
-            visible: false,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
+        await control.command('waitFor', inProjectCreateDialog(), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'clickWhenEnabled',
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
@@ -279,17 +301,39 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         })
         await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
         await control.command(
-          'click',
-          scoped('[data-testid="collaboration-project-settings-participants"]')
+          'waitFor',
+          scoped('[data-testid="project-settings-shell-group-ai-team"]'),
+          { timeoutMs: uiTimeoutMs }
         )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="project-settings-shell-group-ai-team"] + nav button')
+            )
+          ),
+          3,
+          'AI team navigation must expose agents, members, and collaboration teams'
+        )
+
         await control.command(
           'click',
-          scoped('[data-testid="collaboration-participants-tab-groups"]')
+          scoped('[data-testid="collaboration-project-settings-groups"]')
         )
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+          scoped('[data-testid="collaboration-project-settings-groups"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
+        )
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="collaboration-project-groups-page"] [role="tablist"]')
+            )
+          ),
+          0,
+          'Project collaboration teams must open directly without nested participant tabs'
         )
         await control.command(
           'waitFor',
@@ -309,27 +353,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
         await control.command(
           'click',
-          scoped('[data-testid="collaboration-participants-tab-agents"]')
+          scoped('[data-testid="collaboration-project-settings-agents"]')
         )
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-participants-tab-agents"][aria-selected="true"]'),
+          scoped('[data-testid="collaboration-project-settings-agents"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-          timeoutMs: uiTimeoutMs,
-        })
+        await openProjectAgentCreator(
+          control,
+          scoped('[data-testid="project-agent-add"]'),
+          uiTimeoutMs,
+          'wework-agent-resource-creator'
+        )
         const agentDialogSnapshot = JSON.parse(
           await control.command('snapshot', '[data-testid="wework-agent-resource-creator"]')
         )
         assert.ok(
-          !agentDialogSnapshot.testIds.some(testId => testId.includes('execution-environment')),
-          'Custom Agent creation must not bind an execution environment'
+          agentDialogSnapshot.testIds.includes('wework-agent-resource-creator-tab-basic'),
+          'Agent creation must open the basic information tab'
         )
-        await capture(control, 'project-automation-02-agent-create-without-environment.png')
+        await capture(control, 'project-automation-02-agent-create-basic-tab.png')
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
         })
@@ -337,15 +381,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
         )
         const selectableModels = (modelCatalog.data ?? []).filter(
-          model => model.isActive !== false && !model.compatibilityDisabled
+          model =>
+            model.type === 'public' && model.isActive !== false && !model.compatibilityDisabled
         )
         assert.ok(
           selectableModels.length > 0,
           'No executable model is available for Agent creation'
         )
-        await control.command('select', '[data-testid="wework-agent-model"]', {
-          value: '0',
-        })
+        const defaultModel = await readBasicCloudDefault(
+          control,
+          'wework-agent',
+          'wework-agent-resource-creator',
+          uiTimeoutMs
+        )
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
@@ -364,21 +412,98 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Creating a project-owned Agent did not persist',
           uiTimeoutMs
         )
+        assert.ok(projectAgent.wegentTeamId, 'The project Agent must retain its Team binding')
+        await assertSavedCloudRouting(request, projectAgent, defaultModel, { mode: 'project_pool' })
+        assert.equal(projectAgent.canUse, true, 'A newly created Agent must be usable')
+        const membersPath = `/api/share/Team/${projectAgent.wegentTeamId}/members`
+        const members = await request(membersPath)
+        const workspaceGrant = members.members.find(
+          member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
+        )
+        assert.ok(workspaceGrant, 'Agent creation must persist its space authorization')
         await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
           visible: false,
           timeoutMs: uiTimeoutMs,
         })
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="project-agent-archive-${projectAgent.id}"]`)
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="project-agent-reactivate-${projectAgent.id}"]`)
+        )
+        await request(`${membersPath}/${workspaceGrant.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ role: 'Reporter' }),
+        })
+        const unavailable = await request(
+          `/api/v1/cloud-projects/${project.id}/chat-agents?include_archived=true`
+        )
+        assert.equal(unavailable.find(agent => agent.id === projectAgent.id)?.canUse, false)
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="project-agent-reactivate-${projectAgent.id}"]`)
+        )
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
+          agents => agents.find(agent => agent.id === projectAgent.id && agent.canUse),
+          'Explicit Agent reauthorization did not restore project use',
+          uiTimeoutMs
+        )
+        const restoredMembers = await request(membersPath)
+        const restoredGrants = restoredMembers.members.filter(
+          member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
+        )
+        assert.equal(restoredGrants.length, 1, 'Reauthorization must update the existing grant')
+        assert.equal(restoredGrants[0].id, workspaceGrant.id)
+        assert.equal(restoredGrants[0].role, 'Developer')
+        const localDevice = await waitForApiValue(
+          () => request('/api/devices/online'),
+          devices => devices.items.find(device => device.device_type === 'app') ?? null,
+          'The real desktop executor must be registered',
+          workbenchReadyTimeoutMs
+        )
+        const compiled = await request('/api/runtime-work/materialize', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemaVersion: 3,
+            wegentTeamId: projectAgent.wegentTeamId,
+            deviceId: localDevice.device_id,
+            workspacePath: `/tmp/wework-project-agent-${process.pid}`,
+            runtime: 'claude_code',
+            message: 'Compile the assigned Agent without overriding its model',
+            modelSelection: null,
+          }),
+        })
+        assert.equal(
+          compiled.payload.runtime,
+          'codex',
+          'The workbench default replaced the Team Shell'
+        )
+        assert.equal(compiled.payload.executionRequest.team_id, projectAgent.wegentTeamId)
+        assert.equal(compiled.payload.executionRequest.bot[0].shell_type, 'Codex')
+        assert.equal(compiled.payload.schemaVersion, 2)
+        assert.equal(
+          'modelConfig' in compiled.payload,
+          false,
+          'HTTP serialization added a forbidden modelConfig field to the Executor payload'
+        )
+        assert.ok(
+          compiled.payload.executionRequest.model_config.model_id,
+          'The assigned Team model was lost during local task materialization'
+        )
         await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
           text: PROJECT_AGENT_NAME,
           timeoutMs: uiTimeoutMs,
         })
         await control.command(
           'click',
-          scoped('[data-testid="collaboration-participants-tab-groups"]')
+          scoped('[data-testid="collaboration-project-settings-groups"]')
         )
         await control.command(
           'waitFor',
-          scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+          scoped('[data-testid="collaboration-project-settings-groups"][aria-current="page"]'),
           { timeoutMs: uiTimeoutMs }
         )
         await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
@@ -515,6 +640,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           { visible: false, timeoutMs: uiTimeoutMs }
         )
         await capture(control, 'project-automation-07-group-deleted.png')
+        // A separate App reads the authorized HTTP catalog instead of local IPC.
+        const catalogDeviceId = `catalog-recovery-app-${process.pid}`
+        await cloudEnvironment.startGeneratedRemoteDevice({
+          deviceId: catalogDeviceId,
+          deviceName: 'Catalog recovery App',
+          deviceType: 'app',
+        })
+        const catalogDevice = await cloudEnvironment.waitForDeviceType(catalogDeviceId, 'app')
+        assert.notEqual(catalogDevice.id, localDevice.id)
+        for (const resourcePath of [
+          `/api/v1/workspaces/${workspace.id}`,
+          `/api/v1/cloud-projects/${project.id}`,
+        ]) {
+          await request(`${resourcePath}/execution-environments`, {
+            method: 'POST',
+            body: JSON.stringify({ device_id: catalogDevice.id }),
+          })
+        }
+        await verifyCloudSaveDuringNativeFaults(control, {
+          projectId: project.id,
+          device: catalogDevice,
+          request,
+          proxy,
+          waitForApiValue,
+          timeoutMs: uiTimeoutMs,
+        })
+        await verifyLocalBasicDefaultSave(control, uiTimeoutMs, proxy)
       } finally {
         try {
           await archiveFixture()
@@ -529,7 +681,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     },
 
     async cleanup() {
-      await archiveFixture()
+      try {
+        await archiveFixture()
+      } finally {
+        await proxy?.stop()
+      }
     },
+    diagnostics: () => ({ catalogRequests: proxy?.requests }),
   }
 }

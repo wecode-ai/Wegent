@@ -10,17 +10,27 @@ from time import perf_counter
 from typing import Any, Callable, Literal, Optional, Sequence
 
 from sqlalchemy import and_, exists, func, or_, text, tuple_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
-from app.stores.tasks.interfaces import RecentTaskTeamRef, WorkspaceRefLookup
+from app.stores.tasks.interfaces import (
+    ProjectTaskSummary,
+    RecentTaskTeamRef,
+    RecentTeamMode,
+    WorkspaceRefLookup,
+)
+from app.stores.tasks.project_task_summaries import list_project_task_summaries
 from app.stores.tasks.recent_team_refs import (
     list_recent_task_team_refs,
     recent_owner_only_query,
+)
+from app.stores.tasks.title_search import (
+    filter_tasks_by_title,
+    search_owned_task_ids_by_title,
 )
 
 logger = logging.getLogger(__name__)
@@ -787,12 +797,14 @@ class SqlAlchemyTaskStore:
         *,
         user_id: int,
         limit: int,
+        mode: RecentTeamMode | None = None,
     ) -> list[RecentTaskTeamRef]:
         return list_recent_task_team_refs(
             db,
             TaskResource,
             user_id=user_id,
             limit=limit,
+            mode=mode,
         )
 
     def list_recent_owner_only_used_tasks(
@@ -1024,8 +1036,24 @@ class SqlAlchemyTaskStore:
         return [row[0] for row in rows], total
 
     def list_owned_task_ids(
-        self, db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int,
+        limit: int,
+        extra_limit: int,
+        title: Optional[str] = None,
     ) -> tuple[list[int], int]:
+        if title is not None:
+            return search_owned_task_ids_by_title(
+                db,
+                user_id=user_id,
+                title=title,
+                skip=skip,
+                limit=limit + extra_limit,
+                sources=self._task_query_sources(db, owner_user_ids=[user_id]),
+            )
         total = _timed_scalar(
             db,
             _OWNED_COUNT_SQL,
@@ -1157,15 +1185,22 @@ class SqlAlchemyTaskStore:
         project_id: int,
         owner_user_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        title: Optional[str] = None,
     ) -> int:
-        query = db.query(func.count(TaskResource.id)).filter(
-            TaskResource.project_id == project_id,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        sources = self._task_query_sources(
+            db, owner_user_ids=[owner_user_id] if owner_user_id is not None else None
         )
-        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        return int(query.scalar() or 0)
+        total = 0
+        for model, query in sources:
+            query = self._filter_active_project_tasks(
+                query,
+                model=model,
+                owner_user_id=owner_user_id,
+                client_origin=client_origin,
+                title=title,
+            ).filter(model.project_id == project_id)
+            total += int(query.with_entities(func.count(model.id)).scalar() or 0)
+        return total
 
     def list_active_project_tasks(
         self,
@@ -1174,16 +1209,105 @@ class SqlAlchemyTaskStore:
         project_id: int,
         owner_user_id: Optional[int] = None,
         client_origin: Optional[str] = None,
-    ) -> list[TaskResource]:
-        query = db.query(TaskResource).filter(
-            TaskResource.project_id == project_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        skip: int = 0,
+        limit: Optional[int] = None,
+        before: Optional[tuple[datetime, int]] = None,
+        title: Optional[str] = None,
+        sort_by: Literal["updated_at", "created_at"] = "updated_at",
+    ) -> list[ProjectTaskSummary]:
+        if before is not None and sort_by != "created_at":
+            raise ValueError("Project task cursors require created_at ordering")
+        sources = self._task_query_sources(
+            db, owner_user_ids=[owner_user_id] if owner_user_id is not None else None
         )
-        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        tasks = []
+        for model, query in sources:
+            query = self._filter_active_project_tasks(
+                query,
+                model=model,
+                owner_user_id=owner_user_id,
+                client_origin=client_origin,
+                title=title,
+            ).filter(model.project_id == project_id)
+            tasks.extend(
+                list_project_task_summaries(
+                    query,
+                    model=model,
+                    before=before,
+                    sort_by=sort_by,
+                    skip=skip if len(sources) == 1 else 0,
+                    limit=(
+                        (skip + limit if len(sources) > 1 else limit)
+                        if limit is not None
+                        else None
+                    ),
+                )
+            )
+        if len(sources) == 1:
+            return tasks
+        tasks.sort(key=lambda task: (getattr(task, sort_by), task.id), reverse=True)
+        return tasks[skip:] if limit is None else tasks[skip : skip + limit]
+
+    def count_active_tasks_by_project(
+        self,
+        db: Session,
+        *,
+        project_owners: dict[int, int],
+        client_origin: Optional[str] = None,
+    ) -> dict[int, int]:
+        if not project_owners:
+            return {}
+        counts: dict[int, int] = {}
+        for model, query in self._task_query_sources(
+            db, owner_user_ids=list(set(project_owners.values()))
+        ):
+            query = self._filter_active_project_tasks(
+                query,
+                model=model,
+                client_origin=client_origin,
+            ).filter(
+                tuple_(model.project_id, model.user_id).in_(
+                    list(project_owners.items())
+                )
+            )
+            rows = (
+                query.with_entities(model.project_id, func.count(model.id))
+                .group_by(model.project_id)
+                .all()
+            )
+            for project_id, count in rows:
+                counts[project_id] = counts.get(project_id, 0) + count
+        return counts
+
+    def _task_query_sources(
+        self, db: Session, *, owner_user_ids: Sequence[int] | None = None
+    ) -> list[tuple[type, Query]]:
+        """Return disjoint physical task sources for bounded list reads."""
+        return [(TaskResource, db.query(TaskResource))]
+
+    def _filter_active_project_tasks(
+        self,
+        query: Query,
+        *,
+        owner_user_id: Optional[int] = None,
+        client_origin: Optional[str] = None,
+        title: Optional[str] = None,
+        model: type = TaskResource,
+    ) -> Query:
+        query = query.filter(
+            model.kind == "Task",
+            model.is_active == TaskResource.STATE_ACTIVE,
+            func.coalesce(model.json["status"]["status"].as_string(), "") != "DELETE",
+        )
+        if owner_user_id is not None:
+            query = query.filter(model.user_id == owner_user_id)
         if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        return query.order_by(TaskResource.updated_at.desc()).all()
+            query = query.filter(model.client_origin == client_origin)
+        if title is not None:
+            query = filter_tasks_by_title(
+                query, model=model, title=title, use_name_fallback=True
+            )
+        return query
 
     def get_active_project_task(
         self,

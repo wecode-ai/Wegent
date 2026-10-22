@@ -14,6 +14,39 @@ from app.api.ws import device_namespace
 from app.core.shutdown import shutdown_manager
 
 
+@pytest.mark.asyncio
+async def test_workspace_runner_connection_and_live_revocation(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    save_session = AsyncMock()
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.workspaces.runner_registration.verify_runner_connection",
+        lambda token: (41, "space-runner-a"),
+    )
+    await namespace.on_connect(
+        "runner-sid", {"REMOTE_ADDR": "127.0.0.1"}, {"token": "wgr-1.credential"}
+    )
+    session = save_session.await_args.args[1]
+    assert session["auth_type"] == "workspace_runner"
+    assert session["user_id"] == 41
+    monkeypatch.setattr(namespace, "get_session", AsyncMock(return_value=session))
+    result = await namespace.on_device_register(
+        "runner-sid",
+        {"device_id": "another-runner", "name": "Server", "device_type": "local"},
+    )
+    assert result == {"error": "Runner credential is scoped to its registered device"}
+    monkeypatch.setattr(
+        "app.services.workspaces.runner_registration.verify_runner_connection",
+        lambda token: None,
+    )
+    disconnect = AsyncMock()
+    monkeypatch.setattr(namespace, "disconnect", disconnect)
+    result = await namespace.trigger_event("device:heartbeat", "runner-sid", {})
+    assert result == {"error": "Runner credential revoked"}
+    disconnect.assert_awaited_once_with("runner-sid")
+
+
 @pytest.fixture(autouse=True)
 def reset_shutdown_manager():
     shutdown_manager.reset()

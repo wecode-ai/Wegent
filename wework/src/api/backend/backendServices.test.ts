@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createBackendWorkbenchServices } from './backendServices'
+import type { createDeviceApi } from '@/api/devices'
 
 const composerMocks = vi.hoisted(() => ({ request: vi.fn(), installed: vi.fn(), dispose: vi.fn() }))
 vi.mock('@wegent/chat-core', async importOriginal => ({
@@ -21,9 +22,138 @@ const baseOptions = {
 }
 
 describe('createBackendWorkbenchServices', () => {
+  test('saves on the owning runtime through IPC while preserving omitted unsupported fields', async () => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ detail: 'Not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    )
+    vi.stubGlobal('fetch', fetch)
+    const data = {
+      deviceId: 'owner-device',
+      projectKey: 'owner-key',
+      name: 'Saved',
+      roots: ['/owner'],
+      runtime: 'codex' as const,
+    }
+    composerMocks.request.mockResolvedValue({ ...data, accepted: true })
+    const services = createBackendWorkbenchServices(baseOptions)
+    await expect(services.runtimeWorkApi!.upsertLocalRuntimeProject(data)).resolves.toMatchObject({
+      accepted: true,
+    })
+    expect(composerMocks.request).toHaveBeenCalledWith(
+      'runtime.projects.upsert_local',
+      data,
+      'owner-device'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+  test('reads project save confirmation directly from the addressed owner runtime', async () => {
+    composerMocks.request.mockResolvedValue({ workspaces: [] })
+    const services = createBackendWorkbenchServices(baseOptions)
+    await expect(
+      services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'owner-device' })
+    ).resolves.toMatchObject({ projects: [], chats: [] })
+    expect(composerMocks.request).toHaveBeenCalledWith('runtime.tasks.list', {}, 'owner-device')
+  })
   afterEach(() => {
     vi.unstubAllEnvs()
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  test('invalidates alias-owned plugin knowledge through device discovery while no editor is mounted', async () => {
+    const device = {
+      device_id: 'logical',
+      socket_device_id: 'relay',
+      runtime_instance_id: 'runtime',
+      status: 'online',
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      executor_version: '2.0.21',
+    }
+    let records = [device]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ items: records, total: records.length }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      )
+    )
+    const services = createBackendWorkbenchServices(baseOptions)
+    await (services.deviceApi as ReturnType<typeof createDeviceApi>).getAllDevices()
+    const api = services.projectDevicePluginApi!('relay')
+    composerMocks.request.mockRejectedValue(
+      new Error(
+        'runtime_rpc_failed: Unsupported runtime RPC method: runtime.codex.app_server.request'
+      )
+    )
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    records = [{ ...device, status: 'offline' }]
+    await (services.deviceApi as ReturnType<typeof createDeviceApi>).getAllDevices()
+    records = [device]
+    await services.deviceApi.listDevices()
+    composerMocks.request.mockResolvedValue({ marketplaces: [] })
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'relay' })
+  })
+
+  test('stops an unmounted-editor plugin install when discovery replaces its owning runtime', async () => {
+    let records = [
+      {
+        device_id: 'logical',
+        socket_device_id: 'relay',
+        runtime_instance_id: 'old',
+        status: 'online',
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+        executor_version: '2.0.21',
+      },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ items: records, total: records.length }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      )
+    )
+    const services = createBackendWorkbenchServices(baseOptions)
+    await services.deviceApi.listDevices()
+    const api = services.projectDevicePluginApi!('relay')
+    let finishRead!: (value: unknown) => void
+    composerMocks.request.mockImplementation(async (_method, params) =>
+      params.method === 'plugin/installed'
+        ? new Promise(resolve => {
+            finishRead = resolve
+          })
+        : { marketplaces: [] }
+    )
+    const installing = api.installAvailablePlugin({
+      id: 'quality@team',
+      name: 'quality',
+      manifest: { marketplaceId: 'team', marketplacePath: '/plugins' },
+    } as never)
+    records = [{ ...records[0], runtime_instance_id: 'replacement' }]
+    await services.deviceApi.listDevices()
+    finishRead({ marketplaces: [] })
+    await expect(installing).rejects.toThrow()
+    expect(composerMocks.request).not.toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      expect.objectContaining({ method: 'plugin/install' }),
+      'relay'
+    )
+    expect(composerMocks.request).not.toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      expect.objectContaining({ method: 'config/value/write' }),
+      'relay'
+    )
   })
 
   test('reads the addressed composer through runtime IPC and disposes its connection', async () => {
@@ -61,6 +191,29 @@ describe('createBackendWorkbenchServices', () => {
     expect(services.feedbackApi).toBeUndefined()
   })
 
+  test('reads project plugins through the addressed runtime app-server interface', async () => {
+    composerMocks.request.mockResolvedValue({ marketplaces: [] })
+    const services = createBackendWorkbenchServices(baseOptions)
+
+    await expect(
+      services.projectDevicePluginApi!('remote-device').readState()
+    ).resolves.toMatchObject({
+      deviceId: 'remote-device',
+      marketplaceItems: [],
+    })
+
+    expect(composerMocks.request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      { method: 'plugin/installed', params: {} },
+      'remote-device'
+    )
+    expect(composerMocks.request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      { method: 'plugin/list', params: { cwds: null } },
+      'remote-device'
+    )
+  })
+
   test('enables feedback only for the build-time feedback endpoint', () => {
     vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
 
@@ -88,7 +241,7 @@ describe('createBackendWorkbenchServices', () => {
     expect(services.sharedWorkspaceApi?.agents.list).toBeTypeOf('function')
     expect(services.workspaceRuntimePort?.bindTask).toBeTypeOf('function')
     expect(services.workspaceRuntimePort?.trackProjectTask).toBeTypeOf('function')
-    expect(services.workspaceRuntimePort?.claimNextExecution).toBeTypeOf('function')
+    expect(services.workspaceRuntimePort).not.toHaveProperty('claimNextExecution')
     expect(services.workspaceRuntimePort?.reportExecutionLifecycle).toBeTypeOf('function')
     expect('collaborationApi' in services).toBe(false)
   })

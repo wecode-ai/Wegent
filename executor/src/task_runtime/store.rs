@@ -4,30 +4,39 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    env,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
 mod code_projects;
+pub(crate) mod execution_workspace;
+mod ordering;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
-    ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
-    LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
-    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind,
-    TaskReorder, TaskUpdate,
+    ArchivedLoopItem, ArchivedLoopItemPage, ChatAgent, ChatAgentCreate, ChatAgentUpdate,
+    LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
+    LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind,
+    ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskUpdate,
 };
 
 #[path = "local_automation.rs"]
 mod local_automation;
+
+#[path = "runner_dispatch.rs"]
+mod runner_dispatch;
+
+#[cfg(test)]
+#[path = "runner_routing_tests.rs"]
+mod runner_routing_tests;
 
 #[path = "local_execution_activity.rs"]
 mod local_execution_activity;
@@ -35,7 +44,13 @@ use local_execution_activity::{
     create_execution_comment, create_local_execution, ensure_execution_binding, insert_task_binding,
 };
 
-const LOCAL_SCHEMA_VERSION: i64 = 9;
+#[path = "collaboration_dispatch.rs"]
+mod collaboration_dispatch;
+
+#[path = "stand_in.rs"]
+mod stand_in;
+
+const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -120,7 +135,7 @@ impl LocalTaskStore {
              WHERE resource_type = 'project' AND deleted_at IS NULL
              ORDER BY updated_at DESC",
         )?;
-        let rows = statement.query_map([], map_loop_item)?;
+        let rows = statement.query_map([], |row| map_loop_item(&connection, row))?;
         let mut projects = collect_items(rows)?;
         drop(statement);
         projects.extend(list_external_projects(&connection)?);
@@ -334,11 +349,19 @@ impl LocalTaskStore {
             metadata["collaboration_groups"] = collaboration_groups;
         }
         if let Some(automatic_processing_rules) = input.automatic_processing_rules {
-            local_automation::validate_rules(&automatic_processing_rules)?;
+            local_automation::validate_rules(
+                &*self.connection()?,
+                &project.id,
+                &metadata,
+                &automatic_processing_rules,
+            )?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
         if let Some(execution_environment) = input.execution_environment {
-            metadata["execution_environment"] = execution_environment;
+            metadata["execution_environment"] = code_projects::merge_execution_environment(
+                &metadata["execution_environment"],
+                execution_environment,
+            );
         }
         let connection = self.connection()?;
         let updated = connection.execute(
@@ -400,9 +423,9 @@ impl LocalTaskStore {
              FROM loop_items
              WHERE resource_type = 'task' AND cloud_project_id = ?1
                AND deleted_at IS NULL
-             ORDER BY sort_order, updated_at DESC",
+             ORDER BY sort_order, updated_at DESC, id",
         )?;
-        let rows = statement.query_map([project_id], map_loop_item)?;
+        let rows = statement.query_map([project_id], |row| map_loop_item(&connection, row))?;
         let mut items = collect_items(rows)?;
         drop(statement);
         let executions = latest_executions_for_project(&connection, project_id)?;
@@ -431,6 +454,7 @@ impl LocalTaskStore {
         &self,
         project_id: &str,
         task_id: &str,
+        activity_sequence: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let connection = self.connection()?;
         let item = get_item_from(&connection, task_id, "task")?
@@ -440,12 +464,21 @@ impl LocalTaskStore {
             drop(connection);
             return self.get_task(project_id, task_id);
         }
-        if item.metadata["is_unread"] == json!(true) {
+        if item.metadata["is_unread"] == json!(true) || activity_sequence.is_some() {
             connection.execute(
                 "UPDATE loop_items
-                 SET metadata = json_set(metadata, '$.is_unread', json('false'))
+                 SET metadata = json_set(
+                    metadata,
+                    '$.is_unread',
+                    json('false'),
+                    '$.activity_read_sequence',
+                    MAX(
+                        COALESCE(json_extract(metadata, '$.activity_read_sequence'), 0),
+                        ?2
+                    )
+                 )
                  WHERE id = ?1",
-                [task_id],
+                params![task_id, activity_sequence.unwrap_or(0)],
             )?;
         }
         drop(connection);
@@ -457,9 +490,20 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_with_schedule(project_id, input, None, None)
+    }
+
+    pub fn create_task_with_schedule(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
+        validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let project = get_item_from(&transaction, project_id, "project")?
@@ -467,6 +511,24 @@ impl LocalTaskStore {
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
+        let assignee_count = usize::from(input.assignee_user_id.is_some())
+            + usize::from(input.assignee_agent_id.is_some())
+            + usize::from(input.assignee_group_id.is_some());
+        if assignee_count > 1 {
+            return Err(TaskRuntimeError::Invalid(
+                "Issue can only be assigned to one target".to_owned(),
+            ));
+        }
+        let assigned_agent = input
+            .assignee_agent_id
+            .as_deref()
+            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .transpose()?;
+        let assigned_group = input
+            .assignee_group_id
+            .as_deref()
+            .map(|group_id| collaboration_group(&project, group_id))
+            .transpose()?;
         if let Some(parent_id) = input.parent_id.as_deref() {
             require_parent(&transaction, project_id, parent_id, None)?;
         }
@@ -478,15 +540,56 @@ impl LocalTaskStore {
         let id = format!("{project_key}-{sequence}");
         let now = now();
         let parent_id = input.parent_id.clone();
-        let completed_at = (input.status == "completed").then(|| now.clone());
+        let status = if (assigned_agent.is_some() || assigned_group.is_some())
+            && input.status != "completed"
+        {
+            "in_progress".to_owned()
+        } else {
+            input.status
+        };
+        let completed_at = (status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
+        if let Some(start_at) = start_at {
+            metadata["start_at"] = json!(start_at);
+        }
+        if let Some(due_at) = due_at {
+            metadata["due_at"] = json!(due_at);
+        }
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow;
-        } else if let Some(definition) = project.metadata.get("workflow_definition") {
-            metadata["workflow"] = instantiate_local_workflow(definition)?;
         }
+        if let Some(group) = assigned_group.as_ref() {
+            metadata["collaboration_group"] = group.clone();
+        }
+        if let Some(group) = assigned_group.as_ref() {
+            record_assignment_change(
+                &mut metadata,
+                project.created_by_user_id,
+                Some("group"),
+                input.assignee_group_id.as_deref(),
+                group.get("name").and_then(Value::as_str),
+            );
+        } else if let Some(agent) = assigned_agent.as_ref() {
+            record_assignment_change(
+                &mut metadata,
+                project.created_by_user_id,
+                Some("agent"),
+                Some(&agent.id),
+                agent.title.as_deref().or(agent.name.as_deref()),
+            );
+        } else if let Some(user_id) = input.assignee_user_id {
+            let user_id = user_id.to_string();
+            record_assignment_change(
+                &mut metadata,
+                project.created_by_user_id,
+                Some("user"),
+                Some(&user_id),
+                None,
+            );
+        }
+        // Allocating an Issue number does not change editable project configuration.
         transaction.execute(
-            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+            "UPDATE loop_items SET next_item_number = ?1,
                     updated_at = ?2 WHERE id = ?3",
             params![sequence + 1, now, project_id],
         )?;
@@ -505,48 +608,44 @@ impl LocalTaskStore {
                 input.title,
                 input.description,
                 sequence,
-                input.status,
+                status,
                 input.priority,
                 metadata.to_string(),
                 now,
                 completed_at,
-                None::<String>,
+                assigned_agent.as_ref().map(|agent| agent.id.as_str()),
                 input.assignee_user_id,
             ],
         )?;
-        if metadata.get("workflow").is_some_and(Value::is_object) {
-            enqueue_ready_local_workflow_stages(
+        if let Some(group) = assigned_group.as_ref() {
+            dispatch_collaboration_group_assignment(
+                &transaction,
+                CollaborationGroupExecutionInput {
+                    item_id: &id,
+                    project_id,
+                    group,
+                    issue_title: &input.title,
+                    issue_description: &input.description,
+                    issue_status: Some(&status),
+                    priority: &input.priority,
+                    payload: Value::Null,
+                },
+            )?;
+        } else if let Some(agent) = assigned_agent.as_ref() {
+            create_local_execution(
                 &transaction,
                 &id,
                 project_id,
-                input.priority.as_str(),
-                &mut metadata["workflow"],
-            )?;
-            transaction.execute(
-                "UPDATE loop_items
-                 SET metadata = ?1,
-                     status = CASE
-                         WHEN EXISTS (
-                             SELECT 1 FROM loop_item_executions
-                             WHERE loop_item_id = ?2
-                               AND status IN ('pending_approval', 'queued', 'claimed', 'running')
-                         ) THEN 'in_progress'
-                         ELSE status
-                     END,
-                     assignee_agent_id = (
-                         SELECT agent_id FROM loop_item_executions
-                         WHERE loop_item_id = ?2
-                           AND status IN ('pending_approval', 'queued', 'claimed', 'running')
-                         ORDER BY id DESC LIMIT 1
-                     )
-                 WHERE id = ?2",
-                params![metadata.to_string(), id],
+                &agent.id,
+                agent,
+                &input.priority,
+                Value::Null,
             )?;
         }
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
-        local_automation::on_event(&transaction, project_id, &id, "task.created", &[])?;
+        local_automation::on_event_with_origin(&transaction, project_id, &id, "task.created", &[])?;
         transaction.commit()?;
         drop(connection);
         self.get_item(&id, "task")
@@ -557,6 +656,17 @@ impl LocalTaskStore {
         project_id: &str,
         task_id: &str,
         input: TaskUpdate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_with_schedule(project_id, task_id, input, None, None)
+    }
+
+    pub fn update_task_with_schedule(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        start_at: Option<Option<String>>,
+        due_at: Option<Option<String>>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -577,16 +687,12 @@ impl LocalTaskStore {
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
         }
-        if let Some(Some(agent_id)) = input.assignee_agent_id.as_ref() {
-            let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-                TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-            })?;
-            if agent.cloud_project_id.as_deref() != Some(project_id) {
-                return Err(TaskRuntimeError::Invalid(
-                    "Robot is not in this project".to_owned(),
-                ));
-            }
-        }
+        let selected_agent = input
+            .assignee_agent_id
+            .as_ref()
+            .and_then(|agent_id| agent_id.as_deref())
+            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .transpose()?;
         if let Some(Some(parent_id)) = input.parent_id.as_ref() {
             require_parent(&transaction, project_id, parent_id, Some(task_id))?;
         }
@@ -606,14 +712,10 @@ impl LocalTaskStore {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let status_changed = input
-            .status
-            .as_ref()
-            .is_some_and(|status| current.status.as_ref() != Some(status));
         let previous_parent_id = current.parent_id.clone();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
-        let status = input.status.or(current.status);
+        let mut status = input.status.or_else(|| current.status.clone());
         let priority = input.priority.clone().or_else(|| current.priority.clone());
         let parent_id = input.parent_id.unwrap_or(current.parent_id);
         let previous_group_id = current.metadata["collaboration_group"]["id"]
@@ -622,24 +724,20 @@ impl LocalTaskStore {
         let requested_group_id = input.assignee_group_id.as_ref().cloned().flatten();
         let collaboration_group_changed = input.assignee_group_id.is_some()
             && previous_group_id.as_deref() != requested_group_id.as_deref();
-        let mut metadata = current.metadata;
-        if let Some(group_id) = &input.assignee_group_id {
-            metadata["collaboration_group"] = if let Some(group_id) = group_id {
+        let selected_collaboration_group =
+            if let Some(Some(group_id)) = input.assignee_group_id.as_ref() {
                 let project = get_item_from(&transaction, project_id, "project")?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
-                project
-                    .metadata
-                    .get("collaboration_groups")
-                    .and_then(Value::as_array)
-                    .and_then(|groups| {
-                        groups
-                            .iter()
-                            .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        TaskRuntimeError::Invalid("Team is not in this project".to_owned())
-                    })?
+                Some(collaboration_group(&project, group_id)?)
+            } else {
+                None
+            };
+        let mut metadata = current.metadata;
+        if let Some(group_id) = &input.assignee_group_id {
+            metadata["collaboration_group"] = if group_id.is_some() {
+                selected_collaboration_group
+                    .clone()
+                    .expect("selected collaboration group was validated")
             } else {
                 Value::Null
             };
@@ -658,8 +756,77 @@ impl LocalTaskStore {
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow.unwrap_or(Value::Null);
         }
+        if let Some(start_at) = start_at {
+            metadata["start_at"] = start_at.map_or(Value::Null, Value::String);
+        }
+        if let Some(due_at) = due_at {
+            metadata["due_at"] = due_at.map_or(Value::Null, Value::String);
+        }
+        validate_schedule_range(metadata["start_at"].as_str(), metadata["due_at"].as_str())?;
+        if collaboration_group_changed {
+            if let (Some(group_id), Some(group)) = (
+                requested_group_id.as_deref(),
+                selected_collaboration_group.as_ref(),
+            ) {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    Some("group"),
+                    Some(group_id),
+                    group.get("name").and_then(Value::as_str),
+                );
+            } else {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        } else if let Some(agent_id) = input.assignee_agent_id.as_ref() {
+            if agent_id.is_some() {
+                let agent = selected_agent
+                    .as_ref()
+                    .expect("selected agent was validated");
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    Some("agent"),
+                    Some(&agent.id),
+                    agent.title.as_deref().or(agent.name.as_deref()),
+                );
+            } else {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        } else if let Some(user_id) = input.assignee_user_id {
+            if let Some(user_id) = user_id {
+                let user_id = user_id.to_string();
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    Some("user"),
+                    Some(&user_id),
+                    None,
+                );
+            } else {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        }
         let assignee_agent_id = match input.assignee_agent_id.as_ref() {
-            Some(Some(agent_id)) => Some(agent_id.as_str()),
+            Some(Some(_)) => selected_agent.as_ref().map(|agent| agent.id.as_str()),
             Some(None) => None,
             None if input.assignee_user_id.flatten().is_some()
                 || input
@@ -684,6 +851,13 @@ impl LocalTaskStore {
             input.assignee_user_id.unwrap_or(current.assignee_user_id)
         };
         let assignee_changed = assignee_agent_id != current.assignee_agent_id.as_deref();
+        let starts_runtime_dispatch = (collaboration_group_changed
+            && selected_collaboration_group.is_some())
+            || (assignee_changed && assignee_agent_id.is_some());
+        if starts_runtime_dispatch && status.as_deref() != Some("completed") {
+            status = Some("in_progress".to_owned());
+        }
+        let status_changed = current.status.as_ref() != status.as_ref();
         let now = now();
         let completed_at = if status.as_deref() == Some("completed") {
             current.completed_at.or_else(|| Some(now.clone()))
@@ -715,6 +889,15 @@ impl LocalTaskStore {
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
         }
+        if let Some(position) = input.position.as_ref() {
+            ordering::move_task(
+                &transaction,
+                project_id,
+                task_id,
+                parent_id.as_deref(),
+                position,
+            )?;
+        }
         refresh_runtime_projection_additional_context(&transaction, task_id)?;
         if previous_parent_id != parent_id {
             if let Some(previous_parent_id) = previous_parent_id.as_deref() {
@@ -726,31 +909,36 @@ impl LocalTaskStore {
         }
         if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
-            if let Some(group_id) = requested_group_id.as_deref() {
-                local_automation::run_collaboration_group(
+            if let Some(group) = selected_collaboration_group.as_ref() {
+                dispatch_collaboration_group_assignment(
                     &transaction,
-                    project_id,
-                    task_id,
-                    group_id,
+                    CollaborationGroupExecutionInput {
+                        item_id: task_id,
+                        project_id,
+                        group,
+                        issue_title: title.as_deref().unwrap_or(task_id),
+                        issue_description: &description,
+                        issue_status: status.as_deref(),
+                        priority: priority.as_deref().unwrap_or("none"),
+                        payload: input.execution_payload.unwrap_or(Value::Null),
+                    },
                 )?;
-            } else if let Some(agent_id) = assignee_agent_id {
-                let agent =
-                    get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-                        TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-                    })?;
-                create_local_execution(
-                    &transaction,
-                    task_id,
-                    project_id,
-                    agent_id,
-                    &agent,
-                    current.priority.as_deref().unwrap_or("none"),
-                    input.execution_payload.unwrap_or(Value::Null),
-                )?;
+            } else if requested_group_id.is_none() {
+                if let Some(agent) = selected_agent.as_ref() {
+                    create_local_execution(
+                        &transaction,
+                        task_id,
+                        project_id,
+                        &agent.id,
+                        agent,
+                        current.priority.as_deref().unwrap_or("none"),
+                        input.execution_payload.unwrap_or(Value::Null),
+                    )?;
+                }
             }
         }
         if !added_tags.is_empty() {
-            local_automation::on_event(
+            local_automation::on_event_with_origin(
                 &transaction,
                 project_id,
                 task_id,
@@ -759,7 +947,7 @@ impl LocalTaskStore {
             )?;
         }
         if status_changed {
-            local_automation::on_event(
+            local_automation::on_event_with_origin(
                 &transaction,
                 project_id,
                 task_id,
@@ -793,7 +981,8 @@ impl LocalTaskStore {
              WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1 AND deleted_at IS NULL
              ORDER BY created_at ASC",
         )?;
-        let rows = statement.query_map(params![project_id], map_loop_item)?;
+        let rows =
+            statement.query_map(params![project_id], |row| map_loop_item(&connection, row))?;
         let agents = collect_items(rows)?;
         Ok(agents
             .into_iter()
@@ -870,6 +1059,34 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::VersionConflict);
         }
         let mut metadata = current.metadata;
+        if let Some(policy) = input.execution_policy.as_ref() {
+            metadata["execution_policy"] = policy.clone();
+        }
+        if let Some(policy) = input.model_policy.as_ref() {
+            metadata["model_policy"] = policy.clone();
+        }
+        super::runner_routing::validate_policies(
+            metadata.get("execution_policy"),
+            metadata.get("model_policy"),
+        )?;
+        super::runner_routing::validate_model_runtime(
+            metadata.get("model_policy"),
+            input
+                .runtime
+                .as_deref()
+                .or_else(|| metadata["runtime"].as_str())
+                .unwrap_or("codex"),
+        )?;
+        if metadata
+            .get("execution_policy")
+            .is_some_and(|v| !v.is_null())
+            && metadata.get("model_policy").is_some_and(|v| !v.is_null())
+        {
+            metadata
+                .as_object_mut()
+                .unwrap()
+                .remove("routing_configuration_required");
+        }
         if let Some(name) = input.name.as_ref() {
             validate_name(name, "robot name")?;
         }
@@ -891,6 +1108,9 @@ impl LocalTaskStore {
         }
         if let Some(model_namespace) = input.model_namespace.as_ref() {
             metadata["model_namespace"] = json!(model_namespace);
+        }
+        if let Some(allowed_models) = input.allowed_models.as_ref() {
+            metadata["allowed_models"] = json!(allowed_models);
         }
         if let Some(description) = input.capability_description.as_ref() {
             metadata["capability_description"] = json!(description);
@@ -1055,10 +1275,11 @@ impl LocalTaskStore {
             prompt,
             model,
         } = *input;
-        let connection = self.connection()?;
-        if let Some(message_id) = connection
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some((message_id, status)) = transaction
             .query_row(
-                "SELECT message_id FROM loop_item_comments
+                "SELECT message_id, status FROM loop_item_comments
                  WHERE project_id=?1 AND task_id=?2 AND sender_type='agent'
                    AND reply_to_message_id=?3
                    AND json_extract(metadata,'$.runtime_address.deviceId')=?4
@@ -1071,17 +1292,22 @@ impl LocalTaskStore {
                     runtime_device_id,
                     runtime_task_id
                 ],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
         {
-            return comment_row(&connection, &message_id);
+            if matches!(status.as_str(), "pending" | "streaming") {
+                move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+            }
+            let comment = comment_row(&transaction, &message_id)?;
+            transaction.commit()?;
+            return Ok(comment);
         }
-        let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+        let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
             TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
         })?;
-        insert_comment(
-            &connection,
+        let comment = insert_comment(
+            &transaction,
             &LocalCommentCreate {
                 project_id: project_id.to_owned(),
                 task_id: task_id.to_owned(),
@@ -1104,7 +1330,10 @@ impl LocalTaskStore {
                 reply_to_message_id: Some(trigger_message_id.to_owned()),
             },
             "streaming",
-        )
+        )?;
+        move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+        transaction.commit()?;
+        Ok(comment)
     }
 
     pub fn fail_runtime_comment(
@@ -1190,7 +1419,7 @@ impl LocalTaskStore {
                     e.execution_scope, e.observed_state, e.sync_state,
                     e.claimed_at, e.start_requested_at, e.observed_at,
                     e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                    t.title, t.status, t.priority,
+                    COALESCE(t.title, t.name, ''), t.status, t.priority,
                     a.name, a.title, a.metadata, e.runtime_instance_id
              FROM loop_item_executions e
              LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -1321,8 +1550,10 @@ impl LocalTaskStore {
         let timestamp = now();
         let message = note.unwrap_or("AI execution was cancelled");
         let start_was_delivered = current.start_requested_at.is_some();
-        if matches!(current.status.as_str(), "pending_approval" | "queued")
-            || (current.status == "claimed" && !start_was_delivered)
+        if matches!(
+            current.status.as_str(),
+            "pending_approval" | "queued" | "waiting_runtime"
+        ) || (current.status == "claimed" && !start_was_delivered)
         {
             let changed = transaction.execute(
                 "UPDATE loop_item_executions
@@ -1393,78 +1624,56 @@ impl LocalTaskStore {
         &self,
         claim: &LocalExecutionClaim,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        let runtime_active_task_ids = claim
-            .runtime_active_task_ids
-            .iter()
-            .map(|task_id| task_id.trim())
-            .collect::<HashSet<_>>();
-        if claim.runtime_instance_id.trim().is_empty()
-            || !(1..=20).contains(&claim.device_capacity)
-            || runtime_active_task_ids.len() != claim.runtime_active_task_ids.len()
-            || runtime_active_task_ids.len() != claim.runtime_active as usize
-            || runtime_active_task_ids.contains("")
-        {
+        self.claim_next_execution_for_runtime(
+            claim.execution_device_id.as_deref(),
+            &claim.runtime_instance_id,
+            claim.lease_seconds,
+        )
+    }
+
+    pub fn claim_next_execution_for_runtime(
+        &self,
+        execution_device_id: Option<&str>,
+        runtime_instance_id: &str,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.claim_next_execution_with_catalog(
+            execution_device_id,
+            runtime_instance_id,
+            lease_seconds,
+            None,
+        )
+    }
+
+    pub fn has_queued_executions(&self) -> Result<bool, TaskRuntimeError> {
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE execution_environment='local' AND status='queued')",
+            [], |row| row.get(0),
+        )?)
+    }
+
+    pub(crate) fn claim_next_execution_with_catalog(
+        &self,
+        execution_device_id: Option<&str>,
+        runtime_instance_id: &str,
+        lease_seconds: u64,
+        catalog: Option<&Value>,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        if runtime_instance_id.trim().is_empty() {
             return Err(TaskRuntimeError::Invalid(
-                "Runtime capacity identity or limit is invalid".to_owned(),
+                "Runtime instance identity is required".to_owned(),
             ));
         }
-        let connection = self.connection()?;
-        let ambiguous: i64 = connection.query_row(
-            "SELECT COUNT(*) FROM loop_item_executions
-             WHERE status IN ('claimed', 'running', 'cancel_requested')
-               AND runtime_instance_id = ''",
-            [],
-            |row| row.get(0),
-        )?;
-        if ambiguous > 0 {
-            return Ok(None);
-        }
-        let durable_task_ids = {
-            let mut statement = connection.prepare(
-                "SELECT runtime_task_id FROM loop_item_executions
-             WHERE status IN ('claimed', 'running', 'cancel_requested')
-               AND runtime_instance_id = ?1",
-            )?;
-            let rows = statement.query_map(params![&claim.runtime_instance_id], |row| {
-                row.get::<_, Option<String>>(0)
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
-        let pending_reservations = durable_task_ids
-            .iter()
-            .filter(|task_id| {
-                task_id
-                    .as_deref()
-                    .map_or(true, |task_id| !runtime_active_task_ids.contains(task_id))
-            })
-            .count() as u64;
-        let occupied = claim.runtime_active + pending_reservations;
-        if occupied >= claim.device_capacity {
-            return Ok(None);
-        }
-        let running_agents: HashMap<String, i64> = {
-            let mut statement = connection.prepare(
-                "SELECT agent_id, COUNT(*) FROM loop_item_executions
-                 WHERE status IN ('claimed', 'running', 'cancel_requested')
-                   AND agent_id != ''
-                 GROUP BY agent_id",
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?;
-            rows.collect::<Result<HashMap<_, _>, _>>()?
-        };
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut sql = String::from(
-            "SELECT e.id, e.agent_id, e.execution_scope, e.priority_weight,
-                    COALESCE(json_extract(a.metadata, '$.max_concurrent_executions'), 1)
+            "SELECT e.id, e.execution_scope
              FROM loop_item_executions e
-             LEFT JOIN loop_items a ON a.id = e.agent_id
              WHERE e.execution_environment = 'local' AND e.status = 'queued'",
         );
-        if claim.execution_device_id.is_some() {
+        if execution_device_id.is_some() {
             // Robots created before device binding have no bound device; the
-            // claiming device adopts those runs the same way the cloud
-            // dispatcher binds unbound local runs.
+            // claiming Executor adopts those runs atomically.
             sql.push_str(
                 " AND (e.execution_device_id = ?1
                      OR e.execution_device_id IS NULL
@@ -1473,28 +1682,16 @@ impl LocalTaskStore {
         }
         sql.push_str(" ORDER BY e.priority_weight DESC, e.queued_at ASC, e.id ASC");
         let mut statement = connection.prepare(&sql)?;
-        let candidates = if let Some(device_id) = claim.execution_device_id.as_ref() {
+        let candidates = if let Some(device_id) = execution_device_id {
             statement
                 .query_map(params![device_id], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             statement
                 .query_map([], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         };
@@ -1509,60 +1706,53 @@ impl LocalTaskStore {
                 .collect::<Result<HashSet<_>, _>>()?;
             scopes
         };
-        let mut candidate = None;
-        let mut priorities = candidates
-            .iter()
-            .map(|row| row.3)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        priorities.sort_unstable_by(|left, right| right.cmp(left));
-        for priority in priorities {
-            let mut seen_agents = HashSet::new();
-            let mut fair_candidates = Vec::new();
-            for (position, (id, agent_id, execution_scope, row_priority, configured_limit)) in
-                candidates.iter().enumerate()
-            {
-                if *row_priority != priority {
-                    continue;
-                }
-                let limit = if (1..=20).contains(configured_limit) {
-                    *configured_limit
-                } else {
-                    1
-                };
-                let agent_available = agent_id.is_empty()
-                    || running_agents.get(agent_id).copied().unwrap_or(0) < limit;
-                let scope_available =
-                    execution_scope.is_empty() || !occupied_scopes.contains(execution_scope);
-                let fairness_key = if agent_id.is_empty() {
-                    format!("automation:{id}")
-                } else {
-                    agent_id.clone()
-                };
-                if agent_available && scope_available && seen_agents.insert(fairness_key) {
-                    fair_candidates.push((
-                        running_agents.get(agent_id).copied().unwrap_or(0),
-                        position,
-                        *id,
-                    ));
-                }
-            }
-            if let Some((_, _, id)) = fair_candidates.into_iter().min() {
-                candidate = Some(id);
-                break;
-            }
-        }
-        let Some(candidate_id) = candidate else {
+        let Some((candidate_id, _)) = candidates.into_iter().find(|(_, execution_scope)| {
+            execution_scope.is_empty() || !occupied_scopes.contains(execution_scope)
+        }) else {
             return Ok(None);
         };
         let now = now();
-        let runtime_device_id = claim
-            .execution_device_id
-            .as_deref()
-            .unwrap_or("local-device");
-        let runtime_task_id = format!("codex-queue-{candidate_id}");
-        let lease_seconds = claim.lease_seconds.max(60);
+        let runtime_device_id = execution_device_id.unwrap_or("local-device");
+        let pending = execution_row(&connection, candidate_id)?;
+        let issue = get_item_from(&connection, &pending.loop_item_id, "task")?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let conflict = issue.metadata.get("runner_binding_conflict").is_some()
+            || issue
+                .metadata
+                .pointer("/runner_binding/environment_id")
+                .and_then(Value::as_str)
+                .is_some_and(|bound| bound != runtime_device_id);
+        let mut payload = local_execution_runtime_payload(&pending);
+        let project = get_item_from(&connection, &pending.cloud_project_id, "project")?;
+        if project.is_none() {
+            drop(statement);
+            connection.rollback()?;
+            drop(guard);
+            self.fail_runtime_preflight(candidate_id, "Project is unavailable")?;
+            return Err(TaskRuntimeError::ProjectNotFound);
+        }
+        let resume_conflict = payload["resumeEnvironmentId"]
+            .as_str()
+            .is_some_and(|bound| bound != runtime_device_id);
+        let validation = if conflict || resume_conflict {
+            Err(TaskRuntimeError::Invalid(
+                "ISSUE_RUNNER_CONFLICT: Issue is bound to another runner".into(),
+            ))
+        } else {
+            super::runner_routing::resolve_pending(&mut payload, catalog, runtime_device_id)
+        };
+        if let Err(error) = validation {
+            connection.execute("UPDATE loop_item_executions SET status='waiting_runtime', error_message=?1 WHERE id=?2", params![error.to_string(), candidate_id])?;
+            drop(statement);
+            connection.commit()?;
+            return Err(error);
+        }
+
+        let runtime_task_id = payload["continueTaskId"]
+            .as_str()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("codex-queue-{candidate_id}"));
+        let lease_seconds = lease_seconds.max(60);
         let changed = connection.execute(
             "UPDATE loop_item_executions
              SET status = 'claimed', claimed_at = ?1, heartbeat_at = ?1,
@@ -1577,14 +1767,43 @@ impl LocalTaskStore {
                 candidate_id,
                 runtime_device_id,
                 runtime_task_id,
-                &claim.runtime_instance_id,
+                runtime_instance_id,
             ],
         )?;
         if changed != 1 {
             return Ok(None);
         }
+        connection.execute(
+            "UPDATE loop_item_executions SET execution_payload=?1 WHERE id=?2",
+            params![payload.to_string(), candidate_id],
+        )?;
         let mut execution = execution_row(&connection, candidate_id)?;
-        execution.execution_payload = Some(local_execution_runtime_payload(&execution));
+        drop(statement);
+        connection.execute(
+            "UPDATE loop_items
+             SET metadata=json_set(COALESCE(metadata, '{}'), '$.runner_binding',
+                 json_object('environment_id', ?1))
+             WHERE id=?2 AND json_extract(metadata, '$.runner_binding') IS NULL",
+            params![runtime_device_id, issue.id],
+        )?;
+        connection.commit()?;
+        drop(guard);
+        let mut payload = local_execution_runtime_payload(&execution);
+        let preflight = self
+            .get_project(&execution.cloud_project_id)
+            .and_then(|project| {
+                execution_workspace::apply_project_workspace(
+                    &mut payload,
+                    &project.metadata,
+                    runtime_device_id,
+                    &execution.cloud_project_id,
+                )
+            });
+        if let Err(error) = preflight {
+            self.fail_runtime_preflight(candidate_id, &error.to_string())?;
+            return Err(error);
+        }
+        execution.execution_payload = Some(payload);
         Ok(Some(execution))
     }
 
@@ -1737,7 +1956,8 @@ impl LocalTaskStore {
         &self,
         runtime_task_id: &str,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        let connection = self.connection()?;
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions
@@ -1756,13 +1976,23 @@ impl LocalTaskStore {
             return Ok(None);
         }
         let execution_id = connection.query_row(
-            "SELECT id FROM loop_item_executions WHERE runtime_task_id = ?1",
+            "SELECT id FROM loop_item_executions WHERE runtime_task_id = ?1
+             AND status IN ('running', 'cancel_requested') ORDER BY id DESC LIMIT 1",
             params![runtime_task_id],
             |row| row.get(0),
         )?;
-        mark_local_workflow_stage_running(&connection, execution_id, &timestamp)?;
         connection.execute("UPDATE loop_item_comments SET status='streaming', updated_at=?1 WHERE deleted_at IS NULL AND json_extract(metadata,'$.execution_id')=?2", params![timestamp, execution_id])?;
-        execution_row(&connection, execution_id).map(Some)
+        let execution = execution_row(&connection, execution_id)?;
+        let dispatch_role = execution
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_role"))
+            .and_then(Value::as_str);
+        if !matches!(dispatch_role, Some("manager" | "member")) {
+            move_runtime_comment_task_to_in_progress(&connection, &execution.loop_item_id)?;
+        }
+        connection.commit()?;
+        Ok(Some(execution))
     }
 
     pub fn reconcile_execution_snapshot(
@@ -1826,6 +2056,16 @@ impl LocalTaskStore {
                     Some("Runtime reconciled cancellation"),
                 );
             }
+            "missing" => {
+                let error = if current.termination_reason == "runtime_dispatch_unknown"
+                    && !current.error_message.trim().is_empty()
+                {
+                    current.error_message.as_str()
+                } else {
+                    "Runtime task disappeared before execution completed"
+                };
+                return self.fail_execution(execution_id, error, true);
+            }
             _ => {}
         }
 
@@ -1876,6 +2116,7 @@ impl LocalTaskStore {
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = execution_row(&transaction, execution_id)?;
         let timestamp = now();
         let changed = transaction.execute(
             "UPDATE loop_item_executions
@@ -1890,33 +2131,46 @@ impl LocalTaskStore {
             transaction.rollback()?;
             return execution_row(&connection, execution_id).map(Some);
         }
-        let workflow_advanced =
-            advance_local_workflow_after_execution(&transaction, execution_id, &timestamp)?;
-        if !workflow_advanced {
-            // Non-workflow robot assignments still finish in human review.
-            transaction.execute(
-                "UPDATE loop_items
-                 SET status = 'in_review', sort_order = 0,
-                     metadata = CASE
-                         WHEN cloud_project_id = ?3 THEN metadata
-                         ELSE json_set(metadata, '$.is_unread', json('true'))
-                     END,
-                     version = version + 1, updated_at = ?1
-                 WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
-                   AND assignee_agent_id =
-                       (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
-                   AND status != 'completed'",
-                params![timestamp, execution_id, DEFAULT_WORK_ITEM_PROJECT_ID],
-            )?;
-        }
         update_agent_comment(
             &transaction,
             execution_id,
-            "completed",
+            &execution_row(&transaction, execution_id)?.status,
             content.unwrap_or(""),
             &timestamp,
         )?;
+        let dispatch_role = current
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_role"))
+            .and_then(Value::as_str);
+        if !matches!(dispatch_role, Some("manager" | "member")) {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = 'in_review',
+                     metadata = json_set(metadata, '$.is_unread', json('true')),
+                     version = version + 1, updated_at = ?1
+                 WHERE id = ?2 AND status != 'completed'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_item_comments pending_comment
+                       WHERE pending_comment.task_id=?2
+                         AND pending_comment.deleted_at IS NULL
+                         AND pending_comment.status IN ('pending','streaming')
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_item_executions active_execution
+                       WHERE active_execution.loop_item_id=?2
+                         AND active_execution.status IN (
+                             'queued','pending_approval','claimed','running',
+                             'cancel_requested'
+                         )
+                   )",
+                params![timestamp, current.loop_item_id],
+            )?;
+        }
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -1977,6 +2231,9 @@ impl LocalTaskStore {
             return execution_row(&connection, retry_id).map(Some);
         }
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -1988,7 +2245,9 @@ impl LocalTaskStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = execution_row(&transaction, execution_id)?;
-        if current.status != "claimed" || current.start_requested_at.is_some() {
+        if !matches!(current.status.as_str(), "queued" | "claimed")
+            || current.start_requested_at.is_some()
+        {
             transaction.rollback()?;
             return Ok(Some(current));
         }
@@ -2000,7 +2259,7 @@ impl LocalTaskStore {
                  sync_state = 'in_sync', error_message = ?2,
                  termination_reason = 'runtime_preflight_failed',
                  version = version + 1, updated_at = ?1
-             WHERE id = ?3 AND status = 'claimed' AND start_requested_at IS NULL",
+             WHERE id = ?3 AND status IN ('queued', 'claimed') AND start_requested_at IS NULL",
             params![timestamp, error, execution_id],
         )?;
         if changed != 1 {
@@ -2009,6 +2268,9 @@ impl LocalTaskStore {
         }
         update_agent_comment(&transaction, execution_id, "failed", &error, &timestamp)?;
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -2036,6 +2298,9 @@ impl LocalTaskStore {
         }
         update_agent_comment(&transaction, execution_id, "cancelled", message, &timestamp)?;
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -2070,8 +2335,14 @@ impl LocalTaskStore {
             } else {
                 connection.execute(
                     "UPDATE loop_item_executions
-                     SET sync_state = 'stale', error_message = ?2,
-                         termination_reason = 'runtime_observation_stale',
+                     SET sync_state = 'stale',
+                         error_message = CASE
+                           WHEN termination_reason = 'runtime_dispatch_unknown'
+                                AND error_message != ''
+                           THEN error_message ELSE ?2 END,
+                         termination_reason = CASE
+                           WHEN termination_reason = 'runtime_dispatch_unknown'
+                           THEN termination_reason ELSE 'runtime_observation_stale' END,
                          version = version + 1, updated_at = ?1
                      WHERE id = ?3",
                     params![now, "Runtime state requires reconciliation", id],
@@ -2120,7 +2391,34 @@ impl LocalTaskStore {
         })?;
         let task =
             get_item_from(&connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if agent.cloud_project_id.as_deref() != Some(project_id)
+            || agent.status.as_deref() != Some("active")
+            || task.cloud_project_id.as_deref() != Some(project_id)
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Robot or Issue is not active in this project".into(),
+            ));
+        }
         if let Some(trigger) = trigger_message_id {
+            let trigger_record = comment_row(&connection, trigger)?;
+            if trigger_record.project_id != project_id || trigger_record.task_id != task_id {
+                return Err(TaskRuntimeError::Invalid(
+                    "Comment does not belong to this Issue".into(),
+                ));
+            }
+            let existing: Option<i64> = connection.query_row(
+                "SELECT id FROM loop_item_executions WHERE loop_item_id=?1 AND agent_id=?2 AND json_extract(execution_payload, '$.trigger_message_id')=?3 ORDER BY id DESC LIMIT 1",
+                params![task_id, agent_id, trigger], |row| row.get(0),
+            ).optional()?;
+            if let Some(id) = existing {
+                return execution_row(&connection, id);
+            }
+            payload = local_execution_activity::comment_execution_payload(
+                &connection,
+                &trigger_record,
+                agent_id,
+                payload,
+            )?;
             if !payload.is_object() {
                 payload = json!({});
             }
@@ -2156,10 +2454,41 @@ impl LocalTaskStore {
     }
 
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        let parent_id = self.get_task(project_id, task_id)?.parent_id;
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let parent_id: Option<String> = transaction
+            .query_row(
+                "SELECT parent_id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL",
+                params![task_id, project_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let incomplete_count: i64 = transaction.query_row(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at IS NULL
+             )
+             SELECT COUNT(*) FROM loop_items
+             WHERE id IN (SELECT id FROM task_tree) AND status != 'completed'",
+            params![task_id, project_id],
+            |row| row.get(0),
+        )?;
+        if incomplete_count > 0 {
+            return Err(TaskRuntimeError::Invalid(
+                "Only completed task subtrees can be archived".to_owned(),
+            ));
+        }
         let archived_at = now();
-        let updated = connection.execute(
+        let updated = transaction.execute(
             "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
@@ -2179,9 +2508,132 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         if let Some(parent_id) = parent_id.as_deref() {
-            refresh_runtime_projection_additional_context(&connection, parent_id)?;
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn list_archived_tasks(
+        &self,
+        project_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT item.id, item.resource_type, item.project_space, item.cloud_project_id,
+                    item.parent_id, item.public_id, item.project_key, item.name, item.title,
+                    item.description, item.sequence_number, item.next_item_number, item.status,
+                    item.priority, item.sort_order, item.current_delivery_id, item.metadata,
+                    item.version, item.created_at, item.updated_at, item.completed_at,
+                    item.assignee_agent_id, item.created_by_user_id, item.assignee_user_id,
+                    item.deleted_at
+             FROM loop_items item
+             LEFT JOIN loop_items parent ON parent.id = item.parent_id
+             WHERE item.resource_type = 'task' AND item.cloud_project_id = ?1
+               AND item.deleted_at IS NOT NULL
+               AND (
+                   item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
+                   OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
+               )
+             ORDER BY item.deleted_at DESC, item.id DESC
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = statement.query_map(
+            params![project_id, limit.saturating_add(1), offset],
+            |row| {
+                Ok(ArchivedLoopItem {
+                    item: map_loop_item(&connection, row)?,
+                    archived_at: row.get(24)?,
+                })
+            },
+        )?;
+        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+        Ok(ArchivedLoopItemPage {
+            items,
+            next_cursor: has_more.then(|| offset.saturating_add(limit).to_string()),
+        })
+    }
+
+    pub fn restore_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (archived_at, parent_id): (String, Option<String>) = transaction
+            .query_row(
+                "SELECT item.deleted_at, item.parent_id
+                 FROM loop_items item
+                 LEFT JOIN loop_items parent ON parent.id = item.parent_id
+                 WHERE item.id = ?1 AND item.resource_type = 'task'
+                   AND item.cloud_project_id = ?2 AND item.deleted_at IS NOT NULL
+                   AND (
+                       item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
+                       OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
+                   )",
+                params![task_id, project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let restored_ids = {
+            let mut statement = transaction.prepare(
+                "WITH RECURSIVE task_tree(id) AS (
+                     SELECT id FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'task'
+                       AND cloud_project_id = ?2 AND deleted_at = ?3
+                     UNION ALL
+                     SELECT child.id FROM loop_items child
+                     JOIN task_tree parent ON child.parent_id = parent.id
+                     WHERE child.resource_type = 'task'
+                       AND child.cloud_project_id = ?2 AND child.deleted_at = ?3
+                 )
+                 SELECT id FROM task_tree",
+            )?;
+            let restored_ids = statement
+                .query_map(params![task_id, project_id, archived_at], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<HashSet<_>, _>>()?;
+            restored_ids
+        };
+        let updated = transaction.execute(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at = ?3
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at = ?3
+             )
+             UPDATE loop_items
+             SET deleted_at = NULL, updated_at = ?4, version = version + 1
+             WHERE id IN (SELECT id FROM task_tree)",
+            params![task_id, project_id, archived_at, now()],
+        )?;
+        if updated == 0 {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if let Some(parent_id) = parent_id.as_deref() {
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.list_tasks(project_id).map(|items| {
+            items
+                .into_iter()
+                .filter(|item| restored_ids.contains(&item.id))
+                .collect()
+        })
     }
 
     pub fn reorder_tasks(
@@ -2189,7 +2641,9 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskReorder,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        validate_status(&input.status)?;
+        if let Some(status) = &input.status {
+            validate_status(status)?;
+        }
         if input.item_ids.is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "item_ids must contain at least one task".to_owned(),
@@ -2202,48 +2656,39 @@ impl LocalTaskStore {
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
-        let mut statement = transaction.prepare(
-            "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
-                    public_id, project_key, name, title, description, sequence_number,
-                    next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id, assignee_user_id
-             FROM loop_items
-             WHERE resource_type = 'task' AND cloud_project_id = ?1 AND status = ?2
-               AND ((?3 IS NULL AND (parent_id IS NULL OR parent_id = '')) OR parent_id = ?3)
-               AND deleted_at IS NULL
-             ORDER BY sort_order, updated_at DESC",
-        )?;
-        let lane = collect_items(statement.query_map(
-            params![project_id, input.status, input.parent_id],
-            map_loop_item,
-        )?)?;
-        drop(statement);
+        let siblings = ordering::siblings(&transaction, project_id, input.parent_id.as_deref())?;
+        let lane = siblings
+            .iter()
+            .filter(|(_, status)| input.status.as_ref().map_or(true, |scope| scope == status))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
         let mut ordered_ids = input
             .item_ids
             .into_iter()
-            .filter(|id| lane.iter().any(|item| item.id == *id))
+            .filter(|id| lane.contains(id) && seen.insert(id.clone()))
             .collect::<Vec<_>>();
         if ordered_ids.is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "task not found in lane".to_owned(),
             ));
         }
-        let remaining_ids = lane
-            .iter()
-            .filter(|item| !ordered_ids.contains(&item.id))
-            .map(|item| item.id.clone())
+        ordered_ids.extend(lane.iter().filter(|id| !seen.contains(*id)).cloned());
+        let mut ordered_lane = ordered_ids.iter();
+        let global_ids = siblings
+            .into_iter()
+            .map(|(id, _)| {
+                if lane.contains(&id) {
+                    ordered_lane
+                        .next()
+                        .expect("all lane positions are present")
+                        .clone()
+                } else {
+                    id
+                }
+            })
             .collect::<Vec<_>>();
-        ordered_ids.extend(remaining_ids);
-        let updated_at = now();
-        for (position, item_id) in ordered_ids.iter().enumerate() {
-            transaction.execute(
-                "UPDATE loop_items
-                 SET sort_order = ?1, version = version + 1, updated_at = ?2
-                 WHERE id = ?3 AND sort_order != ?1",
-                params![position as i64, updated_at, item_id],
-            )?;
-        }
+        ordering::persist(&transaction, &global_ids, None)?;
         transaction.commit()?;
         drop(connection);
         let by_id = self
@@ -2263,6 +2708,7 @@ impl LocalTaskStore {
         item_id: Option<&str>,
         external_item_id: Option<&str>,
         input: RuntimeTaskAddress,
+        dispatch: Option<&Value>,
     ) -> Result<TaskBinding, TaskRuntimeError> {
         validate_name(&input.device_id, "device id")?;
         validate_name(&input.task_id, "task id")?;
@@ -2312,8 +2758,51 @@ impl LocalTaskStore {
             "workflow_node_id": input.workflow_node_id,
             "workflow_stage_input": workflow_stage_input,
         });
+        // A member's own task carries the collaboration dispatch it was started
+        // from so a delivery can settle the exact round assignment. Absent
+        // fields are omitted: the rebind below merges with a JSON patch where
+        // null values would delete the stored identity.
+        if let Some(dispatch) = dispatch {
+            for (metadata_key, value) in [
+                (
+                    "human_assignment_id",
+                    dispatch
+                        .get("humanAssignmentId")
+                        .or_else(|| dispatch.get("human_assignment_id")),
+                ),
+                (
+                    "dispatch_id",
+                    dispatch
+                        .get("dispatchId")
+                        .or_else(|| dispatch.get("dispatch_id")),
+                ),
+                (
+                    "dispatch_round_id",
+                    dispatch
+                        .get("dispatchRoundId")
+                        .or_else(|| dispatch.get("dispatch_round_id")),
+                ),
+                (
+                    "assignment_id",
+                    dispatch
+                        .get("assignmentId")
+                        .or_else(|| dispatch.get("assignment_id")),
+                ),
+            ] {
+                if let Some(value) = value
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    metadata[metadata_key] = json!(value);
+                }
+            }
+        }
         if let Some(model_selection) = input.model_selection.as_ref() {
             metadata["model_selection"] = model_selection.clone();
+        }
+        if let Some(execution_context) = input.execution_context.as_ref() {
+            metadata["execution_context"] = execution_context.clone();
         }
         if let Some(active) = active {
             let target_item_id = item_id.or(external_item_id);
@@ -2392,7 +2881,7 @@ impl LocalTaskStore {
             "source_description": description,
         });
         transaction.execute(
-            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+            "UPDATE loop_items SET next_item_number = ?1,
                     updated_at = ?2 WHERE id = ?3",
             params![sequence + 1, timestamp, DEFAULT_WORK_ITEM_PROJECT_ID],
         )?;
@@ -2441,66 +2930,6 @@ impl LocalTaskStore {
         transaction.commit()?;
         drop(connection);
         self.get_binding(&binding_id)
-    }
-
-    pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
-        self.list_task_bindings_batch(&[item_id.to_owned()])
-    }
-
-    pub fn list_task_bindings_batch(
-        &self,
-        item_ids: &[String],
-    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
-        let item_ids = item_ids
-            .iter()
-            .map(|item_id| item_id.trim())
-            .filter(|item_id| !item_id.is_empty())
-            .collect::<HashSet<_>>();
-        if item_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let placeholders = std::iter::repeat("?")
-            .take(item_ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let connection = self.connection()?;
-        let mut statement = connection.prepare(&format!(
-            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                    task_user_id, device_id,
-                    task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'),
-                    CASE
-                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                             = 'default-work-items'
-                        THEN 'system'
-                        ELSE 'user'
-                    END,
-                    linked_at,
-                    json_extract(metadata, '$.model_selection')
-             FROM loop_items
-             WHERE resource_type = 'execution' AND unlinked_at IS NULL
-               AND (
-                    loop_item_id IN ({placeholders})
-                    OR json_extract(metadata, '$.external_item_id') IN ({placeholders})
-               )
-             ORDER BY linked_at DESC"
-        ))?;
-        let parameters = item_ids.iter().copied().chain(item_ids.iter().copied());
-        let rows = statement.query_map(params_from_iter(parameters), map_task_binding)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(TaskRuntimeError::from)
-    }
-
-    pub fn find_task_binding(
-        &self,
-        device_id: &str,
-        task_id: &str,
-    ) -> Result<TaskBinding, TaskRuntimeError> {
-        let connection = self.connection()?;
-        get_effective_binding(&connection, device_id, task_id)?
-            .ok_or(TaskRuntimeError::TaskNotFound)
     }
 
     pub fn project_bound_task_status(
@@ -2559,6 +2988,13 @@ impl LocalTaskStore {
                      AND device_id = ?3 AND task_id = ?4
                      AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                      AND json_extract(metadata, '$.workflow_node_id') IS NULL
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM loop_item_executions dispatch_execution
+                         WHERE dispatch_execution.id = CAST(
+                             json_extract(loop_items.metadata, '$.execution_id') AS INTEGER
+                         )
+                     )
                      AND CAST(COALESCE(
                          json_extract(metadata, '$.runtime_status_observed_at_ms'),
                          0
@@ -2589,6 +3025,13 @@ impl LocalTaskStore {
                AND device_id = ?3 AND task_id = ?4
                AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                AND json_extract(metadata, '$.workflow_node_id') IS NULL
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM loop_item_executions dispatch_execution
+                   WHERE dispatch_execution.id = CAST(
+                       json_extract(loop_items.metadata, '$.execution_id') AS INTEGER
+                   )
+               )
                AND CAST(COALESCE(
                    json_extract(metadata, '$.runtime_status_observed_at_ms'),
                    0
@@ -2597,6 +3040,53 @@ impl LocalTaskStore {
         )?;
         transaction.commit()?;
         Ok(changed)
+    }
+
+    pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        self.list_task_bindings_batch(&[item_id.to_owned()])
+    }
+
+    pub fn list_task_bindings_batch(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        let item_ids = item_ids
+            .iter()
+            .map(|item_id| item_id.trim())
+            .filter(|item_id| !item_id.is_empty())
+            .collect::<HashSet<_>>();
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(item_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(&format!(
+            "SELECT {TASK_BINDING_COLUMNS}
+             FROM loop_items
+             WHERE resource_type = 'execution' AND unlinked_at IS NULL
+               AND (
+                    loop_item_id IN ({placeholders})
+                    OR json_extract(metadata, '$.external_item_id') IN ({placeholders})
+               )
+             ORDER BY linked_at DESC"
+        ))?;
+        let parameters = item_ids.iter().copied().chain(item_ids.iter().copied());
+        let rows = statement.query_map(params_from_iter(parameters), map_task_binding)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(TaskRuntimeError::from)
+    }
+
+    pub fn find_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        let connection = self.connection()?;
+        get_effective_binding(&connection, device_id, task_id)?
+            .ok_or(TaskRuntimeError::TaskNotFound)
     }
 
     pub fn find_system_task_binding(
@@ -2657,21 +3147,10 @@ impl LocalTaskStore {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                        COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                        task_user_id, device_id,
-                        task_id, task_title, backend_task_id,
-                        json_extract(metadata, '$.workflow_node_id'),
-                        json_extract(metadata, '$.workflow_stage_input'),
-                        CASE
-                            WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                                 = 'default-work-items'
-                            THEN 'system'
-                            ELSE 'user'
-                        END,
-                        linked_at,
-                        json_extract(metadata, '$.model_selection')
+                &format!(
+                    "SELECT {TASK_BINDING_COLUMNS}
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
+                ),
                 [id],
                 map_task_binding,
             )
@@ -2711,6 +3190,11 @@ fn insert_chat_agent(
     project_id: &str,
     input: ChatAgentCreate,
 ) -> Result<String, TaskRuntimeError> {
+    super::runner_routing::validate_policies(
+        input.execution_policy.as_ref(),
+        input.model_policy.as_ref(),
+    )?;
+    super::runner_routing::validate_model_runtime(input.model_policy.as_ref(), &input.runtime)?;
     validate_name(&input.name, "robot name")?;
     validate_chat_agent_runtime(&input.runtime)?;
     if !(1..=20).contains(&input.max_concurrent_executions) {
@@ -2735,13 +3219,29 @@ fn insert_chat_agent(
     });
     let id = format!("LA-{}", Uuid::new_v4().simple());
     let timestamp = now();
+    let allowed_models = input.allowed_models.clone().unwrap_or_else(|| {
+        input
+            .model
+            .as_ref()
+            .map(|model| {
+                vec![json!({
+                    "name": model,
+                    "type": input.model_type,
+                    "namespace": input.model_namespace.as_deref().unwrap_or("default"),
+                })]
+            })
+            .unwrap_or_default()
+    });
     let mut metadata = json!({
+        "execution_policy": input.execution_policy,
+        "model_policy": input.model_policy,
         "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
         "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
         "runtime": input.runtime,
         "model": input.model,
         "model_type": input.model_type,
         "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
+        "allowed_models": allowed_models,
         "capability_description": input.capability_description.unwrap_or_default(),
         "capability_mode": capability_mode,
         "system_prompt": input.system_prompt.unwrap_or_default(),
@@ -2769,7 +3269,7 @@ fn insert_chat_agent(
             input.name,
             metadata.to_string(),
             timestamp,
-            input.created_by_user_id.unwrap_or(0),
+            input.created_by_user_id,
         ],
     )?;
     Ok(id)
@@ -2782,20 +3282,8 @@ fn get_effective_binding(
 ) -> Result<Option<TaskBinding>, TaskRuntimeError> {
     connection
         .query_row(
-            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                    task_user_id, device_id,
-                    task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'),
-                    CASE
-                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                             = 'default-work-items'
-                        THEN 'system'
-                        ELSE 'user'
-                    END,
-                    linked_at,
-                    json_extract(metadata, '$.model_selection')
+            &format!(
+                "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2808,6 +3296,7 @@ fn get_effective_binding(
                  END,
                  linked_at DESC
              LIMIT 1",
+            ),
             params![device_id, task_id],
             map_task_binding,
         )
@@ -2823,20 +3312,8 @@ fn get_binding_by_kind(
 ) -> Result<Option<TaskBinding>, TaskRuntimeError> {
     connection
         .query_row(
-            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
-                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
-                    task_user_id, device_id,
-                    task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'),
-                    CASE
-                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
-                             = 'default-work-items'
-                        THEN 'system'
-                        ELSE 'user'
-                    END,
-                    linked_at,
-                    json_extract(metadata, '$.model_selection')
+            &format!(
+                "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2846,6 +3323,7 @@ fn get_binding_by_kind(
                ) = ?3
              ORDER BY linked_at DESC
              LIMIT 1",
+            ),
             params![device_id, task_id, system],
             map_task_binding,
         )
@@ -2900,6 +3378,31 @@ fn validate_local_workflow_task_binding(
     Ok(())
 }
 
+/// Columns shared by every query that materializes a [`TaskBinding`]. The
+/// dispatch columns keep the personal task linked to the collaboration round
+/// assignment a manager created for it.
+const TASK_BINDING_COLUMNS: &str = "
+            id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
+            COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
+            task_user_id, device_id,
+            task_id, task_title, backend_task_id,
+            json_extract(metadata, '$.workflow_node_id'),
+            json_extract(metadata, '$.workflow_stage_input'),
+            CASE
+                WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                     = 'default-work-items'
+                THEN 'system'
+                ELSE 'user'
+            END,
+            linked_at,
+            json_extract(metadata, '$.model_selection'),
+            json_extract(metadata, '$.execution_context'),
+            json_extract(metadata, '$.human_assignment_id'),
+            json_extract(metadata, '$.dispatch_id'),
+            json_extract(metadata, '$.dispatch_round_id'),
+            json_extract(metadata, '$.assignment_id')
+";
+
 fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
     Ok(TaskBinding {
         id: row.get(0)?,
@@ -2919,6 +3422,13 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         model_selection: row
             .get::<_, Option<String>>(12)?
             .and_then(|value| serde_json::from_str(&value).ok()),
+        execution_context: row
+            .get::<_, Option<String>>(13)?
+            .and_then(|value| serde_json::from_str(&value).ok()),
+        human_assignment_id: row.get(14)?,
+        dispatch_id: row.get(15)?,
+        dispatch_round_id: row.get(16)?,
+        assignment_id: row.get(17)?,
     })
 }
 
@@ -3200,6 +3710,59 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
         "CREATE INDEX IF NOT EXISTS ix_loop_items_assignee_agent_id
          ON loop_items(assignee_agent_id)",
         [],
+    )?;
+    connection.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS tr_local_task_status_created
+         AFTER INSERT ON loop_items
+         WHEN NEW.resource_type = 'task' AND NEW.status IS NOT NULL
+         BEGIN
+           UPDATE loop_items
+           SET metadata = json_set(
+             COALESCE(NEW.metadata, '{}'), '$.status_history',
+             json_array(json_object(
+               'from_status', '', 'from_status_name', '',
+               'to_status', NEW.status,
+               'to_status_name', COALESCE((
+                 SELECT json_extract(value, '$.name')
+                 FROM json_each((SELECT metadata FROM loop_items WHERE id = NEW.cloud_project_id), '$.board_config.statuses')
+                 WHERE json_extract(value, '$.id') = NEW.status LIMIT 1
+               ), NEW.status),
+               'trigger', 'create', 'by_user_id', NULLIF(NEW.created_by_user_id, 0),
+               'at', NEW.created_at
+             ))
+           )
+           WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS tr_local_task_status_changed
+         AFTER UPDATE OF status ON loop_items
+         WHEN NEW.resource_type = 'task' AND OLD.status IS NOT NEW.status
+         BEGIN
+           UPDATE loop_items
+           SET metadata = json_set(
+             COALESCE(NEW.metadata, '{}'), '$.status_history',
+             json_insert(
+               COALESCE(json_extract(NEW.metadata, '$.status_history'), json('[]')),
+               '$[#]', json_object(
+                 'from_status', COALESCE(OLD.status, ''),
+                 'from_status_name', COALESCE((
+                   SELECT json_extract(value, '$.name')
+                   FROM json_each((SELECT metadata FROM loop_items WHERE id = NEW.cloud_project_id), '$.board_config.statuses')
+                   WHERE json_extract(value, '$.id') = OLD.status LIMIT 1
+                 ), COALESCE(OLD.status, '')),
+                 'to_status', COALESCE(NEW.status, ''),
+                 'to_status_name', COALESCE((
+                   SELECT json_extract(value, '$.name')
+                   FROM json_each((SELECT metadata FROM loop_items WHERE id = NEW.cloud_project_id), '$.board_config.statuses')
+                   WHERE json_extract(value, '$.id') = NEW.status LIMIT 1
+                 ), COALESCE(NEW.status, '')),
+                 'trigger', 'local_status_change',
+                 'by_user_id', NULLIF(NEW.updated_by_user_id, 0),
+                 'at', NEW.updated_at
+               )
+             )
+           )
+           WHERE id = NEW.id;
+         END;",
     )?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
@@ -3496,12 +4059,22 @@ fn get_item_from(
              FROM loop_items
              WHERE id = ?1 AND resource_type = ?2 AND deleted_at IS NULL",
             params![id, resource_type],
-            map_loop_item,
+            |row| map_loop_item(connection, row),
         )
         .optional()
 }
 
-fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
+fn map_loop_item(connection: &Connection, row: &Row<'_>) -> rusqlite::Result<LoopItem> {
+    let metadata = row
+        .get::<_, Option<String>>(16)?
+        .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+        .unwrap_or_else(|| json!({}));
+    let metadata = super::runner_history::metadata(
+        connection,
+        &row.get::<_, String>(0)?,
+        &row.get::<_, String>(1)?,
+        metadata,
+    )?;
     Ok(LoopItem {
         id: row.get(0)?,
         resource_type: row.get(1)?,
@@ -3520,10 +4093,7 @@ fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
         priority: row.get(13)?,
         sort_order: row.get(14)?,
         current_delivery_id: row.get(15)?,
-        metadata: row
-            .get::<_, Option<String>>(16)?
-            .and_then(|value| serde_json::from_str(&value).ok())
-            .unwrap_or_else(|| json!({})),
+        metadata,
         version: row.get(17)?,
         created_at: row.get(18)?,
         updated_at: row.get(19)?,
@@ -3919,120 +4489,37 @@ fn validate_priority(value: &str) -> Result<(), TaskRuntimeError> {
         .ok_or_else(|| TaskRuntimeError::Invalid("invalid task priority".to_owned()))
 }
 
-fn instantiate_local_workflow(definition: &Value) -> Result<Value, TaskRuntimeError> {
-    let version = definition
-        .get("version")
-        .and_then(Value::as_i64)
-        .unwrap_or(1);
-    let definitions = definition
-        .get("nodes")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let ids = definitions
-        .iter()
-        .filter_map(|node| node.get("id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect::<HashSet<_>>();
-    if ids.len() != definitions.len() {
+fn validate_schedule_range(
+    start_at: Option<&str>,
+    due_at: Option<&str>,
+) -> Result<(), TaskRuntimeError> {
+    let start = start_at.map(schedule_datetime).transpose()?;
+    let due = due_at.map(schedule_datetime).transpose()?;
+    if start.zip(due).is_some_and(|(start, due)| start > due) {
         return Err(TaskRuntimeError::Invalid(
-            "workflow node ids must be unique and non-empty".to_owned(),
+            "start_at cannot be after due_at".to_owned(),
         ));
     }
-    let dependency_map = definitions
-        .iter()
-        .map(|node| {
-            let node_id = node
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let dependencies = node
-                .get("depends_on")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>();
-            (node_id, dependencies)
-        })
-        .collect::<HashMap<_, _>>();
-    fn visit_workflow_node(
-        node_id: &str,
-        dependencies: &HashMap<String, Vec<String>>,
-        visiting: &mut HashSet<String>,
-        visited: &mut HashSet<String>,
-    ) -> Result<(), TaskRuntimeError> {
-        if visiting.contains(node_id) {
-            return Err(TaskRuntimeError::Invalid(
-                "workflow dependencies must be acyclic".to_owned(),
-            ));
-        }
-        if visited.contains(node_id) {
-            return Ok(());
-        }
-        visiting.insert(node_id.to_owned());
-        for dependency in dependencies.get(node_id).into_iter().flatten() {
-            visit_workflow_node(dependency, dependencies, visiting, visited)?;
-        }
-        visiting.remove(node_id);
-        visited.insert(node_id.to_owned());
-        Ok(())
+    Ok(())
+}
+
+fn schedule_datetime(value: &str) -> Result<DateTime<Utc>, TaskRuntimeError> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        return Ok(value.with_timezone(&Utc));
     }
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-    for node_id in &ids {
-        visit_workflow_node(node_id, &dependency_map, &mut visiting, &mut visited)?;
+    if let Ok(value) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return Ok(value
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is a valid time")
+            .and_utc());
     }
-    let mut nodes = Vec::with_capacity(definitions.len());
-    for definition in definitions {
-        let dependencies = definition
-            .get("depends_on")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if dependencies
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|dependency| !ids.contains(dependency))
-        {
-            return Err(TaskRuntimeError::Invalid(
-                "workflow dependency does not exist".to_owned(),
-            ));
-        }
-        let mut node = definition;
-        node["status"] = json!(
-            if node.get("node_type").and_then(Value::as_str) == Some("event")
-                && node.get("role").and_then(Value::as_str) == Some("start")
-            {
-                "completed"
-            } else if dependencies.is_empty() {
-                "ready"
-            } else {
-                "blocked"
-            }
-        );
-        node["task_binding_id"] = Value::Null;
-        node["execution_id"] = Value::Null;
-        nodes.push(node);
-    }
-    let mut workflow = json!({
-        "version": 1,
-        "definition_version": version,
-        "nodes": nodes,
-    });
-    release_local_workflow_nodes(&mut workflow)?;
-    Ok(workflow)
+    Err(TaskRuntimeError::Invalid(
+        "schedule dates must be ISO 8601 values".to_owned(),
+    ))
 }
 
 fn local_database_path() -> PathBuf {
-    let home = env::var_os("WEGENT_EXECUTOR_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"));
-    home.join("data").join("tasks.sqlite")
+    crate::config::paths::executor_home().join("data/tasks.sqlite")
 }
 
 pub(crate) fn now() -> String {
@@ -4057,6 +4544,14 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .to_owned()
     };
     ChatAgent {
+        execution_policy: metadata
+            .get("execution_policy")
+            .filter(|value| !value.is_null())
+            .cloned(),
+        model_policy: metadata
+            .get("model_policy")
+            .filter(|value| !value.is_null())
+            .cloned(),
         id: row.id.clone(),
         project_id: row.cloud_project_id.clone().unwrap_or_default(),
         display_name: text("display_name", &name),
@@ -4072,6 +4567,26 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
         model_namespace: text("model_namespace", "default"),
+        allowed_models: metadata
+            .get("allowed_models")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| {
+                metadata
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(|model| {
+                        vec![json!({
+                            "name": model,
+                            "type": metadata.get("model_type"),
+                            "namespace": metadata
+                                .get("model_namespace")
+                                .and_then(Value::as_str)
+                                .unwrap_or("default"),
+                        })]
+                    })
+                    .unwrap_or_default()
+            }),
         capability_description: text("capability_description", ""),
         capability_mode: metadata
             .get("capability_mode")
@@ -4193,6 +4708,21 @@ fn insert_comment(
     comment_row(connection, &message_id)
 }
 
+fn move_runtime_comment_task_to_in_progress(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    connection.execute(
+        "UPDATE loop_items
+         SET status='in_progress', completed_at=NULL,
+             version=version+1, updated_at=?1
+         WHERE id=?2 AND resource_type='task'
+           AND status IN ('inbox', 'pending', 'in_review')",
+        params![now(), task_id],
+    )?;
+    Ok(())
+}
+
 fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
     Ok(LocalComment {
         id: row.get(0)?,
@@ -4286,7 +4816,7 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         version: row.get(24)?,
         created_at: row.get(25)?,
         updated_at: row.get(26)?,
-        task_title: row.get(38)?,
+        task_title: row.get::<_, Option<String>>(38)?.unwrap_or_default(),
         task_status: row.get(39)?,
         task_priority: row.get(40)?,
         agent_name: agent_metadata
@@ -4351,8 +4881,7 @@ fn local_execution_display_state(status: &str, observed_state: &str, sync_state:
         "pending_approval" => "waiting_approval",
         "queued" => "queued",
         "cancel_requested" => "cancelling",
-        "claimed" if observed_state == "unconfirmed" => "starting",
-        "claimed" => "waiting_runtime",
+        "claimed" => "starting",
         "running" if observed_state == "running" => "running",
         _ => "waiting_runtime",
     }
@@ -4375,7 +4904,7 @@ fn execution_row(
                 e.execution_scope, e.observed_state, e.sync_state,
                 e.claimed_at, e.start_requested_at, e.observed_at,
                 e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                t.title, t.status, t.priority,
+                COALESCE(t.title, t.name, ''), t.status, t.priority,
                 a.name, a.title, a.metadata, e.runtime_instance_id
          FROM loop_item_executions e
          LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -4385,6 +4914,247 @@ fn execution_row(
     statement
         .query_row(params![execution_id], map_execution)
         .map_err(TaskRuntimeError::from)
+}
+
+struct CollaborationGroupExecutionInput<'a> {
+    item_id: &'a str,
+    project_id: &'a str,
+    group: &'a Value,
+    issue_title: &'a str,
+    issue_description: &'a str,
+    issue_status: Option<&'a str>,
+    priority: &'a str,
+    payload: Value,
+}
+
+const COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS: &str =
+    "You are the manager for one project Issue. Coordinate the collaboration \
+group through the project-space management tools. Assign one concurrent batch \
+of concrete tasks at a time. Each task must identify its assignee and, when \
+configured, its workflow stage. Do not execute member work yourself. After \
+every batch finishes, evaluate the evidence and either assign the next batch \
+or explicitly update the Issue status. When updating the Issue status, use the \
+optional comment field when collaborators need an explanation. The Executor \
+already records manager and member runs in the Issue activity.";
+
+fn dispatch_collaboration_group_assignment(
+    connection: &Connection,
+    input: CollaborationGroupExecutionInput<'_>,
+) -> Result<Option<i64>, TaskRuntimeError> {
+    let project = get_item_from(connection, input.project_id, "project")?
+        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let leader = input.group.get("leader").ok_or_else(|| {
+        TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
+    })?;
+    let leader_kind = leader.get("kind").and_then(Value::as_str).ok_or_else(|| {
+        TaskRuntimeError::Invalid("Collaboration team leader kind is missing".to_owned())
+    })?;
+    let leader_id = leader
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
+        })?;
+    if leader_kind == "human" {
+        return Ok(None);
+    }
+    if leader_kind != "agent" {
+        return Err(TaskRuntimeError::Invalid(
+            "Collaboration team leader kind is invalid".to_owned(),
+        ));
+    }
+    let leader_agent = collaboration_agent(connection, input.project_id, leader_id)?;
+    let mut execution_payload = input.payload.as_object().cloned().unwrap_or_default();
+    runner_dispatch::add_group_profiles(
+        connection,
+        input.project_id,
+        input.group,
+        &mut execution_payload,
+    )?;
+    let manager_context = collaboration_manager_message(
+        input.group,
+        project
+            .metadata
+            .get("workflow_definition")
+            .unwrap_or(&Value::Null),
+        input.issue_title,
+        input.issue_description,
+        input.issue_status,
+    );
+    execution_payload.insert("message".to_owned(), Value::String(manager_context.clone()));
+    execution_payload.insert(
+        "collaboration_manager_context".to_owned(),
+        Value::String(manager_context),
+    );
+    execution_payload.insert(
+        "projectInstructions".to_owned(),
+        json!(COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS),
+    );
+    execution_payload.insert("dispatch_id".to_owned(), json!(input.item_id));
+    execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
+    execution_payload.insert("collaboration_group".to_owned(), input.group.clone());
+    if let Some(workspace_roots) = project
+        .metadata
+        .get("workspace_roots")
+        .filter(|roots| roots.is_array())
+    {
+        execution_payload.insert(
+            "project_workspace_roots".to_owned(),
+            workspace_roots.clone(),
+        );
+    }
+    create_local_execution(
+        connection,
+        input.item_id,
+        input.project_id,
+        &leader_agent.id,
+        &leader_agent,
+        input.priority,
+        Value::Object(execution_payload),
+    )
+    .map(Some)
+}
+
+fn collaboration_group(project: &LoopItem, group_id: &str) -> Result<Value, TaskRuntimeError> {
+    project
+        .metadata
+        .get("collaboration_groups")
+        .and_then(Value::as_array)
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
+        })
+        .cloned()
+        .ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))
+}
+
+fn record_assignment_change(
+    metadata: &mut Value,
+    by_user_id: i64,
+    to_type: Option<&str>,
+    to_id: Option<&str>,
+    to_name: Option<&str>,
+) {
+    let history = metadata
+        .as_object_mut()
+        .expect("task metadata must be an object")
+        .entry("assignment_history")
+        .or_insert_with(|| json!([]));
+    if !history.is_array() {
+        *history = json!([]);
+    }
+    let entries = history
+        .as_array_mut()
+        .expect("assignment history must be an array");
+    entries.push(json!({
+        "by_user_id": by_user_id,
+        "to_type": to_type,
+        "to_id": to_id,
+        "to_name": to_name,
+        "action": if to_id.is_none() {
+            "unassign"
+        } else if entries.is_empty() {
+            "assign"
+        } else {
+            "reassign"
+        },
+        "at": now(),
+    }));
+}
+
+fn collaboration_agent(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<LoopItem, TaskRuntimeError> {
+    let mut statement = connection.prepare(
+        "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
+                public_id, project_key, name, title, description, sequence_number,
+                next_item_number, status, priority, sort_order, current_delivery_id,
+                metadata, version, created_at, updated_at, completed_at,
+                assignee_agent_id, created_by_user_id, assignee_user_id
+         FROM loop_items
+         WHERE resource_type = 'chat_agent'
+           AND deleted_at IS NULL
+           AND (cloud_project_id = ?1 OR cloud_project_id = ?2)
+           AND (
+               id = ?3
+               OR CAST(json_extract(metadata, '$.wegent_team_id') AS TEXT) = ?3
+           )
+         ORDER BY CASE WHEN id = ?3 THEN 0 ELSE 1 END
+         LIMIT 1",
+    )?;
+    let agent = statement
+        .query_row(
+            params![project_id, DEFAULT_WORK_ITEM_PROJECT_ID, agent_id],
+            |row| map_loop_item(connection, row),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("Collaboration team robot is not active".to_owned())
+        })?;
+    let agent_project_id = agent.cloud_project_id.as_deref();
+    if !matches!(
+        agent_project_id,
+        Some(candidate) if candidate == project_id || candidate == DEFAULT_WORK_ITEM_PROJECT_ID
+    ) || agent.status.as_deref() == Some("archived")
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Collaboration team robot is not active in this project".to_owned(),
+        ));
+    }
+    Ok(agent)
+}
+
+fn collaboration_manager_message(
+    group: &Value,
+    project_workflow: &Value,
+    issue_title: &str,
+    issue_description: &str,
+    issue_status: Option<&str>,
+) -> String {
+    let group_name = group
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("协作小组");
+    let collaboration_context = json!({
+        "group": {
+            "id": group.get("id").cloned().unwrap_or(Value::Null),
+            "name": group.get("name").cloned().unwrap_or(Value::Null),
+            "description": group.get("description").cloned().unwrap_or(Value::Null),
+            "coordination_mode": group
+                .get("coordination_mode")
+                .cloned()
+                .unwrap_or_else(|| json!("manager")),
+        },
+        "group_instructions": group
+            .get("instructions")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "leader": group.get("leader").cloned().unwrap_or(Value::Null),
+        "members": group
+            .get("members")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "group_stages": group
+            .get("stages")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "project_workflow": project_workflow,
+    });
+    format!(
+        "Issue 标题：{issue_title}\nIssue 状态：{}\nIssue 描述：{}\n\n“{group_name}”的项目协作规则、成员与流程：{}",
+        issue_status.unwrap_or("inbox"),
+        if issue_description.trim().is_empty() {
+            "无"
+        } else {
+            issue_description
+        },
+        serde_json::to_string_pretty(&collaboration_context)
+            .unwrap_or_else(|_| "{}".to_owned()),
+    )
 }
 
 fn cancel_active_executions(
@@ -4465,389 +5235,199 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let mut payload = stored
+        .get("runtimePayload")
+        .or_else(|| stored.get("runtime_payload"))
+        .or_else(|| stored.get("managerRuntimeRequest"))
+        .or_else(|| stored.get("manager_runtime_request"))
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| Value::Object(stored.clone()));
+    let runtime_task_id = execution.runtime_task_id.clone().unwrap_or_default();
     let message = stored
         .get("message")
         .or_else(|| stored.get("text"))
+        .or_else(|| payload.get("message"))
+        .or_else(|| payload.get("content"))
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| execution.task_title.clone());
-    let workflow_node_id = stored.get("workflow_node_id").cloned();
-    let automation_run_id = stored.get("automation_run_id").cloned();
-    let automation_role = stored.get("automation_role").cloned();
-    let mut additional_context = json!({
-        "task": {
-            "kind": "application",
-            "value": json!({
-                "id": execution.loop_item_id,
-                "title": execution.task_title,
-                "status": execution.task_status,
-                "priority": execution.task_priority,
-            }).to_string(),
-        },
-    });
-    if let Some(workflow_node_id) = workflow_node_id.as_ref() {
-        additional_context["workflowStage"] = json!({
-            "kind": "application",
-            "value": json!({
-                "workflow_node_id": workflow_node_id,
-                "instruction": message,
-            }).to_string(),
-        });
-    }
-    let shell_type = if execution.agent_runtime == "claude_code" {
-        "ClaudeCode"
-    } else {
-        "Codex"
-    };
-    let mut payload = json!({
-        "taskId": execution.runtime_task_id,
-        "teamId": 0,
-        "runtime": execution.agent_runtime,
-        "message": message,
-        "title": execution.task_title,
+        .unwrap_or(&execution.task_title)
+        .to_owned();
+    let title = stored
+        .get("workflow_task_title")
+        .or_else(|| payload.get("title"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&execution.task_title)
+        .to_owned();
+    let dispatch_id = stored.get("dispatch_id").cloned();
+    let dispatch_role = stored.get("dispatch_role").cloned();
+    let origin = json!({
+        "type": if dispatch_id.is_some() { "issue_dispatch" } else { "project_automation" },
+        "projectStore": "local",
         "cloudProjectId": execution.cloud_project_id,
-        "modelId": execution.agent_model,
-        "bot": [{
-            "id": execution.agent_id,
-            "name": execution.agent_name,
-            "shell_type": shell_type,
-            "system_prompt": execution.agent_system_prompt,
-            "mcp_servers": execution.agent_mcp_servers,
-        }],
-        "projectPlugins": execution.agent_plugins,
-        "additionalSkills": execution.agent_additional_skills,
-        "standaloneChatWorkspace": execution.agent_local_project_id.is_none(),
-        "origin": {
-            "type": "project_automation",
-            "projectStore": "local",
-            "cloudProjectId": execution.cloud_project_id,
-            "loopItemId": execution.loop_item_id,
-            "workflowNodeId": workflow_node_id,
-            "run_id": automation_run_id,
-            "automationRole": automation_role,
+        "loopItemId": execution.loop_item_id,
+        "workflowNodeId": stored.get("workflow_node_id"),
+        "dispatchId": dispatch_id,
+        "dispatchRole": dispatch_role,
+        "managerAgentId": if stored.get("dispatch_role").and_then(Value::as_str) == Some("manager") {
+            Some(execution.agent_id.as_str())
+        } else {
+            None
         },
-        "additionalContext": additional_context,
+        "run_id": stored.get("automation_run_id"),
     });
-    if let Some(local_project_id) = execution.agent_local_project_id {
-        payload["projectId"] = json!(local_project_id);
+
+    let payload_object = payload
+        .as_object_mut()
+        .expect("materialized Runtime payload must be an object");
+    for (key, value) in &stored {
+        if ![
+            "runtimePayload",
+            "runtime_payload",
+            "managerRuntimeRequest",
+            "manager_runtime_request",
+        ]
+        .contains(&key.as_str())
+        {
+            payload_object
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
+    apply_execution_agent_profile(payload_object, execution);
+    for key in ["runnerPolicy", "runnerSelection"] {
+        if let Some(value) = stored.get(key) {
+            payload_object.insert(key.into(), value.clone());
+        }
+    }
+    if let Some(project_instructions) = stored.get("projectInstructions").cloned() {
+        payload_object.insert("projectInstructions".to_owned(), project_instructions);
+    }
+    payload_object.insert("taskId".to_owned(), json!(runtime_task_id));
+    payload_object.insert("title".to_owned(), json!(title));
+    payload_object.insert("message".to_owned(), json!(message));
+    payload_object.insert(
+        "cloudProjectId".to_owned(),
+        json!(execution.cloud_project_id),
+    );
+    if let Some(project_id) = execution.agent_local_project_id {
+        payload_object.insert("projectId".to_owned(), json!(project_id));
+        payload_object.insert("standaloneChatWorkspace".to_owned(), json!(false));
+    } else {
+        payload_object.insert("standaloneChatWorkspace".to_owned(), json!(true));
+    }
+    payload_object.insert("origin".to_owned(), origin.clone());
+    if dispatch_id.is_some() {
+        payload_object.insert("collaboration_model".to_owned(), json!("single"));
+    }
+
+    if let Some(member_profiles) = stored
+        .get("memberRuntimeProfiles")
+        .or_else(|| stored.get("member_runtime_profiles"))
+        .filter(|value| value.is_array())
+        .cloned()
+    {
+        let runtime_handle = payload_object
+            .entry("runtimeHandle")
+            .or_insert_with(|| json!({}));
+        if !runtime_handle.is_object() {
+            *runtime_handle = json!({});
+        }
+        let runtime_handle = runtime_handle
+            .as_object_mut()
+            .expect("Runtime handle was normalized");
+        runtime_handle.insert(
+            "collaborationMemberRuntimeProfiles".to_owned(),
+            member_profiles,
+        );
+        if let Some(manager_context) = stored.get("collaboration_manager_context").cloned() {
+            runtime_handle.insert("collaborationManagerContext".to_owned(), manager_context);
+        }
+        if let Some(dispatch_id) = stored.get("dispatch_id").cloned() {
+            runtime_handle.insert("collaborationDispatchTaskId".to_owned(), dispatch_id);
+        }
+    }
+
+    let execution_request_key = if payload_object.contains_key("executionRequest") {
+        "executionRequest"
+    } else {
+        "execution_request"
+    };
+    if let Some(request) = payload_object
+        .get_mut(execution_request_key)
+        .and_then(Value::as_object_mut)
+    {
+        request.insert("task_id".to_owned(), json!(runtime_task_id));
+        request.insert(
+            "subtask_id".to_owned(),
+            json!(uuid::Uuid::new_v4().to_string()),
+        );
+        request.insert("task_title".to_owned(), json!(title));
+        request.insert(
+            "subtask_title".to_owned(),
+            json!(format!("{title} - Assistant")),
+        );
+        request.insert("prompt".to_owned(), json!(message));
+        request.insert(
+            "new_session".to_owned(),
+            json!(stored.get("continueTaskId").is_none()),
+        );
+        request.insert(
+            "device_id".to_owned(),
+            json!(execution
+                .runtime_device_id
+                .as_deref()
+                .unwrap_or("local-device")),
+        );
+        let extra = request.entry("extra").or_insert_with(|| json!({}));
+        if !extra.is_object() {
+            *extra = json!({});
+        }
+        let extra = extra
+            .as_object_mut()
+            .expect("Execution extra was normalized");
+        extra.insert("origin".to_owned(), origin);
+        extra.insert(
+            "cloudProjectId".to_owned(),
+            json!(execution.cloud_project_id),
+        );
+        extra.insert("execution_target_type".to_owned(), json!("local"));
     }
     payload
 }
 
-fn enqueue_ready_local_workflow_stages(
-    connection: &Connection,
-    item_id: &str,
-    project_id: &str,
-    priority: &str,
-    workflow: &mut Value,
-) -> Result<usize, TaskRuntimeError> {
-    if workflow["cancelled"] == true {
-        return Ok(0);
+fn apply_execution_agent_profile(
+    payload: &mut serde_json::Map<String, Value>,
+    execution: &LocalExecution,
+) {
+    payload
+        .entry("runtime")
+        .or_insert_with(|| json!(execution.agent_runtime));
+    payload
+        .entry("projectInstructions")
+        .or_insert_with(|| json!(execution.agent_system_prompt));
+    if let Some(model) = execution.agent_model.as_deref() {
+        payload.entry("modelId").or_insert_with(|| json!(model));
     }
-    let automation_run_id = workflow.get("automation_run_id").cloned();
-    let nodes = workflow
-        .get_mut("nodes")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let ready = nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
-            node.get("status").and_then(Value::as_str) == Some("ready")
-                && node.get("execution_mode").and_then(Value::as_str) == Some("robot")
-        })
-        .map(|(index, node)| {
-            let node_id = node
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let prompt = node
-                .get("prompt")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let assignee_type = node
-                .get("required_assignee_type")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let assignee_id = node
-                .get("required_assignee_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let automation_role = node
-                .get("automation_role")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            (
-                index,
-                node_id,
-                prompt,
-                assignee_type,
-                assignee_id,
-                automation_role,
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut queued = 0;
-    for (index, node_id, prompt, assignee_type, assignee_id, automation_role) in ready {
-        if assignee_type != "agent" || assignee_id.is_empty() {
-            return Err(TaskRuntimeError::Invalid(format!(
-                "automated workflow stage '{node_id}' requires an agent assignee"
-            )));
-        }
-        let agent = get_item_from(connection, &assignee_id, "chat_agent")?.ok_or_else(|| {
-            TaskRuntimeError::Invalid(format!(
-                "workflow stage '{node_id}' agent '{assignee_id}' is not active"
-            ))
-        })?;
-        if agent.cloud_project_id.as_deref() != Some(project_id)
-            || agent.status.as_deref() == Some("archived")
-        {
-            return Err(TaskRuntimeError::Invalid(format!(
-                "workflow stage '{node_id}' agent '{assignee_id}' is not active in this project"
-            )));
-        }
-        let message = if prompt.trim().is_empty() {
-            format!("Complete workflow stage {node_id}")
-        } else {
-            prompt
-        };
-        let execution_id = create_local_execution(
-            connection,
-            item_id,
-            project_id,
-            &assignee_id,
-            &agent,
-            priority,
-            json!({
-                "message": message,
-                "workflow_node_id": node_id,
-                "automation_run_id": automation_run_id,
-                "automation_role": automation_role,
-            }),
-        )?;
-        let execution = execution_row(connection, execution_id)?;
-        nodes[index]["status"] = json!(if execution.status == "pending_approval" {
-            "waiting"
-        } else {
-            "queued"
-        });
-        nodes[index]["execution_id"] = json!(execution_id);
-        queued += 1;
-    }
-    Ok(queued)
-}
-
-fn release_local_workflow_nodes(workflow: &mut Value) -> Result<(), TaskRuntimeError> {
-    let nodes = workflow
-        .get_mut("nodes")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let completed = nodes
-        .iter()
-        .filter(|node| {
-            matches!(
-                node.get("status").and_then(Value::as_str),
-                Some("completed" | "forced_completed")
-            )
-        })
-        .filter_map(|node| node.get("id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect::<HashSet<_>>();
-    for node in nodes {
-        if node.get("status").and_then(Value::as_str) != Some("blocked") {
-            continue;
-        }
-        let dependencies_complete = node
-            .get("depends_on")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .all(|dependency| completed.contains(dependency));
-        if dependencies_complete {
-            node["status"] = json!("ready");
-        }
-    }
-    Ok(())
-}
-
-fn mark_local_workflow_stage_running(
-    connection: &Connection,
-    execution_id: i64,
-    timestamp: &str,
-) -> Result<(), TaskRuntimeError> {
-    let execution = execution_row(connection, execution_id)?;
-    let Some(workflow_node_id) = execution
-        .execution_payload
-        .as_ref()
-        .and_then(|payload| payload.get("workflow_node_id"))
-        .and_then(Value::as_str)
-    else {
-        return Ok(());
-    };
-    let Some(mut item) = get_item_from(connection, &execution.loop_item_id, "task")? else {
-        return Ok(());
-    };
-    let Some(nodes) = item
-        .metadata
-        .get_mut("workflow")
-        .and_then(|workflow| workflow.get_mut("nodes"))
-        .and_then(Value::as_array_mut)
-    else {
-        return Ok(());
-    };
-    let Some(node) = nodes
-        .iter_mut()
-        .find(|node| node.get("id").and_then(Value::as_str) == Some(workflow_node_id))
-    else {
-        return Ok(());
-    };
-    if !matches!(
-        node.get("status").and_then(Value::as_str),
-        Some("queued" | "waiting")
-    ) {
-        return Ok(());
-    }
-    node["status"] = json!("running");
-    connection.execute(
-        "UPDATE loop_items
-         SET metadata = ?1, version = version + 1, updated_at = ?2
-         WHERE id = ?3",
-        params![item.metadata.to_string(), timestamp, execution.loop_item_id],
-    )?;
-    Ok(())
-}
-
-fn advance_local_workflow_after_execution(
-    connection: &Connection,
-    execution_id: i64,
-    timestamp: &str,
-) -> Result<bool, TaskRuntimeError> {
-    let execution = execution_row(connection, execution_id)?;
-    let workflow_node_id = execution
-        .execution_payload
-        .as_ref()
-        .and_then(|payload| payload.get("workflow_node_id"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let Some(workflow_node_id) = workflow_node_id else {
-        return Ok(false);
-    };
-    let mut item = get_item_from(connection, &execution.loop_item_id, "task")?
-        .ok_or(TaskRuntimeError::TaskNotFound)?;
-    let workflow = item
-        .metadata
-        .get_mut("workflow")
-        .filter(|workflow| workflow.is_object())
-        .ok_or_else(|| {
-            TaskRuntimeError::Invalid("workflow execution has no workflow".to_owned())
-        })?;
-    if workflow["cancelled"] == true {
-        return Ok(true);
-    }
-    let nodes = workflow
-        .get_mut("nodes")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let node = nodes
-        .iter_mut()
-        .find(|node| node.get("id").and_then(Value::as_str) == Some(&workflow_node_id))
-        .ok_or_else(|| {
-            TaskRuntimeError::Invalid("workflow execution stage is missing".to_owned())
-        })?;
-    if node.get("required_assignee_type").and_then(Value::as_str) != Some("agent")
-        || node.get("required_assignee_id").and_then(Value::as_str)
-            != Some(execution.agent_id.as_str())
-    {
-        return Err(TaskRuntimeError::Invalid(
-            "workflow execution assignee does not match the stage constraint".to_owned(),
-        ));
-    }
-    node["status"] = json!("completed");
-    node["execution_id"] = json!(execution_id);
-    release_local_workflow_nodes(workflow)?;
-    let before_enqueue = workflow.clone();
-    connection.execute_batch("SAVEPOINT advance_local_workflow")?;
-    match enqueue_ready_local_workflow_stages(
-        connection,
-        &execution.loop_item_id,
-        &execution.cloud_project_id,
-        execution.task_priority.as_deref().unwrap_or("none"),
-        workflow,
-    ) {
-        Ok(_) => connection.execute_batch("RELEASE advance_local_workflow")?,
-        Err(TaskRuntimeError::Invalid(error)) => {
-            connection.execute_batch(
-                "ROLLBACK TO advance_local_workflow; RELEASE advance_local_workflow",
-            )?;
-            *workflow = before_enqueue;
-            workflow["error"] = json!(error);
-            for node in workflow["nodes"].as_array_mut().into_iter().flatten() {
-                if node["status"] == "ready" && node["execution_mode"] == "robot" {
-                    node["status"] = json!("failed");
-                }
-            }
-        }
-        Err(error) => return Err(error),
-    }
-    let nodes = workflow["nodes"]
-        .as_array()
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let all_required_completed = nodes
-        .iter()
-        .filter(|node| {
-            node.get("required")
-                .and_then(Value::as_bool)
-                .unwrap_or(true)
-                && node.get("role").and_then(Value::as_str) != Some("start")
-        })
-        .all(|node| {
-            matches!(
-                node.get("status").and_then(Value::as_str),
-                Some("completed" | "forced_completed")
-            )
-        });
-    let active_agent_id: Option<String> = connection
-        .query_row(
-            "SELECT agent_id FROM loop_item_executions
-             WHERE loop_item_id = ?1
-               AND status IN ('pending_approval', 'queued', 'claimed', 'running')
-             ORDER BY id DESC LIMIT 1",
-            params![execution.loop_item_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if execution.cloud_project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
-        item.metadata["is_unread"] = json!(true);
-    }
-    let status = if all_required_completed {
-        "completed"
-    } else if active_agent_id.is_some() {
-        "in_progress"
-    } else {
-        "pending"
-    };
-    connection.execute(
-        "UPDATE loop_items
-         SET status = ?1, assignee_agent_id = ?2, metadata = ?3,
-             completed_at = CASE WHEN ?1 = 'completed' THEN ?4 ELSE NULL END,
-             sort_order = 0, version = version + 1, updated_at = ?4
-         WHERE id = ?5",
-        params![
-            status,
-            active_agent_id,
-            item.metadata.to_string(),
-            timestamp,
-            execution.loop_item_id
-        ],
-    )?;
-    Ok(true)
+    payload
+        .entry("additionalSkills")
+        .or_insert_with(|| json!(execution.agent_additional_skills));
+    payload
+        .entry("projectPlugins")
+        .or_insert_with(|| json!(execution.agent_plugins));
+    payload.entry("bot").or_insert_with(|| {
+        json!([{
+            "id": execution.agent_id,
+            "name": execution.agent_name,
+            "shell_type": if execution.agent_runtime == "claude_code" {
+                "ClaudeCode"
+            } else {
+                "Codex"
+            },
+            "mcp_servers": execution.agent_mcp_servers,
+        }])
+    });
 }
 
 fn priority_weight(priority: &str) -> i64 {
@@ -4885,7 +5465,19 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::task_runtime::{BinaryInput, DeliveryCreate};
+    use crate::task_runtime::{BinaryInput, DeliveryCreate, DeliveryFinalize};
+
+    #[test]
+    fn schedule_validation_checks_each_supplied_date() {
+        assert!(validate_schedule_range(Some("not-a-date"), None).is_err());
+        assert!(validate_schedule_range(None, Some("not-a-date")).is_err());
+        assert!(validate_schedule_range(Some("2026-10-11"), None).is_ok());
+        assert!(validate_schedule_range(
+            Some("2026-10-11T00:00:00.900Z"),
+            Some("2026-10-11T00:00:00.100Z"),
+        )
+        .is_err());
+    }
 
     fn chat_agent_store() -> (TempDir, LocalTaskStore, LoopItem) {
         let directory = tempfile::tempdir().unwrap();
@@ -4907,6 +5499,8 @@ mod tests {
             .create_chat_agent(
                 project_id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Local Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -4914,6 +5508,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Be careful.".to_owned()),
@@ -4935,6 +5530,8 @@ mod tests {
 
     fn default_chat_agent_input() -> ChatAgentCreate {
         ChatAgentCreate {
+            execution_policy: None,
+            model_policy: None,
             name: "current-device-assistant".to_owned(),
             display_name: Some("Current device assistant".to_owned()),
             namespace: Some("default".to_owned()),
@@ -4942,6 +5539,7 @@ mod tests {
             model: Some("gpt-5".to_owned()),
             model_type: Some("public".to_owned()),
             model_namespace: Some("default".to_owned()),
+            allowed_models: Some(Vec::new()),
             capability_description: None,
             capability_mode: Some("follow_device".to_owned()),
             system_prompt: Some(String::new()),
@@ -4957,6 +5555,46 @@ mod tests {
             additional_skills: Vec::new(),
             mcp_servers: json!({}),
         }
+    }
+
+    #[test]
+    fn chat_agent_create_derives_allowed_models_only_when_omitted() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let legacy_input: ChatAgentCreate = serde_json::from_value(json!({
+            "name": "Legacy Bot",
+            "model": "legacy-model",
+            "model_type": "runtime",
+            "model_namespace": "legacy"
+        }))
+        .unwrap();
+
+        let legacy = store.create_chat_agent(&project.id, legacy_input).unwrap();
+        assert_eq!(
+            legacy.allowed_models,
+            vec![json!({
+                "name": "legacy-model",
+                "type": "runtime",
+                "namespace": "legacy",
+            })]
+        );
+
+        let explicit_empty = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
+                    name: "Explicit Empty Bot".to_owned(),
+                    model: Some("legacy-model".to_owned()),
+                    model_type: Some("runtime".to_owned()),
+                    model_namespace: Some("legacy".to_owned()),
+                    allowed_models: Some(Vec::new()),
+                    ..serde_json::from_value(json!({"name": "unused"})).unwrap()
+                },
+            )
+            .unwrap();
+        assert!(explicit_empty.allowed_models.is_empty());
     }
 
     fn accept_and_start(store: &LocalTaskStore, claimed: &LocalExecution) -> LocalExecution {
@@ -5000,6 +5638,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5009,6 +5649,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -5028,6 +5669,7 @@ mod tests {
             updated.assignee_agent_id.as_deref(),
             Some(agent.id.as_str())
         );
+        assert_eq!(updated.status.as_deref(), Some("in_progress"));
 
         let executions = store
             .list_executions(&project.id, None, None, false)
@@ -5049,6 +5691,175 @@ mod tests {
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
         );
+    }
+
+    #[test]
+    fn task_create_atomically_dispatches_to_agent() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = make_local_agent(&store, &project.id, "auto");
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Run immediately".to_owned(),
+                    description: "Do not require a second assignment update.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: Some(agent.id.clone()),
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(task.status.as_deref(), Some("in_progress"));
+        assert_eq!(task.assignee_agent_id.as_deref(), Some(agent.id.as_str()));
+        assert_eq!(task.metadata["assignment_history"][0]["to_type"], "agent");
+        assert_eq!(
+            task.metadata["assignment_history"][0]["to_id"],
+            agent.id.as_str()
+        );
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].loop_item_id, task.id);
+        assert_eq!(executions[0].agent_id, agent.id);
+    }
+
+    #[test]
+    fn task_create_accepts_human_led_group_without_starting_manager_agent() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "human-led",
+                        "name": "Human-led team",
+                        "instructions": "The human leader coordinates the work.",
+                        "leader": {
+                            "kind": "human",
+                            "id": "7",
+                            "name": "Project owner"
+                        },
+                        "members": [{
+                            "kind": "human",
+                            "id": "7",
+                            "name": "Project owner"
+                        }]
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Coordinate manually".to_owned(),
+                    description: "The human leader decides the next dispatch.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: Some("human-led".to_owned()),
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(task.status.as_deref(), Some("in_progress"));
+        assert_eq!(
+            task.metadata["collaboration_group"]["leader"]["kind"],
+            "human"
+        );
+        assert_eq!(task.metadata["assignment_history"][0]["to_type"], "group");
+        assert_eq!(task.metadata["assignment_history"][0]["to_id"], "human-led");
+        assert_eq!(
+            task.metadata["assignment_history"][0]["to_name"],
+            "Human-led team"
+        );
+        assert!(store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn collaboration_group_resolves_agents_by_wegent_team_id() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
+        let connection = store.connection().unwrap();
+        let mut metadata = get_item_from(&connection, &leader.id, "chat_agent")
+            .unwrap()
+            .unwrap()
+            .metadata;
+        metadata["wegent_team_id"] = json!(42);
+        connection
+            .execute(
+                "UPDATE loop_items SET metadata = ?1 WHERE id = ?2",
+                params![metadata.to_string(), leader.id],
+            )
+            .unwrap();
+        drop(connection);
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "team-id-group",
+                        "name": "Team ID group",
+                        "leader": {
+                            "kind": "agent",
+                            "id": "42"
+                        },
+                        "members": [{
+                            "kind": "agent",
+                            "id": "42"
+                        }]
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Resolve manager".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: Some("team-id-group".to_owned()),
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].loop_item_id, task.id);
+        assert_eq!(executions[0].agent_id, leader.id);
     }
 
     #[test]
@@ -5137,319 +5948,6 @@ mod tests {
     }
 
     #[test]
-    fn assigning_a_local_issue_to_a_collaboration_group_starts_its_leader() {
-        let (_directory, store, project) = chat_agent_store();
-        let leader = make_local_agent(&store, &project.id, "auto");
-        let inactive = make_local_agent(&store, &project.id, "auto");
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE loop_items
-                 SET metadata=json_set(metadata,'$.display_name','当前设备智能体')
-                 WHERE id=?1",
-                [&leader.id],
-            )
-            .unwrap();
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE loop_items SET status='disabled' WHERE id=?1",
-                [&inactive.id],
-            )
-            .unwrap();
-        let project = store
-            .update_project(
-                &project.id,
-                ProjectUpdate {
-                    version: project.version,
-                    collaboration_groups: Some(json!([
-                        {
-                            "id": "group-1",
-                            "name": "Delivery team",
-                            "instructions": "Coordinate the work.",
-                            "leader": {"kind": "agent", "id": leader.id},
-                            "members": [
-                                {"kind": "agent", "id": leader.id},
-                                {"kind": "agent", "id": inactive.id}
-                            ],
-                            "stages": []
-                        }
-                    ])),
-                    ..ProjectUpdate::default()
-                },
-            )
-            .unwrap();
-        let task = store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    title: "Ship the feature".to_owned(),
-                    description: "Implement and verify it.".to_owned(),
-                    status: "inbox".to_owned(),
-                    priority: "high".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-
-        let assigned = store
-            .update_task(
-                &project.id,
-                &task.id,
-                TaskUpdate {
-                    version: task.version,
-                    assignee_group_id: Some(Some("group-1".to_owned())),
-                    ..TaskUpdate::default()
-                },
-            )
-            .unwrap();
-
-        assert_eq!(assigned.metadata["collaboration_group"]["id"], "group-1");
-        assert_eq!(assigned.status.as_deref(), Some("in_progress"));
-        assert_eq!(
-            assigned.metadata["workflow"]["nodes"][0]["required_assignee_id"],
-            leader.id
-        );
-        assert_eq!(
-            assigned.metadata["workflow"]["nodes"][0]["status"],
-            "queued"
-        );
-        let claimed = store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-instance".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: vec![],
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .expect("the collaboration group leader must be queued");
-        assert_eq!(claimed.agent_id, leader.id);
-        assert_eq!(claimed.agent_name, "当前设备智能体");
-        let payload = claimed.execution_payload.as_ref().unwrap();
-        assert_eq!(
-            payload["origin"]["automationRole"],
-            Value::String("manager".to_owned())
-        );
-        let run_id = payload["origin"]["run_id"].as_str().unwrap();
-        let candidates = store
-            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
-            .unwrap();
-        assert_eq!(candidates["robots"].as_array().unwrap().len(), 1);
-        assert_eq!(candidates["robots"][0]["name"], "当前设备智能体");
-        store
-            .submit_local_automation_workflow_plan(
-                &project.id,
-                &task.id,
-                run_id,
-                &json!({
-                    "summary": "Implement the feature.",
-                    "items": [{
-                        "client_key": "implement",
-                        "title": "Implement",
-                        "description": "Make the requested change.",
-                        "assignee_type": "agent",
-                        "assignee_id": leader.id,
-                        "assignee_name": "当前设备智能体",
-                        "rationale": "Uses the current device."
-                    }]
-                }),
-            )
-            .unwrap();
-        store
-            .complete_execution(claimed.id, Some("Plan submitted"))
-            .unwrap();
-        assert!(store
-            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
-            .is_err());
-        let planned = store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-instance".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: vec![],
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .expect("the submitted plan must queue its assigned Agent");
-        assert_eq!(planned.agent_id, leader.id);
-        assert_eq!(
-            planned.execution_payload.as_ref().unwrap()["message"],
-            "Implement\n\nMake the requested change.\n\nUses the current device."
-        );
-    }
-
-    #[test]
-    fn local_issue_automation_runs_constrained_agents_in_order_and_completes_issue() {
-        let (directory, store, project) = chat_agent_store();
-        let _ = directory;
-        let claude = make_local_agent(&store, &project.id, "auto");
-        let codex = make_local_agent(&store, &project.id, "auto");
-        let project = store
-            .update_project(
-                &project.id,
-                ProjectUpdate {
-                    version: project.version,
-                    workflow_definition: Some(json!({
-                        "version": 1,
-                        "nodes": [
-                            {
-                                "id": "start",
-                                "name": "Issue created",
-                                "node_type": "event",
-                                "role": "start",
-                                "depends_on": [],
-                                "required": false,
-                                "execution_mode": "human"
-                            },
-                            {
-                                "id": "claude",
-                                "name": "Claude",
-                                "prompt": "Implement the issue",
-                                "kind": "my_task",
-                                "depends_on": ["start"],
-                                "required": true,
-                                "execution_mode": "robot",
-                                "required_assignee_type": "agent",
-                                "required_assignee_id": claude.id
-                            },
-                            {
-                                "id": "codex",
-                                "name": "Codex",
-                                "prompt": "Review and finish the issue",
-                                "kind": "my_task",
-                                "depends_on": ["claude"],
-                                "required": true,
-                                "execution_mode": "robot",
-                                "required_assignee_type": "agent",
-                                "required_assignee_id": codex.id
-                            }
-                        ]
-                    })),
-                    ..ProjectUpdate::default()
-                },
-            )
-            .unwrap();
-
-        let task = store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    title: "Ship the feature".to_owned(),
-                    description: "Complete one issue through both agents.".to_owned(),
-                    status: "inbox".to_owned(),
-                    priority: "high".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-        assert_eq!(task.status.as_deref(), Some("in_progress"));
-        assert_eq!(task.assignee_agent_id.as_deref(), Some(claude.id.as_str()));
-        assert_eq!(
-            task.metadata["workflow"]["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|node| node["status"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["completed", "queued", "blocked"]
-        );
-
-        let claim = LocalExecutionClaim {
-            execution_device_id: Some("local-device".to_owned()),
-            runtime_instance_id: "runtime-instance".to_owned(),
-            device_capacity: 1,
-            runtime_active: 0,
-            runtime_active_task_ids: vec![],
-            lease_seconds: 300,
-        };
-        let first = store
-            .claim_next_local_execution(&claim)
-            .unwrap()
-            .expect("Claude stage must be queued");
-        assert_eq!(first.agent_id, claude.id);
-        assert_eq!(
-            first.execution_payload.as_ref().unwrap()["origin"]["workflowNodeId"],
-            "claude"
-        );
-        let serialized_claim = serde_json::to_value(&first).unwrap();
-        assert!(serialized_claim.get("runtime_payload").is_some());
-        assert!(serialized_claim.get("execution_payload").is_none());
-        accept_and_start(&store, &first);
-        let running_claude = store.get_task(&project.id, &task.id).unwrap();
-        assert_eq!(
-            running_claude.metadata["workflow"]["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|node| node["status"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["completed", "running", "blocked"]
-        );
-        store
-            .complete_execution(first.id, Some("Implemented"))
-            .unwrap();
-
-        let after_claude = store.get_task(&project.id, &task.id).unwrap();
-        assert_eq!(after_claude.status.as_deref(), Some("in_progress"));
-        assert_eq!(
-            after_claude.assignee_agent_id.as_deref(),
-            Some(codex.id.as_str())
-        );
-        assert_eq!(
-            after_claude.metadata["workflow"]["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|node| node["status"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["completed", "completed", "queued"]
-        );
-
-        let second = store
-            .claim_next_local_execution(&claim)
-            .unwrap()
-            .expect("Codex stage must be queued after Claude");
-        assert_eq!(second.agent_id, codex.id);
-        assert_eq!(
-            second.execution_payload.as_ref().unwrap()["origin"]["workflowNodeId"],
-            "codex"
-        );
-        accept_and_start(&store, &second);
-        store
-            .complete_execution(second.id, Some("Reviewed"))
-            .unwrap();
-
-        let completed = store.get_task(&project.id, &task.id).unwrap();
-        assert_eq!(completed.status.as_deref(), Some("completed"));
-        assert!(completed.completed_at.is_some());
-        assert_eq!(completed.assignee_agent_id, None);
-        assert_eq!(
-            completed.metadata["workflow"]["nodes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|node| node["status"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["completed", "completed", "completed"]
-        );
-        assert_eq!(
-            store.list_comments(&project.id, &task.id, 0).unwrap().len(),
-            2
-        );
-    }
-
-    #[test]
     fn local_comment_thread_and_enqueue_writeback() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
@@ -5465,6 +5963,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5523,8 +6023,39 @@ mod tests {
             .update_agent_comment_for_execution(execution.id, "completed", "搞定")
             .unwrap()
             .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_executions SET status='completed' WHERE id=?1",
+                params![execution.id],
+            )
+            .unwrap();
         assert_eq!(updated.status, "completed");
         assert_eq!(updated.content, "搞定");
+        let task = store.get_task(&project.id, &task.id).unwrap();
+        let task = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    position: None,
+                    assignee_group_id: None,
+                    assignee_user_id: None,
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: Some("in_review".to_owned()),
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: None,
+                    execution_payload: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(task.status.as_deref(), Some("in_review"));
 
         let after = store
             .list_comments(&project.id, &task.id, user_comment.sequence_number)
@@ -5559,6 +6090,14 @@ mod tests {
             .unwrap();
         assert_eq!(continuation.status, "streaming");
         assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+        assert_eq!(
             continuation.thread_root_message_id,
             user_comment.thread_root_message_id
         );
@@ -5574,6 +6113,174 @@ mod tests {
         assert_eq!(continued.status, "completed");
         assert_eq!(continued.content, "你之前让我看一下");
         assert_eq!(continued.metadata["runtime_address"]["taskId"], "session-1");
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+        let duplicate = store
+            .start_runtime_comment(&LocalRuntimeCommentStart {
+                project_id: &project.id,
+                task_id: &task.id,
+                agent_id: &agent.id,
+                trigger_message_id: &follow_up.message_id,
+                runtime_device_id: "local-device",
+                runtime_task_id: "session-1",
+                prompt: Some("我之前说了什么"),
+                model: None,
+            })
+            .unwrap();
+        assert_eq!(duplicate.message_id, continuation.message_id);
+        assert_eq!(duplicate.status, "completed");
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+    }
+
+    #[test]
+    fn collaboration_runtime_comment_does_not_move_parent_issue_to_review() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Coordinate work".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let comment = store
+            .create_comment(&LocalCommentCreate {
+                project_id: project.id.clone(),
+                task_id: task.id.clone(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: "manager-agent".to_owned(),
+                sender_name: "Manager".to_owned(),
+                content: String::new(),
+                metadata: json!({
+                    "dispatch_role": "manager",
+                    "runtime_address": {
+                        "deviceId": "local-device",
+                        "taskId": "manager-runtime",
+                    },
+                }),
+                reply_to_message_id: None,
+            })
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_comments SET status='streaming' WHERE message_id=?1",
+                params![comment.message_id],
+            )
+            .unwrap();
+
+        store
+            .finish_runtime_comment("manager-runtime", "completed", "Dispatched")
+            .unwrap();
+
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+    }
+
+    #[test]
+    fn runtime_comment_keeps_issue_in_progress_while_followup_is_pending() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Continue work".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        for runtime_task_id in ["runtime-1", "runtime-2"] {
+            let comment = store
+                .create_comment(&LocalCommentCreate {
+                    project_id: project.id.clone(),
+                    task_id: task.id.clone(),
+                    client_message_id: None,
+                    sender_type: "agent".to_owned(),
+                    sender_id: "agent-1".to_owned(),
+                    sender_name: "Agent".to_owned(),
+                    content: String::new(),
+                    metadata: json!({
+                        "runtime_address": {
+                            "deviceId": "local-device",
+                            "taskId": runtime_task_id,
+                        },
+                    }),
+                    reply_to_message_id: None,
+                })
+                .unwrap();
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_item_comments SET status='streaming' WHERE message_id=?1",
+                    params![comment.message_id],
+                )
+                .unwrap();
+        }
+
+        store
+            .finish_runtime_comment("runtime-1", "completed", "First result")
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+
+        store
+            .finish_runtime_comment("runtime-2", "completed", "Follow-up result")
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
     }
 
     #[test]
@@ -5592,6 +6299,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5601,6 +6310,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -5653,6 +6363,25 @@ mod tests {
             streaming_comments[0].metadata["runtime_address"],
             json!({"deviceId": "local-device", "taskId": running.runtime_task_id.unwrap()})
         );
+        assert_eq!(
+            store
+                .project_bound_task_status(
+                    "local-device",
+                    claimed.runtime_task_id.as_deref().unwrap(),
+                    "succeeded",
+                    100,
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
         store.complete_execution(execution.id, None).unwrap();
 
         let updated = store
@@ -5691,6 +6420,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5700,6 +6431,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -5761,7 +6493,37 @@ mod tests {
     }
 
     #[test]
-    fn local_complete_execution_advances_task_to_review() {
+    fn local_read_cursor_persists_the_visible_activity_sequence() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Unread activity".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let updated = store
+            .mark_task_read(&project.id, &task.id, Some(17))
+            .unwrap();
+
+        assert_eq!(updated.metadata["activity_read_sequence"], json!(17));
+        assert_eq!(updated.metadata["is_unread"], json!(false));
+    }
+
+    #[test]
+    fn local_direct_execution_completion_moves_issue_to_review() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent = make_local_agent(&store, &project.id, "auto");
@@ -5776,6 +6538,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5785,6 +6549,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -5818,7 +6583,7 @@ mod tests {
         assert_eq!(updated.status.as_deref(), Some("in_review"));
         assert_eq!(updated.execution_state.as_deref(), Some("succeeded"));
         assert_eq!(updated.metadata["is_unread"], json!(true));
-        store.mark_task_read(&project.id, &task.id).unwrap();
+        store.mark_task_read(&project.id, &task.id, None).unwrap();
         store
             .complete_execution(claimed.id, Some("duplicate"))
             .unwrap();
@@ -5826,7 +6591,7 @@ mod tests {
             store.get_task(&project.id, &task.id).unwrap().metadata["is_unread"],
             json!(false)
         );
-        // A new completion marks an already reviewed task unread again.
+        // Completion also preserves an Issue that was already in review.
         let second = store
             .create_task(
                 &project.id,
@@ -5838,6 +6603,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5847,6 +6614,7 @@ mod tests {
                 &project.id,
                 &second.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: second.version,
@@ -5866,11 +6634,891 @@ mod tests {
             .claim_next_local_execution(&claim)
             .unwrap()
             .expect("second run must be claimable");
-        store.mark_task_read(&project.id, &second.id).unwrap();
+        store.mark_task_read(&project.id, &second.id, None).unwrap();
         store.complete_execution(claimed_second.id, None).unwrap();
         let second_after = store.get_task(&project.id, &second.id).unwrap();
         assert_eq!(second_after.status.as_deref(), Some("in_review"));
         assert_eq!(second_after.metadata["is_unread"], json!(true));
+    }
+
+    #[test]
+    fn collaboration_group_round_runs_members_through_executor_then_restarts_manager() {
+        assert_collaboration_round_completion(true, false, false);
+    }
+
+    #[test]
+    fn agent_only_collaboration_round_restarts_manager_for_review() {
+        assert_collaboration_round_completion(false, false, false);
+    }
+
+    #[test]
+    fn agent_only_collaboration_round_accepts_successful_member_retry() {
+        assert_collaboration_round_completion(false, true, false);
+    }
+
+    #[test]
+    fn collaboration_round_uses_canonical_robot_identity_for_team_alias() {
+        assert_collaboration_round_completion(false, false, true);
+    }
+
+    fn assert_collaboration_round_completion(
+        has_human: bool,
+        retry_member: bool,
+        team_alias: bool,
+    ) {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
+        let member = store
+            .create_chat_agent(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
+                    name: "Evidence Bot".to_owned(),
+                    display_name: Some("Evidence Bot".to_owned()),
+                    namespace: None,
+                    runtime: "codex".to_owned(),
+                    model: Some("gpt-6-mini".to_owned()),
+                    model_type: Some("runtime".to_owned()),
+                    model_namespace: None,
+                    allowed_models: Some(Vec::new()),
+                    capability_description: Some("Collect evidence".to_owned()),
+                    capability_mode: Some("follow_device".to_owned()),
+                    system_prompt: Some("Only collect verifiable evidence.".to_owned()),
+                    visibility: Some("creator_admin".to_owned()),
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
+                    local_project_id: None,
+                    created_by_user_id: Some(7),
+                    plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({
+                        "evidence": {
+                            "command": "evidence-mcp",
+                            "args": ["--read-only"]
+                        }
+                    }),
+                },
+            )
+            .unwrap();
+        let member_assignment_id = if team_alias {
+            store.connection().unwrap().execute(
+                "UPDATE loop_items SET metadata = json_set(metadata, '$.wegent_team_id', 42) WHERE id = ?1",
+                [&member.id],
+            ).unwrap();
+            "42".to_owned()
+        } else {
+            member.id.clone()
+        };
+        let reviewer = store
+            .create_chat_agent(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
+                    name: "Review Bot".to_owned(),
+                    display_name: Some("Review Bot".to_owned()),
+                    namespace: None,
+                    runtime: "codex".to_owned(),
+                    model: Some("gpt-6-mini".to_owned()),
+                    model_type: Some("runtime".to_owned()),
+                    model_namespace: None,
+                    allowed_models: Some(Vec::new()),
+                    capability_description: Some("Review evidence".to_owned()),
+                    capability_mode: Some("follow_device".to_owned()),
+                    system_prompt: Some("Only review submitted evidence.".to_owned()),
+                    visibility: Some("creator_admin".to_owned()),
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
+                    local_project_id: None,
+                    created_by_user_id: Some(7),
+                    plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
+                },
+            )
+            .unwrap();
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    workflow_definition: Some(json!({
+                        "stages": [{
+                            "id": "evidence",
+                            "name": "Evidence",
+                            "acceptance": "Reproducible observations"
+                        }]
+                    })),
+                    collaboration_groups: Some(json!([{
+                        "id": "squad-1",
+                        "name": "Diagnostics",
+                        "instructions": "Use read-only diagnostics and cite evidence.",
+                        "leader": {
+                            "kind": "agent",
+                            "id": leader.id,
+                            "responsibility": "Plan, delegate, and review."
+                        },
+                        "members": [{
+                            "kind": "agent",
+                            "id": member_assignment_id,
+                            "responsibility": "Collect CPU evidence."
+                        }, {
+                            "kind": "agent",
+                            "id": reviewer.id,
+                            "responsibility": "Review the collected evidence."
+                        }, {
+                            "kind": "human",
+                            "id": "42",
+                            "name": "Human reviewer",
+                            "responsibility": "Confirm the observed behavior."
+                        }],
+                        "stages": [{
+                            "id": "diagnosis",
+                            "name": "Diagnosis",
+                            "description": "Gather evidence",
+                            "assignee": null
+                        }]
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Investigate CPU".to_owned(),
+                    description: "Determine whether load is sustained.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let dispatched = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                TaskUpdate {
+                    version: issue.version,
+                    assignee_group_id: Some(Some("squad-1".to_owned())),
+                    execution_payload: Some(json!({
+                        "managerRuntimeRequest": {
+                            "taskId": "manager-template",
+                            "runtime": "codex",
+                            "executionRequest": {
+                                "task_id": "manager-template",
+                                "subtask_id": "manager-template-initial",
+                                "bot": [{
+                                    "id": leader.id,
+                                    "name": "Manager",
+                                    "shell_type": "Codex"
+                                }],
+                                "model_config": {
+                                    "model": "openai",
+                                    "model_id": "gpt-6-sol"
+                                }
+                            }
+                        },
+                        "memberRuntimeProfiles": [{
+                            "memberIds": [leader.id],
+                            "runtimePayload": {
+                                "taskId": "leader-template",
+                                "runtime": "codex",
+                                "executionRequest": {
+                                    "task_id": "leader-template",
+                                    "subtask_id": "leader-template-initial",
+                                    "bot": [{
+                                        "id": leader.id,
+                                        "name": "Manager",
+                                        "shell_type": "Codex"
+                                    }],
+                                    "model_config": {
+                                        "model": "openai",
+                                        "model_id": "gpt-6-sol"
+                                    }
+                                }
+                            }
+                        }, {
+                            "memberIds": [reviewer.id],
+                            "runtimePayload": {
+                                "taskId": "reviewer-template",
+                                "runtime": "codex",
+                                "executionRequest": {
+                                    "task_id": "reviewer-template",
+                                    "subtask_id": "reviewer-template-initial",
+                                    "bot": [{
+                                        "id": reviewer.id,
+                                        "name": "Reviewer",
+                                        "shell_type": "Codex"
+                                    }],
+                                    "model_config": {
+                                        "model": "openai",
+                                        "model_id": "gpt-6-sol"
+                                    }
+                                }
+                            }
+                        }, {
+                            "memberIds": [member.id, member_assignment_id],
+                            "runtimePayload": {
+                                "taskId": "member-template",
+                                "runtime": "codex",
+                                "executionRequest": {
+                                    "task_id": "member-template",
+                                    "subtask_id": "member-template-initial",
+                                    "bot": [{
+                                        "id": member.id,
+                                        "name": "Collector",
+                                        "shell_type": "Codex",
+                                        "mcp_servers": {
+                                            "evidence": {
+                                                "command": "evidence-mcp"
+                                            }
+                                        }
+                                    }],
+                                    "model_config": {
+                                        "model": "openai",
+                                        "model_id": "gpt-6-sol"
+                                    }
+                                }
+                            }
+                        }]
+                    })),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(dispatched.status.as_deref(), Some("in_progress"));
+
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("manager execution must be queued");
+        let payload = claimed.execution_payload.as_ref().unwrap();
+        assert_eq!(claimed.agent_id, leader.id);
+        assert_eq!(
+            payload["executionRequest"]["bot"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(payload["executionRequest"]["bot"][0]["id"], leader.id);
+        assert_eq!(payload["origin"]["dispatchRole"], "manager");
+        assert_eq!(payload["origin"]["dispatchId"], issue.id);
+        assert_eq!(payload["collaboration_model"], "single");
+        assert_eq!(
+            payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Issue 状态：in_progress"));
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Use read-only diagnostics and cite evidence."));
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Human reviewer"));
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Reproducible observations"));
+        assert!(payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Do not execute member work yourself"));
+        let runtime_task_id = claimed
+            .runtime_task_id
+            .as_deref()
+            .expect("manager execution must have a Runtime task id");
+        accept_and_start(&store, &claimed);
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", runtime_task_id, "succeeded", 100,)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .get_task(&project.id, &issue.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+        let leader_assignment_error = store
+            .submit_collaboration_round(
+                runtime_task_id,
+                &json!({
+                    "round_id": "leader-round",
+                    "items": [{
+                        "assignment_id": "manager-cannot-execute",
+                        "title": "负责人不得执行",
+                        "instructions": "This assignment must be rejected.",
+                        "assignee_type": "agent",
+                        "assignee_id": leader.id,
+                    }],
+                }),
+            )
+            .unwrap_err();
+        assert!(leader_assignment_error.to_string().contains(
+            "collaboration group leader coordinates work and cannot be an assignment target"
+        ));
+        let mut plan = json!({
+            "round_id": "round-1",
+            "items": [{
+                "assignment_id": "collect",
+                "title": "采集运行证据",
+                "instructions": "Collect verifiable evidence.",
+                "assignee_type": "agent",
+                "assignee_id": member_assignment_id,
+                "workflow_stage_id": "diagnosis",
+            }, {
+                "assignment_id": "review-agent",
+                "title": "独立复核证据",
+                "instructions": "Review the evidence independently.",
+                "assignee_type": "agent",
+                "assignee_id": reviewer.id,
+                "workflow_stage_id": "diagnosis",
+            }, {
+                "assignment_id": "review-human",
+                "title": "人工确认诊断",
+                "instructions": "Deliver a human review of the evidence.",
+                "assignee_type": "human",
+                "assignee_id": "42",
+                "workflow_stage_id": "diagnosis",
+            }],
+        });
+        if !has_human {
+            plan["items"].as_array_mut().unwrap().truncate(2);
+        }
+        let round = store
+            .submit_collaboration_round(runtime_task_id, &plan)
+            .unwrap();
+        assert_eq!(round["state"], "dispatched");
+        assert_eq!(round["assignments"][0]["agent_name"], "Evidence Bot");
+        assert_eq!(round["assignments"][1]["agent_name"], "Review Bot");
+        let human_task_id = round["assignments"][2]["human_assignment_id"]
+            .as_str()
+            .map(ToOwned::to_owned);
+        if let Some(human_task_id) = human_task_id.as_deref() {
+            assert_eq!(round["assignments"][2]["human_user_name"], "Human reviewer");
+            assert_eq!(round["assignments"][2]["human_user_id"], "42");
+            let human_task = store.get_task(&project.id, human_task_id).unwrap();
+            assert_eq!(human_task.parent_id.as_deref(), Some(issue.id.as_str()));
+            assert_eq!(human_task.assignee_user_id, Some(42));
+            assert_eq!(human_task.title.as_deref(), Some("人工确认诊断"));
+            assert_eq!(
+                human_task.metadata["collaboration_assignment"]["round_id"],
+                "round-1"
+            );
+        }
+        let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
+        let manager = comments
+            .iter()
+            .find(|comment| comment.metadata["dispatch_role"] == "manager")
+            .expect("manager activity must exist");
+        assert_eq!(
+            manager.metadata["dispatch_assignments"][0]["task_title"],
+            "采集运行证据"
+        );
+        assert_eq!(
+            manager.metadata["dispatch_assignments"][0]["agent_name"],
+            "Evidence Bot"
+        );
+        assert_eq!(manager.metadata["dispatch_id"], issue.id);
+        assert_eq!(manager.metadata["activity_type"], "manager_assignment");
+        if has_human {
+            assert_eq!(
+                manager.metadata["dispatch_assignments"][2]["human_user_id"],
+                "42"
+            );
+        }
+        let issue_after_dispatch = store.get_task(&project.id, &issue.id).unwrap();
+        assert_eq!(
+            issue_after_dispatch.assignee_user_id,
+            has_human.then_some(42)
+        );
+        assert_eq!(
+            issue_after_dispatch.assignee_agent_id,
+            (!has_human).then_some(member.id.clone())
+        );
+        let member_activity = comments
+            .iter()
+            .find(|comment| comment.metadata["dispatch_role"] == "member")
+            .expect("member activity must exist");
+        assert_ne!(member_activity.metadata["execution_id"], claimed.id);
+        assert_eq!(
+            member_activity.metadata["workflow_task_title"],
+            "采集运行证据"
+        );
+        let connection = store.connection().unwrap();
+        let settled_manager = execution_row(&connection, claimed.id).unwrap();
+        assert_eq!(settled_manager.status, "completed");
+        assert_eq!(
+            settled_manager.termination_reason,
+            "collaboration_round_dispatched"
+        );
+        drop(connection);
+
+        let first_member_execution = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 2,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("first member execution must be queued");
+        assert_eq!(first_member_execution.agent_id, member.id);
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["title"],
+            "采集运行证据"
+        );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["message"],
+            "任务标题：采集运行证据\n\n执行要求：Collect verifiable evidence."
+        );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["collaboration_model"],
+            "single"
+        );
+        let member_system_prompt = first_member_execution.execution_payload.as_ref().unwrap()
+            ["executionRequest"]["system_prompt"]
+            .as_str()
+            .expect("member system prompt");
+        assert!(member_system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
+        assert!(member_system_prompt.contains("不要调用 add_board_item_comment"));
+        assert!(member_system_prompt.contains("必须调用 upload_item_attachment"));
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["executionRequest"]["bot"]
+                [0]["id"],
+            member.id
+        );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["executionRequest"]["bot"]
+                [0]["mcp_servers"]["evidence"]["command"],
+            "evidence-mcp"
+        );
+        assert_eq!(first_member_execution.execution_scope, "");
+
+        let second_member_execution = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 2,
+                runtime_active: 1,
+                runtime_active_task_ids: vec![first_member_execution
+                    .runtime_task_id
+                    .clone()
+                    .expect("first member must have a Runtime task id")],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("second member execution must be claimable concurrently");
+        assert_eq!(second_member_execution.agent_id, reviewer.id);
+        assert_eq!(
+            second_member_execution.execution_payload.as_ref().unwrap()["title"],
+            "独立复核证据"
+        );
+        assert_eq!(second_member_execution.execution_scope, "");
+
+        let completed_member_id = if retry_member {
+            accept_and_start(&store, &first_member_execution);
+            let retry = store
+                .fail_execution(first_member_execution.id, "Runtime interrupted", true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(retry.previous_execution_id, Some(first_member_execution.id));
+            let claimed_retry = store
+                .claim_next_local_execution(&LocalExecutionClaim {
+                    execution_device_id: Some("local-device".to_owned()),
+                    runtime_instance_id: "runtime-1".to_owned(),
+                    device_capacity: 2,
+                    runtime_active: 1,
+                    runtime_active_task_ids: vec![second_member_execution
+                        .runtime_task_id
+                        .clone()
+                        .unwrap()],
+                    lease_seconds: 300,
+                })
+                .unwrap()
+                .expect("retry must be claimable");
+            assert_eq!(claimed_retry.id, retry.id);
+            accept_and_start(&store, &claimed_retry);
+            retry.id
+        } else {
+            first_member_execution.id
+        };
+        store
+            .complete_execution(completed_member_id, Some("Evidence collected."))
+            .unwrap();
+        assert!(store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 2,
+                runtime_active: 1,
+                runtime_active_task_ids: vec![second_member_execution
+                    .runtime_task_id
+                    .clone()
+                    .expect("second member must have a Runtime task id")],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .is_none());
+        store
+            .complete_execution(
+                second_member_execution.id,
+                Some("Evidence independently reviewed."),
+            )
+            .unwrap();
+        if has_human {
+            assert!(store
+                .claim_next_local_execution(&LocalExecutionClaim {
+                    execution_device_id: Some("local-device".to_owned()),
+                    runtime_instance_id: "runtime-1".to_owned(),
+                    device_capacity: 1,
+                    runtime_active: 0,
+                    runtime_active_task_ids: Vec::new(),
+                    lease_seconds: 300,
+                })
+                .unwrap()
+                .is_none());
+
+            let human_task_id = human_task_id.unwrap();
+            let delivery = store
+                .create_delivery(
+                    &project.id,
+                    &human_task_id,
+                    true,
+                    DeliveryCreate {
+                        markdown: "Human review confirms the evidence.".to_owned(),
+                        chat: None,
+                        source_task: None,
+                    },
+                )
+                .unwrap();
+            store
+                .finalize_delivery(
+                    &human_task_id,
+                    &delivery.id,
+                    crate::task_runtime::DeliveryFinalize::default(),
+                )
+                .unwrap();
+            let delivered_human_task = store.get_task(&project.id, &human_task_id).unwrap();
+            assert_eq!(delivered_human_task.status.as_deref(), Some("completed"));
+            assert_eq!(
+                delivered_human_task.current_delivery_id.as_deref(),
+                Some(delivery.id.as_str())
+            );
+        }
+
+        let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
+        let member_activity = comments
+            .iter()
+            .find(|comment| {
+                comment.metadata["dispatch_role"] == "member"
+                    && comment.content == "Evidence collected."
+            })
+            .expect("member activity must remain present");
+        assert_eq!(member_activity.status, "completed");
+        assert_eq!(member_activity.content, "Evidence collected.");
+
+        let resumed_manager = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap();
+        let resumed_manager = resumed_manager.expect("manager must restart after the batch");
+        assert_eq!(resumed_manager.agent_id, leader.id);
+        assert_eq!(
+            resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
+            "manager"
+        );
+        assert_eq!(
+            resumed_manager.execution_payload.as_ref().unwrap()["collaboration_model"],
+            "single"
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("Evidence collected.")
+        );
+        if has_human {
+            assert!(
+                resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Human review confirms the evidence.")
+            );
+        }
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("Use read-only diagnostics and cite evidence.")
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("Reproducible observations")
+        );
+        assert_eq!(
+            store
+                .get_task(&project.id, &issue.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+    }
+
+    #[test]
+    fn human_assignment_delivery_from_the_issue_settles_the_round() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "squad-human",
+                        "name": "开发",
+                        "instructions": "不管什么事都找 @admin",
+                        "leader": {
+                            "kind": "agent",
+                            "id": leader.id,
+                            "responsibility": "Plan and review."
+                        },
+                        "members": [{
+                            "kind": "human",
+                            "id": "42",
+                            "name": "admin",
+                            "responsibility": "Confirm the observed behavior."
+                        }],
+                        "stages": []
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "看下cpu占用".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let dispatched = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                TaskUpdate {
+                    version: issue.version,
+                    assignee_group_id: Some(Some("squad-human".to_owned())),
+                    execution_payload: Some(json!({
+                        "managerRuntimeRequest": {
+                            "taskId": "manager-template",
+                            "runtime": "codex",
+                            "executionRequest": {
+                                "task_id": "manager-template",
+                                "subtask_id": "manager-template-initial",
+                                "bot": [{
+                                    "id": leader.id,
+                                    "name": "Manager",
+                                    "shell_type": "Codex"
+                                }],
+                                "model_config": {
+                                    "model": "openai",
+                                    "model_id": "gpt-6-sol"
+                                }
+                            }
+                        },
+                        "memberRuntimeProfiles": []
+                    })),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(dispatched.status.as_deref(), Some("in_progress"));
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("manager execution must be queued");
+        accept_and_start(&store, &claimed);
+        let runtime_task_id = claimed
+            .runtime_task_id
+            .as_deref()
+            .expect("manager execution must have a Runtime task id")
+            .to_owned();
+        let round = store
+            .submit_collaboration_round(
+                &runtime_task_id,
+                &json!({
+                    "round_id": "cpu-review-round-1",
+                    "items": [{
+                        "assignment_id": "cpu-review-admin",
+                        "title": "请 @admin 检查 CPU 占用",
+                        "instructions": "Check the CPU load and deliver evidence.",
+                        "assignee_type": "human",
+                        "assignee_id": "42",
+                    }],
+                }),
+            )
+            .unwrap();
+        assert_eq!(round["state"], "dispatched");
+        assert_eq!(round["assignments"][0]["human_user_id"], "42");
+        assert_eq!(round["assignments"][0]["human_user_name"], "admin");
+        assert_eq!(
+            round["assignments"][0]["instructions"],
+            "Check the CPU load and deliver evidence."
+        );
+        let human_task_id = round["assignments"][0]["human_assignment_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let issue_after_dispatch = store.get_task(&project.id, &issue.id).unwrap();
+        assert_eq!(issue_after_dispatch.assignee_user_id, Some(42));
+        assert_eq!(
+            issue_after_dispatch.metadata["assignee_label"],
+            json!("admin")
+        );
+        assert!(issue_after_dispatch.metadata["collaboration_group"].is_null());
+        let human_task = store.get_task(&project.id, &human_task_id).unwrap();
+        assert_eq!(
+            human_task.metadata["collaboration_assignment"]["dispatch_id"],
+            json!(issue.id)
+        );
+
+        let address = RuntimeTaskAddress {
+            device_id: "local-device".to_owned(),
+            task_id: "runtime-human-1".to_owned(),
+            task_title: Some("请 @admin 检查 CPU 占用".to_owned()),
+            backend_task_id: None,
+            model_selection: None,
+            execution_context: None,
+            workflow_node_id: None,
+        };
+        let binding = store
+            .bind_task(
+                &project.id,
+                Some(&issue.id),
+                None,
+                address.clone(),
+                Some(&json!({
+                    "humanAssignmentId": human_task_id,
+                    "dispatchId": issue.id,
+                    "dispatchRoundId": "cpu-review-round-1",
+                    "assignmentId": "cpu-review-admin",
+                })),
+            )
+            .unwrap();
+        assert_eq!(
+            binding.human_assignment_id.as_deref(),
+            Some(human_task_id.as_str())
+        );
+        assert_eq!(
+            binding.dispatch_round_id.as_deref(),
+            Some("cpu-review-round-1")
+        );
+
+        let delivery = store
+            .create_delivery(
+                &project.id,
+                &issue.id,
+                true,
+                DeliveryCreate {
+                    markdown: "CPU load confirmed at 42%.".to_owned(),
+                    chat: None,
+                    source_task: Some(address),
+                },
+            )
+            .unwrap();
+        store
+            .finalize_delivery(&issue.id, &delivery.id, DeliveryFinalize::default())
+            .unwrap();
+        let settled_human_task = store.get_task(&project.id, &human_task_id).unwrap();
+        assert_eq!(settled_human_task.status.as_deref(), Some("completed"));
+        assert_eq!(
+            settled_human_task.current_delivery_id.as_deref(),
+            Some(delivery.id.as_str())
+        );
+        let resumed_manager = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("manager must restart after the human delivery");
+        assert_eq!(resumed_manager.agent_id, leader.id);
+        assert_eq!(
+            resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
+            "manager"
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("CPU load confirmed at 42%.")
+        );
     }
 
     #[test]
@@ -5889,6 +7537,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5898,6 +7548,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -5958,6 +7609,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5967,6 +7620,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6011,6 +7665,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Creator Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6018,6 +7674,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("manual".to_owned()),
                     system_prompt: None,
@@ -6106,6 +7763,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6115,6 +7774,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6177,6 +7837,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Bound Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6184,6 +7846,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6210,6 +7873,8 @@ mod tests {
                 &project.id,
                 &agent.id,
                 ChatAgentUpdate {
+                    execution_policy: None,
+                    model_policy: None,
                     version: agent.version,
                     name: None,
                     display_name: None,
@@ -6218,6 +7883,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: None,
                     capability_description: None,
                     capability_mode: None,
                     system_prompt: None,
@@ -6242,6 +7908,8 @@ mod tests {
                 &project.id,
                 &agent.id,
                 ChatAgentUpdate {
+                    execution_policy: None,
+                    model_policy: None,
                     version: updated.version,
                     name: None,
                     display_name: None,
@@ -6250,6 +7918,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: None,
                     capability_description: None,
                     capability_mode: None,
                     system_prompt: None,
@@ -6271,13 +7940,15 @@ mod tests {
     }
 
     #[test]
-    fn local_claim_respects_device_capacity() {
+    fn local_claim_is_not_gated_by_reported_device_capacity() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent_a = store
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Bot A".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6285,6 +7956,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6306,6 +7978,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Bot B".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6313,6 +7987,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6342,6 +8017,8 @@ mod tests {
                         parent_id: None,
                         tags: vec![],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -6351,6 +8028,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
                         version: task.version,
@@ -6379,8 +8057,10 @@ mod tests {
             .claim_next_local_execution(&claim)
             .unwrap()
             .expect("first robot should claim");
-        // Capacity 1 -> the second robot's run stays queued.
-        assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
+        let second = store
+            .claim_next_local_execution(&claim)
+            .unwrap()
+            .expect("Executor owns its free slots and may claim another run");
 
         let manual_process = LocalExecutionClaim {
             device_capacity: 2,
@@ -6391,28 +8071,33 @@ mod tests {
         assert!(store
             .claim_next_local_execution(&manual_process)
             .unwrap()
-            .is_none());
+            .is_some());
 
         let observed_first = LocalExecutionClaim {
             device_capacity: 2,
             runtime_active: 1,
-            runtime_active_task_ids: vec![first.runtime_task_id.unwrap()],
+            runtime_active_task_ids: vec![
+                first.runtime_task_id.unwrap(),
+                second.runtime_task_id.unwrap(),
+            ],
             ..claim
         };
         assert!(store
             .claim_next_local_execution(&observed_first)
             .unwrap()
-            .is_some_and(|execution| execution.agent_name == "Bot B"));
+            .is_none());
     }
 
     #[test]
-    fn local_claim_allows_configured_robot_parallelism() {
+    fn local_claim_does_not_apply_agent_parallelism_limits() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent = store
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Parallel Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6420,6 +8105,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6449,6 +8135,8 @@ mod tests {
                         parent_id: None,
                         tags: vec![],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -6458,6 +8146,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
                         version: task.version,
@@ -6485,6 +8174,7 @@ mod tests {
 
         assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
         assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
         assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
     }
 
@@ -6496,6 +8186,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Unbound Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6503,6 +8195,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6532,6 +8225,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6541,6 +8236,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6578,6 +8274,51 @@ mod tests {
     }
 
     #[test]
+    fn claimed_execution_fails_when_project_was_archived() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Archived project".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let execution = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .remove(0);
+        store.archive_project(&project.id, project.version).unwrap();
+        assert!(store
+            .claim_next_execution_for_runtime(Some("local-device"), "runtime-1", 300)
+            .is_err());
+        let connection = store.connection().unwrap();
+        let failed = execution_row(&connection, execution.id).unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.termination_reason, "runtime_preflight_failed");
+        assert!(failed.lease_expires_at.is_none());
+    }
+
+    #[test]
     fn local_fail_and_reject_close_agent_comment() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
@@ -6595,6 +8336,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6638,6 +8381,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Manual Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6645,6 +8390,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6673,6 +8419,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6709,6 +8457,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Status Filter Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -6716,6 +8466,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6744,6 +8495,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6753,6 +8506,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6795,6 +8549,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6859,6 +8615,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6888,6 +8646,51 @@ mod tests {
         store
             .request_runtime_start(claimed.id, device_id, task_id, 300)
             .unwrap();
+        store
+            .update_execution_binding_runtime(
+                claimed.id,
+                Some(&json!({
+                    "runtime": "codex",
+                    "threadId": "thread-1",
+                    "workspacePath": "/tmp/wegent/worktrees/codex-queue-1",
+                    "workspaceKind": "worktree",
+                    "worktreeId": "codex-queue-1",
+                })),
+                Some(&json!({
+                    "modelName": "gpt-5.6-sol",
+                    "modelType": "runtime",
+                    "options": {
+                        "codexProviderType": "official"
+                    }
+                })),
+            )
+            .unwrap();
+        let binding = store
+            .list_task_bindings(&task.id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("Runtime start must create an Issue task binding");
+        assert_eq!(
+            binding.execution_context,
+            Some(json!({
+                "runtime": "codex",
+                "threadId": "thread-1",
+                "workspacePath": "/tmp/wegent/worktrees/codex-queue-1",
+                "workspaceKind": "worktree",
+                "worktreeId": "codex-queue-1",
+            }))
+        );
+        assert_eq!(
+            binding.model_selection,
+            Some(json!({
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {
+                    "codexProviderType": "official"
+                }
+            }))
+        );
 
         let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
         connection
@@ -6908,7 +8711,7 @@ mod tests {
         assert_eq!(accepted.status, "claimed");
         assert_eq!(accepted.observed_state, "accepted");
         assert_eq!(accepted.sync_state, "in_sync");
-        assert_eq!(accepted.display_state, "waiting_runtime");
+        assert_eq!(accepted.display_state, "starting");
         assert!(accepted.started_at.is_none());
         assert!(accepted.error_message.is_empty());
 
@@ -6938,6 +8741,8 @@ mod tests {
                         parent_id: None,
                         tags: vec![],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -7010,10 +8815,10 @@ mod tests {
     }
 
     #[test]
-    fn local_recovery_keeps_delivered_run_unknown_instead_of_redelivering() {
+    fn local_recovery_terminalizes_missing_runtime_and_unblocks_agent_queue() {
         let (directory, store, project) = chat_agent_store();
         let agent = make_local_agent(&store, &project.id, "auto");
-        let task = store
+        let stale_task = store
             .create_task(
                 &project.id,
                 TaskCreate {
@@ -7024,6 +8829,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7031,9 +8838,35 @@ mod tests {
         store
             .enqueue_execution(
                 &project.id,
-                &task.id,
+                &stale_task.id,
                 &agent.id,
                 json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let next_task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Run after recovery".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let next_execution = store
+            .enqueue_execution(
+                &project.id,
+                &next_task.id,
+                &agent.id,
+                json!({"text": "next"}),
                 None,
             )
             .unwrap();
@@ -7070,7 +8903,18 @@ mod tests {
         assert_eq!(execution.status, "running");
         assert_eq!(execution.display_state, "unknown");
         assert_eq!(execution.sync_state, "stale");
-        assert!(store
+        let reconciled = store
+            .reconcile_execution_snapshot(claimed.id, "missing", false, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reconciled.status, "queued");
+        assert_eq!(reconciled.previous_execution_id, Some(claimed.id));
+        let failed = execution_row(&store.connection().unwrap(), claimed.id).unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.observed_state, "failed");
+        assert_eq!(failed.sync_state, "in_sync");
+
+        let claimed_next = store
             .claim_next_local_execution(&LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
                 runtime_instance_id: "runtime-1".to_owned(),
@@ -7080,7 +8924,95 @@ mod tests {
                 lease_seconds: 300,
             })
             .unwrap()
-            .is_none());
+            .unwrap();
+        assert_eq!(claimed_next.id, next_execution.id);
+    }
+
+    #[test]
+    fn local_recovery_retries_a_delivered_run_missing_from_runtime() {
+        let (directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Retry missing runtime task".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
+            device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
+            lease_seconds: 300,
+        };
+        let first = store.claim_next_local_execution(&claim).unwrap().unwrap();
+        let device_id = first.runtime_device_id.as_deref().unwrap();
+        let task_id = first.runtime_task_id.as_deref().unwrap();
+        store
+            .request_runtime_start(first.id, device_id, task_id, 300)
+            .unwrap()
+            .expect("start intent must be fenced");
+        store
+            .mark_runtime_dispatch_unknown(
+                first.id,
+                device_id,
+                task_id,
+                "invalid type: null, expected a map",
+            )
+            .unwrap();
+        let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
+        connection
+            .execute(
+                "UPDATE loop_item_executions
+                 SET lease_expires_at = '2000-01-01T00:00:00+00:00'
+                 WHERE id = ?1",
+                params![first.id],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(store.recover_stale_local_executions().unwrap(), (0, 1));
+        let retry = store
+            .reconcile_execution_snapshot(first.id, "missing", false, None)
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(retry.id, first.id);
+        assert_eq!(retry.status, "queued");
+        assert_eq!(retry.previous_execution_id, Some(first.id));
+        let previous = execution_row(&store.connection().unwrap(), first.id).unwrap();
+        assert_eq!(previous.status, "failed");
+        assert_eq!(previous.termination_reason, "runtime_failed");
+        assert_eq!(previous.error_message, "invalid type: null, expected a map");
+        assert_eq!(
+            store
+                .claim_next_local_execution(&claim)
+                .unwrap()
+                .unwrap()
+                .id,
+            retry.id
+        );
     }
 
     #[test]
@@ -7098,6 +9030,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7281,6 +9215,8 @@ mod tests {
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
+                    execution_policy: None,
+                    model_policy: None,
                     name: "Migrated Bot".to_owned(),
                     display_name: None,
                     namespace: None,
@@ -7288,6 +9224,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7316,6 +9253,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7325,6 +9264,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -7363,6 +9303,105 @@ mod tests {
                 provider_config: json!({}),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn local_task_status_history_records_creation_and_all_status_updates() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let created = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Track status".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(created.metadata["status_history"][0]["trigger"], "create");
+        assert_eq!(
+            created.metadata["status_history"][0]["to_status_name"],
+            "待开始"
+        );
+
+        let updated = store
+            .update_task(
+                &project.id,
+                &created.id,
+                TaskUpdate {
+                    version: created.version,
+                    status: Some("in_progress".to_owned()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            updated.metadata["status_history"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(
+            updated.metadata["status_history"][1]["from_status_name"],
+            "待开始"
+        );
+        assert_eq!(
+            updated.metadata["status_history"][1]["to_status_name"],
+            "进行中"
+        );
+
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "UPDATE loop_items SET status = 'in_review', updated_at = ?1 WHERE id = ?2",
+                    params![now(), created.id],
+                )
+                .unwrap();
+        }
+        let reviewed = store.get_task(&project.id, &created.id).unwrap();
+        assert_eq!(
+            reviewed.metadata["status_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            reviewed.metadata["status_history"][2]["to_status_name"],
+            "待确认"
+        );
+
+        let workflow_task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Workflow status".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: Vec::new(),
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: Some(json!({ "nodes": [] })),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            workflow_task.metadata["status_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -7865,10 +9904,16 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
             .unwrap();
+        assert_eq!(
+            store.get_project(&project.id).unwrap().version,
+            project.version
+        );
         let child = store
             .create_task(
                 &project.id,
@@ -7880,6 +9925,8 @@ mod tests {
                     parent_id: Some(parent.id.clone()),
                     tags: vec!["nested".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7917,6 +9964,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7932,6 +9981,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7942,7 +9993,7 @@ mod tests {
                 &project.id,
                 TaskReorder {
                     parent_id: None,
-                    status: "inbox".to_owned(),
+                    status: Some("inbox".to_owned()),
                     item_ids: vec![second.id.clone(), first.id.clone()],
                 },
             )
@@ -7960,6 +10011,54 @@ mod tests {
     }
 
     #[test]
+    fn reorders_local_siblings_across_statuses_without_touching_children() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let create = |title: &str, status: &str, parent_id: Option<String>| {
+            store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value::<TaskCreate>(serde_json::json!({
+                        "title": title, "status": status, "parent_id": parent_id
+                    }))
+                    .unwrap(),
+                )
+                .unwrap()
+        };
+        let first = create("First", "inbox", None);
+        let second = create("Second", "completed", None);
+        let child = create("Child", "inbox", Some(first.id.clone()));
+        let reordered = store
+            .reorder_tasks(
+                &project.id,
+                TaskReorder {
+                    parent_id: None,
+                    status: None,
+                    item_ids: vec![second.id.clone(), first.id.clone(), child.id.clone()],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![second.id.as_str(), first.id.as_str()]
+        );
+        assert_eq!(reordered[0].status.as_deref(), Some("completed"));
+        assert_eq!(reordered[0].sort_order, 0);
+        assert_eq!(reordered[1].sort_order, 1);
+        assert_eq!(
+            store.get_task(&project.id, &child.id).unwrap().sort_order,
+            child.sort_order
+        );
+        assert_eq!(
+            store.get_task(&project.id, &child.id).unwrap().version,
+            child.version
+        );
+    }
+
+    #[test]
     fn binds_and_unbinds_a_runtime_task() {
         let (_directory, store) = store();
         let project = local_project(&store);
@@ -7974,6 +10073,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7994,8 +10095,14 @@ mod tests {
                         "modelType": "public",
                         "options": {"reasoning": "high"},
                     })),
+                    execution_context: Some(json!({
+                        "workspacePath": "/tmp/wegent",
+                        "workspaceKind": "worktree",
+                        "worktreeId": "runtime-1",
+                    })),
                     workflow_node_id: None,
                 },
+                None,
             )
             .unwrap();
 
@@ -8006,6 +10113,14 @@ mod tests {
                 "modelName": "gpt-5.6-sol",
                 "modelType": "public",
                 "options": {"reasoning": "high"},
+            }))
+        );
+        assert_eq!(
+            binding.execution_context,
+            Some(json!({
+                "workspacePath": "/tmp/wegent",
+                "workspaceKind": "worktree",
+                "worktreeId": "runtime-1",
             }))
         );
         assert_eq!(store.list_task_bindings(&task.id).unwrap().len(), 1);
@@ -8040,6 +10155,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8055,14 +10172,16 @@ mod tests {
                     task_title: task.title.clone(),
                     backend_task_id: None,
                     model_selection: None,
+                    execution_context: None,
                     workflow_node_id: None,
                 },
+                None,
             )
             .unwrap();
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "running", 100,)
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 100)
                 .unwrap(),
             1
         );
@@ -8077,7 +10196,7 @@ mod tests {
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "succeeded", 200,)
+                .project_bound_task_status("local-device", "runtime-status-1", "succeeded", 200)
                 .unwrap(),
             1
         );
@@ -8089,30 +10208,10 @@ mod tests {
                 .as_deref(),
             Some("in_review")
         );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .metadata["is_unread"],
-            Value::Null
-        );
-        assert_eq!(
-            store
-                .mark_task_read(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .metadata["is_unread"],
-            Value::Null
-        );
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "running", 150,)
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "queued", 175,)
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 150)
                 .unwrap(),
             0
         );
@@ -8124,32 +10223,16 @@ mod tests {
                 .as_deref(),
             Some("in_review")
         );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .metadata["is_unread"],
-            Value::Null
-        );
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "running", 300,)
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 300)
                 .unwrap(),
             1
         );
         assert_eq!(
             store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("in_progress")
-        );
-
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "archived", 400,)
+                .project_bound_task_status("local-device", "runtime-status-1", "archived", 400)
                 .unwrap(),
             1
         );
@@ -8327,11 +10410,13 @@ mod tests {
                 TaskCreate {
                     title: "Temporary child context".to_owned(),
                     description: String::new(),
-                    status: "inbox".to_owned(),
+                    status: "completed".to_owned(),
                     priority: "none".to_owned(),
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8354,6 +10439,24 @@ mod tests {
                 .metadata["has_additional_context"],
             json!(false)
         );
+
+        let restored = store
+            .restore_task(DEFAULT_WORK_ITEM_PROJECT_ID, &child.id)
+            .unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![child.id.as_str()]
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &parent_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
+        );
     }
 
     #[test]
@@ -8371,6 +10474,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8386,6 +10491,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8402,8 +10509,10 @@ mod tests {
                         task_title: item.title.clone(),
                         backend_task_id: None,
                         model_selection: None,
+                        execution_context: None,
                         workflow_node_id: None,
                     },
+                    None,
                 )
                 .unwrap();
         }
@@ -8441,6 +10550,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8456,6 +10567,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8466,6 +10579,7 @@ mod tests {
             task_title: Some("Runtime".to_owned()),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: None,
         };
 
@@ -8475,10 +10589,11 @@ mod tests {
                 Some(&system_task.id),
                 None,
                 address.clone(),
+                None,
             )
             .unwrap();
         let user_binding = store
-            .bind_task(&user_project.id, Some(&user_task.id), None, address)
+            .bind_task(&user_project.id, Some(&user_task.id), None, address, None)
             .unwrap();
 
         assert_eq!(system_binding.binding_type, "system");
@@ -8528,138 +10643,6 @@ mod tests {
     }
 
     #[test]
-    fn validates_local_workflow_task_bindings() {
-        let (_directory, store) = store();
-        let project = local_project(&store);
-        let project = store
-            .update_project(
-                &project.id,
-                ProjectUpdate {
-                    version: project.version,
-                    workflow_definition: Some(json!({
-                        "version": 1,
-                        "nodes": [
-                            {
-                                "id": "develop",
-                                "name": "Develop",
-                                "kind": "my_task",
-                                "depends_on": [],
-                                "required": true,
-                                "workspace_policy": "composer"
-                            },
-                            {
-                                "id": "test",
-                                "name": "Test",
-                                "kind": "my_task",
-                                "depends_on": ["develop"],
-                                "required": true,
-                                "workspace_policy": "inherit"
-                            }
-                        ]
-                    })),
-                    ..ProjectUpdate::default()
-                },
-            )
-            .unwrap();
-        let task = store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    title: "Workflow task".to_owned(),
-                    description: String::new(),
-                    status: "pending".to_owned(),
-                    priority: "none".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-
-        store
-            .bind_task(
-                &project.id,
-                Some(&task.id),
-                None,
-                RuntimeTaskAddress {
-                    device_id: "local-device".to_owned(),
-                    task_id: "runtime-1".to_owned(),
-                    task_title: Some("Develop".to_owned()),
-                    backend_task_id: None,
-                    model_selection: None,
-                    workflow_node_id: Some("develop".to_owned()),
-                },
-            )
-            .unwrap();
-
-        let additional = store
-            .bind_task(
-                &project.id,
-                Some(&task.id),
-                None,
-                RuntimeTaskAddress {
-                    device_id: "local-device".to_owned(),
-                    task_id: "runtime-2".to_owned(),
-                    task_title: Some("Additional develop".to_owned()),
-                    backend_task_id: None,
-                    model_selection: None,
-                    workflow_node_id: Some("develop".to_owned()),
-                },
-            )
-            .unwrap();
-        assert_eq!(additional.workflow_node_id.as_deref(), Some("develop"));
-
-        let current = store.get_task(&project.id, &task.id).unwrap();
-        let mut workflow = current.metadata["workflow"].clone();
-        workflow["nodes"][0]["status"] = json!("awaiting_approval");
-        store
-            .update_task(
-                &project.id,
-                &task.id,
-                TaskUpdate {
-                    assignee_group_id: None,
-                    assignee_user_id: None,
-                    version: current.version,
-                    workflow: Some(Some(workflow)),
-                    ..TaskUpdate::default()
-                },
-            )
-            .unwrap();
-        let correction = store
-            .bind_task(
-                &project.id,
-                Some(&task.id),
-                None,
-                RuntimeTaskAddress {
-                    device_id: "local-device".to_owned(),
-                    task_id: "runtime-correction".to_owned(),
-                    task_title: Some("Correct develop".to_owned()),
-                    backend_task_id: None,
-                    model_selection: None,
-                    workflow_node_id: Some("develop".to_owned()),
-                },
-            )
-            .unwrap();
-        assert_eq!(correction.workflow_node_id.as_deref(), Some("develop"));
-
-        let blocked = store.bind_task(
-            &project.id,
-            Some(&task.id),
-            None,
-            RuntimeTaskAddress {
-                device_id: "local-device".to_owned(),
-                task_id: "runtime-3".to_owned(),
-                task_title: Some("Test".to_owned()),
-                backend_task_id: None,
-                model_selection: None,
-                workflow_node_id: Some("test".to_owned()),
-            },
-        );
-        assert!(matches!(blocked, Err(TaskRuntimeError::Invalid(_))));
-    }
-
-    #[test]
     fn stores_project_content_without_persisting_external_issues() {
         let (_directory, store) = store();
         let local_project = local_project(&store);
@@ -8674,6 +10657,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8845,6 +10830,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: Some(json!({
                         "version": 1,
                         "nodes": [{
@@ -8867,10 +10854,11 @@ mod tests {
             task_title: Some("Implement".to_owned()),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: Some("develop".to_owned()),
         };
         store
-            .bind_task(&project.id, Some(&task.id), None, address.clone())
+            .bind_task(&project.id, Some(&task.id), None, address.clone(), None)
             .unwrap();
         let delivery = store
             .create_delivery(

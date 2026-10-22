@@ -141,9 +141,9 @@ pub(crate) fn current_user_response(
 }
 
 /// The `UserPreferences`-modeled preference keys the response echoes.
-/// Dynamic-keyed objects (`wework_project_work_preferences`,
-/// `runtime_configs`, `options`) echo their stored JSON verbatim through
-/// [`RawEcho`].
+/// Dynamic-keyed objects (`wework_project_work_preferences`, `options`) echo
+/// their stored JSON verbatim through [`brz_json::RawJson`];
+/// `runtime_configs` is re-materialized from its declared nested model.
 #[derive(Debug, Default, Deserialize)]
 struct EchoedPreferences {
     #[serde(default)]
@@ -161,6 +161,8 @@ struct EchoedPreferences {
     #[serde(default)]
     tool_output_guard_enabled: Option<bool>,
     #[serde(default)]
+    mcp_provider_keys: Option<McpProviderKeys>,
+    #[serde(default)]
     quick_access: Option<QuickAccessPreference>,
     #[serde(default)]
     composer_quick_phrases: Option<Vec<ComposerQuickPhrase>>,
@@ -171,9 +173,26 @@ struct EchoedPreferences {
     #[serde(default)]
     wework_project_execution_mode: Option<String>,
     #[serde(default)]
-    wework_project_work_preferences: Option<RawEcho>,
+    wework_project_work_preferences: Option<brz_json::RawJson>,
     #[serde(default)]
-    runtime_configs: Option<RawEcho>,
+    runtime_configs: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// `MCPProviderKeys` (`extra="allow"`): the three legacy provider-key fields
+/// plus every extension provider key. The source model always materializes
+/// `bailian`, `modelscope` and `mcp_router` (schema default `None`), so an
+/// absent key renders `null`; because extensions are allowed, a stored key the
+/// model does not declare echoes verbatim rather than being dropped.
+#[derive(Debug, Default, Deserialize, serde::Serialize)]
+struct McpProviderKeys {
+    #[serde(default)]
+    bailian: Option<String>,
+    #[serde(default)]
+    modelscope: Option<String>,
+    #[serde(default)]
+    mcp_router: Option<String>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// `QuickAccessPreference`: both fields re-materialize their schema default
@@ -212,7 +231,7 @@ struct ModelSelectionPreference {
     #[serde(rename = "modelType", default)]
     model_type: Option<String>,
     #[serde(default)]
-    options: Option<RawEcho>,
+    options: Option<brz_json::RawJson>,
 }
 
 /// `ComposerQuickPhrase`: `id`, `title`, `content` and `mode` are required;
@@ -280,24 +299,6 @@ impl ComposerQuickPhrase {
     }
 }
 
-/// A raw JSON document echoed verbatim through `raw_value` (dynamic keys,
-/// no materialized dynamic value). Deserialization captures the exact
-/// stored serialization, which re-emits byte-identical JSON.
-#[derive(Debug, Clone)]
-struct RawEcho(Box<serde_json::value::RawValue>);
-
-impl<'de> Deserialize<'de> for RawEcho {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Box::<serde_json::value::RawValue>::deserialize(deserializer).map(RawEcho)
-    }
-}
-
-impl serde::Serialize for RawEcho {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-
 /// `UserPreferences`'s serialized shape: known fields keep their stored
 /// non-null value or fall back to the schema default; unknown fields are
 /// dropped; nested dict fields coerce to `{}` when absent. A
@@ -312,7 +313,7 @@ struct PreferencesResponse {
     memory_enabled: bool,
     chat_status_items: Option<Vec<String>>,
     tool_output_guard_enabled: bool,
-    mcp_provider_keys: Option<RawEcho>,
+    mcp_provider_keys: Option<McpProviderKeys>,
     quick_access: Option<QuickAccessResponse>,
     composer_quick_phrases: Option<Vec<ComposerQuickPhraseResponse>>,
     default_execution_target: Option<String>,
@@ -320,15 +321,15 @@ struct PreferencesResponse {
     wework_project_execution_mode: String,
     #[serde(flatten)]
     extra: crate::user_profile::ErasedFields,
-    wework_project_work_preferences: RawEcho,
-    runtime_configs: RawEcho,
+    wework_project_work_preferences: brz_json::RawJson,
+    runtime_configs: serde_json::Value,
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelSelectionResponse {
     model_name: Option<String>,
     model_type: Option<String>,
-    options: RawEcho,
+    options: brz_json::RawJson,
 }
 
 fn preferences_view(
@@ -366,7 +367,7 @@ fn preferences_view(
         memory_enabled: source.memory_enabled.unwrap_or(false),
         chat_status_items: source.chat_status_items,
         tool_output_guard_enabled: source.tool_output_guard_enabled.unwrap_or(false),
-        mcp_provider_keys: None,
+        mcp_provider_keys: source.mcp_provider_keys,
         quick_access: source.quick_access.map(QuickAccessResponse::from),
         composer_quick_phrases,
         default_execution_target: source.default_execution_target,
@@ -378,14 +379,39 @@ fn preferences_view(
         wework_project_work_preferences: source
             .wework_project_work_preferences
             .unwrap_or_else(empty_object_echo),
-        runtime_configs: source.runtime_configs.unwrap_or_else(empty_object_echo),
+        runtime_configs: runtime_configs_view(source.runtime_configs),
     })
+}
+
+/// `runtime_configs: dict[str, UserRuntimeConfigPreference]`: every stored
+/// runtime document is validated against the declared model, so only
+/// `use_user_config` (default `false`) is rendered and unknown nested keys
+/// such as `use_proxy` are dropped. Entries keep the stored document order.
+fn runtime_configs_view(
+    configs: Option<serde_json::Map<String, serde_json::Value>>,
+) -> serde_json::Value {
+    let Some(configs) = configs else {
+        return serde_json::Value::Object(serde_json::Map::new());
+    };
+    let mut rendered = serde_json::Map::new();
+    for (runtime, config) in configs {
+        let use_user_config = config
+            .as_object()
+            .and_then(|object| object.get("use_user_config"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        rendered.insert(
+            runtime,
+            serde_json::json!({ "use_user_config": use_user_config }),
+        );
+    }
+    serde_json::Value::Object(rendered)
 }
 
 /// The `{}` document for a schema-defaulted nested dict field
 /// (`default_factory=dict`).
-fn empty_object_echo() -> RawEcho {
-    RawEcho(serde_json::value::RawValue::from_string("{}".to_string()).expect("valid JSON"))
+fn empty_object_echo() -> brz_json::RawJson {
+    brz_json::RawJson::from_string("{}".to_string()).expect("valid JSON")
 }
 
 /// `git_info: Optional[List[GitInfo]]`: JSON `null` (the recorded column)
@@ -629,6 +655,19 @@ mod tests {
         );
     }
 
+    /// `UserRuntimeConfigPreference` declares only `use_user_config`
+    /// (default `false`), so a stored document's extra keys (the persisted
+    /// `use_proxy` flag) never reach the response.
+    #[test]
+    fn runtime_configs_drop_unknown_keys() {
+        let preferences = r#"{"runtime_configs":{"codex":{"use_user_config":false,"use_proxy":false},"claude":{"use_proxy":true}}}"#;
+        let body = serde_json::to_value(user_in_db_response(&user_row(preferences))).unwrap();
+        assert_eq!(
+            serde_json::to_string(&body["preferences"]["runtime_configs"]).unwrap(),
+            r#"{"codex":{"use_user_config":false},"claude":{"use_user_config":false}}"#
+        );
+    }
+
     #[test]
     fn git_info_list_materializes_every_field() {
         let mut row = user_row("{}");
@@ -657,6 +696,41 @@ mod tests {
         row.git_info = brz_mysql::Json(json!({"git_domain": "x"}).into());
         let body = serde_json::to_value(user_in_db_response(&row)).unwrap();
         assert!(body["git_info"].is_null());
+    }
+
+    #[test]
+    fn mcp_provider_keys_echo_the_stored_document() {
+        // `UserPreferences.mcp_provider_keys` is `Optional[MCPProviderKeys]`;
+        // the recorded document keeps the three legacy fields, all echoed.
+        let preferences = r#"{"mcp_provider_keys": {"bailian": "key-a", "modelscope": "key-b", "mcp_router": "key-c"}}"#;
+        let body = serde_json::to_value(user_in_db_response(&user_row(preferences))).unwrap();
+        assert_eq!(
+            body["preferences"]["mcp_provider_keys"],
+            json!({"bailian": "key-a", "modelscope": "key-b", "mcp_router": "key-c"})
+        );
+    }
+
+    #[test]
+    fn absent_mcp_provider_keys_renders_null() {
+        let body = serde_json::to_value(user_in_db_response(&user_row("{}"))).unwrap();
+        assert!(body["preferences"].is_null());
+        let body = serde_json::to_value(user_in_db_response(&user_row(r#"{"send_key":"enter"}"#)))
+            .unwrap();
+        assert!(body["preferences"]["mcp_provider_keys"].is_null());
+    }
+
+    #[test]
+    fn mcp_provider_keys_materialize_declared_fields_and_echo_extensions() {
+        // `MCPProviderKeys` declares `bailian`/`modelscope`/`mcp_router` with
+        // `None` defaults and `extra="allow"`, so a stored document with one
+        // legacy key and an extension key materializes all three declared
+        // fields and echoes the extension.
+        let preferences = r#"{"mcp_provider_keys": {"bailian": "k", "acme": {"token": "t"}}}"#;
+        let body = serde_json::to_value(user_in_db_response(&user_row(preferences))).unwrap();
+        assert_eq!(
+            body["preferences"]["mcp_provider_keys"],
+            json!({"bailian": "k", "modelscope": null, "mcp_router": null, "acme": {"token": "t"}})
+        );
     }
 
     #[test]

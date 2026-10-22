@@ -10,10 +10,12 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -37,6 +39,8 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'capture-workspace': 'captureWorkspaceWindow',
   snapshot: 'snapshot',
   debug: 'getWorkbenchDebugSnapshot',
+  'conversation-diagnostics': 'getConversationDiagnosticsSnapshot',
+  'conversation-frame-probe': 'setConversationFrameProbeEnabled',
   'active-element': 'getActiveElementTestId',
   'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
   click: 'click',
@@ -95,6 +99,8 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
   'capture-workspace',
   'snapshot',
   'debug',
+  'conversation-diagnostics',
+  'conversation-frame-probe',
   'active-element',
   'activate-task-notification',
   'click-at',
@@ -133,8 +139,11 @@ function usage() {
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
+  --executor-home PATH      Use an explicitly selected existing executor home
   --packaged true           Launch the packaged app instead of Electron source mode
+  --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
+  --window LABEL            Target window label (defaults to main)
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
                             paste-paths, or drop-paths
@@ -190,12 +199,33 @@ export function resolveOptionalBoolean(value, optionName) {
 }
 
 export function validateStartOptions(options) {
-  const allowedOptions = new Set(['codex-home-initialization', 'packaged', 'timeout'])
+  const allowedOptions = new Set([
+    'codex-home-initialization',
+    'executor-home',
+    'packaged',
+    'timeout',
+    'rollout',
+  ])
   const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
   if (unexpectedOption) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  if (options['executor-home'] !== undefined) {
+    const executorHome = options['executor-home'].trim()
+    if (!executorHome || !isAbsolute(executorHome)) {
+      throw new Error('--executor-home must be a nonempty absolute path')
+    }
+    if (options['codex-home-initialization'] === 'true') {
+      throw new Error('--executor-home cannot be combined with --codex-home-initialization true')
+    }
+    if (options.rollout) {
+      throw new Error('--rollout cannot be combined with --executor-home')
+    }
+  }
+  if (options.rollout && options['codex-home-initialization'] === 'true') {
+    throw new Error('--rollout cannot be combined with --codex-home-initialization')
+  }
 }
 
 function json(response, status, value) {
@@ -247,6 +277,21 @@ export function acknowledgeStartedCommand(pending, started) {
 
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
+  if (process.platform === 'win32') {
+    await new Promise((resolvePromise, reject) => {
+      execFile(
+        'taskkill',
+        windowsTaskkillArguments(session.launcherPid),
+        { windowsHide: true },
+        error => {
+          if (error && (typeof error.code !== 'number' || processIsAlive(session.launcherPid)))
+            reject(error)
+          else resolvePromise()
+        }
+      )
+    })
+    return
+  }
   await signalProcessGroup(session.launcherPid, 'TERM')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
   await signalProcessGroup(session.launcherPid, 'KILL')
@@ -440,11 +485,17 @@ export function monitorAppProcess(app, pending, onExit) {
   })
 }
 
+export function takeWindowCommand(queue, windowLabel) {
+  const index = queue.findIndex(command => command.windowLabel === windowLabel)
+  return index < 0 ? null : queue.splice(index, 1)[0]
+}
+
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
   const pending = new Map()
   let ready = null
+  const readyByClientId = new Map()
   let app = null
   let appExit = null
   let shutdownPromise = null
@@ -460,10 +511,12 @@ async function runServer(sessionPath, token) {
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
+        readyByClientId.set(ready.clientId, ready)
         return json(response, 200, { ok: true })
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
-        const command = queue.shift()
+        const client = readyByClientId.get(url.searchParams.get('clientId'))
+        const command = takeWindowCommand(queue, client?.windowLabel)
         if (command) return json(response, 200, command)
         response.writeHead(204, corsHeaders)
         return response.end()
@@ -511,7 +564,7 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        const nextCommand = { id, ...command }
+        const nextCommand = { id, windowLabel: 'main', ...command }
         queue.push(nextCommand)
         try {
           return json(response, 200, {
@@ -563,7 +616,7 @@ async function runServer(sessionPath, token) {
   process.once('SIGTERM', () => void shutdown(143))
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
-  const executorHome = join(session.directory, 'executor-home')
+  const executorHome = session.executorHomeOverride ?? join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
   const nativeCodexHome = session.verifyCodexHomeInitialization
     ? join(session.directory, 'native-codex')
@@ -645,6 +698,8 @@ async function main() {
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
     validateStartOptions(options)
+    const rolloutSource = options.rollout ? resolve(options.rollout) : undefined
+    if (rolloutSource) await readRolloutHeader(rolloutSource)
     const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
     await prepareElectronApp({ packaged })
     const launch = resolveElectronLaunch({
@@ -658,6 +713,9 @@ async function main() {
       `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
     )
     await mkdir(directory, { recursive: true })
+    const rolloutReplay = rolloutSource
+      ? await seedAiVerifyRollout(rolloutSource, directory)
+      : undefined
     const token = randomBytes(32).toString('hex')
     await readFile(launch.command)
     const sessionPath = join(directory, 'session.json')
@@ -671,7 +729,9 @@ async function main() {
           token,
           status: 'starting',
           launchMode: packaged ? 'packaged' : 'source',
+          executorHomeOverride: options['executor-home']?.trim(),
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
+          rolloutReplay,
         },
         null,
         2
@@ -722,7 +782,11 @@ async function main() {
             lastStatus = await request(session, token, '/status')
             if (lastStatus.ready) {
               console.log(
-                JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
+                JSON.stringify(
+                  { session: sessionPath, controlUrl: session.controlUrl, rolloutReplay },
+                  null,
+                  2
+                )
               )
               return
             }
@@ -778,6 +842,7 @@ async function main() {
   const effectiveTimeoutMs = resolveCommandTimeout(options.timeout)
   const value = await request(session, session.token, '/command', 'POST', {
     action,
+    windowLabel: options.window ?? 'main',
     selector,
     target: options.target,
     value: dropFilePath ? (await readFile(dropFilePath)).toString('base64') : options.value,

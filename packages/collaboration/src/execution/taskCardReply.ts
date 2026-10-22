@@ -1,11 +1,7 @@
 import type { ProjectChatMessage } from "@wegent/chat-core";
 import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { RuntimePaneQueuedMessage } from "@wegent/chat-core/conversation-queue";
-import {
-  localRuntimeAttachments,
-  remoteAttachmentIds,
-} from "@wegent/chat-core/runtime-attachments";
-import { createRuntimeUserMessage } from "./runtimeUserMessage";
+import { remoteAttachmentIds } from "@wegent/chat-core/runtime-attachments";
 import {
   startTaskAiRun,
   type CommentExecutionTask,
@@ -55,27 +51,15 @@ export function cardSessionActive(
   card: TaskReplyCard,
   busy: (address: RuntimeTaskAddress) => boolean | undefined,
 ): boolean {
-  return [card.root, ...card.replies].some((message) => {
-    if (message.sender.type !== "agent") return false;
-    const running = message.runtimeAddress
-      ? busy(message.runtimeAddress)
-      : undefined;
-    return (
-      running ??
-      (message.status === "pending" || message.status === "streaming")
-    );
-  });
-}
-export function isCustomAutomationManager(
-  message: ProjectChatMessage,
-): boolean {
-  return (
-    message.sender.type === "agent" &&
-    message.metadata.executor_type === "automation_manager" &&
-    message.metadata.manager_type === "custom"
+  const messages = [card.root, ...card.replies].filter(
+    (message) => message.sender.type === "agent",
   );
+  const currentAddress = cardSessionAddress(card);
+  const live = currentAddress ? busy(currentAddress) : undefined;
+  if (live !== undefined) return live;
+  const current = messages.at(-1);
+  return current?.status === "pending" || current?.status === "streaming";
 }
-
 export interface TaskCardReplyInput<
   Project,
   Task extends CommentExecutionTask,
@@ -85,6 +69,7 @@ export interface TaskCardReplyInput<
 > {
   card: TaskReplyCard;
   reply: RuntimePaneQueuedMessage;
+  sessionAddress?: RuntimeTaskAddress | null;
   agent?: { id: string; name: string; systemPrompt?: string; runtime?: string };
   selfManagedExecution?: boolean;
   prepareComment?(
@@ -106,7 +91,6 @@ export async function dispatchTaskCardReply<
     task,
     card,
     reply,
-    runtime,
     onMessages,
     startFailedText,
     sendFailedText,
@@ -128,8 +112,7 @@ export async function dispatchTaskCardReply<
     : input.agent;
   const rootId = card.root.messageId;
   const attachments = reply.attachments ?? [];
-  const address = cardSessionAddress(card);
-  const customManager = isCustomAutomationManager(card.root);
+  const address = input.sessionAddress ?? cardSessionAddress(card);
   let persisted = false;
   let executionError: string | null = null;
   const onError = (error: string) => {
@@ -138,14 +121,7 @@ export async function dispatchTaskCardReply<
   };
   if (!reply.content.trim())
     return { ok: false, persisted, error: sendFailedText };
-  const serverExecution =
-    project.project_store === "backend" && client.executeTaskComment;
-  if (
-    !serverExecution &&
-    customManager &&
-    (!client.continueAutomationManager || !address)
-  )
-    return { ok: false, persisted, error: startFailedText };
+  const serverExecution = client.executeTaskComment;
   try {
     const text = input.prepareComment
       ? await input.prepareComment(reply.content, attachments)
@@ -158,13 +134,13 @@ export async function dispatchTaskCardReply<
       // A local self-managed reply is continued below through the card's
       // runtime address. Mention-driven enqueue is reserved for a new root
       // comment; including the mention here would create a second session.
-      mentions:
-        !serverExecution &&
-        agent &&
-        !customManager &&
-        !(input.selfManagedExecution && address)
-          ? [{ type: "agent", id: agent.id, label: agent.name }]
-          : [],
+      mentions: [
+        ...(!serverExecution && agent && !input.selfManagedExecution
+          ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
+          : []),
+        // Members the reply composer mentioned are addressed, not enqueued.
+        ...(reply.mentions ?? []).filter((mention) => mention.type === "user"),
+      ],
       replyToMessageId: rootId,
       model: null,
     });
@@ -180,58 +156,9 @@ export async function dispatchTaskCardReply<
           attachmentIds: remoteAttachmentIds(attachments),
         }),
       );
-    } else if (customManager && address) {
-      let pending: ProjectChatMessage | undefined;
-      try {
-        pending = await client.continueAutomationManager!({
-          projectId: project.id,
-          taskId: task.id,
-          triggerMessageId: message.messageId,
-          managerMessageId: rootId,
-        });
-        onMessages([pending]);
-        const continued = await runtime.sendRuntimePaneMessage(
-          {
-            address,
-            message: message.content,
-            collaborationMode: "default",
-            attachmentIds: remoteAttachmentIds(attachments),
-            attachments: localRuntimeAttachments(attachments),
-          },
-          {
-            optimisticUserMessage: createRuntimeUserMessage(
-              message.content,
-              attachments,
-              {
-                id: pending.messageId,
-              },
-            ),
-            onError,
-          },
-        );
-        if (!continued) throw new Error(executionError ?? startFailedText);
-      } catch (cause) {
-        const error = cause instanceof Error ? cause.message : startFailedText;
-        if (pending) {
-          try {
-            onMessages([
-              await client.failAgentResponse({
-                projectId: project.id,
-                taskId: task.id,
-                messageId: pending.messageId,
-                error,
-              }),
-            ]);
-          } catch (cleanupError) {
-            onError(
-              `${error}; ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-            );
-            return { ok: false, persisted, error: executionError ?? error };
-          }
-        }
-        throw cause;
-      }
-    } else if (agent && (!input.selfManagedExecution || address)) {
+    } else if (agent) {
+      if (input.selfManagedExecution && !address)
+        throw new Error(startFailedText);
       if (agent.runtime === "wegent") {
         if (!client.continueWegentTask) throw new Error(startFailedText);
         onMessages([
@@ -254,6 +181,7 @@ export async function dispatchTaskCardReply<
             ? {
                 runtimeDeviceId: address.deviceId,
                 runtimeTaskId: address.taskId,
+                address,
               }
             : null,
           threadRootId: rootId,

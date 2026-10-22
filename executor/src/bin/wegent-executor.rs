@@ -24,13 +24,10 @@ const RUNTIME_SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
 const WATCHDOG_EXIT_GRACE: Duration = Duration::from_secs(3);
 
 #[cfg(any(target_os = "macos", test))]
-const OPEN_FILES_SOFT_LIMIT: libc::rlim_t = 65_536;
+const OPEN_FILES_SOFT_LIMIT: u64 = 65_536;
 
 #[cfg(any(target_os = "macos", test))]
-fn open_files_soft_limit_target(
-    hard_limit: libc::rlim_t,
-    kernel_limit: Option<libc::rlim_t>,
-) -> libc::rlim_t {
+fn open_files_soft_limit_target(hard_limit: u64, kernel_limit: Option<u64>) -> u64 {
     let target = OPEN_FILES_SOFT_LIMIT.min(hard_limit);
     kernel_limit.map_or(target, |limit| target.min(limit))
 }
@@ -95,6 +92,67 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--workbench-project-state") {
+        if let Err(error) = wegent_executor::runtime_work::run_project_state_query() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--migrate-workspace-metadata") {
+        let args: Vec<_> = env::args().skip(2).collect();
+        let result = match args.as_slice() {
+            [root, stopped] if stopped == "--executor-stopped" =>
+                wegent_executor::migrate_workspace_metadata(std::path::Path::new(root)),
+            _ => Err("Stop every executor sharing this workspace, then run --migrate-workspace-metadata <absolute-workspace-root> --executor-stopped".into()),
+        };
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        println!("Workspace metadata migration complete; repositories were not moved");
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--workbench-codex-migration-check") {
+        let result = env::args()
+            .nth(2)
+            .ok_or_else(|| "Missing Codex Home".to_owned())
+            .and_then(|home| {
+                wegent_executor::local::workbench_codex_migration::check(std::path::Path::new(
+                    &home,
+                ))
+            });
+        // Return bounded, credential-free diagnostics without initializing the runtime.
+        println!(
+            "{}",
+            match result {
+                Ok(()) => serde_json::json!({"codex_home_migration": 1, "allowed": true}),
+                Err(reason) =>
+                    serde_json::json!({"codex_home_migration": 1, "allowed": false, "reason": reason}),
+            }
+        );
+        return;
+    }
+    if env::args().nth(1).as_deref() == Some("--workbench-lock") {
+        let result = env::args()
+            .nth(2)
+            .ok_or_else(|| "Missing migration lock resources".to_owned())
+            .and_then(|resources| {
+                wegent_executor::local::workbench_lock::run(
+                    &resources,
+                    env::args().any(|argument| argument == "--workbench-lock-wait"),
+                )
+            });
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if wegent_executor::local::workbench_schema::is_query(env::args().skip(1)) {
+        println!("{}", wegent_executor::local::workbench_schema::response());
+        return;
+    }
     raise_open_files_soft_limit();
     if wegent_executor::plugin_workspace_cli::is_plugin_workspace_command() {
         if let Err(error) = runtime().block_on(wegent_executor::plugin_workspace_cli::run()) {
@@ -145,6 +203,9 @@ fn main() {
     } else {
         None
     };
+    // Loopback backend sockets must bypass system HTTP proxies. Set this before
+    // Tokio starts: POSIX environment mutation can race with TLS and DNS readers.
+    env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
     let runtime_instance = runtime();
     let outcome = runtime_instance.block_on(wegent_executor::app::run_with_shell_environment(
         args,
@@ -229,7 +290,7 @@ mod tests {
     #[test]
     fn open_files_target_uses_configured_limit_when_supported() {
         assert_eq!(
-            open_files_soft_limit_target(libc::RLIM_INFINITY, Some(245_760)),
+            open_files_soft_limit_target(u64::MAX, Some(245_760)),
             OPEN_FILES_SOFT_LIMIT
         );
     }
@@ -241,9 +302,6 @@ mod tests {
 
     #[test]
     fn open_files_target_respects_macos_kernel_limit() {
-        assert_eq!(
-            open_files_soft_limit_target(libc::RLIM_INFINITY, Some(24_576)),
-            24_576
-        );
+        assert_eq!(open_files_soft_limit_target(u64::MAX, Some(24_576)), 24_576);
     }
 }

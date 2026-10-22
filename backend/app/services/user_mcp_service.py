@@ -26,6 +26,31 @@ MCP_ROOT_KEY = "mcps"
 MCP_SERVICES_KEY = "services"
 MCP_CREDENTIALS_KEY = "credentials"
 MCP_URL_KEY = "url"
+MCP_AUTH_MODE_KEY = "auth_mode"
+MCP_AUTH_MODE_URL = "url"
+MCP_AUTH_MODE_OAUTH = "oauth"
+MCP_OAUTH_KEY = "oauth"
+MCP_ACCESS_TOKEN_KEY = "access_token"
+MCP_REFRESH_TOKEN_KEY = "refresh_token"
+MCP_EXPIRES_AT_KEY = "expires_at"
+MCP_SCOPE_KEY = "scope"
+MCP_ACCOUNT_KEY = "account"
+
+
+def _encrypt(value: str) -> str:
+    """Encrypt a value unless it is already stored encrypted."""
+    if not value:
+        return ""
+    return value if is_data_encrypted(value) else encrypt_sensitive_data(value)
+
+
+def _decrypt(value: Any) -> str:
+    """Decrypt a stored value, tolerating plaintext for backwards compatibility."""
+    if not isinstance(value, str) or not value:
+        return ""
+    if is_data_encrypted(value):
+        return decrypt_sensitive_data(value) or ""
+    return value
 
 
 class UserMCPService:
@@ -73,9 +98,24 @@ class UserMCPService:
         else:
             url = ""
 
+        refresh_token = _decrypt(credentials.get(MCP_REFRESH_TOKEN_KEY))
+        access_token = _decrypt(credentials.get(MCP_ACCESS_TOKEN_KEY))
+        expires_at = credentials.get(MCP_EXPIRES_AT_KEY)
+        account = _decrypt(credentials.get(MCP_ACCOUNT_KEY))
+
+        auth_mode = service.get(MCP_AUTH_MODE_KEY)
+        if auth_mode not in {MCP_AUTH_MODE_URL, MCP_AUTH_MODE_OAUTH}:
+            auth_mode = MCP_AUTH_MODE_URL
+
         return {
             "enabled": bool(service.get("enabled", False)),
             "url": url,
+            "auth_mode": auth_mode,
+            "oauth_connected": bool(access_token or refresh_token),
+            "oauth_expires_at": (
+                int(expires_at) if isinstance(expires_at, int) else None
+            ),
+            "oauth_account": account or None,
         }
 
     @staticmethod
@@ -263,6 +303,7 @@ class UserMCPService:
         service_id: str,
         enabled: bool,
         url: str,
+        auth_mode: str | None = None,
     ) -> dict[str, Any]:
         """Update a provider MCP service config inside user preferences."""
         if not UserMCPService.get_provider_service_definition(
@@ -283,23 +324,205 @@ class UserMCPService:
 
         cleaned_url = url.strip()
         if cleaned_url:
-            credentials[MCP_URL_KEY] = (
-                cleaned_url
-                if is_data_encrypted(cleaned_url)
-                else encrypt_sensitive_data(cleaned_url)
-            )
+            credentials[MCP_URL_KEY] = _encrypt(cleaned_url)
         else:
             credentials.pop(MCP_URL_KEY, None)
 
         service["enabled"] = enabled
+        if auth_mode is not None:
+            if auth_mode not in {MCP_AUTH_MODE_URL, MCP_AUTH_MODE_OAUTH}:
+                raise ValueError(f"Unsupported MCP auth mode: {auth_mode}")
+            service[MCP_AUTH_MODE_KEY] = auth_mode
+        if credentials:
+            service[MCP_CREDENTIALS_KEY] = credentials
+        else:
+            service.pop(MCP_CREDENTIALS_KEY, None)
+        if auth_mode == MCP_AUTH_MODE_URL:
+            # Switching to a personal URL drops stored OAuth tokens so a
+            # long-lived refresh token does not survive the mode change.
+            UserMCPService._clear_oauth_credentials(service)
+
+        services[service_id] = service
+        provider[MCP_SERVICES_KEY] = services
+
+        mcps[provider_id] = provider
+        prefs[MCP_ROOT_KEY] = mcps
+        return prefs
+
+    @staticmethod
+    def get_service_auth_mode(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> str:
+        """Return the configured authentication mode of a provider service."""
+        service = UserMCPService._get_service(
+            UserMCPService.load_preferences(preferences),
+            provider_id,
+            service_id,
+        )
+        auth_mode = service.get(MCP_AUTH_MODE_KEY)
+        return (
+            auth_mode
+            if auth_mode in {MCP_AUTH_MODE_URL, MCP_AUTH_MODE_OAUTH}
+            else MCP_AUTH_MODE_URL
+        )
+
+    @staticmethod
+    def set_service_auth_mode(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+        auth_mode: str,
+    ) -> dict[str, Any]:
+        """Persist the authentication mode of a provider service."""
+        if auth_mode not in {MCP_AUTH_MODE_URL, MCP_AUTH_MODE_OAUTH}:
+            raise ValueError(f"Unsupported MCP auth mode: {auth_mode}")
+
+        prefs = UserMCPService.load_preferences(preferences)
+        service = UserMCPService._get_service(prefs, provider_id, service_id)
+        service[MCP_AUTH_MODE_KEY] = auth_mode
+        if auth_mode == MCP_AUTH_MODE_URL:
+            # A personal StreamableHttp URL carries its own credential; stale
+            # OAuth tokens must not survive the switch.
+            UserMCPService._clear_oauth_credentials(service)
+
+        return UserMCPService._set_service(prefs, provider_id, service_id, service)
+
+    @staticmethod
+    def get_provider_oauth_client(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+    ) -> dict[str, Any]:
+        """Return the cached OAuth client registration of a provider."""
+        prefs = UserMCPService.load_preferences(preferences)
+        provider = (prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {}
+        client = provider.get(MCP_OAUTH_KEY)
+        return dict(client) if isinstance(client, dict) else {}
+
+    @staticmethod
+    def set_provider_oauth_client(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        client: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist the OAuth client registration of a provider."""
+        prefs = UserMCPService.load_preferences(preferences)
+        mcps = dict(prefs.get(MCP_ROOT_KEY) or {})
+        provider = dict(mcps.get(provider_id) or {})
+        provider[MCP_OAUTH_KEY] = dict(client)
+        mcps[provider_id] = provider
+        prefs[MCP_ROOT_KEY] = mcps
+        return prefs
+
+    @staticmethod
+    def get_service_oauth_credentials(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, Any]:
+        """Return the decrypted OAuth credentials of a provider service."""
+        service = UserMCPService._get_service(
+            UserMCPService.load_preferences(preferences),
+            provider_id,
+            service_id,
+        )
+        credentials = service.get(MCP_CREDENTIALS_KEY)
+        if not isinstance(credentials, dict):
+            credentials = {}
+
+        expires_at = credentials.get(MCP_EXPIRES_AT_KEY)
+        return {
+            MCP_ACCESS_TOKEN_KEY: _decrypt(credentials.get(MCP_ACCESS_TOKEN_KEY)),
+            MCP_REFRESH_TOKEN_KEY: _decrypt(credentials.get(MCP_REFRESH_TOKEN_KEY)),
+            MCP_EXPIRES_AT_KEY: int(expires_at) if isinstance(expires_at, int) else 0,
+            MCP_SCOPE_KEY: _decrypt(credentials.get(MCP_SCOPE_KEY)),
+            MCP_ACCOUNT_KEY: _decrypt(credentials.get(MCP_ACCOUNT_KEY)),
+        }
+
+    @staticmethod
+    def save_service_oauth_credentials(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+        *,
+        access_token: str,
+        refresh_token: str,
+        expires_at: int,
+        scope: str = "",
+        account: str = "",
+    ) -> dict[str, Any]:
+        """Store freshly issued OAuth credentials for a provider service."""
+        prefs = UserMCPService.load_preferences(preferences)
+        service = UserMCPService._get_service(prefs, provider_id, service_id)
+        credentials = dict(service.get(MCP_CREDENTIALS_KEY) or {})
+
+        credentials[MCP_ACCESS_TOKEN_KEY] = _encrypt(access_token)
+        if refresh_token:
+            credentials[MCP_REFRESH_TOKEN_KEY] = _encrypt(refresh_token)
+        credentials[MCP_EXPIRES_AT_KEY] = int(expires_at or 0)
+        if scope:
+            credentials[MCP_SCOPE_KEY] = _encrypt(scope)
+        if account:
+            credentials[MCP_ACCOUNT_KEY] = _encrypt(account)
+
+        service[MCP_CREDENTIALS_KEY] = credentials
+        service[MCP_AUTH_MODE_KEY] = MCP_AUTH_MODE_OAUTH
+        return UserMCPService._set_service(prefs, provider_id, service_id, service)
+
+    @staticmethod
+    def clear_service_oauth_credentials(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, Any]:
+        """Drop stored OAuth credentials while keeping the service configured."""
+        prefs = UserMCPService.load_preferences(preferences)
+        service = UserMCPService._get_service(prefs, provider_id, service_id)
+        UserMCPService._clear_oauth_credentials(service)
+
+        return UserMCPService._set_service(prefs, provider_id, service_id, service)
+
+    @staticmethod
+    def _clear_oauth_credentials(service: dict[str, Any]) -> None:
+        """Remove OAuth token entries from a service's credentials."""
+        credentials = dict(service.get(MCP_CREDENTIALS_KEY) or {})
+        for key in (
+            MCP_ACCESS_TOKEN_KEY,
+            MCP_REFRESH_TOKEN_KEY,
+            MCP_EXPIRES_AT_KEY,
+            MCP_SCOPE_KEY,
+            MCP_ACCOUNT_KEY,
+        ):
+            credentials.pop(key, None)
         if credentials:
             service[MCP_CREDENTIALS_KEY] = credentials
         else:
             service.pop(MCP_CREDENTIALS_KEY, None)
 
+    @staticmethod
+    def _get_service(
+        prefs: dict[str, Any],
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, Any]:
+        provider = (prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {}
+        services = provider.get(MCP_SERVICES_KEY) or {}
+        service = services.get(service_id)
+        return dict(service) if isinstance(service, dict) else {}
+
+    @staticmethod
+    def _set_service(
+        prefs: dict[str, Any],
+        provider_id: str,
+        service_id: str,
+        service: dict[str, Any],
+    ) -> dict[str, Any]:
+        mcps = dict(prefs.get(MCP_ROOT_KEY) or {})
+        provider = dict(mcps.get(provider_id) or {})
+        services = dict(provider.get(MCP_SERVICES_KEY) or {})
         services[service_id] = service
         provider[MCP_SERVICES_KEY] = services
-
         mcps[provider_id] = provider
         prefs[MCP_ROOT_KEY] = mcps
         return prefs

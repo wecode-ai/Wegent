@@ -8,6 +8,7 @@ import {
   File as FileIcon,
   FileText,
   Folder,
+  Hash,
   LibraryBig,
   ListTodo,
   MessageCircle,
@@ -45,6 +46,7 @@ import {
 } from '../issue-detail/AttachmentImageView'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
+import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
 import {
   classifyComposerReference,
   composerSkillName,
@@ -90,11 +92,13 @@ const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
 export function UserMessage({
   services,
   message,
+  replyQuestions,
   onBeforeToggle,
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   editable = false,
   editing = false,
+  forceExpanded = false,
   editSubmitting = false,
   onStartEdit,
   onCancelEdit,
@@ -102,11 +106,14 @@ export function UserMessage({
 }: {
   services: UserMessageServices
   message: WorkbenchMessage
+  /** Questions this message answered, for non-blocking questions answered by the next user message. */
+  replyQuestions?: AsyncRequestUserInputReply[]
   onBeforeToggle?: () => void
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
   editing?: boolean
+  forceExpanded?: boolean
   editSubmitting?: boolean
   onStartEdit?: () => void
   onCancelEdit?: () => void
@@ -274,14 +281,25 @@ export function UserMessage({
               data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words bg-muted px-4 py-1.5',
-                shouldCollapse && !isExpanded ? 'max-h-44' : '',
+                shouldCollapse && !isExpanded && !forceExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
-              {renderUserContent(
-                displayContent,
-                services,
-                onOpenLocalSkillFile,
-                onOpenWorkspaceFile
+              {replyQuestions && replyQuestions.length > 0 ? (
+                <div data-testid="user-message-question-reply" className="flex flex-col gap-2">
+                  {replyQuestions.map((row, index) => (
+                    <div key={index} className="flex flex-col gap-0.5">
+                      <span className="text-xs text-text-muted">{row.question}</span>
+                      <span className="whitespace-pre-wrap text-sm">{row.answer}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                renderUserContent(
+                  displayContent,
+                  services,
+                  onOpenLocalSkillFile,
+                  onOpenWorkspaceFile
+                )
               )}
               {showGoalRequestBadge && (
                 <div className="mt-1.5 flex">
@@ -316,11 +334,11 @@ export function UserMessage({
                   </CodeCommentPreview>
                 </div>
               )}
-              {shouldCollapse && !isExpanded && (
+              {shouldCollapse && !isExpanded && !forceExpanded && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
               )}
             </div>
-            {shouldCollapse && (
+            {shouldCollapse && !forceExpanded && (
               <button
                 type="button"
                 data-testid="toggle-user-message-button"
@@ -360,6 +378,12 @@ export function UserMessage({
         />
       )}
     </div>
+  )
+}
+
+export function getUserMessageTextContent(content: string): string {
+  return normalizeCodexUserMessageContent(
+    parseCodexLocalFileMentions(content)?.requestText ?? visibleRuntimeUserMessage(content)
   )
 }
 
@@ -681,6 +705,7 @@ function renderUserContent(
           mentionKind === 'skill'
             ? `sent-local-skill-icon-${tokenTestId}`
             : `sent-${mentionKind}-icon-${tokenTestId}`
+        const isIssueReference = mentionKind === 'issue'
         const canOpen = Boolean(
           canOpenSkill ||
           (pathReference && onOpenWorkspaceFile) ||
@@ -693,7 +718,10 @@ function renderUserContent(
             tabIndex={canOpen ? 0 : -1}
             data-testid={testId}
             data-cloud-resource-kind={cloudKind}
-            className="composer-mention-node gap-1 rounded-xl bg-muted text-blue-600 no-underline [&>:first-child]:self-center"
+            className={[
+              'composer-mention-node gap-1 no-underline [&>:first-child]:self-center',
+              isIssueReference ? 'composer-mention-link' : 'rounded-xl bg-muted text-blue-600',
+            ].join(' ')}
             onClick={event => {
               event.preventDefault()
               if (canOpenSkill && knownSkill) onOpenLocalSkillFile?.(knownSkill.path)
@@ -707,10 +735,16 @@ function renderUserContent(
               if (pluginReference) services.onOpenPlugin?.(pluginReference)
             }}
           >
-            {mentionKind === 'folder' ? (
+            {isIssueReference ? (
+              <Hash data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0" />
+            ) : mentionKind === 'folder' ? (
               <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
             ) : mentionKind === 'file' ? (
-              <FileReferenceIcon path={pathReference?.path ?? href} data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              <FileReferenceIcon
+                path={pathReference?.path ?? href}
+                data-testid={iconTestId}
+                className="h-3.5 w-3.5 shrink-0 text-blue-600"
+              />
             ) : mentionKind === 'cloud' ? (
               cloudKind === 'todo' ? (
                 <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
@@ -751,12 +785,13 @@ function renderUserContent(
             )}
             <span className="min-w-0 truncate">
               {mentionKind === 'skill'
-                ? skill.displayLabel ??
-                  (knownSkill ? displayCodexMentionName(knownSkill.name) : `$${skill.name}`)
+                ? (skill.displayLabel ??
+                  (knownSkill ? displayCodexMentionName(knownSkill.name) : `$${skill.name}`))
                 : mentionKind === 'file' ||
                     mentionKind === 'folder' ||
                     mentionKind === 'cloud' ||
-                    mentionKind === 'conversation'
+                    mentionKind === 'conversation' ||
+                    mentionKind === 'issue'
                   ? mentionName
                   : displayCodexMentionName(mentionName)}
             </span>

@@ -1,3 +1,5 @@
+import { DefaultRunnerSetting } from './DefaultRunnerSetting'
+import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
 import {
   Activity,
@@ -36,6 +38,10 @@ import {
   type FixedWorkspaceTabPreference,
   type WorkbenchMode,
 } from '@/desktop/appPreferences'
+import {
+  fixedWorkspaceTabsPatch,
+  saveFixedWorkspaceTabs as persistFixedWorkspaceTabs,
+} from '@/features/workspace-tabs/fixedWorkspaceTabs'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -292,13 +298,19 @@ export function GeneralSettingsPage() {
       description: t('workbench.general_settings_tray_running_description'),
       icon: Activity,
     },
-    {
-      preferenceKey: 'trayUsageEnabled',
-      testId: 'general-tray-usage-toggle',
-      label: t('workbench.general_settings_tray_usage'),
-      description: t('workbench.general_settings_tray_usage_description'),
-      icon: Gauge,
-    },
+    // The Codex quota is meaningless while the local Codex subscription is off:
+    // the tray has no rate limits to read, so the toggle is hidden entirely.
+    ...(preferences.localCodexSubscriptionEnabled
+      ? [
+          {
+            preferenceKey: 'trayUsageEnabled',
+            testId: 'general-tray-usage-toggle',
+            label: t('workbench.general_settings_tray_usage'),
+            description: t('workbench.general_settings_tray_usage_description'),
+            icon: Gauge,
+          } satisfies TrayDisplayOption,
+        ]
+      : []),
     {
       preferenceKey: 'trayWegentUsageEnabled',
       testId: 'general-tray-wegent-usage-toggle',
@@ -375,13 +387,12 @@ export function GeneralSettingsPage() {
       return
     }
 
-    const previousMode = preferences.workbenchMode
     const nextMode = pendingWorkbenchMode
     setPreferences(current => ({ ...current, workbenchMode: nextMode }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(await changeWorkbenchMode(previousMode, nextMode))
+      setPreferences(await changeWorkbenchMode(nextMode))
     } catch (saveError) {
       console.error('[Wework] Failed to update workbench mode', saveError)
       try {
@@ -404,24 +415,16 @@ export function GeneralSettingsPage() {
     startupWorkspaceTabId = preferences.startupWorkspaceTabId ??
       defaultAppPreferences.startupWorkspaceTabId
   ) => {
-    const nextStartupId = fixedWorkspaceTabs.some(tab => tab.id === startupWorkspaceTabId)
-      ? startupWorkspaceTabId
-      : (fixedWorkspaceTabs[0]?.id ?? '')
+    const patch = fixedWorkspaceTabsPatch(fixedWorkspaceTabs, startupWorkspaceTabId)
     const previousPreferences = preferences
     setPreferences(current => ({
       ...current,
-      fixedWorkspaceTabs,
-      startupWorkspaceTabId: nextStartupId,
+      ...patch,
     }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(
-        await updateAppPreferences({
-          fixedWorkspaceTabs,
-          startupWorkspaceTabId: nextStartupId,
-        })
-      )
+      setPreferences(await persistFixedWorkspaceTabs(fixedWorkspaceTabs, startupWorkspaceTabId))
     } catch (saveError) {
       console.error('[Wework] Failed to update fixed workspace tabs', saveError)
       setPreferences(previousPreferences)
@@ -520,6 +523,7 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
+          <DefaultRunnerSetting />
           <SettingsRow
             label={t('workbench.general_settings_mode')}
             description={t('workbench.general_settings_mode_description')}
@@ -676,7 +680,10 @@ export function GeneralSettingsPage() {
                   const label =
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
-                      : t(`workbench.general_settings_default_workspace_tab_${tab.kind}`)
+                      : tab.kind === 'auxiliary'
+                        ? (tab.title ?? t('workbench.workspace_tab_auxiliary', '工作区'))
+                        : (tab.title ??
+                          t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (
                     <div
                       key={tab.id}
@@ -882,12 +889,67 @@ export function GeneralSettingsPage() {
               'workbench.general_settings_prevent_sleep_while_tasks_running_description'
             ),
           })}
-          {renderSwitchRow({
-            preferenceKey: 'taskCompletionNotificationsEnabled',
-            testId: 'general-task-completion-notifications-toggle',
-            label: t('workbench.general_settings_task_completion_notifications'),
-            description: t('workbench.general_settings_task_completion_notifications_description'),
-          })}
+          <SettingsRow
+            label={
+              <span className="flex items-center gap-2">
+                <Bell className="h-4 w-4 text-text-secondary" />
+                {t('workbench.general_settings_tray_display_content')}
+              </span>
+            }
+            description={t('workbench.general_settings_tray_display_content_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid w-[420px] max-w-full shrink-0 grid-cols-2 gap-2">
+                {trayDisplayOptions.map(option => {
+                  const Icon = option.icon
+                  const selected = Boolean(preferences[option.preferenceKey])
+                  return (
+                    <button
+                      key={option.preferenceKey}
+                      data-testid={option.testId}
+                      type="button"
+                      aria-pressed={selected}
+                      title={option.description}
+                      disabled={loading || saving}
+                      onClick={() => void handlePreferenceChange(option.preferenceKey, !selected)}
+                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        selected
+                          ? 'border-text-primary/50 bg-muted text-text-primary'
+                          : 'border-border bg-background text-text-secondary hover:border-text-muted/40 hover:bg-muted/40 hover:text-text-primary'
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Icon
+                          className={`h-4 w-4 shrink-0 ${
+                            selected ? 'text-text-primary' : 'text-text-secondary'
+                          }`}
+                        />
+                        <span className="truncate">{option.label}</span>
+                      </span>
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition ${
+                          selected
+                            ? 'border-text-primary bg-text-primary text-background'
+                            : 'border-border bg-surface group-hover:border-text-muted/40'
+                        }`}
+                      >
+                        {selected && <Check className="h-3 w-3" />}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+        </SettingsGroup>
+      </section>
+
+      <section data-testid="general-settings-ai-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_ai_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
           <SettingsRow
             label={t('workbench.friendly_task_titles_title', '使用友好标题')}
             description={t(
@@ -967,59 +1029,7 @@ export function GeneralSettingsPage() {
               </div>
             </div>
           )}
-          <SettingsRow
-            label={
-              <span className="flex items-center gap-2">
-                <Bell className="h-4 w-4 text-text-secondary" />
-                {t('workbench.general_settings_tray_display_content')}
-              </span>
-            }
-            description={t('workbench.general_settings_tray_display_content_description')}
-            className={GENERAL_ROW_CLASS_NAME}
-            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
-              <div className="grid w-[420px] max-w-full shrink-0 grid-cols-2 gap-2">
-                {trayDisplayOptions.map(option => {
-                  const Icon = option.icon
-                  const selected = Boolean(preferences[option.preferenceKey])
-                  return (
-                    <button
-                      key={option.preferenceKey}
-                      data-testid={option.testId}
-                      type="button"
-                      aria-pressed={selected}
-                      title={option.description}
-                      disabled={loading || saving}
-                      onClick={() => void handlePreferenceChange(option.preferenceKey, !selected)}
-                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                        selected
-                          ? 'border-text-primary/50 bg-muted text-text-primary'
-                          : 'border-border bg-background text-text-secondary hover:border-text-muted/40 hover:bg-muted/40 hover:text-text-primary'
-                      }`}
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <Icon
-                          className={`h-4 w-4 shrink-0 ${
-                            selected ? 'text-text-primary' : 'text-text-secondary'
-                          }`}
-                        />
-                        <span className="truncate">{option.label}</span>
-                      </span>
-                      <span
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition ${
-                          selected
-                            ? 'border-text-primary bg-text-primary text-background'
-                            : 'border-border bg-surface group-hover:border-text-muted/40'
-                        }`}
-                      >
-                        {selected && <Check className="h-3 w-3" />}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            }
-          />
+          <ReplyPredictionSettings />
         </SettingsGroup>
       </section>
 

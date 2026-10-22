@@ -1,3 +1,4 @@
+import { requestRunnerSelection, runnerSelectionRequest } from '@/lib/runner-selection'
 import { removeToken } from './auth'
 import { redirectToLogin } from '@/features/auth/redirect'
 import { createRequestId } from '@/lib/request-id'
@@ -91,9 +92,11 @@ export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
   headers?: HeadersInit
+  cache?: RequestCache
 }
 
 export interface HttpClient {
+  getCacheScope?(): unknown
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   getBlob(endpoint: string): Promise<Blob>
   post<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
@@ -151,7 +154,8 @@ async function parseError(response: Response): Promise<ApiError> {
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
-  const inFlightGetRequests = new Map<string, Promise<unknown>>()
+  let cacheToken: string | null | undefined
+  let cacheScope = 0
 
   async function fetchWithDiagnostics(
     endpoint: string,
@@ -255,12 +259,20 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   async function request<T>(
     endpoint: string,
     init: RequestInit,
-    requestOptions: HttpRequestOptions = {}
+    requestOptions: HttpRequestOptions = {},
+    selectionAttempted = false
   ): Promise<T> {
-    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
-      token: getToken(),
-      signal: requestOptions.signal,
-    })
+    const diagnostics = await fetchWithDiagnostics(
+      endpoint,
+      {
+        ...init,
+        ...(requestOptions.cache ? { cache: requestOptions.cache } : {}),
+      },
+      {
+        token: getToken(),
+        signal: requestOptions.signal,
+      }
+    )
     const { response } = diagnostics
 
     if (!response.ok) {
@@ -270,6 +282,24 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       if (response.status === 401 && redirectOnUnauthorized) {
         removeToken()
         redirectToLogin()
+      }
+      const selectionRequest = runnerSelectionRequest(error)
+      if (
+        !selectionAttempted &&
+        selectionRequest &&
+        typeof init.body === 'string' &&
+        ['POST', 'PATCH'].includes(init.method ?? '')
+      ) {
+        const selection = await requestRunnerSelection(selectionRequest)
+        const body = JSON.parse(init.body) as Record<string, unknown>
+        delete body.runnerSelection
+        delete body.runner_selection
+        return request<T>(
+          endpoint,
+          { ...init, body: JSON.stringify({ ...body, runner_selection: selection }) },
+          requestOptions,
+          true
+        )
       }
       throw error
     }
@@ -282,29 +312,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   function get<T>(endpoint: string, requestOptions: HttpRequestOptions = {}): Promise<T> {
-    const token = getToken()
-    const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
-    const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
-    if (!requestOptions.signal) {
-      const currentRequest = inFlightGetRequests.get(cacheKey)
-      if (currentRequest) {
-        return currentRequest as Promise<T>
-      }
-    }
-
-    const nextRequest = request<T>(
-      endpoint,
-      { method: 'GET', headers: requestOptions.headers },
-      requestOptions
-    ).finally(() => {
-      if (!requestOptions.signal) {
-        inFlightGetRequests.delete(cacheKey)
-      }
-    })
-    if (!requestOptions.signal) {
-      inFlightGetRequests.set(cacheKey, nextRequest)
-    }
-    return nextRequest
+    return request<T>(endpoint, { method: 'GET', headers: requestOptions.headers }, requestOptions)
   }
 
   async function getBlob(endpoint: string): Promise<Blob> {
@@ -329,6 +337,14 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   return {
+    getCacheScope() {
+      const token = getToken()
+      if (cacheToken !== token) {
+        cacheToken = token
+        cacheScope++
+      }
+      return cacheScope
+    },
     get,
     getBlob,
     post: (endpoint, data, requestOptions = {}) =>

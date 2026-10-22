@@ -67,10 +67,10 @@
 
 .collaboration-danger-button {
   min-height: 36px;
-  border: 1px solid #ef4444;
+  border: 1px solid rgb(var(--color-destructive));
   border-radius: 8px;
   padding: 8px 14px;
-  color: #dc2626;
+  color: rgb(var(--color-destructive));
   background: transparent;
   cursor: pointer;
 }
@@ -167,41 +167,6 @@
   align-items: center;
   padding: 16px;
   background: rgb(0 0 0 / 0.35);
-}
-
-.shared-issue-detail-confirm-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgb(0 0 0 / 0.35);
-}
-
-.shared-issue-detail-confirm {
-  width: min(420px, calc(100vw - 32px));
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 14px;
-  padding: 20px;
-  background: rgb(var(--color-bg-surface));
-  box-shadow: 0 20px 50px rgb(0 0 0 / 0.2);
-}
-
-.shared-issue-detail-confirm h2 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.shared-issue-detail-confirm p {
-  margin: 10px 0 18px;
-  color: rgb(var(--color-text-secondary));
-}
-
-.shared-issue-detail-confirm > div {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .collaboration-dialog {

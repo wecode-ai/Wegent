@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { ApiError } from '@/api/http'
+import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
@@ -16,6 +19,9 @@ const mocks = vi.hoisted(() => {
   const cloudCreateRuntimeTask = vi.fn()
   const cloudMaterializeRuntimeTask = vi.fn()
   const localListDevices = vi.fn()
+  const localSidebarIdentity = vi.fn()
+  const localSyncRemoteProjects = vi.fn()
+  const localActivateProject = vi.fn()
   const cloudListDevices = vi.fn()
   const localListRuntimeWork = vi.fn()
   const cloudListRuntimeWork = vi.fn()
@@ -71,8 +77,27 @@ const mocks = vi.hoisted(() => {
     startDeviceCodeServer: vi.fn(),
     createRemoteTerminalClient: vi.fn(),
   }
+  const localProjectChatClient = {
+    reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]),
+  }
+  const localProjectSpaceDetailServices = {
+    deliveryApi: { source: 'local' },
+    projectChatClient: localProjectChatClient,
+    projectChatAgentApi: { source: 'local' },
+    loopItemExecutionApi: { source: 'local' },
+    deviceApi: { source: 'local' },
+    modelApi: { source: 'local' },
+    teamApi: { source: 'local' },
+  }
+
+  const localDecisionRouterApi = {
+    resolveLaunch: vi.fn(),
+    unregister: vi.fn(),
+  }
 
   const localServices = {
+    getLocalRuntimeSidebarIdentity: localSidebarIdentity,
+    replyPredictionApi: { predict: vi.fn().mockResolvedValue({ suggestion: '继续' }) },
     composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
       listTeams: vi.fn().mockResolvedValue([]),
@@ -96,12 +121,15 @@ const mocks = vi.hoisted(() => {
       readWorkspaceTextFile: vi.fn(),
     },
     runtimeWorkApi: {
+      syncRuntimeRemoteProjects: localSyncRemoteProjects,
+      activateRuntimeProject: localActivateProject,
       getRuntimeTranscript: vi.fn(),
       materializeRuntimeTask: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      cleanRuntimeBackgroundTerminals: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       getWorktreeCapabilities: localGetWorktreeCapabilities,
@@ -112,6 +140,7 @@ const mocks = vi.hoisted(() => {
       archiveProjectConversations: localArchiveProjectConversations,
     },
     automationApi: localAutomationApi,
+    localDecisionRouterApi,
     userApi: { updateCurrentUser: localUpdateCurrentUser },
     attachmentApi: {
       uploadAttachment: localUploadAttachment,
@@ -123,6 +152,9 @@ const mocks = vi.hoisted(() => {
 
   const localOnlyServices = {
     ...localServices,
+    projectSpaceDetailServices: {
+      local: localProjectSpaceDetailServices,
+    },
     runtimeWorkApi: {
       ...localServices.runtimeWorkApi,
       createRuntimeTask: vi.fn().mockResolvedValue({ taskId: 'local-project-task' }),
@@ -192,6 +224,9 @@ const mocks = vi.hoisted(() => {
     localCreateRuntimeTask,
     cloudCreateRuntimeTask,
     localListDevices,
+    localSidebarIdentity,
+    localSyncRemoteProjects,
+    localActivateProject,
     cloudListDevices,
     localListRuntimeWork,
     cloudListRuntimeWork,
@@ -222,6 +257,7 @@ const mocks = vi.hoisted(() => {
     localDeleteAttachment,
     cloudUploadAttachment,
     localAutomationApi,
+    localDecisionRouterApi,
     captureLocalAppOptions,
     captureRuntimeIpcOptions,
     captureAutomationIpcOptions,
@@ -233,16 +269,19 @@ const mocks = vi.hoisted(() => {
     localArchiveProjectConversations,
     cloudArchiveProjectConversations,
     cloudWorkspaceSessionApi,
+    localProjectChatClient,
+    localProjectSpaceDetailServices,
     localServices,
     localOnlyServices,
     cloudServices,
   }
 })
 
-vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: (options: unknown) => {
+vi.mock('@/api/local/localServices', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/local/localServices')>()),
+  createLocalAppServices: (options: { materializeRuntimeTask?: unknown } | undefined) => {
     mocks.captureLocalAppOptions(options)
-    return options === undefined ? mocks.localOnlyServices : mocks.localServices
+    return options?.materializeRuntimeTask ? mocks.localServices : mocks.localOnlyServices
   },
   createAutomationApiFromIpc: (
     request: (
@@ -431,6 +470,407 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+describe('qualified local sidebar routing', () => {
+  const identity = {
+    deviceId: 'electron-shared',
+    runtimeInstanceId: 'current-runtime',
+    provenance: 'local-ipc' as const,
+  }
+  const request = { deviceId: identity.deviceId, projects: [] }
+
+  it('activates through qualified local IPC and rejects the same activation after replacement', async () => {
+    const services = createServices()
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'local',
+        status: 'online',
+        name: 'Local',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 5,
+        device_id: 'history',
+        app_device_id: identity.deviceId,
+        runtime_instance_id: 'old-runtime',
+        device_type: 'remote',
+        status: 'offline',
+        name: 'History',
+      },
+    ])
+    await services.cloudBackgroundApi!.listDevices!()
+    await services.deviceApi.listDevices()
+    mocks.localSidebarIdentity.mockResolvedValue(identity)
+    mocks.localActivateProject.mockResolvedValue({ accepted: true })
+    mocks.localActivateProject.mockClear()
+    const activation = {
+      deviceId: identity.deviceId,
+      projectKey: 'stable-sidebar',
+      workspacePath: '/srv/repo',
+      remoteHostId: 'remote-owner',
+    }
+    await expect(
+      services.runtimeWorkApi!.activateRuntimeProject(activation, {
+        localSidebarIdentity: identity,
+      })
+    ).resolves.toMatchObject({ accepted: true })
+    expect(mocks.localActivateProject).toHaveBeenCalledWith(activation, {
+      localSidebarIdentity: identity,
+    })
+    mocks.localSidebarIdentity.mockResolvedValue({ ...identity, runtimeInstanceId: 'replacement' })
+    mocks.localActivateProject.mockClear()
+    await expect(
+      services.runtimeWorkApi!.activateRuntimeProject(activation, {
+        localSidebarIdentity: identity,
+      })
+    ).rejects.toThrow('local-sidebar-runtime-changed')
+    expect(mocks.localActivateProject).not.toHaveBeenCalled()
+  })
+
+  it.each(['other-runtime', null])(
+    'uses local IPC without selecting an offline %s alias from the global catalog',
+    async runtimeInstanceId => {
+      const services = createServices()
+      mocks.localSidebarIdentity.mockResolvedValue(identity)
+      mocks.localSyncRemoteProjects.mockResolvedValue({ accepted: true })
+      mocks.localListDevices.mockResolvedValue([
+        {
+          id: 0,
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+          device_type: 'local',
+          status: 'online',
+          name: 'Local',
+        },
+      ])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          id: 20,
+          device_id: 'historical-relay',
+          app_device_id: identity.deviceId,
+          runtime_instance_id: runtimeInstanceId,
+          device_type: 'remote',
+          status: 'offline',
+          name: 'Historical',
+        },
+      ])
+      await services.cloudBackgroundApi!.listDevices!()
+      await services.deviceApi.listDevices()
+      mocks.localSyncRemoteProjects.mockClear()
+      mocks.cloudRuntimeIpcRequest.mockClear()
+      await expect(
+        services.runtimeWorkApi!.syncRuntimeRemoteProjects(request, {
+          localSidebarIdentity: identity,
+        })
+      ).resolves.toMatchObject({ accepted: true })
+      expect(mocks.localSyncRemoteProjects).toHaveBeenCalledWith(request, {
+        localSidebarIdentity: identity,
+      })
+      expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+      await expect(services.runtimeWorkApi!.syncRuntimeRemoteProjects(request)).rejects.toThrow(
+        'ambiguous-executor-identity:electron-shared'
+      )
+    }
+  )
+
+  it('revokes a queued local mirror write when the current IPC runtime has been replaced', async () => {
+    const services = createServices()
+    mocks.localSidebarIdentity.mockResolvedValue({ ...identity, runtimeInstanceId: 'replacement' })
+    mocks.localSyncRemoteProjects.mockClear()
+    mocks.cloudRuntimeIpcRequest.mockClear()
+    await expect(
+      services.runtimeWorkApi!.syncRuntimeRemoteProjects(request, {
+        localSidebarIdentity: identity,
+      })
+    ).rejects.toThrow('local-sidebar-runtime-changed')
+    expect(mocks.localSyncRemoteProjects).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
+  it('invalidates remembered local routing when a fresh IPC description reports a replacement', async () => {
+    const services = createServices()
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'old-device',
+        runtime_instance_id: 'old-runtime',
+        device_type: 'local',
+        status: 'online',
+        name: 'Local',
+      },
+    ])
+    await services.deviceApi.listDevices()
+    mocks.localSidebarIdentity.mockResolvedValue(identity)
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'local',
+        status: 'online',
+        name: 'Local',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([])
+    mocks.localSyncRemoteProjects.mockClear()
+    await services.getLocalRuntimeSidebarIdentity!()
+    await expect(
+      services.runtimeWorkApi!.syncRuntimeRemoteProjects({ deviceId: 'old-device', projects: [] })
+    ).rejects.toThrow('executor-not-found:old-device')
+    expect(mocks.localSyncRemoteProjects).not.toHaveBeenCalled()
+  })
+
+  it('observes a cached local plugin through IPC identity without resolving a conflicting catalog alias', async () => {
+    const services = createServices()
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'local',
+        status: 'online',
+        name: 'Local',
+      },
+    ])
+    await services.deviceApi.listDevices()
+    services.projectDevicePluginApi!(identity.deviceId)
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 20,
+        device_id: 'history',
+        app_device_id: identity.deviceId,
+        runtime_instance_id: 'old-runtime',
+        device_type: 'remote',
+        status: 'offline',
+        name: 'Historical',
+      },
+    ])
+    await expect(services.cloudBackgroundApi!.listDevices!()).resolves.toHaveLength(1)
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(2)
+    await expect(services.runtimeWorkApi!.syncRuntimeRemoteProjects(request)).rejects.toThrow(
+      'ambiguous-executor-identity:electron-shared'
+    )
+  })
+
+  it('revokes remembered project ownership when both local device and runtime identities change', async () => {
+    const services = createServices()
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'old-device',
+        runtime_instance_id: 'old-runtime',
+        device_type: 'local',
+        status: 'online',
+        name: 'Local',
+      },
+    ])
+    mocks.localSidebarIdentity.mockResolvedValue({
+      deviceId: 'old-device',
+      runtimeInstanceId: 'old-runtime',
+      provenance: 'local-ipc',
+    })
+    mocks.localListRuntimeWork.mockResolvedValue({
+      projects: [
+        {
+          project: { key: 'stale-project-key', name: 'Old local', stateDeviceId: 'old-device' },
+          deviceWorkspaces: [],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    await services.deviceApi.listDevices()
+    await services.runtimeWorkApi!.listRuntimeWork()
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'new-device',
+        runtime_instance_id: 'new-runtime',
+        device_type: 'local',
+        status: 'online',
+        name: 'Local',
+      },
+    ])
+    await services.deviceApi.listDevices()
+    mocks.localArchiveProjectConversations.mockClear()
+    mocks.cloudArchiveProjectConversations.mockResolvedValue({ accepted: true })
+    mocks.cloudArchiveProjectConversations.mockClear()
+    await services.runtimeWorkApi!.archiveProjectConversations({
+      runtimeProjectKey: 'stale-project-key',
+    })
+    expect(mocks.localArchiveProjectConversations).not.toHaveBeenCalled()
+    expect(mocks.cloudArchiveProjectConversations).toHaveBeenCalledWith({
+      runtimeProjectKey: 'stale-project-key',
+    })
+  })
+
+  it.each(['protocol_mismatch', 'executor_disconnected'])(
+    'only revokes cached local ownership for invalid identity, not transient %s',
+    async code => {
+      const services = createServices()
+      mocks.localSidebarIdentity.mockResolvedValue(identity)
+      mocks.localListDevices.mockResolvedValue([
+        {
+          id: 0,
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+          device_type: 'local',
+          status: 'online',
+          name: 'Local',
+        },
+      ])
+      mocks.localListRuntimeWork.mockResolvedValue({
+        projects: [
+          {
+            project: { key: 'cached-project', stateDeviceId: identity.deviceId, name: 'Local' },
+            deviceWorkspaces: [],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      })
+      await services.deviceApi.listDevices()
+      await services.runtimeWorkApi!.listRuntimeWork()
+      mocks.localSidebarIdentity.mockRejectedValueOnce(
+        new DshExecutorTransportError(code, 'Invalid or disconnected IPC')
+      )
+      await expect(services.getLocalRuntimeSidebarIdentity!()).rejects.toThrow(
+        'Invalid or disconnected IPC'
+      )
+      mocks.localArchiveProjectConversations.mockResolvedValue({ accepted: true })
+      mocks.cloudArchiveProjectConversations.mockResolvedValue({ accepted: true })
+      mocks.localArchiveProjectConversations.mockClear()
+      mocks.cloudArchiveProjectConversations.mockClear()
+      await services.runtimeWorkApi!.archiveProjectConversations({
+        runtimeProjectKey: 'cached-project',
+      })
+      if (code === 'protocol_mismatch') {
+        expect(mocks.localArchiveProjectConversations).not.toHaveBeenCalled()
+        expect(mocks.cloudArchiveProjectConversations).toHaveBeenCalled()
+        mocks.localListDevices.mockResolvedValue([])
+        mocks.cloudListDevices.mockResolvedValue([])
+        mocks.localSyncRemoteProjects.mockClear()
+        await expect(services.runtimeWorkApi!.syncRuntimeRemoteProjects(request)).rejects.toThrow(
+          'executor-not-found'
+        )
+        expect(mocks.localSyncRemoteProjects).not.toHaveBeenCalled()
+      } else {
+        expect(mocks.localArchiveProjectConversations).toHaveBeenCalled()
+        expect(mocks.cloudArchiveProjectConversations).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it.each([undefined, 'electron-shared'])(
+    'rejects a local %s list read whose IPC identity changes while the snapshot is pending',
+    async deviceId => {
+      const services = createServices()
+      const pending = deferred<{ projects: never[]; chats: never[]; totalTasks: number }>()
+      mocks.localSidebarIdentity.mockResolvedValue(identity)
+      mocks.localListDevices.mockResolvedValue([
+        {
+          id: 0,
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+          device_type: 'local',
+          status: 'online',
+          name: 'Local',
+        },
+      ])
+      mocks.localListRuntimeWork.mockReturnValueOnce(pending.promise)
+      mocks.localListRuntimeWork.mockClear()
+      const listing = services.runtimeWorkApi!.listRuntimeWork(deviceId ? { deviceId } : undefined)
+      const rejected = expect(listing).rejects.toThrow('local-sidebar-runtime-changed')
+      await vi.waitFor(() => expect(mocks.localListRuntimeWork).toHaveBeenCalledOnce())
+      mocks.localSidebarIdentity.mockResolvedValue({
+        ...identity,
+        runtimeInstanceId: 'replacement',
+      })
+      pending.resolve({ projects: [], chats: [], totalTasks: 0 })
+      await rejected
+    }
+  )
+
+  it('fences a local list and qualified mirror write when the fresh IPC source is offline', async () => {
+    const services = createServices()
+    mocks.localSidebarIdentity.mockRejectedValue(
+      new DshExecutorTransportError('executor_disconnected', 'IPC offline')
+    )
+    mocks.localListRuntimeWork.mockClear()
+    mocks.localSyncRemoteProjects.mockClear()
+    await expect(services.runtimeWorkApi!.listRuntimeWork()).rejects.toThrow('IPC offline')
+    await expect(
+      services.runtimeWorkApi!.syncRuntimeRemoteProjects(request, {
+        localSidebarIdentity: identity,
+      })
+    ).rejects.toThrow('IPC offline')
+    expect(mocks.localListRuntimeWork).not.toHaveBeenCalled()
+    expect(mocks.localSyncRemoteProjects).not.toHaveBeenCalled()
+  })
+
+  it.each(['local-sidebar-runtime-changed', 'protocol_mismatch', 'executor_disconnected'])(
+    'revokes cached local ownership after an inner list %s fence, preserving transient recovery',
+    async failure => {
+      const services = createServices()
+      mocks.localSidebarIdentity.mockResolvedValue(identity)
+      mocks.localListDevices.mockResolvedValue([
+        {
+          id: 0,
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+          device_type: 'local',
+          status: 'online',
+          name: 'Local',
+        },
+      ])
+      mocks.localListRuntimeWork.mockResolvedValue({
+        projects: [
+          {
+            project: { key: 'old-local-key', stateDeviceId: identity.deviceId, name: 'Cached' },
+            deviceWorkspaces: [],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      })
+      await services.deviceApi.listDevices()
+      await services.runtimeWorkApi!.listRuntimeWork()
+      const error =
+        failure === 'local-sidebar-runtime-changed'
+          ? new Error(failure)
+          : new DshExecutorTransportError(failure, 'Inner local list fence')
+      mocks.localListRuntimeWork.mockRejectedValueOnce(error)
+      await expect(
+        services.runtimeWorkApi!.listRuntimeWork({ deviceId: identity.deviceId })
+      ).rejects.toThrow(error.message)
+      mocks.localArchiveProjectConversations.mockResolvedValue({ accepted: true })
+      mocks.cloudArchiveProjectConversations.mockResolvedValue({ accepted: true })
+      mocks.localArchiveProjectConversations.mockClear()
+      mocks.cloudArchiveProjectConversations.mockClear()
+      await services.runtimeWorkApi!.archiveProjectConversations({
+        runtimeProjectKey: 'old-local-key',
+      })
+      if (failure === 'executor_disconnected') {
+        expect(mocks.localArchiveProjectConversations).toHaveBeenCalled()
+        expect(mocks.cloudArchiveProjectConversations).not.toHaveBeenCalled()
+      } else {
+        expect(mocks.localArchiveProjectConversations).not.toHaveBeenCalled()
+        expect(mocks.cloudArchiveProjectConversations).toHaveBeenCalled()
+        mocks.localListDevices.mockResolvedValue([])
+        mocks.cloudListDevices.mockResolvedValue([])
+        mocks.localSyncRemoteProjects.mockClear()
+        await expect(services.runtimeWorkApi!.syncRuntimeRemoteProjects(request)).rejects.toThrow(
+          'executor-not-found'
+        )
+        expect(mocks.localSyncRemoteProjects).not.toHaveBeenCalled()
+      }
+    }
+  )
+})
+
 describe('local project execution ownership', () => {
   it('uses a backend-free service for creation and continuation after reopening', async () => {
     const services = createServices()
@@ -503,6 +943,21 @@ describe('execution status write-back on history reads', () => {
     expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
   })
 
+  it('keeps local Issue execution context on the local runtime route', async () => {
+    const request = {
+      ...address,
+      issueExecution: { projectId: 'local-project', issueId: 'issue-1' },
+    }
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue({
+      ...response,
+      origin: { projectStore: 'local' },
+    })
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockClear()
+    await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
+  })
+
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
     mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)
     mocks.cloudServices.projectChatClient.reconcileExecutionSnapshot.mockResolvedValue([])
@@ -539,6 +994,65 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('sends current cloud credentials and model identity to the remote prediction device', async () => {
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ suggestion: '请继续' })
+    const services = createServices()
+    await services.replyPredictionApi!.predict({
+      address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+      modelSelection: {
+        modelName: 'cloud-selected',
+        modelType: 'user',
+        options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '42' },
+      },
+    })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.text.predict_reply',
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({
+          model_id: 'cloud-selected',
+          api_key: 'cloud-token',
+          default_headers: expect.objectContaining({ 'X-Wegent-Model-Namespace': 'default' }),
+        }),
+      }),
+      'cloud-device'
+    )
+  })
+
+  it('routes predictions and cancellation to the session device', async () => {
+    const services = createServices()
+    const local = { address: { deviceId: 'local-device', taskId: 'local-task' } }
+    await services.replyPredictionApi!.predict(local)
+    expect(mocks.localServices.replyPredictionApi.predict).toHaveBeenCalledWith(local)
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+
+    const controller = new AbortController()
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async method =>
+      method === 'runtime.text.predict_reply' ? new Promise(() => {}) : { cancelled: true }
+    )
+    const pending = services.replyPredictionApi!.predict({
+      address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+      latestTurnId: 'turn-1',
+      signal: controller.signal,
+    })
+    const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() =>
+      expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+        'runtime.text.predict_reply',
+        expect.objectContaining({ taskId: 'cloud-task', latestTurnId: 'turn-1' }),
+        'cloud-device'
+      )
+    )
+    const start = mocks.cloudRuntimeIpcRequest.mock.calls.find(
+      ([method]) => method === 'runtime.text.predict_reply'
+    )!
+    controller.abort()
+    await rejection
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.text.cancel',
+      { deviceId: 'cloud-device', taskId: start[1].requestId },
+      'cloud-device'
+    )
+  })
   test('routes side composer catalogs to their device and rejects another APP registration', async () => {
     const services = createServices()
     mocks.localServices.composerCatalogApi.readCatalog.mockResolvedValue({ taskId: 'local-side' })
@@ -570,6 +1084,7 @@ describe('createHybridWorkbenchServices', () => {
   })
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.localSidebarIdentity.mockReset()
     mocks.localListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
     mocks.cloudListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
     mocks.localListDevices.mockResolvedValue([
@@ -722,7 +1237,10 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcReconnect).toHaveBeenCalledTimes(1)
   })
 
-  it('reads a local attachment through the Electron host before uploading it to cloud', async () => {
+  it.each([
+    '/Users/me/Downloads/screenshot.png',
+    '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+  ])('uploads a local attachment from %s through the existing cloud API', async localPath => {
     const services = createServices()
 
     const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
@@ -733,12 +1251,10 @@ describe('createHybridWorkbenchServices', () => {
       status: 'ready',
       file_extension: '.png',
       created_at: '2026-08-11T00:00:00.000Z',
-      local_path: '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
+      local_path: localPath,
     })
 
-    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(
-      '/Users/me/.wework/workspace/attachments/draft/screenshot.png'
-    )
+    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(localPath)
     const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
     expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
     expect(uploaded?.id).toBe(42)
@@ -787,7 +1303,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
-  it('routes project assignment notifications through the cloud runtime stream only', () => {
+  it('routes project assignment notifications by project storage', () => {
     const services = createServices()
     const onProjectTaskAssigned = vi.fn()
 
@@ -803,11 +1319,22 @@ describe('createHybridWorkbenchServices', () => {
       assignerName: 'Alice',
     }
 
-    expect(localHandlers?.onProjectTaskAssigned).toBeUndefined()
+    const localPayload = {
+      ...payload,
+      projectStore: 'local' as const,
+      projectId: 'local-project',
+    }
+    localHandlers?.onProjectTaskAssigned?.(localPayload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledExactlyOnceWith(localPayload)
+    cloudHandlers?.onProjectTaskAssigned?.(localPayload)
+    localHandlers?.onProjectTaskAssigned?.(payload)
+    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
     cloudHandlers?.onProjectTaskAssigned?.(payload)
 
-    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
-    expect(onProjectTaskAssigned).toHaveBeenCalledWith(payload)
+    expect(onProjectTaskAssigned.mock.calls.map(([notification]) => notification)).toEqual([
+      localPayload,
+      payload,
+    ])
   })
 
   it('loads cloud models in the background without delaying local models', async () => {
@@ -841,7 +1368,24 @@ describe('createHybridWorkbenchServices', () => {
     info.mockRestore()
   })
 
-  it('preserves a refresh requested while a failing cloud model request is still settling', async () => {
+  it('loads the cloud catalog even when the local catalog fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.localListModels.mockRejectedValue(new Error('Local catalog unavailable'))
+    const services = createServices()
+
+    const initial = await services.modelApi.listModels()
+    expect(initial.data).toEqual([])
+
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data.map(model => model.name)).toEqual(['codex-gpt-5.5'])
+    })
+
+    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local models', expect.any(Error))
+    warning.mockRestore()
+  })
+
+  it('waits for an explicit refresh after a cloud model request fails', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     let rejectInitial!: (error: Error) => void
     mocks.cloudListModels.mockImplementationOnce(
@@ -855,6 +1399,13 @@ describe('createHybridWorkbenchServices', () => {
     await services.modelApi.listModels()
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
     rejectInitial(new Error('Cloud temporarily unavailable'))
+    await vi.waitFor(() =>
+      expect(warning).toHaveBeenCalledWith(
+        '[Wework] Failed to refresh cloud models',
+        expect.any(Error)
+      )
+    )
+    services.modelApi.refresh?.()
     await vi.waitFor(() => expect(mocks.cloudListModels).toHaveBeenCalledTimes(2))
     warning.mockRestore()
   })
@@ -950,6 +1501,39 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes the composer cloud catalog on demand without changing its selected model', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.cloudListModels
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const view = renderHook(() => useWorkbenchModels({ api: services.modelApi, locked: false }))
+    try {
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(view.result.current.models.map(model => model.name)).toEqual(['gpt-5.5'])
+      act(() => view.result.current.setSelectedModel(view.result.current.models[0]))
+      const selectedName = view.result.current.selectedModel?.name
+
+      await act(() => vi.advanceTimersByTimeAsync(600_000))
+      expect(mocks.cloudListModels).toHaveBeenCalledOnce()
+      act(() => view.result.current.refreshModels())
+      await act(() => vi.advanceTimersByTimeAsync(0))
+
+      expect(view.result.current.models.map(model => model.name)).toEqual([
+        'gpt-5.5',
+        'responses-model',
+      ])
+      expect(view.result.current.selectedModel?.name).toBe(selectedName)
+      expect(view.result.current.error).toBeNull()
+      expect(mocks.cloudListModels).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('lists persisted Wegent teams only for explicit Wegent execution', async () => {
     const services = createServices()
 
@@ -1014,6 +1598,22 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(devices?.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
     expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps local project activity on the Executor-owned project stream', () => {
+    const services = createServices()
+    const localDetailServices = services.projectSpaceDetailServices?.local
+
+    expect(localDetailServices?.projectChatClient).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatClient
+    )
+    expect(localDetailServices?.deliveryApi).toBe(mocks.localProjectSpaceDetailServices.deliveryApi)
+    expect(localDetailServices?.projectChatAgentApi).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatAgentApi
+    )
+    expect(localDetailServices?.loopItemExecutionApi).toBe(
+      mocks.localProjectSpaceDetailServices.loopItemExecutionApi
+    )
   })
 
   it('keeps local project execution available when cloud device discovery fails', async () => {
@@ -1286,6 +1886,132 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
   })
 
+  it('invalidates alias-owned plugin support through background discovery without an editor', async () => {
+    const device = {
+      id: 1,
+      device_id: 'logical',
+      socket_device_id: 'relay',
+      name: 'Remote',
+      status: 'online',
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      executor_version: '2.0.21',
+      runtime_instance_id: 'runtime',
+      is_default: false,
+    }
+    mocks.cloudListDevices.mockResolvedValue([device])
+    const services = createServices()
+    await services.cloudBackgroundApi!.listDevices!()
+    const api = services.projectDevicePluginApi!('relay')
+    mocks.cloudRuntimeIpcRequest.mockRejectedValue(
+      new Error(
+        'runtime_rpc_failed: Unsupported runtime RPC method: runtime.codex.app_server.request'
+      )
+    )
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    mocks.cloudListDevices.mockResolvedValue([])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.cloudListDevices.mockResolvedValue([device])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ marketplaces: [] })
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'relay' })
+  })
+
+  it('invalidates plugin knowledge and pending writes when runtime connections are recovered', async () => {
+    const device = {
+      id: 1,
+      device_id: 'remote',
+      name: 'Remote',
+      status: 'online',
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      executor_version: '2.0.21',
+      runtime_instance_id: 'runtime',
+      is_default: false,
+    }
+    mocks.cloudListDevices.mockResolvedValue([device])
+    const services = createServices()
+    await services.cloudBackgroundApi!.listDevices!()
+    const api = services.projectDevicePluginApi!('remote')
+    mocks.cloudRuntimeIpcRequest.mockRejectedValue(
+      new Error('Unsupported runtime RPC method: runtime.codex.app_server.request')
+    )
+    await expect(api.readState()).rejects.toMatchObject({ name: 'ProjectPluginsUnsupportedError' })
+    await services.recoverRuntimeConnections!()
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({ marketplaces: [] })
+    await expect(api.readState()).resolves.toMatchObject({ deviceId: 'remote' })
+    let finishRead!: (value: unknown) => void
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (_method, params) =>
+      params.method === 'plugin/installed'
+        ? new Promise(resolve => {
+            finishRead = resolve
+          })
+        : { marketplaces: [] }
+    )
+    const installing = api.installAvailablePlugin({
+      id: 'quality@team',
+      name: 'quality',
+      manifest: { marketplaceId: 'team', marketplacePath: '/plugins' },
+    } as never)
+    await vi.waitFor(() => expect(finishRead).toBeDefined())
+    await services.recoverRuntimeConnections!()
+    finishRead({ marketplaces: [] })
+    await expect(installing).rejects.toThrow()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      expect.objectContaining({ method: 'plugin/install' }),
+      'remote'
+    )
+  })
+
+  it('targets project plugin RPC and inventory to each cloud or remote execution device', async () => {
+    mocks.cloudListDevices.mockResolvedValue(
+      ['cloud', 'remote'].map((deviceType, index) => ({
+        id: index + 1,
+        device_id: `${deviceType}-device`,
+        name: deviceType,
+        status: 'online',
+        is_default: false,
+        device_type: deviceType,
+        bind_shell: 'claudecode',
+      }))
+    )
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, payload, deviceId) => {
+      expect(method).toBe('runtime.codex.app_server.request')
+      if (payload.method === 'plugin/installed') return { marketplaces: [] }
+      return {
+        marketplaces:
+          deviceId === 'cloud-device'
+            ? [
+                {
+                  name: 'team',
+                  path: '/cloud/plugins',
+                  plugins: [
+                    { id: 'quality@team', name: 'quality', installed: false, enabled: false },
+                  ],
+                },
+              ]
+            : [],
+      }
+    })
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+    const cloud = services.projectDevicePluginApi!('cloud-device')
+    const remote = services.projectDevicePluginApi!('remote-device')
+    expect((await cloud.readState()).marketplaceItems).toHaveLength(1)
+    expect((await remote.readState()).marketplaceItems).toEqual([])
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      { method: 'plugin/list', params: { cwds: null } },
+      'cloud-device'
+    )
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.codex.app_server.request',
+      { method: 'plugin/list', params: { cwds: null } },
+      'remote-device'
+    )
+  })
+
   it('routes extension commands through the Backend command API', async () => {
     mocks.cloudServices.deviceApi.executeCommand.mockResolvedValueOnce({
       success: true,
@@ -1346,12 +2072,25 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
-  it('merges remembered cloud devices into the local device when app_device_id matches', async () => {
+  it('merges remembered cloud devices into local IPC only with the same known runtime identity', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'local-device',
+        runtime_instance_id: 'shared-runtime',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+      },
+    ])
     mocks.cloudListDevices.mockResolvedValue([
       {
         id: 1,
         device_id: 'cloud-device',
         app_device_id: 'local-device',
+        runtime_instance_id: 'shared-runtime',
         name: 'Cloud Executor',
         status: 'online',
         is_default: false,
@@ -1574,6 +2313,124 @@ describe('createHybridWorkbenchServices', () => {
     expect(runtimeWork?.totalTasks).toBe(1)
   })
 
+  it.each([
+    ['online', 'runtime-other'],
+    ['offline', 'runtime-other'],
+    ['online', undefined],
+    ['offline', undefined],
+  ] as const)(
+    'starts local tasks when a %s app registration shares the address with runtime %s',
+    async (status, runtimeInstanceId) => {
+      const local = {
+        id: 0,
+        device_id: 'electron-current',
+        name: 'Local Executor',
+        status: 'online' as const,
+        is_default: true,
+        device_type: 'local' as const,
+        runtime_instance_id: 'runtime-current',
+      }
+      mocks.localListDevices.mockResolvedValue([local])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          ...local,
+          id: 1,
+          device_type: 'app',
+          app_device_id: local.device_id,
+          socket_device_id: 'app-record-1',
+          runtime_instance_id: runtimeInstanceId,
+          status,
+        },
+        {
+          ...local,
+          id: 2,
+          device_type: 'app',
+          app_device_id: local.device_id,
+          socket_device_id: 'app-record-2',
+        },
+      ])
+      const services = createServices()
+      await services.deviceApi.listDevices()
+      await services.cloudBackgroundApi!.listDevices!()
+      const devices = await services.deviceApi.listDevices()
+      expect(devices).toHaveLength(1)
+      expect(devices[0].runtime_routes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-2' })])
+      )
+      expect(devices[0].runtime_routes).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-1' })])
+      )
+      mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'local-task' })
+      for (const deviceId of [local.device_id, 'app-record-2']) {
+        const request = { deviceId, runtime: 'codex' as const, message: 'run' }
+        await expect(services.runtimeWorkApi!.createRuntimeTask(request)).resolves.toMatchObject({
+          accepted: true,
+          taskId: 'local-task',
+        })
+      }
+      expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(2)
+      await expect(
+        services.runtimeWorkApi!.createRuntimeTask({
+          deviceId: 'app-record-1',
+          runtime: 'codex',
+          message: 'run',
+        })
+      ).rejects.toThrow('executor-not-found:app-record-1')
+      expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(2)
+      expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps APP-alias recovery on the validated local runtime while it is offline', async () => {
+    const local = {
+      id: 0,
+      device_id: 'electron-current',
+      name: 'Local Executor',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      runtime_instance_id: 'runtime-current',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([
+      { ...local, id: 2, device_type: 'app', socket_device_id: 'app-record-2' },
+    ])
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.localListDevices.mockResolvedValue([{ ...local, status: 'offline' }])
+    const [device] = await services.deviceApi.listDevices()
+    expect(device.status).toBe('offline')
+    const address = { deviceId: 'app-record-2', taskId: 'task-1' }
+    const rollback = { address, message: '' }
+    mocks.localServices.runtimeWorkApi.rollbackRuntimeTask.mockRejectedValueOnce(
+      new Error('Local IPC offline')
+    )
+    mocks.localServices.runtimeWorkApi.cleanRuntimeBackgroundTerminals.mockRejectedValueOnce(
+      new Error('Local IPC offline')
+    )
+
+    await expect(
+      services.runtimeWorkApi!.createRuntimeTask({
+        deviceId: address.deviceId,
+        runtime: 'codex',
+        message: 'run',
+      })
+    ).rejects.toThrow('executor-offline')
+    await expect(services.runtimeWorkApi!.rollbackRuntimeTask(rollback)).rejects.toThrow(
+      'Local IPC offline'
+    )
+    await expect(
+      services.runtimeWorkApi!.cleanRuntimeBackgroundTerminals!(address)
+    ).rejects.toThrow('Local IPC offline')
+    expect(mocks.localServices.runtimeWorkApi.rollbackRuntimeTask).toHaveBeenCalledWith(rollback)
+    expect(mocks.localServices.runtimeWorkApi.cleanRuntimeBackgroundTerminals).toHaveBeenCalledWith(
+      address
+    )
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+  })
+
   it('forwards the delivery fence to the selected runtime adapter', async () => {
     const services = createServices()
     await services.deviceApi.listDevices()
@@ -1644,6 +2501,7 @@ describe('createHybridWorkbenchServices', () => {
       {
         id: 0,
         device_id: 'electron-current-app',
+        runtime_instance_id: 'current-app-runtime',
         name: 'Current App',
         status: 'online',
         is_default: true,
@@ -1657,6 +2515,7 @@ describe('createHybridWorkbenchServices', () => {
         device_id: 'logical-current-app',
         socket_device_id: 'app-record-1839',
         app_device_id: 'electron-current-app',
+        runtime_instance_id: 'current-app-runtime',
         name: 'Current App Registration',
         status: 'online',
         is_default: false,
@@ -2411,5 +3270,19 @@ describe('createHybridWorkbenchServices', () => {
         syncConfiguredModelCatalog: true,
       })
     )
+  })
+
+  test('routes decision router registration through the local Executor only', async () => {
+    const services = createServices()
+
+    expect(services.localDecisionRouterApi).toBe(mocks.localServices.localDecisionRouterApi)
+    expect(services.localDecisionRouterApi).toBeDefined()
+
+    const launch = { token: 't', baseUrl: 'http://127.0.0.1:1/v1/decision-router/t' }
+    mocks.localDecisionRouterApi.resolveLaunch.mockResolvedValue(launch)
+    await expect(services.localDecisionRouterApi!.resolveLaunch('smart-app:42')).resolves.toBe(
+      launch
+    )
+    expect(mocks.localDecisionRouterApi.resolveLaunch).toHaveBeenCalledWith('smart-app:42')
   })
 })

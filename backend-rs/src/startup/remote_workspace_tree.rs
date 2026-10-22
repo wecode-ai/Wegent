@@ -17,10 +17,13 @@ use std::{sync::Arc, time::Duration};
 
 pub async fn build<M: Mysql>(
     mysql: M,
-    task_policy: crate::task_routing::TaskPolicy,
+    task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
     erp: std::sync::Arc<
         dyn crate::erp_provider::ErpProvider<brz_redis::RedisService> + Send + Sync,
     >,
+    entity_resolvers: crate::permissions::EntityResolvers<brz_redis::RedisService>,
+    attachment_http: HttpClient,
+    video_result_urls: std::sync::Arc<dyn crate::video_result_urls::VideoResultUrlRefresh>,
 ) -> anyhow::Result<Arc<crate::remote_workspace_tree::Deps<M, brz_redis::RedisService>>> {
     let config = Config::load()?;
     let http = HttpClient::builder()
@@ -33,6 +36,7 @@ pub async fn build<M: Mysql>(
             config.redis_slave_url.as_deref(),
         )?;
         let redis_options = RedisServiceOptions::default()
+            .with_resource_name(super::redis::resource_name())
             .with_password(redis_config.password.clone())
             .with_timeout(Duration::from_secs(5));
         let master = redis_config.endpoint();
@@ -61,10 +65,15 @@ pub async fn build<M: Mysql>(
     Ok(build_deps(
         config,
         mysql,
-        task_policy,
+        task_store,
         http,
         redis,
         kinds_redis,
         erp,
+        entity_resolvers,
+        crate::remote_workspace_status::app_state::VideoRefresh {
+            client: attachment_http,
+            extension: video_result_urls,
+        },
     ))
 }

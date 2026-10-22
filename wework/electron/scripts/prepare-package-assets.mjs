@@ -2,6 +2,7 @@ import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 import { spawn } from 'node:child_process'
 import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
@@ -24,6 +25,7 @@ import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plu
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
+import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
@@ -41,14 +43,17 @@ const packageEnvironment = {
   WEWORK_CODEX_TARGET: packageTargets.codexTarget,
   WEWORK_DWS_TARGET: packageTargets.dwsTarget,
 }
-const { assetDirectory: harnessRuntimeAssetDirectory } = resolveHarnessRuntimeCachePaths(
-  weworkRoot,
-  packageEnvironment
-)
+const {
+  assetDirectory: harnessRuntimeAssetDirectory,
+  materializedRoot: harnessRuntimeMaterializedRoot,
+} = resolveHarnessRuntimeCachePaths(weworkRoot, packageEnvironment)
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
-    ? Promise.resolve(resolve(configuredExecutorPath))
+    ? waitForConfiguredExecutor(
+        resolve(configuredExecutorPath),
+        process.env.WEWORK_EXECUTOR_WAIT_SECONDS
+      )
     : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
   run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
@@ -59,32 +64,32 @@ const [executorPath] = await Promise.all([
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
 const runtimeCatalog = JSON.parse(
-  await readFile(join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
+  await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
 )
-const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
-  ['core', 'workbench'].includes(runtime.role)
-)
+const packagedCatalog = packagedHarnessRuntimeCatalog(runtimeCatalog)
+const packagedRuntimes = packagedCatalog.runtimes
 const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
-for (const runtime of packagedRuntimes) {
-  await cp(
-    join(harnessRuntimeAssetDirectory, runtime.assetName),
-    join(harnessResources, runtime.assetName)
-  )
+for (const assetName of new Set(packagedRuntimes.map(runtime => runtime.assetName))) {
+  await cp(join(harnessRuntimeAssetDirectory, assetName), join(harnessResources, assetName))
 }
 await writeFile(
   join(harnessResources, 'runtimes.json'),
-  `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
+  `${JSON.stringify(packagedCatalog, null, 2)}\n`,
   { mode: 0o600 }
 )
 await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {
-  await cp(corePluginSource(weworkRoot, directory), join(corePluginsRoot, corePluginTarget(directory)), {
-    recursive: true,
-    filter: source => !source.endsWith('.test.mjs'),
-  })
+  await cp(
+    corePluginSource(weworkRoot, directory),
+    join(corePluginsRoot, corePluginTarget(directory)),
+    {
+      recursive: true,
+      filter: source => !source.endsWith('.test.mjs'),
+    }
+  )
 }
 if (INTERNAL_CORE_PLUGINS.length > 0) {
   await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
@@ -213,6 +218,26 @@ async function buildExecutor(profile, target, targetDirectory) {
   return executorPackageBinaryPath(targetDirectory, target, profile)
 }
 
+async function waitForConfiguredExecutor(path, configuredWaitSeconds) {
+  const waitSeconds = Number(configuredWaitSeconds || 0)
+  if (!Number.isInteger(waitSeconds) || waitSeconds < 0) {
+    throw new Error(`Invalid WEWORK_EXECUTOR_WAIT_SECONDS: ${configuredWaitSeconds}`)
+  }
+
+  const deadline = Date.now() + waitSeconds * 1000
+  while (true) {
+    const file = await stat(path).catch(error => {
+      if (error?.code === 'ENOENT') return null
+      throw error
+    })
+    if (file?.isFile()) return path
+    if (Date.now() >= deadline) {
+      throw new Error(`Configured Wework executor was not available after ${waitSeconds}s: ${path}`)
+    }
+    await delay(250)
+  }
+}
+
 function run(command, args, cwd, environment = process.env) {
   return new Promise((resolvePromise, reject) => {
     const resolved = wrapWindowsScriptCommand(command, args)
@@ -221,10 +246,20 @@ function run(command, args, cwd, environment = process.env) {
       env: environment,
       stdio: 'inherit',
     })
+    const label = `${command} ${args.join(' ')}`
+    console.log(`Package asset process started: ${label} (pid ${child.pid})`)
     child.once('error', reject)
-    child.once('exit', code => {
-      if (code === 0) resolvePromise()
-      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}`))
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        console.log(`Package asset process completed: ${label} (pid ${child.pid})`)
+        resolvePromise()
+      } else {
+        reject(
+          new Error(
+            `${label} (pid ${child.pid}) exited with ${signal || `code ${code ?? 'unknown'}`}`
+          )
+        )
+      }
     })
   })
 }

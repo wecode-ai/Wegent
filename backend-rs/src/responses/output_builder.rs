@@ -8,18 +8,21 @@
 //! `app/services/openapi/output_builder.py`).
 //!
 //! The output items are the source's `ResponseOutputItem` union:
-//! `message`, `function_call`, `mcp_call`, `shell_call`, plus the
-//! image/video generation calls. Recorded traffic exercises the first
-//! four; the generation items are not emitted (their download-URL
-//! construction needs attachment/link services no recorded case reaches),
-//! so a generation block falls through to nothing — the same visible
-//! result as the source for any block whose id is present only in those
-//! paths is out of scope of the recorded contract.
+//! `message`, `function_call`, `mcp_call`, `shell_call`, plus the image and
+//! video generation calls. A generation block (`type` `image`/`video`)
+//! becomes a generation item, whose temporary download URLs are signed from
+//! the block's attachment ids.
 use serde::Serialize;
 use serde_json::Value;
 
+use super::generation_output::{
+    ImageGenerationCallItem, VideoGenerationCallItem, build_generation_output_item_from_block,
+};
+use super::http_error::HttpError;
 use super::python_json::python_json_dumps;
 use super::responses_repository::TaskRow;
+use super::shell_output::{ShellCallItem, ShellInput, build_shell_item, shell_call_status};
+use crate::config::AuthConfig;
 
 /// One persisted subtask `result` document
 /// (`_build_items_from_messages_chain` / `_build_items_from_blocks` inputs).
@@ -74,64 +77,39 @@ impl<'de> serde::Deserialize<'de> for ArgumentsText {
     }
 }
 
-/// A persisted `blocks` entry: `tool`, `text`, `thinking`, or an unknown
-/// kind that contributes nothing.
+/// A persisted `blocks` entry: `tool`, `text`, `thinking`, an `image`/`video`
+/// generation block, or an unknown kind that contributes nothing.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
-struct ToolOrTextBlock {
+pub(super) struct ToolOrTextBlock {
     #[serde(rename = "type")]
-    kind: Option<String>,
-    id: Option<String>,
-    status: Option<String>,
-    content: Option<String>,
-    tool_use_id: Option<String>,
-    tool_name: Option<String>,
-    tool_protocol: Option<String>,
-    server_label: Option<String>,
+    pub(super) kind: Option<String>,
+    pub(super) id: Option<String>,
+    pub(super) status: Option<String>,
+    pub(super) content: Option<String>,
+    pub(super) tool_use_id: Option<String>,
+    pub(super) tool_name: Option<String>,
+    pub(super) tool_protocol: Option<String>,
+    pub(super) server_label: Option<String>,
     /// The raw `tool_input` document, kept verbatim for the blocks path's
     /// `_dump_arguments` rendering (unknown keys and field order retained).
     #[serde(rename = "tool_input")]
-    tool_input_json: Option<Value>,
-    tool_output: Option<Value>,
-}
-
-/// The shell call's `input`: the parsed-arguments dict passthrough. The
-/// source hands `_parse_arguments(arguments)` (a plain dict) to the
-/// response model, so the object keeps the arguments' own keys, order,
-/// and number forms — a typed struct cannot express that contract.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct ShellInput(serde_json::Map<String, Value>);
-
-impl ShellInput {
-    /// The parsed arguments of a chain tool call.
-    fn from_arguments(arguments: &str) -> Self {
-        Self(parse_arguments(arguments))
-    }
-
-    /// The block's own `tool_input` object (source `_build_tool_item_from_block`
-    /// passes the block's input dict through).
-    fn from_tool_input(block: &ToolOrTextBlock) -> Self {
-        Self(
-            block
-                .tool_input_json
-                .as_ref()
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default(),
-        )
-    }
-
-    fn commands(&self) -> Vec<String> {
-        shell_commands(&self.0)
-    }
-
-    fn timeout_ms(&self) -> Option<i64> {
-        shell_timeout_ms(&self.0)
-    }
-
-    fn max_output_length(&self) -> Option<i64> {
-        shell_max_output_length(&self.0)
-    }
+    pub(super) tool_input_json: Option<Value>,
+    pub(super) tool_output: Option<Value>,
+    /// Generation-block fields (`type` `image`/`video`), read verbatim so the
+    /// output item preserves the block's own number forms.
+    pub(super) is_placeholder: Option<bool>,
+    pub(super) video_url: Option<Value>,
+    pub(super) video_attachment_id: Option<Value>,
+    pub(super) video_duration: Option<Value>,
+    pub(super) video_progress: Option<Value>,
+    pub(super) video_thumbnail: Option<Value>,
+    pub(super) image_urls: Option<Vec<Value>>,
+    pub(super) image_download_urls: Option<Vec<Value>>,
+    pub(super) image_attachment_ids: Option<Vec<Value>>,
+    pub(super) image_count: Option<Value>,
+    pub(super) image_size: Option<Value>,
+    pub(super) image_download_url_expires_in_seconds: Option<Value>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -164,60 +142,6 @@ impl<'de> serde::Deserialize<'de> for ResultText {
             other => other.to_string(),
         };
         Ok(Self(text))
-    }
-}
-
-/// `_parse_arguments`: empty input is `{}`; a JSON object parses to itself;
-/// everything else (invalid JSON, non-objects) is `{}`. The result is kept
-/// as the source's parsed-arguments dict passthrough: arbitrary keys
-/// (`working_dir`, …), insertion order, and original number forms.
-fn parse_arguments(value: &str) -> serde_json::Map<String, Value> {
-    if value.is_empty() {
-        return serde_json::Map::new();
-    }
-    match serde_json::from_str::<Value>(value) {
-        Ok(Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
-    }
-}
-
-/// The shell action's `commands` list: `commands` entries (empty strings
-/// dropped), else the single `command`.
-fn shell_commands(input: &serde_json::Map<String, Value>) -> Vec<String> {
-    if let Some(Value::Array(items)) = input.get("commands") {
-        return items
-            .iter()
-            .filter_map(|item| item.as_str())
-            .filter(|command| !command.is_empty())
-            .map(str::to_string)
-            .collect();
-    }
-    input
-        .get("command")
-        .and_then(Value::as_str)
-        .filter(|command| !command.is_empty())
-        .map(|command| vec![command.to_string()])
-        .unwrap_or_default()
-}
-
-/// The shell action's `timeout_ms`: `timeout_seconds` as int/float,
-/// multiplied by 1000.
-fn shell_timeout_ms(input: &serde_json::Map<String, Value>) -> Option<i64> {
-    let seconds = input.get("timeout_seconds")?;
-    if let Some(seconds) = seconds.as_i64() {
-        return Some(seconds * 1000);
-    }
-    seconds.as_f64().map(|seconds| (seconds * 1000.0) as i64)
-}
-
-/// The shell action's `max_output_length` (source passes the parsed value
-/// through; non-integers are absent in every recorded payload).
-fn shell_max_output_length(input: &serde_json::Map<String, Value>) -> Option<i64> {
-    match input.get("max_output_length") {
-        None | Some(Value::Null) => None,
-        Some(value) => value
-            .as_i64()
-            .or_else(|| value.as_f64().map(|value| value as i64)),
     }
 }
 
@@ -326,27 +250,6 @@ pub struct McpCallItem {
     output: ToolOutput,
 }
 
-/// `ShellCallAction`.
-#[derive(Debug, Serialize)]
-pub struct ShellCallAction {
-    commands: Vec<String>,
-    timeout_ms: Option<i64>,
-    max_output_length: Option<i64>,
-}
-
-/// `ShellCallOutputItem`.
-#[derive(Debug, Serialize)]
-pub struct ShellCallItem {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    id: String,
-    call_id: String,
-    status: &'static str,
-    action: ShellCallAction,
-    name: String,
-    input: ShellInput,
-}
-
 /// One emitted `ResponseOutputItem`, serialized as an untagged member of
 /// the source union. Field order follows each Pydantic model declaration.
 #[derive(Debug, Serialize)]
@@ -356,6 +259,8 @@ pub enum OutputItem {
     FunctionCall(FunctionCallItem),
     McpCall(McpCallItem),
     ShellCall(ShellCallItem),
+    ImageGenerationCall(ImageGenerationCallItem),
+    VideoGenerationCall(VideoGenerationCallItem),
 }
 
 /// `ResponseObject` (`app.schemas.openapi_response.ResponseObject`) with the
@@ -372,7 +277,7 @@ pub struct ResponseObject {
     pub model: String,
     pub output: Vec<OutputItem>,
     pub pending_user_input: Option<bool>,
-    pub pending_user_input_payload: Option<Box<serde_json::value::RawValue>>,
+    pub pending_user_input_payload: Option<brz_json::RawJson>,
     pub previous_response_id: Option<String>,
 }
 
@@ -435,7 +340,8 @@ pub fn task_to_response_object(
     model_string: &str,
     subtasks: &[super::responses_repository::SubtaskRow],
     previous_response_id: Option<String>,
-) -> ResponseObject {
+    config: &AuthConfig,
+) -> Result<ResponseObject, HttpError> {
     // Task status: the CRD `status.status` field, `PENDING` when absent.
     let task_crd = crate::crd::CrdDocument::project_opaque(&task.json.0);
     let status = task_crd.status.as_ref();
@@ -448,13 +354,13 @@ pub fn task_to_response_object(
     let created_at_unix = task_created_at_unix(task).unwrap_or_else(unix_now);
 
     // Output items from the subtasks (assistant role only).
-    let output = build_response_output(subtasks);
+    let output = build_response_output(subtasks, config)?;
 
     // Error only when the task failed and carries a message.
     let error = if wegent_status == "FAILED" {
         status
             .and_then(|status| status.error_message.as_ref())
-            .and_then(crate::json_compat::OpaqueJson::project::<String>)
+            .and_then(brz_json::OpaqueJson::project::<String>)
             .filter(|message| !message.is_empty())
             .map(|message| ResponseError {
                 code: "task_failed".to_string(),
@@ -464,7 +370,7 @@ pub fn task_to_response_object(
         None
     };
 
-    ResponseObject {
+    Ok(ResponseObject {
         id: format!("resp_{}", task.id),
         object: "response",
         created_at: created_at_unix,
@@ -476,7 +382,7 @@ pub fn task_to_response_object(
         pending_user_input: None,
         pending_user_input_payload: None,
         previous_response_id,
-    }
+    })
 }
 
 /// `int(created_at.timestamp())` for the task CRD's `status.createdAt`
@@ -488,7 +394,7 @@ fn task_created_at_unix(task: &TaskRow) -> Option<i64> {
         .status
         .as_ref()
         .and_then(|status| status.created_at.as_ref())
-        .and_then(crate::json_compat::OpaqueJson::project::<String>)
+        .and_then(brz_json::OpaqueJson::project::<String>)
         && let Some(naive) = parse_naive_datetime(&created_at)
     {
         return Some(naive_and_shanghai_to_unix(&naive));
@@ -524,15 +430,16 @@ fn unix_now() -> i64 {
 /// Only ASSISTANT subtasks produce items (`build_output_items_for_subtask`).
 pub fn build_response_output(
     subtasks: &[super::responses_repository::SubtaskRow],
-) -> Vec<OutputItem> {
+    config: &AuthConfig,
+) -> Result<Vec<OutputItem>, HttpError> {
     let mut output = Vec::new();
     for subtask in subtasks {
         if subtask.role != "ASSISTANT" {
             continue;
         }
-        output.extend(build_output_items_for_subtask(subtask));
+        output.extend(build_output_items_for_subtask(subtask, config)?);
     }
-    output
+    Ok(output)
 }
 
 /// `build_output_items_for_subtask`: `result.output_items` passthrough,
@@ -540,21 +447,22 @@ pub fn build_response_output(
 /// fallback.
 pub fn build_output_items_for_subtask(
     subtask: &super::responses_repository::SubtaskRow,
-) -> Vec<OutputItem> {
+    config: &AuthConfig,
+) -> Result<Vec<OutputItem>, HttpError> {
     let result = subtask
         .result
         .as_ref()
         .and_then(|result| result.0.value.as_ref());
     let Some(result) = result else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let message_status = subtask_status_to_message_status(&subtask.status);
 
     if let Some(items) = build_items_from_messages_chain(subtask, result, message_status) {
-        return items;
+        return Ok(items);
     }
-    if let Some(items) = build_items_from_blocks(subtask, result, message_status) {
-        return items;
+    if let Some(items) = build_items_from_blocks(subtask, result, message_status, config)? {
+        return Ok(items);
     }
 
     // Plain `value`/`reasoning_content` result (`build_output_items_for_subtask`
@@ -562,15 +470,15 @@ pub fn build_output_items_for_subtask(
     let text = result.value.0.as_str();
     let reasoning = result.reasoning_content.as_deref().unwrap_or("");
     if text.is_empty() && reasoning.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    vec![OutputItem::Message(OutputMessage {
+    Ok(vec![OutputItem::Message(OutputMessage {
         kind: "message",
         id: format!("msg_{}", subtask.id),
         status: message_status,
         role: "assistant",
         content: build_message_content(text, reasoning),
-    })]
+    })])
 }
 
 /// `_build_items_from_messages_chain`: for each assistant entry, the tool
@@ -717,74 +625,95 @@ fn build_tool_item_from_tool_call(
     }
 }
 
-/// `_build_items_from_blocks`: tool blocks become tool items, text and
-/// thinking blocks become messages, then the final `value`/`reasoning`
-/// message when no text was emitted.
+/// `_build_items_from_blocks`: tool blocks become tool items, generation
+/// (`image`/`video`) blocks become generation items, text and thinking blocks
+/// become messages, then the final `value`/`reasoning` message when no text or
+/// media was emitted.
 fn build_items_from_blocks(
     subtask: &super::responses_repository::SubtaskRow,
     result: &ResultInput,
     message_status: &'static str,
-) -> Option<Vec<OutputItem>> {
-    let blocks = result.blocks.as_ref()?;
+    config: &AuthConfig,
+) -> Result<Option<Vec<OutputItem>>, HttpError> {
+    let Some(blocks) = result.blocks.as_ref() else {
+        return Ok(None);
+    };
     if blocks.is_empty() {
-        return None;
+        return Ok(None);
     }
+
+    // `generation_default_status`: the item default when the block carries no
+    // status of its own.
+    let generation_default_status = if matches!(message_status, "in_progress" | "completed") {
+        message_status
+    } else {
+        "failed"
+    };
 
     let mut items: Vec<OutputItem> = Vec::new();
     let mut emitted_text = false;
     let mut emitted_reasoning = false;
+    let mut emitted_media = false;
     for block in blocks.iter().filter_map(|block| block.as_ref()) {
-        match block.kind.as_deref() {
-            Some("tool") => {
-                let tool_use_id = block
-                    .tool_use_id
-                    .as_deref()
-                    .or(block.id.as_deref())
-                    .unwrap_or("");
-                let tool_name = block.tool_name.as_deref().unwrap_or("");
-                // `_dump_arguments(tool_input)`: the block's own input
-                // document, `json.dumps`-rendered with its stored field
-                // order and unknown keys retained.
-                let arguments = block
-                    .tool_input_json
-                    .as_ref()
-                    .map(python_json_dumps)
-                    .unwrap_or_default();
-                match normalize_tool_protocol(tool_name, Some(block)) {
-                    ToolProtocol::Shell => {
-                        let input = ShellInput::from_tool_input(block);
-                        let item = build_shell_item(
-                            tool_use_id,
-                            tool_name,
-                            &input,
-                            shell_call_status(Some(block)),
-                        );
-                        items.push(item);
-                    }
-                    ToolProtocol::Mcp => {
-                        items.push(OutputItem::McpCall(McpCallItem {
-                            kind: "mcp_call",
-                            id: nonempty_or(tool_use_id, &format!("mcp_{tool_name}")),
-                            name: tool_name.to_string(),
-                            server_label: block.server_label.clone().unwrap_or_default(),
-                            arguments,
-                            status: shell_call_status(Some(block)),
-                            output: normalize_tool_output(block.tool_output.as_ref()),
-                        }));
-                    }
-                    ToolProtocol::Function => {
-                        let fallback_id = format!("fc_{tool_name}");
-                        let id = nonempty_or(tool_use_id, &fallback_id);
-                        items.push(OutputItem::FunctionCall(FunctionCallItem {
-                            kind: "function_call",
-                            id: id.clone(),
-                            call_id: id,
-                            name: tool_name.to_string(),
-                            arguments,
-                        }));
-                    }
+        if block.kind.as_deref() == Some("tool") {
+            let tool_use_id = block
+                .tool_use_id
+                .as_deref()
+                .or(block.id.as_deref())
+                .unwrap_or("");
+            let tool_name = block.tool_name.as_deref().unwrap_or("");
+            // `_dump_arguments(tool_input)`: the block's own input
+            // document, `json.dumps`-rendered with its stored field
+            // order and unknown keys retained.
+            let arguments = block
+                .tool_input_json
+                .as_ref()
+                .map(python_json_dumps)
+                .unwrap_or_default();
+            match normalize_tool_protocol(tool_name, Some(block)) {
+                ToolProtocol::Shell => {
+                    let input = ShellInput::from_tool_input(block);
+                    let item = build_shell_item(
+                        tool_use_id,
+                        tool_name,
+                        &input,
+                        shell_call_status(Some(block)),
+                    );
+                    items.push(item);
+                }
+                ToolProtocol::Mcp => {
+                    items.push(OutputItem::McpCall(McpCallItem {
+                        kind: "mcp_call",
+                        id: nonempty_or(tool_use_id, &format!("mcp_{tool_name}")),
+                        name: tool_name.to_string(),
+                        server_label: block.server_label.clone().unwrap_or_default(),
+                        arguments,
+                        status: shell_call_status(Some(block)),
+                        output: normalize_tool_output(block.tool_output.as_ref()),
+                    }));
+                }
+                ToolProtocol::Function => {
+                    let fallback_id = format!("fc_{tool_name}");
+                    let id = nonempty_or(tool_use_id, &fallback_id);
+                    items.push(OutputItem::FunctionCall(FunctionCallItem {
+                        kind: "function_call",
+                        id: id.clone(),
+                        call_id: id,
+                        name: tool_name.to_string(),
+                        arguments,
+                    }));
                 }
             }
+            continue;
+        }
+        if let Some(item) =
+            build_generation_output_item_from_block(block, generation_default_status, config)?
+        {
+            emitted_media = true;
+            items.push(item);
+            continue;
+        }
+        match block.kind.as_deref() {
             Some("text") => {
                 if let Some(content) = block.content.as_deref().filter(|c| !c.is_empty()) {
                     emitted_text = true;
@@ -803,7 +732,7 @@ fn build_items_from_blocks(
         }
     }
 
-    let final_text = if emitted_text {
+    let final_text = if emitted_text || emitted_media {
         String::new()
     } else {
         result.value.0.clone()
@@ -823,7 +752,7 @@ fn build_items_from_blocks(
             content: build_message_content(&final_text, reasoning),
         }));
     }
-    Some(items)
+    Ok(Some(items))
 }
 
 /// One `message` output item with the `msg_{id}_{index}` id
@@ -841,38 +770,6 @@ fn text_message(
         status: message_status,
         role: "assistant",
         content: build_message_content(text, reasoning),
-    })
-}
-
-/// `ShellCallOutputItem` from either the chain arguments or the block's
-/// `tool_input`.
-fn build_shell_item(
-    tool_use_id: &str,
-    tool_name: &str,
-    input: &ShellInput,
-    status: &'static str,
-) -> OutputItem {
-    let commands = input.commands();
-    let timeout_ms = input.timeout_ms();
-    let max_output_length = input.max_output_length();
-    let name = if tool_name.is_empty() {
-        "exec"
-    } else {
-        tool_name
-    };
-    let id = nonempty_or(tool_use_id, &format!("shell_{name}"));
-    OutputItem::ShellCall(ShellCallItem {
-        kind: "shell_call",
-        id: id.clone(),
-        call_id: id,
-        status,
-        action: ShellCallAction {
-            commands,
-            timeout_ms,
-            max_output_length,
-        },
-        name: name.to_string(),
-        input: input.clone(),
     })
 }
 
@@ -921,19 +818,6 @@ fn normalize_tool_protocol(tool_name: &str, block: Option<&ToolOrTextBlock>) -> 
     ToolProtocol::Function
 }
 
-/// `_shell_call_status`: `error` -> failed, `pending` -> in_progress,
-/// everything else (including no block) -> completed.
-fn shell_call_status(block: Option<&ToolOrTextBlock>) -> &'static str {
-    match block
-        .and_then(|block| block.status.as_deref())
-        .unwrap_or("")
-    {
-        "error" => "failed",
-        "pending" => "in_progress",
-        _ => "completed",
-    }
-}
-
 /// `str((block or {}).get("server_label") or "")`.
 fn server_label_of(block: Option<&ToolOrTextBlock>) -> String {
     block
@@ -942,7 +826,7 @@ fn server_label_of(block: Option<&ToolOrTextBlock>) -> String {
         .to_string()
 }
 
-fn nonempty_or(value: &str, fallback: &str) -> String {
+pub(super) fn nonempty_or(value: &str, fallback: &str) -> String {
     if value.is_empty() {
         fallback.to_string()
     } else {

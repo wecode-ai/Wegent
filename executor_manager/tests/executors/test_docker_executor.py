@@ -17,6 +17,28 @@ from shared.status import TaskStatus
 class TestDockerExecutor:
     """Test cases for DockerExecutor"""
 
+    def test_workspace_mount_and_runtime_root_agree(
+        self, executor, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("EXECUTOR_WORKSPACE", str(tmp_path))
+        command = []
+        executor._add_workspace_mount(command)
+        assert command == [
+            "-v",
+            f"{tmp_path}:/root/.wegent/workspace",
+            "-e",
+            "WORKSPACE_ROOT=/root/.wegent/workspace",
+        ]
+        assert list(tmp_path.iterdir()) == []
+
+    def test_without_workspace_mount_uses_executor_home_default(
+        self, executor, monkeypatch
+    ):
+        monkeypatch.delenv("EXECUTOR_WORKSPACE", raising=False)
+        command = []
+        executor._add_workspace_mount(command)
+        assert command == []
+
     @pytest.fixture
     def mock_subprocess(self):
         """Mock subprocess module"""
@@ -280,7 +302,12 @@ class TestDockerExecutor:
         executor._add_workspace_mount(cmd)
 
         assert workspace.is_dir()
-        assert cmd == ["-v", f"{workspace}:/workspace"]
+        assert cmd == [
+            "-v",
+            f"{workspace}:/root/.wegent/workspace",
+            "-e",
+            "WORKSPACE_ROOT=/root/.wegent/workspace",
+        ]
 
     def test_submit_executor_existing_container_success(self, executor):
         """Test submitting executor to existing container successfully"""

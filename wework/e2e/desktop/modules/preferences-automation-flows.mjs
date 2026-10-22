@@ -182,6 +182,9 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
       Object.prototype.hasOwnProperty.call(
         {
           app_started: true,
+          app_startup_attempted: true,
+          app_startup_failed: true,
+          app_startup_succeeded: true,
           feature_opened: true,
           telemetry_preference_changed: true,
         },
@@ -232,8 +235,10 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
 
 async function declineInitialTelemetryConsent(control) {
   const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
-  const overlayCount = Number(await control.command('getElementCount', overlaySelector))
-  if (overlayCount === 0) return
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
+  })
   await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -262,9 +267,13 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
   const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
   await control.command('click', '[data-testid="settings-button"]', { visible: true })
   await control.command('click', '[data-testid="settings-menu-button"]')
-  await control.command('waitFor', toggleSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),
+    'The experimental features control did not mount'
+  )
+  await control.command('scrollIntoView', toggleSelector, { visible: false })
+  await control.command('waitFor', toggleSelector, { visible: true })
   if (
     (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
     String(enabled)
@@ -788,10 +797,10 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
         interface: plugin.spec.interface,
       })
     )
-    const manifestPath = join(capabilities, 'manifest.json')
+    const manifestPath = join(capabilities, 'manifest-v2.json')
     const manifest = (await pathExists(manifestPath))
       ? JSON.parse(await readFile(manifestPath, 'utf8'))
-      : { plugins: {} }
+      : { version: 2, plugins: {} }
     manifest.plugins[name + '@wegent'] = {
       name,
       marketplace: 'wegent',

@@ -26,6 +26,9 @@ case "$1" in
     inspect)
         echo "true"
         ;;
+    exec)
+        exit "${FAKE_RUNTIME_STATUS:-0}"
+        ;;
     ps)
         echo "$CONTAINER_NAME"
         ;;
@@ -96,6 +99,17 @@ export FAKE_API_STATUS=404
 if bash "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
     echo "Expected standalone verification to fail when the API proxy returns 404."
     cat "$TMP_DIR/output.log"
+    exit 1
+fi
+
+export FAKE_API_STATUS=400
+export FAKE_RUNTIME_STATUS=1
+if bash "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/runtime-failure.log" 2>&1; then
+    echo "Expected standalone verification to fail when Knowledge Runtime is unavailable."
+    exit 1
+fi
+if ! grep -q 'http://127.0.0.1:8200/internal/rag/health' "$FAKE_DOCKER_LOG"; then
+    echo "Expected Knowledge Runtime to be checked inside the container."
     exit 1
 fi
 

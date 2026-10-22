@@ -7,39 +7,57 @@ description = "Incremental Rust migration gateway for the Wegent backend"
 license = "Apache-2.0"
 
 [dependencies]
+aes = "0.8"
 aes-gcm = "0.10"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.23.1"
 bcrypt = "0.19"
-brz-http = { version = "=0.0.8", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-gateway = { version = "=0.1.4", features = ["fallback-log"] }
-brz-http-server = { version = "=0.0.20", features = ["macros", "metrics", "api-log", "slow-log"] }
-brz-logs = { version = "=0.0.10", features = ["metrics"] }
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+brz-http = { version = "=0.0.13", features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-gateway = { version = "=0.2.10", features = ["fallback-log"] }
+brz-http-server = { version = "=0.0.32", features = ["macros", "metrics", "api-log", "slow-log"] }
+brz-logs = { version = "=0.0.16", features = ["metrics"] }
 # Keep the Breeze components on exact published versions and one metrics
 # registry revision in the final backend binary.
-brz-metrics = "=0.0.7"
-brz-mysql = { version = "=0.0.12", features = ["metrics", "slow-log"] }
-brz-redis = { version = "=0.0.10", features = ["metrics", "slow-log"] }
+brz-metrics = { version = "=0.0.12", features = ["tokio"] }
+brz-mysql = { version = "=0.0.20", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.16", features = ["metrics", "slow-log"] }
+bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
 erased-serde = "0.4"
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+getrandom = "0.2"
 hmac = "0.12"
 http = "1"
 hyper = { version = "1", features = ["http1", "server"] }
 jsonwebtoken = { version = "9.3", default-features = false }
+# `md5` for the repository-token digest and the URL-metadata cache key
+# (`hashlib.md5`).
+md-5 = "0.10"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
-# `preserve_order` keeps JSON objects insertion-ordered, so an opaque value
-# echoed from an upstream response keeps the source's dict order.
-# `raw_value` carries those values through without materializing them.
-serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+brz-json = "=0.0.11"
+# Preserve source dict ordering at the remaining dynamic mutation boundaries.
+serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.10"
 sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.8"
+tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
+turbojpeg = { version = "=1.5.1", default-features = false, features = ["cmake"] }
 url = "2"
+yaml-rust2 = { version = "0.10.4", default-features = false }
+# Pillow's PNG encoder compresses with `deflateInit2(level 9, windowBits 15,
+# memLevel 9, Z_FILTERED)`. `flate2` fixes memLevel at 8 and `zlib-rs` does not
+# reproduce zlib's deflate stream byte-for-byte, so the attachment PNG encoder
+# calls the already-linked zlib through this FFI surface.
+libz-sys = "1.1"
+brotli = { version = "8.0.4", default-features = false, features = ["std"] }
+zstd = { version = "0.13.1", features = ["arrays"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

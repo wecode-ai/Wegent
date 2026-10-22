@@ -10,6 +10,7 @@ import {
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
+import { ApplicationMenuButton } from './ApplicationMenuButton'
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
 import type { ReactNode } from 'react'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
@@ -58,6 +59,10 @@ export function ChromeTitlebar({
           <MacOSTitleBarDragRegion />
         </div>
       )}
+
+      {/* Windows/Linux: the frameless window hides the OS menu bar, so the
+          application menu is exposed through a native button instead. */}
+      {isDesktop && (platform === 'win' || platform === 'linux') && <ApplicationMenuButton />}
 
       {beforeTabs && (
         <div

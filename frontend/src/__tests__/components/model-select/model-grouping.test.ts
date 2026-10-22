@@ -14,6 +14,7 @@ const models: GroupableModel[] = [
     displayName: 'Model A',
     provider: 'provider-one',
     modelId: 'model-a-id',
+    capability: 'Fast reasoning for complex tasks',
     modelGroup: 'Primary One',
     modelSubGroup: 'Secondary One',
   },
@@ -61,6 +62,7 @@ describe('model grouping', () => {
     expect(matchesModelSearch(models[0], 'primary one')).toBe(true)
     expect(matchesModelSearch(models[0], 'secondary one')).toBe(true)
     expect(matchesModelSearch(models[0], 'provider-one')).toBe(true)
+    expect(matchesModelSearch(models[0], 'reasoning')).toBe(true)
     expect(matchesModelSearch(models[0], 'missing')).toBe(false)
   })
 })

@@ -40,6 +40,34 @@ pub(crate) fn transcript_snapshot_messages(link: &RuntimeTaskLink) -> Vec<Value>
     runtime_handle_messages(&link.runtime_handle, "transcriptSnapshotMessages")
 }
 
+pub(crate) fn transcript_snapshot_pagination(
+    link: &RuntimeTaskLink,
+) -> Option<(Option<String>, Option<String>)> {
+    let thread_id = link.thread_id.as_deref()?;
+    if link
+        .runtime_handle
+        .get("transcriptSnapshotThreadId")?
+        .as_str()?
+        != thread_id
+    {
+        return None;
+    }
+    let pagination = link
+        .runtime_handle
+        .get("transcriptSnapshotPagination")?
+        .as_object()?;
+    Some((
+        pagination
+            .get("beforeCursor")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        pagination
+            .get("afterCursor")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    ))
+}
+
 pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: Vec<Value>) {
     if !runtime_handle.is_object() {
         *runtime_handle = Value::Object(Map::new());
@@ -54,6 +82,8 @@ pub(crate) fn set_transcript_snapshot_messages(
     runtime_handle: &mut Value,
     thread_id: &str,
     messages: Vec<Value>,
+    before_cursor: Option<String>,
+    after_cursor: Option<String>,
 ) {
     if thread_id.trim().is_empty() {
         return;
@@ -71,6 +101,10 @@ pub(crate) fn set_transcript_snapshot_messages(
     object.insert(
         "transcriptSnapshotMessages".to_owned(),
         Value::Array(messages),
+    );
+    object.insert(
+        "transcriptSnapshotPagination".to_owned(),
+        serde_json::json!({"beforeCursor": before_cursor, "afterCursor": after_cursor}),
     );
 }
 
@@ -139,6 +173,7 @@ pub(crate) fn clear_transcript_snapshot_messages(runtime_handle: &mut Value) {
     if let Some(object) = runtime_handle.as_object_mut() {
         object.remove("transcriptSnapshotMessages");
         object.remove("transcriptSnapshotThreadId");
+        object.remove("transcriptSnapshotPagination");
     }
 }
 
@@ -154,7 +189,7 @@ pub(crate) fn append_unique_transcript_messages(
             if same_user_client_message_id(existing, &message) {
                 preserve_local_user_message_metadata(&mut message, existing);
             }
-            *existing = message;
+            *existing = merge_assistant_transcript_message(existing, message);
         } else if let Some(existing) = target
             .iter_mut()
             .find(|existing| same_user_client_message_id(existing, &message))
@@ -165,6 +200,79 @@ pub(crate) fn append_unique_transcript_messages(
             target.push(message);
         }
     }
+}
+
+pub(crate) fn visit_transcript_blocks_mut(message: &mut Value, mut visit: impl FnMut(&mut Value)) {
+    for key in ["blocks", "runtimeItems"] {
+        let Some(items) = message.get_mut(key).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for item in items {
+            let block = if key == "runtimeItems" {
+                let Some(block) = item.get_mut("block") else {
+                    continue;
+                };
+                block
+            } else {
+                item
+            };
+            visit(block);
+        }
+    }
+}
+
+pub(crate) fn merge_assistant_transcript_message(existing: &Value, mut incoming: Value) -> Value {
+    if existing.get("role").and_then(Value::as_str) != Some("assistant")
+        || incoming.get("role").and_then(Value::as_str) != Some("assistant")
+    {
+        return incoming;
+    }
+    let Some(object) = incoming.as_object_mut() else {
+        return incoming;
+    };
+    // A live projection contains only observed notifications. Preserve native
+    // history items, replacing overlapping IDs with their latest state.
+    for key in ["blocks", "runtimeItems"] {
+        let mut items = existing
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for item in object
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let id = item.get("id").and_then(Value::as_str);
+            if let Some(previous) = items
+                .iter_mut()
+                .find(|previous| id.is_some() && previous.get("id").and_then(Value::as_str) == id)
+            {
+                *previous = item.clone();
+            } else {
+                items.push(item.clone());
+            }
+        }
+        if !items.is_empty() {
+            object.insert(key.to_owned(), Value::Array(items));
+        }
+    }
+    if object
+        .get("content")
+        .and_then(Value::as_str)
+        .map_or(true, str::is_empty)
+    {
+        if let Some(content) = existing.get("content") {
+            object.insert("content".to_owned(), content.clone());
+        }
+    }
+    if let Some(previous) = existing.as_object() {
+        for (key, value) in previous {
+            object.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    incoming
 }
 
 fn same_user_client_message_id(left: &Value, right: &Value) -> bool {
@@ -357,12 +465,24 @@ mod tests {
             &mut link.runtime_handle,
             "thread-1",
             vec![json!({"id": "message-1", "role": "assistant"})],
+            Some("native-cursor".to_owned()),
+            None,
         );
 
+        assert_eq!(
+            transcript_snapshot_pagination(&link),
+            Some((Some("native-cursor".to_owned()), None))
+        );
         assert_eq!(transcript_snapshot_messages(&link).len(), 1);
 
         link.thread_id = Some("thread-2".to_owned());
         assert!(transcript_snapshot_messages(&link).is_empty());
+        assert!(transcript_snapshot_pagination(&link).is_none());
+        clear_transcript_snapshot_messages(&mut link.runtime_handle);
+        assert!(link
+            .runtime_handle
+            .get("transcriptSnapshotPagination")
+            .is_none());
     }
 
     #[test]
@@ -412,6 +532,27 @@ mod tests {
         assert_eq!(messages[0]["content"], "Provider prompt");
         assert_eq!(messages[0]["turnId"], "turn-1");
         assert_eq!(messages[0]["attachments"][0]["id"], "attachment-1");
+    }
+
+    #[test]
+    fn live_projection_preserves_native_items_and_updates_overlaps() {
+        let mut messages = vec![json!({
+            "id": "assistant-turn-1", "role": "assistant", "content": "Earlier result",
+            "blocks": [{"id": "old"}, {"id": "overlap", "status": "pending"}],
+            "runtimeItems": [{"id": "old"}, {"id": "overlap"}],
+        })];
+        append_unique_transcript_messages(
+            &mut messages,
+            vec![json!({
+                "id": "assistant-turn-1", "role": "assistant", "content": "",
+                "blocks": [{"id": "overlap", "status": "success"}, {"id": "new"}],
+                "runtimeItems": [{"id": "overlap"}, {"id": "new"}],
+            })],
+        );
+        assert_eq!(messages[0]["content"], "Earlier result");
+        assert_eq!(messages[0]["blocks"].as_array().unwrap().len(), 3);
+        assert_eq!(messages[0]["blocks"][1]["status"], "success");
+        assert_eq!(messages[0]["runtimeItems"].as_array().unwrap().len(), 3);
     }
 
     #[test]

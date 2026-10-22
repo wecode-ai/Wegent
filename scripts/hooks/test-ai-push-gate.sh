@@ -43,14 +43,38 @@ create_stub() {
     cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
+if [ "$(basename "$0")" = "pnpm" ]; then
+    case "$*" in
+        '--filter wework run prepare:electron')
+            rm -f "$CALL_LOG.electron-typecheck-complete"
+            ;;
+        '--dir wework/electron typecheck')
+            # Keep the shared staging directory busy until typechecking finishes.
+            sleep 0.2
+            touch "$CALL_LOG.electron-typecheck-complete"
+            ;;
+        '--dir wework/electron test')
+            if [ ! -f "$CALL_LOG.electron-typecheck-complete" ]; then
+                echo 'Electron tests started before typechecking finished staging process-explorer' >&2
+                exit 1
+            fi
+            ;;
+    esac
+fi
 exit 0
 STUB
     chmod +x "$path"
 }
 
-for cmd in cargo uv black isort pytest npm npx pnpm; do
+for cmd in cargo uv black isort pytest npm npx pnpm caffeinate; do
     create_stub "$cmd"
 done
+
+cat > "$TMP_DIR/bin/uname" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "${PUSH_GATE_TEST_PLATFORM:-Linux}"
+STUB
+chmod +x "$TMP_DIR/bin/uname"
 
 export CALL_LOG
 export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Wegent Push Gate Test}"
@@ -443,6 +467,21 @@ EOF
 if ! grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
     echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Rust test suite."
     echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+AI_VERIFIED=1 \
+PUSH_GATE_TEST_PLATFORM=Darwin \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/macos-sleep.out" 2>&1
+refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
+EOF
+
+if ! grep -qE '^caffeinate -is -w [0-9]+$' "$CALL_LOG"; then
+    echo "Expected macOS checks to hold a sleep assertion for the hook lifetime."
     cat "$CALL_LOG"
     exit 1
 fi

@@ -1,9 +1,14 @@
 import type { RuntimeWorkListResponse } from '@/types/api'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 
 export function debugRuntimeSidebarState(event: string, details: Record<string, unknown>): void {
-  if (globalThis.localStorage?.getItem('wework:debug-runtime') !== '1') return
+  if (
+    !getDesktopE2ERuntimeConfig().controlUrl &&
+    globalThis.localStorage?.getItem('wework:debug-runtime') !== '1'
+  )
+    return
 
-  console.info('[Wework] Runtime sidebar state', {
+  console.debug('[Wework] Runtime sidebar state', {
     event,
     ...details,
   })

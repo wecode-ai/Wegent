@@ -16,8 +16,6 @@ from app.schemas.connector import (
     ConnectorAppReadItem,
     ConnectorAppReadRequest,
     ConnectorAppReadResponse,
-    ConnectorInstalledApp,
-    ConnectorInstalledResponse,
     ConnectorToolSummary,
 )
 from app.services.connector_apps import ConnectorApp, connector_app_service
@@ -125,32 +123,3 @@ async def read_apps(
             )
         )
     return ConnectorAppReadResponse(apps=apps, missing_app_ids=missing)
-
-
-@router.get("/installed", response_model=ConnectorInstalledResponse)
-async def installed_apps(
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> ConnectorInstalledResponse:
-    tools_by_app = await _tool_summaries_by_app(db, user)
-    apps: list[ConnectorInstalledApp] = []
-    for app in connector_app_service.list_visible_apps(db, user):
-        user_view = connector_app_service.user_response(db, app, user)
-        if user_view.connection.status != "connected":
-            continue
-        app_tools = tools_by_app.get(_app_id(app), [])
-        apps.append(
-            ConnectorInstalledApp(
-                id=_app_id(app),
-                slug=app.slug,
-                name=app.name,
-                description=app.description,
-                icon_url=app.icon_url,
-                runtime_name=app.name if app_tools else None,
-                enabled=app.enabled,
-                callable=bool(app_tools),
-                connection=user_view.connection,
-                tool_summaries=app_tools,
-            )
-        )
-    return ConnectorInstalledResponse(apps=apps)

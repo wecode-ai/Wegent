@@ -1,4 +1,5 @@
 import {
+  DEEPSEEK_FLASH_MODEL_ID,
   DEEPSEEK_V4_CONTEXT_WINDOW,
   DEEPSEEK_V4_FLASH_MODEL_ID,
   DEEPSEEK_V4_PRO_MODEL_ID,
@@ -173,13 +174,20 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     apiFormat: 'openai-responses',
     requestPath: '/responses',
     modelsPath: '/models',
-    allowedModelIds: [DEEPSEEK_V4_FLASH_MODEL_ID, DEEPSEEK_V4_PRO_MODEL_ID],
+    allowedModelIds: [
+      DEEPSEEK_FLASH_MODEL_ID,
+      DEEPSEEK_V4_FLASH_MODEL_ID,
+      DEEPSEEK_V4_PRO_MODEL_ID,
+    ],
     toolProfile: 'custom',
     group: 'DeepSeek',
     contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
     webSearchMode: 'live',
     imageGenerationEnabled: false,
     modelDefaults: {
+      [DEEPSEEK_FLASH_MODEL_ID]: {
+        contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
+      },
       [DEEPSEEK_V4_FLASH_MODEL_ID]: {
         contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
       },

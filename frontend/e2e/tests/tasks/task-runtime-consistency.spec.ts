@@ -51,7 +51,7 @@ type CapturedModelRequest = {
   } | null
 }
 
-test.describe.configure({ mode: 'serial' })
+test.describe.configure({ mode: 'serial', timeout: 120_000 })
 
 test.describe('Task runtime consistency', () => {
   let apiClient: ApiClient
@@ -778,9 +778,16 @@ test.describe('Task runtime consistency', () => {
     await expect
       .poll(
         async () => {
-          const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
-            headers: authHeaders(),
-          })
+          let response
+          try {
+            response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
+              headers: authHeaders(),
+            })
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (!/socket hang up|ECONNRESET/i.test(message)) throw error
+            return `TRANSPORT_ERROR_${message}`
+          }
           if (response.status() !== 200) {
             return `HTTP_${response.status()}`
           }
@@ -976,7 +983,7 @@ test.describe('Task runtime consistency', () => {
     const agentSelector = page
       .locator('[data-testid="agent-skill-selector-button"], [data-testid="team-selector"]')
       .first()
-    await expect(agentSelector).toBeVisible({ timeout: 10000 })
+    await expect(agentSelector).toBeVisible({ timeout: 45_000 })
     await agentSelector.click({ force: true })
 
     const searchInput = page

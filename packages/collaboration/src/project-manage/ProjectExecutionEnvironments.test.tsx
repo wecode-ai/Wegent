@@ -4,174 +4,175 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  createCollaborationTranslator,
-  type CollaborationLocale,
-} from "../i18n";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import type {
-  CollaborationExecutionEnvironment,
-  CollaborationProject,
-} from "../types";
-import { ProjectExecutionEnvironments } from "./ProjectExecutionEnvironments";
+import { createCollaborationTranslator, type CollaborationLocale } from '../i18n'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationExecutionEnvironment, CollaborationProject } from '../types'
+import { ProjectExecutionEnvironments } from './ProjectExecutionEnvironments'
 
 const repositoryOptions = [
   {
     id: 1,
-    name: "wegent",
-    fullName: "wecode-ai/wegent",
-    cloneUrl: "ssh://git@git.example.com:2222/wecode-ai/wegent.git",
-    gitDomain: "git.example.com",
-    provider: "gitlab",
+    name: 'wegent',
+    fullName: 'wecode-ai/wegent',
+    cloneUrl: 'ssh://git@git.example.com:2222/wecode-ai/wegent.git',
+    gitDomain: 'git.example.com',
+    provider: 'gitlab',
   },
   {
     id: 2,
-    name: "internal-sdk",
-    fullName: "wecode-ai/internal-sdk",
-    cloneUrl: "https://git.example.com/wecode-ai/internal-sdk.git",
-    gitDomain: "git.example.com",
-    provider: "gitlab",
+    name: 'internal-sdk',
+    fullName: 'wecode-ai/internal-sdk',
+    cloneUrl: 'https://git.example.com/wecode-ai/internal-sdk.git',
+    gitDomain: 'git.example.com',
+    provider: 'gitlab',
   },
-];
+]
 
 function repositoryKey(option: (typeof repositoryOptions)[number]) {
-  return `${option.provider}::${option.gitDomain}::${option.fullName}`;
+  return `${option.provider}::${option.gitDomain}::${option.fullName}`
 }
 
 const project: CollaborationProject = {
-  id: "project-1",
-  workspace_id: "workspace-1",
-  public_id: "project-public-1",
-  project_key: "PRJ",
-  name: "Project",
-  description: "",
-  project_store: "backend",
-  task_provider: "local",
+  id: 'project-1',
+  workspace_id: 'workspace-1',
+  public_id: 'project-public-1',
+  project_key: 'PRJ',
+  name: 'Project',
+  description: '',
+  project_store: 'backend',
+  task_provider: 'local',
   provider_config: {},
   created_by_user_id: 1,
-  access_role: "Owner",
-  status: "active",
+  access_role: 'Owner',
+  status: 'active',
   tags: [],
   version: 1,
-  created_at: "2026-09-14T00:00:00Z",
-  updated_at: "2026-09-14T00:00:00Z",
-};
+  created_at: '2026-09-14T00:00:00Z',
+  updated_at: '2026-09-14T00:00:00Z',
+}
 
 function environment(
   deviceId: number,
   name: string,
-  status: CollaborationExecutionEnvironment["status"],
-  deviceKey = `device-${deviceId}`,
+  status: CollaborationExecutionEnvironment['status'],
+  deviceKey = `device-${deviceId}`
 ): CollaborationExecutionEnvironment {
   return {
     id: `environment-${deviceId}`,
     device_id: deviceId,
     device_key: deviceKey,
     name,
-    kind: "local_device",
-    coding_tools: ["codex"],
-    owner_type: "user",
-    owner_id: "1",
-    owner_name: "Owner",
+    kind: 'local_device',
+    coding_tools: ['codex'],
+    owner_type: 'user',
+    owner_id: '1',
+    owner_name: 'Owner',
     status,
-    updated_at: "2026-09-14T00:00:00Z",
-  };
+    updated_at: '2026-09-14T00:00:00Z',
+  }
 }
 
-let root: Root | null = null;
-let container: HTMLDivElement | null = null;
+let root: Root | null = null
+let container: HTMLDivElement | null = null
 
 afterEach(() => {
-  act(() => root?.unmount());
-  root = null;
-  container?.remove();
-  container = null;
-});
+  act(() => root?.unmount())
+  root = null
+  container?.remove()
+  container = null
+})
 
-const prefix = "collaboration-project-execution-environment";
+const prefix = 'collaboration-project-execution-environment'
 
 function element<T extends HTMLElement>(suffix: string): T {
-  const result = container?.querySelector<T>(
-    `[data-testid="${prefix}${suffix}"]`,
-  );
-  if (!result) throw new Error(`Missing element: ${suffix}`);
-  return result;
+  const result = container?.querySelector<T>(`[data-testid="${prefix}${suffix}"]`)
+  if (!result) throw new Error(`Missing element: ${suffix}`)
+  return result
 }
 
 async function change(suffix: string, value: string) {
+  if (element(suffix).closest('details')) await openPreparation()
   await act(async () => {
-    const control = element<
-      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-    >(suffix);
+    const control = element<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(suffix)
     const prototype =
       control instanceof HTMLInputElement
         ? HTMLInputElement.prototype
         : control instanceof HTMLTextAreaElement
           ? HTMLTextAreaElement.prototype
-          : HTMLSelectElement.prototype;
-    Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(
-      control,
-      value,
-    );
+          : HTMLSelectElement.prototype
+    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(control, value)
     control.dispatchEvent(
-      new Event(control instanceof HTMLSelectElement ? "change" : "input", {
+      new Event(control instanceof HTMLSelectElement ? 'change' : 'input', {
         bubbles: true,
-      }),
-    );
-  });
+      })
+    )
+  })
 }
 
 async function openPicker() {
-  await act(async () => element<HTMLButtonElement>("-add").click());
+  await act(async () => element<HTMLButtonElement>('-add').click())
+}
+
+async function openPreparation() {
+  if (!element<HTMLDetailsElement>('-preparation').open) {
+    await togglePreparation(element('-preparation-toggle'))
+  }
+}
+
+async function togglePreparation(toggle: HTMLElement) {
+  await act(async () => {
+    // Native details dispatches toggle asynchronously; await the actual event.
+    const toggled = new Promise<void>(resolve => {
+      toggle.closest('details')!.addEventListener('toggle', () => resolve(), { once: true })
+    })
+    toggle.click()
+    await toggled
+  })
 }
 
 async function addRepositoryDraft() {
-  await act(async () => element<HTMLButtonElement>("-add-repository").click());
+  await openPreparation()
+  await act(async () => element<HTMLButtonElement>('-add-repository').click())
 }
 
 async function saveConfiguration() {
-  await act(async () =>
-    element<HTMLButtonElement>("-save-configuration").click(),
-  );
+  await openPreparation()
+  await act(async () => element<HTMLButtonElement>('-save-configuration').click())
 }
 
 function candidateDeviceIds() {
-  return [
-    ...container!.querySelectorAll<HTMLElement>(
-      `[data-testid^="${prefix}-candidate-"]`,
-    ),
-  ].map((candidate) =>
-    candidate.dataset.testid!.slice(`${prefix}-candidate-`.length),
-  );
+  return [...container!.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}-candidate-"]`)].map(
+    candidate => candidate.dataset.testid!.slice(`${prefix}-candidate-`.length)
+  )
 }
 
 async function render({
   assigned = [],
-  role = "Owner",
-  locale = "zh-CN",
+  role = 'Owner',
+  locale = 'zh-CN',
   gitRepositories,
   executionEnvironment,
   onManageDevices,
   onProjectChange,
 }: {
-  assigned?: CollaborationExecutionEnvironment[];
-  role?: CollaborationProject["access_role"];
-  locale?: CollaborationLocale;
-  gitRepositories?: SharedWorkspaceApi["gitRepositories"];
-  executionEnvironment?: CollaborationProject["execution_environment"];
-  onManageDevices?(): void;
-  onProjectChange?(project: CollaborationProject): void;
+  assigned?: CollaborationExecutionEnvironment[]
+  role?: CollaborationProject['access_role']
+  locale?: CollaborationLocale
+  gitRepositories?: SharedWorkspaceApi['gitRepositories']
+  executionEnvironment?: CollaborationProject['execution_environment']
+  onManageDevices?(): void
+  onProjectChange?(project: CollaborationProject): void
 } = {}) {
-  const online = environment(21, "Personal online", "online");
-  const offline = environment(22, "Personal offline", "offline");
-  const shared = environment(23, "Shared online", "online");
-  const failed = environment(24, "Shared error", "error");
-  const preparing = environment(25, "Shared preparing", "provisioning");
-  const available = [online, offline, shared, failed, preparing];
+  const online = environment(21, 'Personal online', 'online')
+  const offline = environment(22, 'Personal offline', 'offline')
+  const shared = environment(23, 'Shared online', 'online')
+  const failed = environment(24, 'Shared error', 'error')
+  const preparing = environment(25, 'Shared preparing', 'provisioning')
+  const available = [online, offline, shared, failed, preparing]
   const api = {
     projects: {
       update: vi.fn(
@@ -180,71 +181,70 @@ async function render({
           input: {
             executionEnvironment: {
               repositories: NonNullable<
-                CollaborationProject["execution_environment"]
-              >["repositories"];
+                CollaborationProject['execution_environment']
+              >['repositories']
               setupSteps: Array<{
-                command: string;
-                workingDirectory: string;
-              }>;
-            };
-          },
+                command: string
+                workingDirectory: string
+              }>
+            }
+          }
         ) => ({
           ...project,
           version: 2,
           execution_environment: {
             repositories: input.executionEnvironment.repositories,
-            setup_steps: input.executionEnvironment.setupSteps.map((step) => ({
+            setup_steps: input.executionEnvironment.setupSteps.map(step => ({
               command: step.command,
               working_directory: step.workingDirectory,
             })),
-            fingerprint: "environment-v1",
+            fingerprint: 'environment-v1',
             devices: {},
           },
-        }),
+        })
       ),
       initializeExecutionEnvironment: vi.fn(
         async (_projectId: string, input: { deviceId: number }) => {
           // The backend records the entry under the identity of the exact
           // device record that prepared the environment.
           const deviceKey = [...assigned, ...available].find(
-            (candidate) => candidate.device_id === input.deviceId,
-          )!.device_key!;
+            candidate => candidate.device_id === input.deviceId
+          )!.device_key!
           return {
             ...project,
             version: 3,
             execution_environment: {
               repositories: [
                 {
-                  name: "Wegent",
-                  url: "https://github.com/wecode-ai/Wegent.git",
-                  ref: "main",
-                  path: "wegent",
+                  name: 'Wegent',
+                  url: 'https://github.com/wecode-ai/Wegent.git',
+                  ref: 'main',
+                  path: 'wegent',
                   primary: true,
                 },
               ],
-              setup_steps: [
-                { command: "pnpm install", working_directory: "wegent" },
-              ],
-              fingerprint: "environment-v1",
+              setup_steps: [{ command: 'pnpm install', working_directory: 'wegent' }],
+              fingerprint: 'environment-v1',
               devices: {
                 [deviceKey]: {
-                  status: "ready" as const,
-                  workspace_path: "/workspace/project-1",
-                  prepared_at: "2026-09-16T00:00:00Z",
-                  error: "",
+                  status: 'ready' as const,
+                  workspace_path: '/workspace/project-1',
+                  prepared_at: '2026-09-16T00:00:00Z',
+                  error: '',
                 },
               },
             },
-          };
-        },
+          }
+        }
       ),
       listExecutionEnvironments: vi.fn(async () => assigned),
       addExecutionEnvironment: vi.fn(
         async (_projectId: string, deviceId: number) =>
-          available.find((environment) => environment.device_id === deviceId)!,
+          available.find(environment => environment.device_id === deviceId)!
       ),
     },
     resources: {
+      devices: { cloud: vi.fn(async () => [online, offline, shared]) },
       list: vi.fn(async () => ({
         agents: [],
         execution_environments: [online, offline, shared],
@@ -252,12 +252,13 @@ async function render({
     },
     workspaces: {
       listExecutionEnvironments: vi.fn(async () => [shared, failed, preparing]),
+      addExecutionEnvironment: vi.fn(async () => online),
     },
     ...(gitRepositories ? { gitRepositories } : {}),
-  } as unknown as SharedWorkspaceApi;
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+  } as unknown as SharedWorkspaceApi
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
   await act(async () => {
     root?.render(
       <ProjectExecutionEnvironments
@@ -267,15 +268,13 @@ async function render({
         project={{
           ...project,
           access_role: role,
-          ...(executionEnvironment
-            ? { execution_environment: executionEnvironment }
-            : {}),
+          ...(executionEnvironment ? { execution_environment: executionEnvironment } : {}),
         }}
         translate={createCollaborationTranslator(locale)}
-      />,
-    );
-  });
-  return api;
+      />
+    )
+  })
+  return api
 }
 
 // Re-renders the mounted component with a refreshed project, mirroring the
@@ -286,9 +285,9 @@ async function rerender(
     executionEnvironment,
     version = 2,
   }: {
-    executionEnvironment?: CollaborationProject["execution_environment"];
-    version?: number;
-  },
+    executionEnvironment?: CollaborationProject['execution_environment']
+    version?: number
+  }
 ) {
   await act(async () => {
     root?.render(
@@ -297,880 +296,864 @@ async function rerender(
         project={{
           ...project,
           version,
-          ...(executionEnvironment
-            ? { execution_environment: executionEnvironment }
-            : {}),
+          ...(executionEnvironment ? { execution_environment: executionEnvironment } : {}),
         }}
-        translate={createCollaborationTranslator("zh-CN")}
-      />,
-    );
-  });
+        translate={createCollaborationTranslator('zh-CN')}
+      />
+    )
+  })
 }
 
-const workspacePrefix = "collaboration-workspace-execution-environment";
+const workspacePrefix = 'collaboration-workspace-execution-environment'
 
 async function renderWorkspaceScope({
   location,
   gitRepositories,
 }: {
-  location: "local" | "cloud";
-  gitRepositories?: SharedWorkspaceApi["gitRepositories"];
+  location: 'local' | 'cloud'
+  gitRepositories?: SharedWorkspaceApi['gitRepositories']
 }) {
   const api = {
     workspaces: {
       listExecutionEnvironments: vi.fn(async () => []),
     },
     resources: {
+      devices: { local: vi.fn(async () => []), cloud: vi.fn(async () => []) },
       list: vi.fn(async () => ({ agents: [], execution_environments: [] })),
     },
     ...(gitRepositories ? { gitRepositories } : {}),
-  } as unknown as SharedWorkspaceApi;
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+  } as unknown as SharedWorkspaceApi
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
   await act(async () => {
     root?.render(
       <ProjectExecutionEnvironments
         api={api}
         workspace={{
-          id: "workspace-1",
-          access_role: "Owner",
+          id: 'workspace-1',
+          access_role: 'Owner',
           version: 1,
           location,
         }}
-        translate={createCollaborationTranslator("zh-CN")}
-      />,
-    );
-  });
-  return api;
+        translate={createCollaborationTranslator('zh-CN')}
+      />
+    )
+  })
+  return api
 }
 
 function workspaceElement<T extends HTMLElement>(suffix: string): T {
-  const result = container?.querySelector<T>(
-    `[data-testid="${workspacePrefix}${suffix}"]`,
-  );
-  if (!result) throw new Error(`Missing element: ${suffix}`);
-  return result;
+  const result = container?.querySelector<T>(`[data-testid="${workspacePrefix}${suffix}"]`)
+  if (!result) throw new Error(`Missing element: ${suffix}`)
+  return result
 }
 
-describe("ProjectExecutionEnvironments", () => {
-  it("saves multiple repositories and ordered setup steps", async () => {
+describe('ProjectExecutionEnvironments', () => {
+  it('saves multiple repositories and ordered setup steps', async () => {
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
-    });
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
 
-    await addRepositoryDraft();
-    await change("-repository-name-0", "Wegent");
-    await change(
-      "-repository-url-0",
-      "https://github.com/wecode-ai/Wegent.git",
-    );
-    await change("-repository-ref-0", "main");
-    await change("-repository-path-0", "wegent");
-    await act(async () =>
-      element<HTMLButtonElement>("-add-repository").click(),
-    );
-    await change("-repository-name-1", "SDK");
-    await change("-repository-url-1", "https://github.com/example/sdk.git");
-    await change("-repository-ref-1", "v2");
-    await change("-repository-path-1", "deps/sdk");
-    await act(async () =>
-      element<HTMLButtonElement>("-add-setup-step").click(),
-    );
-    await change("-setup-command-0", "pnpm install");
-    await change("-setup-directory-0", "wegent");
-    await saveConfiguration();
-    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+    await addRepositoryDraft()
+    await change('-repository-name-0', 'Wegent')
+    await change('-repository-url-0', 'https://github.com/wecode-ai/Wegent.git')
+    await change('-repository-ref-0', 'main')
+    await change('-repository-path-0', 'wegent')
+    await act(async () => element<HTMLButtonElement>('-add-repository').click())
+    await change('-repository-name-1', 'SDK')
+    await change('-repository-url-1', 'https://github.com/example/sdk.git')
+    await change('-repository-ref-1', 'v2')
+    await change('-repository-path-1', 'deps/sdk')
+    await act(async () => element<HTMLButtonElement>('-add-setup-step').click())
+    await change('-setup-command-0', 'pnpm install')
+    await change('-setup-directory-0', 'wegent')
+    await saveConfiguration()
+    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
 
-    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
+    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith('project-1', {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: 'git_worktree',
         repositories: [
           {
-            name: "Wegent",
-            url: "https://github.com/wecode-ai/Wegent.git",
-            ref: "main",
-            path: "wegent",
+            name: 'Wegent',
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            ref: 'main',
+            path: 'wegent',
             primary: true,
           },
           {
-            name: "SDK",
-            url: "https://github.com/example/sdk.git",
-            ref: "v2",
-            path: "deps/sdk",
+            name: 'SDK',
+            url: 'https://github.com/example/sdk.git',
+            ref: 'v2',
+            path: 'deps/sdk',
             primary: false,
           },
         ],
         setupSteps: [
           {
-            command: "pnpm install",
-            workingDirectory: "wegent",
+            command: 'pnpm install',
+            workingDirectory: 'wegent',
           },
         ],
       },
-    });
-    expect(
-      api.projects.initializeExecutionEnvironment,
-    ).toHaveBeenCalledExactlyOnceWith("project-1", {
-      deviceId: 21,
-      version: 2,
-    });
-    expect(container?.textContent).toContain("环境已初始化");
-    expect(element("-21").textContent).toContain("环境已就绪");
-    expect(element("-configuration-status").textContent).toContain(
-      "配置已保存",
-    );
-  });
+    })
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledExactlyOnceWith(
+      'project-1',
+      {
+        deviceId: 21,
+        version: 2,
+      }
+    )
+    expect(container?.querySelector(`[data-testid="${prefix}-completion-status"]`)).toBeNull()
+    expect(element('-21').dataset.preparationState).toBe('ready')
+    expect(element('-configuration-status').textContent).toContain('配置已保存')
+  })
 
-  it("initializes a repository-free environment without an implicit save", async () => {
+  it('initializes a repository-free environment without an implicit save', async () => {
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
-    });
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
 
-    const initializeButton = element<HTMLButtonElement>("-initialize-21");
-    expect(element("-required").textContent).toBe("必需");
-    expect(element("-readiness").textContent).toBe("待完成");
-    expect(container?.textContent).toContain(
-      "至少在一台在线设备上完成初始化，项目任务才能使用此环境运行。",
-    );
-    expect(initializeButton.classList).toContain(
-      "collaboration-primary-button",
-    );
-
-    await act(async () => initializeButton.click());
-
-    expect(api.projects.update).not.toHaveBeenCalled();
+    const initializeButton = element<HTMLButtonElement>('-initialize-21')
+    const preparation = element<HTMLDetailsElement>('-preparation')
+    expect(preparation.open).toBe(false)
     expect(
-      api.projects.initializeExecutionEnvironment,
-    ).toHaveBeenCalledExactlyOnceWith("project-1", {
-      deviceId: 21,
-      version: 1,
-    });
-    expect(element("-21").textContent).toContain("环境已就绪");
-    expect(element("-readiness").textContent).toBe("已完成");
-    expect(element("-completion-status").textContent).toBe("环境已初始化");
-    expect(initializeButton.classList).toContain(
-      "collaboration-secondary-button",
-    );
-    expect(initializeButton.classList).not.toContain(
-      "collaboration-primary-button",
-    );
-  });
+      element('-environments').compareDocumentPosition(preparation) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.toBe(0)
+    expect(element<HTMLDetailsElement>('-actions-21').open).toBe(false)
+    expect(container?.textContent).toContain('首次运行时自动准备')
+    await act(async () => element('-actions-toggle-21').click())
+    expect(initializeButton.classList).toContain('collaboration-link-button')
 
-  it("saves repository-free setup steps before enabling initialization", async () => {
-    const onProjectChange = vi.fn();
+    await act(async () => initializeButton.click())
+
+    expect(api.projects.update).not.toHaveBeenCalled()
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledExactlyOnceWith(
+      'project-1',
+      {
+        deviceId: 21,
+        version: 1,
+      }
+    )
+    expect(element('-21').dataset.preparationState).toBe('ready')
+
+    expect(preparation.open).toBe(false)
+    expect(initializeButton.classList).toContain('collaboration-link-button')
+    expect(initializeButton.classList).not.toContain('collaboration-primary-button')
+  })
+
+  it('preserves setup drafts when collapsed and requires saving before initialization', async () => {
+    const onProjectChange = vi.fn()
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
+      assigned: [environment(21, 'Assigned online', 'online')],
       onProjectChange,
-    });
+    })
 
-    expect(element("-repositories-empty").textContent).toContain(
-      "未添加代码仓库",
-    );
-    await act(async () =>
-      element<HTMLButtonElement>("-add-setup-step").click(),
-    );
-    await change("-setup-command-0", "mkdir -p generated");
-    expect(element<HTMLButtonElement>("-initialize-21").disabled).toBe(true);
+    expect(element('-repositories-empty').textContent).toContain('未添加代码仓库')
+    await openPreparation()
+    await act(async () => element<HTMLButtonElement>('-add-setup-step').click())
+    await change('-setup-command-0', 'mkdir -p generated')
+    await change('-workspace-policy', 'project')
+    expect(element<HTMLButtonElement>('-initialize-21').disabled).toBe(true)
+    await togglePreparation(element('-preparation-toggle'))
+    expect(element<HTMLDetailsElement>('-preparation').open).toBe(false)
+    expect(element('-preparation-toggle').textContent).toContain('0 个仓库 · 1 个初始化步骤')
+    expect(element('-preparation-toggle').textContent).toContain('未保存')
+    await openPreparation()
+    expect(element<HTMLInputElement>('-setup-command-0').value).toBe('mkdir -p generated')
+    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
 
-    await saveConfiguration();
+    await saveConfiguration()
 
-    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
+    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith('project-1', {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: 'project',
         repositories: [],
-        setupSteps: [{ command: "mkdir -p generated", workingDirectory: "" }],
+        setupSteps: [{ command: 'mkdir -p generated', workingDirectory: '' }],
       },
-    });
-    expect(element("-configuration-status").textContent).toContain(
-      "配置已保存",
-    );
-    expect(element<HTMLButtonElement>("-initialize-21").disabled).toBe(false);
+    })
+    expect(element('-configuration-status').textContent).toContain('配置已保存')
+    expect(element<HTMLButtonElement>('-initialize-21').disabled).toBe(false)
+    expect(element('-preparation-toggle').textContent).not.toContain('未保存')
     expect(onProjectChange).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "project-1", version: 2 }),
-    );
-  });
+      expect.objectContaining({ id: 'project-1', version: 2 })
+    )
+  })
 
-  it("publishes the initialized project so a remount keeps the current version", async () => {
-    const onProjectChange = vi.fn();
+  it('publishes the initialized project so a remount keeps the current version', async () => {
+    const onProjectChange = vi.fn()
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
+      assigned: [environment(21, 'Assigned online', 'online')],
       onProjectChange,
-    });
+    })
 
-    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
 
     expect(onProjectChange).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "project-1", version: 3 }),
-    );
-    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledWith(
-      "project-1",
-      { deviceId: 21, version: 1 },
-    );
-  });
+      expect.objectContaining({ id: 'project-1', version: 3 })
+    )
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledWith('project-1', {
+      deviceId: 21,
+      version: 1,
+    })
+  })
 
-  it("does not silently discard an incomplete repository draft", async () => {
-    const api = await render();
+  it('does not silently discard an incomplete repository draft', async () => {
+    const api = await render()
 
-    await addRepositoryDraft();
-    await change("-repository-name-0", "Wegent");
-    await change("-repository-path-0", "wegent");
-    await saveConfiguration();
+    await addRepositoryDraft()
+    await change('-repository-name-0', 'Wegent')
+    await change('-repository-path-0', 'wegent')
+    await saveConfiguration()
 
-    expect(api.projects.update).not.toHaveBeenCalled();
-    expect(element("-configuration-error").textContent).toContain(
-      "请补全仓库的名称、Git 仓库和目录",
-    );
-  });
+    expect(api.projects.update).not.toHaveBeenCalled()
+    expect(element('-configuration-error').textContent).toContain(
+      '请补全仓库的名称、Git 仓库和目录'
+    )
+  })
 
-  it("summarizes a device-side clone failure and shows it once", async () => {
+  it('summarizes a device-side clone failure and shows it once', async () => {
     const rawError =
-      "Failed to prepare execution repositories: git clone failed for " +
-      "/home/wegent/.wecode/wegent-executor/workspace/projects/environment-project-1-x/environment/wegent: " +
+      'Failed to prepare execution repositories: git clone failed for ' +
+      '/home/wegent/.wecode/wegent-executor/workspace/projects/environment-project-1-x/environment/wegent: ' +
       "Cloning into '/home/wegent/.wecode/.../wegent'... fatal: could not read " +
-      "Username for 'https://git.example.com': terminal prompts disabled";
+      "Username for 'https://git.example.com': terminal prompts disabled"
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
-    });
-    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
-      async () => ({
-        version: 3,
-        execution_environment: {
-          repositories: [],
-          setup_steps: [],
-          fingerprint: "environment-v1",
-          devices: {
-            "device-21": {
-              status: "error" as const,
-              workspace_path: "",
-              prepared_at: null,
-              error: rawError,
-            },
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(async () => ({
+      version: 3,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: 'environment-v1',
+        devices: {
+          'device-21': {
+            status: 'error' as const,
+            workspace_path: '',
+            prepared_at: null,
+            error: rawError,
           },
         },
-      }),
-    );
-    await addRepositoryDraft();
-    await change("-repository-name-0", "Wegent");
-    await change(
-      "-repository-url-0",
-      "https://github.com/wecode-ai/Wegent.git",
-    );
-    await change("-repository-path-0", "wegent");
-    await saveConfiguration();
-    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+      },
+    }))
+    await addRepositoryDraft()
+    await change('-repository-name-0', 'Wegent')
+    await change('-repository-url-0', 'https://github.com/wecode-ai/Wegent.git')
+    await change('-repository-path-0', 'wegent')
+    await saveConfiguration()
+    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
 
-    const shown = container?.querySelector(
-      `[data-testid="${prefix}-environment-error"]`,
-    );
-    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce();
-    expect(element("-21").textContent).toContain("环境初始化失败");
+    const shown = container?.querySelector(`[data-testid="${prefix}-environment-error"]`)
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce()
+    expect(element('-21').textContent).toContain('项目准备失败')
     expect(shown?.textContent).toBe(
-      "Failed to prepare execution repositories: fatal: could not read " +
-        "Username for 'https://git.example.com': terminal prompts disabled",
-    );
-    expect(shown?.getAttribute("title")).toBe(rawError);
-    expect(
-      container?.querySelector(`[data-testid="${prefix}s-error"]`),
-    ).toBeNull();
-  });
+      'Failed to prepare execution repositories: fatal: could not read ' +
+        "Username for 'https://git.example.com': terminal prompts disabled"
+    )
+    expect(shown?.getAttribute('title')).toBe(rawError)
+    expect(container?.querySelector(`[data-testid="${prefix}s-error"]`)).toBeNull()
+  })
 
-  it("explains that a legacy Executor cannot initialize a blank environment", async () => {
+  it('explains that a legacy Executor cannot initialize a blank environment', async () => {
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
+      assigned: [environment(21, 'Assigned online', 'online')],
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "blank-environment-v1",
+        fingerprint: 'blank-environment-v1',
         devices: {},
       },
-    });
+    })
     const rawError =
-      "Failed to prepare execution repositories: " +
-      "Execution environment must have exactly one primary repository";
-    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
-      async () => ({
-        ...project,
-        version: 3,
-        execution_environment: {
-          repositories: [],
-          setup_steps: [],
-          fingerprint: "blank-environment-v1",
-          devices: {
-            "device-21": {
-              status: "error" as const,
-              workspace_path: "",
-              prepared_at: null,
-              error: rawError,
-            },
+      'Failed to prepare execution repositories: ' +
+      'Execution environment must have exactly one primary repository'
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(async () => ({
+      ...project,
+      version: 3,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: 'blank-environment-v1',
+        devices: {
+          'device-21': {
+            status: 'error' as const,
+            workspace_path: '',
+            prepared_at: null,
+            error: rawError,
           },
         },
-      }),
-    );
+      },
+    }))
 
-    await act(async () => element<HTMLButtonElement>("-initialize-21").click());
+    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
 
-    const shown = element("-environment-error");
+    const shown = element('-environment-error')
     expect(shown.textContent).toContain(
-      "当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试",
-    );
-    expect(shown.getAttribute("title")).toBe(rawError);
-  });
+      '当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试'
+    )
+    expect(shown.getAttribute('title')).toBe(rawError)
+  })
 
-  it("shows environment configuration before runtime devices", async () => {
+  it('shows available environments before the collapsed project setup', async () => {
     await render({
-      assigned: [environment(21, "Assigned online", "online")],
-    });
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
 
-    const repository = element("-repositories-empty");
-    const configuredEnvironment = element("-21");
-    const addButton = element<HTMLButtonElement>("-add");
+    const preparation = element<HTMLDetailsElement>('-preparation')
+    const configuredEnvironment = element('-21')
+    const addButton = element<HTMLButtonElement>('-add')
 
     expect(
-      repository.compareDocumentPosition(addButton) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(addButton.textContent).toContain("＋ 添加设备");
+      configuredEnvironment.compareDocumentPosition(preparation) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(preparation.open).toBe(false)
+    expect(addButton.textContent).toContain('＋ 添加设备')
     expect(
-      addButton.compareDocumentPosition(configuredEnvironment) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(element("-21").textContent).toContain("环境未初始化");
-    expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
-      "初始化环境",
-    );
-    expect(
-      container?.querySelector(`[data-testid="${prefix}-select"]`),
-    ).toBeNull();
-  });
+      addButton.compareDocumentPosition(configuredEnvironment) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(element('-21').textContent).not.toContain('环境未初始化')
+    expect(element<HTMLButtonElement>('-initialize-21').textContent).toContain('提前准备项目目录')
+    expect(container?.querySelector(`[data-testid="${prefix}-select"]`)).toBeNull()
+  })
 
-  it("labels all device statuses and deduplicates personal and shared resources", async () => {
-    await render();
-    await openPicker();
+  it('labels all device statuses and deduplicates personal and shared resources', async () => {
+    await render()
+    await openPicker()
 
-    expect(candidateDeviceIds()).toEqual(["21", "23"]);
-    expect(element("-picker").textContent).toContain(
-      "Personal online本地设备 · 在线 · 我的资源",
-    );
-    expect(element("-picker").textContent).not.toContain("Personal offline");
-    expect(element("-picker").textContent).not.toContain("Shared preparing");
-  });
+    expect(candidateDeviceIds()).toEqual(['21', '23'])
+    expect(element('-picker').textContent).toContain('Personal online本地设备 · 在线 · 我的资源')
+    expect(element('-picker').textContent).not.toContain('Personal offline')
+    expect(element('-picker').textContent).not.toContain('Shared preparing')
+  })
 
-  it("opens device settings when there are no online candidates", async () => {
-    const onManageDevices = vi.fn();
+  it('opens device settings when there are no online candidates', async () => {
+    const onManageDevices = vi.fn()
     await render({
       assigned: [
-        environment(21, "Assigned personal", "online"),
-        environment(23, "Assigned shared", "online"),
+        environment(21, 'Assigned personal', 'online'),
+        environment(23, 'Assigned shared', 'online'),
       ],
       onManageDevices,
-    });
-    await openPicker();
+    })
+    await openPicker()
 
-    await act(async () =>
-      element<HTMLButtonElement>("-manage-devices-picker").click(),
-    );
+    await act(async () => element<HTMLButtonElement>('-manage-devices-picker').click())
 
-    expect(onManageDevices).toHaveBeenCalledOnce();
-  });
+    expect(onManageDevices).toHaveBeenCalledOnce()
+  })
 
-  it("keeps online candidates available while filtering the configured pool", async () => {
+  it('keeps online candidates available while filtering the configured pool', async () => {
     await render({
       assigned: [
-        environment(22, "Assigned offline", "offline"),
-        environment(24, "Assigned error", "error"),
+        environment(22, 'Assigned offline', 'offline'),
+        environment(24, 'Assigned error', 'error'),
       ],
-    });
-    await openPicker();
+    })
+    await openPicker()
 
-    await change("-status-filter", "offline");
+    await change('-status-filter', 'offline')
 
-    expect(element("-22").textContent).toContain("Assigned offline");
-    expect(container?.querySelector(`[data-testid="${prefix}-24"]`)).toBeNull();
-    expect(candidateDeviceIds()).toEqual(["21", "23"]);
+    expect(element('-22').textContent).toContain('Assigned offline')
+    expect(container?.querySelector(`[data-testid="${prefix}-24"]`)).toBeNull()
+    expect(candidateDeviceIds()).toEqual(['21', '23'])
 
-    await change("-status-filter", "error");
-    expect(element("-24").textContent).toContain("Assigned error");
-    expect(candidateDeviceIds()).toEqual(["21", "23"]);
-  });
+    await change('-status-filter', 'error')
+    expect(element('-24').textContent).toContain('Assigned error')
+    expect(candidateDeviceIds()).toEqual(['21', '23'])
+  })
 
-  it("adds the selected online device to the project authorization pool", async () => {
-    const api = await render();
-    await openPicker();
-    await act(async () => element<HTMLButtonElement>("-candidate-21").click());
+  it('adds the selected online device to the project authorization pool', async () => {
+    const api = await render()
+    await openPicker()
+    await act(async () => element<HTMLButtonElement>('-candidate-21').click())
 
-    expect(
-      api.projects.addExecutionEnvironment,
-    ).toHaveBeenCalledExactlyOnceWith("project-1", 21);
-    expect(element("-21").textContent).toContain("Personal online");
-    expect(element("-21").textContent).toContain("在线");
-    expect(
-      container?.querySelector(`[data-testid="${prefix}-picker"]`),
-    ).toBeNull();
-  });
+    expect(api.workspaces!.addExecutionEnvironment).toHaveBeenCalledExactlyOnceWith('workspace-1', {
+      deviceId: 21,
+    })
+    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledExactlyOnceWith('project-1', 21)
+    expect(element('-21').textContent).toContain('Personal online')
+    expect(element('-21').textContent).toContain('在线')
+    expect(container?.querySelector(`[data-testid="${prefix}-picker"]`)).toBeNull()
+  })
 
-  it("lets read-only members filter assigned devices without management controls", async () => {
+  it('lets read-only members filter assigned devices without management controls', async () => {
     await render({
-      role: "Reporter",
+      role: 'Viewer',
       assigned: [
-        environment(21, "Assigned online", "online"),
-        environment(22, "Assigned offline", "offline"),
-        environment(24, "Assigned error", "error"),
+        environment(21, 'Assigned online', 'online'),
+        environment(22, 'Assigned offline', 'offline'),
+        environment(24, 'Assigned error', 'error'),
       ],
-    });
-    expect(element("-24").textContent).toContain("异常");
-    expect(
-      container?.querySelector(`[data-testid="${prefix}-add"]`),
-    ).toBeNull();
-    expect(
-      container?.querySelector(`[data-testid^="${prefix}-remove-"]`),
-    ).toBeNull();
-    await change("-status-filter", "online");
-    expect(element("-21").textContent).toContain("Assigned online");
-    expect(container?.querySelector(`[data-testid="${prefix}-22"]`)).toBeNull();
+    })
+    expect(element('-24').textContent).toContain('异常')
+    expect(container?.querySelector(`[data-testid="${prefix}-add"]`)).toBeNull()
+    expect(container?.querySelector(`[data-testid^="${prefix}-remove-"]`)).toBeNull()
+    await change('-status-filter', 'online')
+    expect(element('-21').textContent).toContain('Assigned online')
+    expect(container?.querySelector(`[data-testid="${prefix}-22"]`)).toBeNull()
 
-    await change("-status-filter", "all");
-    expect(element("-22").textContent).toContain("Assigned offline");
-  });
+    await change('-status-filter', 'all')
+    expect(element('-22').textContent).toContain('Assigned offline')
+  })
 
-  it("marks only the Wework installation that prepared the environment", async () => {
+  it('marks only the Wework installation that prepared the environment', async () => {
     // Every Wework desktop registers under the logical id "local-device", so
     // the ready badge must follow the per-record identity instead.
     const api = await render({
       assigned: [
-        environment(1748, "Wework laptop", "online", "app-record-1748"),
-        environment(1824, "Wework desktop", "online", "app-record-1824"),
+        environment(1748, 'Wework laptop', 'online', 'app-record-1748'),
+        environment(1824, 'Wework desktop', 'online', 'app-record-1824'),
       ],
-    });
+    })
 
-    await addRepositoryDraft();
-    await change("-repository-name-0", "Wegent");
-    await change(
-      "-repository-url-0",
-      "https://github.com/wecode-ai/Wegent.git",
-    );
-    await change("-repository-path-0", "wegent");
-    await saveConfiguration();
-    await act(async () =>
-      element<HTMLButtonElement>("-initialize-1824").click(),
-    );
+    await addRepositoryDraft()
+    await change('-repository-name-0', 'Wegent')
+    await change('-repository-url-0', 'https://github.com/wecode-ai/Wegent.git')
+    await change('-repository-path-0', 'wegent')
+    await saveConfiguration()
+    await act(async () => element<HTMLButtonElement>('-initialize-1824').click())
 
-    expect(
-      api.projects.initializeExecutionEnvironment,
-    ).toHaveBeenCalledExactlyOnceWith("project-1", {
-      deviceId: 1824,
-      version: 2,
-    });
-    expect(element("-1824").textContent).toContain("环境已就绪");
-    expect(element("-1748").textContent).toContain("环境未初始化");
-  });
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledExactlyOnceWith(
+      'project-1',
+      {
+        deviceId: 1824,
+        version: 2,
+      }
+    )
+    expect(element('-1824').dataset.preparationState).toBe('ready')
+    expect(element('-1748').dataset.preparationState).toBe('uninitialized')
+  })
 
-  it("keeps the prepared device ready while another device initializes", async () => {
-    const pending = new Promise<never>(() => {});
+  it('keeps the prepared device ready while another device initializes', async () => {
+    const pending = new Promise<never>(() => {})
     const api = await render({
       assigned: [
-        environment(1748, "Wework laptop", "online", "app-record-1748"),
-        environment(1824, "Wework desktop", "online", "app-record-1824"),
+        environment(1748, 'Wework laptop', 'online', 'app-record-1748'),
+        environment(1824, 'Wework desktop', 'online', 'app-record-1824'),
       ],
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "environment-v1",
+        fingerprint: 'environment-v1',
         devices: {
-          "app-record-1748": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'app-record-1748': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
         },
       },
-    });
-    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
-      () => pending,
-    );
-    await act(async () =>
-      element<HTMLButtonElement>("-initialize-1824").click(),
-    );
+    })
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(() => pending)
+    await act(async () => element<HTMLButtonElement>('-initialize-1824').click())
 
-    expect(element("-1824").textContent).toContain("正在初始化环境");
-    expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(element("-1748").textContent).not.toContain("正在初始化环境");
-  });
+    expect(element('-1824').textContent).toContain('正在准备项目目录')
+    expect(element('-1748').dataset.preparationState).toBe('ready')
+    expect(element('-1748').textContent).not.toContain('正在准备项目目录')
+  })
 
   it("renders each device's own persisted state independently", async () => {
     await render({
       assigned: [
-        environment(1748, "Wework laptop", "online", "app-record-1748"),
-        environment(1824, "Wework desktop", "online", "app-record-1824"),
-        environment(21, "Assigned online", "online"),
+        environment(1748, 'Wework laptop', 'online', 'app-record-1748'),
+        environment(1824, 'Wework desktop', 'online', 'app-record-1824'),
+        environment(21, 'Assigned online', 'online'),
       ],
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "environment-v1",
+        fingerprint: 'environment-v1',
         devices: {
-          "app-record-1748": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'app-record-1748': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
-          "app-record-1824": {
-            status: "error",
-            workspace_path: "",
+          'app-record-1824': {
+            status: 'error',
+            workspace_path: '',
             prepared_at: null,
-            error: "clone failed",
+            error: 'clone failed',
           },
         },
       },
-    });
+    })
 
-    expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(
-      element<HTMLButtonElement>("-initialize-1748").textContent,
-    ).toContain("重新初始化");
-    expect(element("-1824").textContent).toContain("环境初始化失败");
-    expect(
-      element<HTMLButtonElement>("-initialize-1824").textContent,
-    ).toContain("重新初始化");
-    expect(element("-21").textContent).toContain("环境未初始化");
-    expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
-      "初始化环境",
-    );
-  });
+    expect(element('-1748').dataset.preparationState).toBe('ready')
+    expect(element<HTMLButtonElement>('-initialize-1748').textContent).toContain('提前准备项目目录')
+    expect(element('-1824').textContent).toContain('项目准备失败')
+    expect(element<HTMLButtonElement>('-initialize-1824').textContent).toContain('提前准备项目目录')
+    expect(element('-21').textContent).not.toContain('环境未初始化')
+    expect(element<HTMLButtonElement>('-initialize-21').textContent).toContain('提前准备项目目录')
+  })
 
-  it("refreshes every device row when the project prop poll delivers new state", async () => {
+  it('refreshes every device row when the project prop poll delivers new state', async () => {
     const api = await render({
       assigned: [
-        environment(1748, "Wework laptop", "online", "app-record-1748"),
-        environment(1824, "Wework desktop", "online", "app-record-1824"),
+        environment(1748, 'Wework laptop', 'online', 'app-record-1748'),
+        environment(1824, 'Wework desktop', 'online', 'app-record-1824'),
       ],
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "environment-v1",
+        fingerprint: 'environment-v1',
         devices: {
-          "app-record-1748": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'app-record-1748': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
         },
       },
-    });
+    })
 
-    expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(element("-1824").textContent).toContain("环境未初始化");
+    expect(element('-1748').dataset.preparationState).toBe('ready')
+    expect(element('-1824').dataset.preparationState).toBe('uninitialized')
 
     await rerender(api, {
       version: 3,
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "environment-v1",
+        fingerprint: 'environment-v1',
         devices: {
-          "app-record-1748": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'app-record-1748': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
-          "app-record-1824": {
-            status: "ready",
-            workspace_path: "/workspace/project-1-b",
-            prepared_at: "2026-09-16T01:00:00Z",
-            error: "",
+          'app-record-1824': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1-b',
+            prepared_at: '2026-09-16T01:00:00Z',
+            error: '',
           },
         },
       },
-    });
+    })
 
-    expect(element("-1748").textContent).toContain("环境已就绪");
-    expect(element("-1824").textContent).toContain("环境已就绪");
-  });
+    expect(element('-1748').dataset.preparationState).toBe('ready')
+    expect(element('-1824').dataset.preparationState).toBe('ready')
+  })
 
-  it("issues a single initialization for rapid clicks in the same tick", async () => {
+  it('issues a single initialization for rapid clicks in the same tick', async () => {
     // React state guards are async: two clicks before a re-render both see
     // `saving === false`, so the component must reject the second attempt
     // synchronously — including a click on another device's button, because
     // the project-level config save cannot run concurrently either.
-    const pending = new Promise<never>(() => {});
+    const pending = new Promise<never>(() => {})
     const api = await render({
       assigned: [
-        environment(1748, "Wework laptop", "online", "app-record-1748"),
-        environment(1824, "Wework desktop", "online", "app-record-1824"),
+        environment(1748, 'Wework laptop', 'online', 'app-record-1748'),
+        environment(1824, 'Wework desktop', 'online', 'app-record-1824'),
       ],
-    });
-    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
-      () => pending,
-    );
+    })
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(() => pending)
     await act(async () => {
-      element<HTMLButtonElement>("-initialize-1748").click();
-      element<HTMLButtonElement>("-initialize-1748").click();
-      element<HTMLButtonElement>("-initialize-1824").click();
-    });
+      element<HTMLButtonElement>('-initialize-1748').click()
+      element<HTMLButtonElement>('-initialize-1748').click()
+      element<HTMLButtonElement>('-initialize-1824').click()
+    })
 
-    expect(api.projects.update).not.toHaveBeenCalled();
-    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce();
-    expect(element("-1748").textContent).toContain("正在初始化环境");
-  });
+    expect(api.projects.update).not.toHaveBeenCalled()
+    expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce()
+    expect(element('-1748').textContent).toContain('正在准备项目目录')
+  })
 
-  it("localizes status labels and filters in English", async () => {
+  it('localizes preparation, status labels and filters in English', async () => {
     await render({
-      locale: "en",
+      locale: 'en',
       assigned: [
-        environment(22, "Assigned offline", "offline"),
-        environment(24, "Assigned error", "error"),
+        environment(22, 'Assigned offline', 'offline'),
+        environment(24, 'Assigned error', 'error'),
       ],
-    });
-    await openPicker();
-    expect(element("-picker").textContent).toContain(
-      "Personal onlineLocal device · Online · My resources",
-    );
-    expect(element("-picker").textContent).not.toContain("Personal offline");
+    })
+    expect(element('-environments').textContent).toContain('Available environments')
+    expect(element('-preparation-toggle').textContent).toContain('Project setup')
+    expect(element('-preparation-toggle').textContent).toContain('Uses a blank working directory')
+    await addRepositoryDraft()
+    expect(element('-preparation-toggle').textContent).toContain(
+      'Repositories: 1 · Initialization steps: 0'
+    )
+    await openPicker()
+    expect(element('-picker').textContent).toContain(
+      'Personal onlineLocal device · Online · My resources'
+    )
+    expect(element('-picker').textContent).not.toContain('Personal offline')
     expect(
-      [...element<HTMLSelectElement>("-status-filter").options].map(
-        (option) => option.textContent,
-      ),
-    ).toEqual(["All", "Online", "Offline", "Preparing", "Error"]);
-  });
+      [...element<HTMLSelectElement>('-status-filter').options].map(option => option.textContent)
+    ).toEqual(['All', 'Online', 'Offline', 'Preparing', 'Error'])
+  })
 
-  it("derives name and directory from the selected repository and submits the chosen branch", async () => {
+  it('derives name and directory from the selected repository and submits the chosen branch', async () => {
     const listBranches = vi.fn(async () => [
-      { name: "develop", default: false },
-      { name: "main", default: true },
-    ]);
+      { name: 'develop', default: false },
+      { name: 'main', default: true },
+    ])
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
+      assigned: [environment(21, 'Assigned online', 'online')],
       gitRepositories: {
         list: vi.fn(async () => repositoryOptions),
         listBranches,
       },
-    });
+    })
 
-    await addRepositoryDraft();
-    await change("-repository-url-0", repositoryKey(repositoryOptions[0]));
+    await addRepositoryDraft()
+    await change('-repository-url-0', repositoryKey(repositoryOptions[0]))
 
-    expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
-      "wegent",
-    );
-    expect(element<HTMLInputElement>("-repository-path-0").value).toBe(
-      "wegent",
-    );
-    expect(listBranches).toHaveBeenCalledWith(repositoryOptions[0]);
+    expect(element<HTMLInputElement>('-repository-name-0').value).toBe('wegent')
+    expect(element<HTMLInputElement>('-repository-path-0').value).toBe('wegent')
+    expect(listBranches).toHaveBeenCalledWith(repositoryOptions[0])
     // The provider's default branch is preselected.
-    expect(element<HTMLSelectElement>("-repository-ref-0").value).toBe("main");
+    expect(element<HTMLSelectElement>('-repository-ref-0').value).toBe('main')
 
     // A customized name survives switching repositories while the derived
     // directory follows the new repository.
-    await change("-repository-name-0", "Custom name");
-    await change("-repository-url-0", repositoryKey(repositoryOptions[1]));
-    expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
-      "Custom name",
-    );
-    expect(element<HTMLInputElement>("-repository-path-0").value).toBe(
-      "internal-sdk",
-    );
+    await change('-repository-name-0', 'Custom name')
+    await change('-repository-url-0', repositoryKey(repositoryOptions[1]))
+    expect(element<HTMLInputElement>('-repository-name-0').value).toBe('Custom name')
+    expect(element<HTMLInputElement>('-repository-path-0').value).toBe('internal-sdk')
 
-    await change("-repository-ref-0", "develop");
-    await saveConfiguration();
+    await change('-repository-ref-0', 'develop')
+    await saveConfiguration()
 
-    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
+    expect(api.projects.update).toHaveBeenCalledExactlyOnceWith('project-1', {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: 'git_worktree',
         repositories: [
           {
-            name: "Custom name",
-            url: "https://git.example.com/wecode-ai/internal-sdk.git",
-            ref: "develop",
-            path: "internal-sdk",
+            name: 'Custom name',
+            url: 'https://git.example.com/wecode-ai/internal-sdk.git',
+            ref: 'develop',
+            path: 'internal-sdk',
             primary: true,
           },
         ],
         setupSteps: [],
       },
-    });
-  });
+    })
+  })
 
-  it("keeps free-text entry and offers a retry when the repository catalog fails to load", async () => {
+  it('keeps free-text entry and offers a retry when the repository catalog fails to load', async () => {
     const list = vi.fn(async () => {
-      throw new Error("catalog unavailable");
-    });
+      throw new Error('catalog unavailable')
+    })
     await render({
       gitRepositories: { list, listBranches: vi.fn() },
-    });
+    })
 
-    expect(container?.textContent).not.toContain("仓库列表加载失败");
-    await addRepositoryDraft();
-    expect(container?.textContent).toContain("仓库列表加载失败");
-    expect(element("-repository-url-0")).toBeInstanceOf(HTMLInputElement);
-    expect(element("-repository-ref-0")).toBeInstanceOf(HTMLInputElement);
+    expect(container?.textContent).not.toContain('仓库列表加载失败')
+    await addRepositoryDraft()
+    expect(container?.textContent).toContain('仓库列表加载失败')
+    expect(element('-repository-url-0')).toBeInstanceOf(HTMLInputElement)
+    expect(element('-repository-ref-0')).toBeInstanceOf(HTMLInputElement)
 
-    list.mockImplementation(async () => repositoryOptions);
-    await act(async () =>
-      element<HTMLButtonElement>("-repositories-retry").click(),
-    );
+    list.mockImplementation(async () => repositoryOptions)
+    await act(async () => element<HTMLButtonElement>('-repositories-retry').click())
 
-    expect(container?.textContent).not.toContain("仓库列表加载失败");
-    expect(element("-repository-url-0")).toBeInstanceOf(HTMLSelectElement);
-  });
+    expect(container?.textContent).not.toContain('仓库列表加载失败')
+    expect(element('-repository-url-0')).toBeInstanceOf(HTMLSelectElement)
+  })
 
-  it("keeps a saved repository that is outside the catalog editable", async () => {
+  it('keeps repository details optional and derives the manual URL defaults', async () => {
+    const api = await render()
+    await addRepositoryDraft()
+
+    expect(element<HTMLButtonElement>('-advanced-repositories').getAttribute('aria-expanded')).toBe(
+      'false'
+    )
+    expect(
+      element('-repository-name-0').parentElement?.parentElement?.classList.contains('hidden')
+    ).toBe(true)
+
+    await change('-repository-url-0', 'https://github.com/example/api-engine.git')
+    expect(element<HTMLInputElement>('-repository-name-0').value).toBe('api-engine')
+    expect(element<HTMLInputElement>('-repository-path-0').value).toBe('api-engine')
+    await saveConfiguration()
+    expect(api.projects.update).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({
+        executionEnvironment: expect.objectContaining({
+          repositories: [
+            expect.objectContaining({
+              name: 'api-engine',
+              path: 'api-engine',
+              ref: '',
+            }),
+          ],
+        }),
+      })
+    )
+
+    await act(async () => element<HTMLButtonElement>('-advanced-repositories').click())
+    expect(element<HTMLButtonElement>('-advanced-repositories').getAttribute('aria-expanded')).toBe(
+      'true'
+    )
+  })
+
+  it('keeps a saved repository that is outside the catalog editable', async () => {
     await render({
       gitRepositories: {
         list: vi.fn(async () => repositoryOptions),
-        listBranches: vi.fn(async () => [{ name: "main", default: true }]),
+        listBranches: vi.fn(async () => [{ name: 'main', default: true }]),
       },
       executionEnvironment: {
         repositories: [
           {
-            name: "Wegent",
-            url: "https://other.example.com/custom/wegent.git",
-            ref: "release",
-            path: "wegent",
+            name: 'Wegent',
+            url: 'https://other.example.com/custom/wegent.git',
+            ref: 'release',
+            path: 'wegent',
             primary: true,
           },
         ],
         setup_steps: [],
       },
-    });
+    })
 
-    const urlControl = element<HTMLSelectElement>("-repository-url-0");
-    expect(urlControl).toBeInstanceOf(HTMLSelectElement);
-    expect(urlControl.value).toBe("__custom_repository__");
+    await openPreparation()
+    const urlControl = element<HTMLSelectElement>('-repository-url-0')
+    expect(urlControl).toBeInstanceOf(HTMLSelectElement)
+    expect(urlControl.value).toBe('__custom_repository__')
     expect(urlControl.selectedOptions[0]?.textContent).toBe(
-      "https://other.example.com/custom/wegent.git",
-    );
+      'https://other.example.com/custom/wegent.git'
+    )
     // Without a catalog match the ref stays a free-text field.
-    expect(element<HTMLInputElement>("-repository-ref-0").value).toBe(
-      "release",
-    );
-  });
+    expect(element<HTMLInputElement>('-repository-ref-0').value).toBe('release')
+  })
 
-  it("renders repository dropdowns for a cloud workspace", async () => {
-    const list = vi.fn(async () => repositoryOptions);
+  it('renders repository dropdowns for a cloud workspace', async () => {
+    const list = vi.fn(async () => repositoryOptions)
     await renderWorkspaceScope({
-      location: "cloud",
+      location: 'cloud',
       gitRepositories: { list, listBranches: vi.fn(async () => []) },
-    });
+    })
 
-    expect(list).toHaveBeenCalledOnce();
-    await act(async () =>
-      workspaceElement<HTMLButtonElement>("-add-repository").click(),
-    );
-    expect(workspaceElement("-repository-url-0")).toBeInstanceOf(
-      HTMLSelectElement,
-    );
-  });
+    expect(list).not.toHaveBeenCalled()
+    expect(workspaceElement<HTMLDetailsElement>('-preparation').open).toBe(false)
+    await togglePreparation(workspaceElement('-preparation-toggle'))
+    expect(list).toHaveBeenCalledOnce()
+    await act(async () => workspaceElement<HTMLButtonElement>('-add-repository').click())
+    expect(workspaceElement('-repository-url-0')).toBeInstanceOf(HTMLSelectElement)
+  })
 
-  it("keeps free-text inputs for a local workspace without fetching the catalog", async () => {
-    const list = vi.fn(async () => repositoryOptions);
+  it('keeps free-text inputs for a local workspace without fetching the catalog', async () => {
+    const list = vi.fn(async () => repositoryOptions)
     await renderWorkspaceScope({
-      location: "local",
+      location: 'local',
       gitRepositories: { list, listBranches: vi.fn() },
-    });
+    })
 
-    expect(list).not.toHaveBeenCalled();
-    await act(async () =>
-      workspaceElement<HTMLButtonElement>("-add-repository").click(),
-    );
-    expect(workspaceElement("-repository-url-0")).toBeInstanceOf(
-      HTMLInputElement,
-    );
-    expect(workspaceElement("-repository-ref-0")).toBeInstanceOf(
-      HTMLInputElement,
-    );
-  });
+    expect(list).not.toHaveBeenCalled()
+    await togglePreparation(workspaceElement('-preparation-toggle'))
+    await act(async () => workspaceElement<HTMLButtonElement>('-add-repository').click())
+    expect(workspaceElement('-repository-url-0')).toBeInstanceOf(HTMLInputElement)
+    expect(workspaceElement('-repository-ref-0')).toBeInstanceOf(HTMLInputElement)
+  })
 
-  it("follows the refreshed project prop when the environment becomes ready", async () => {
+  it('follows the refreshed project prop when the environment becomes ready', async () => {
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
-    });
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
 
-    expect(element("-21").textContent).toContain("环境未初始化");
+    expect(element('-21').textContent).not.toContain('环境未初始化')
 
     await rerender(api, {
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "environment-v1",
+        fingerprint: 'environment-v1',
         devices: {
-          "device-21": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'device-21': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
         },
       },
-    });
+    })
 
-    expect(element("-21").textContent).toContain("环境已就绪");
-    expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
-      "重新初始化",
-    );
-  });
+    expect(element('-21').dataset.preparationState).toBe('ready')
+    expect(element<HTMLButtonElement>('-initialize-21').textContent).toContain('提前准备项目目录')
+  })
 
-  it("does not clobber in-progress form edits when the project prop refreshes", async () => {
+  it('refreshes saved workspace policy without replacing an unsaved selection', async () => {
+    const api = await render({ assigned: [] })
+    const configuration = {
+      workspace_policy: 'project' as const,
+      repositories: [],
+      setup_steps: [],
+      fingerprint: '',
+      devices: {},
+    }
+    await rerender(api, { executionEnvironment: configuration })
+    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
+    await change('-workspace-policy', 'git_worktree')
+    await rerender(api, { executionEnvironment: configuration, version: 3 })
+    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('git_worktree')
+  })
+
+  it('does not clobber in-progress form edits when the project prop refreshes', async () => {
     const api = await render({
-      assigned: [environment(21, "Assigned online", "online")],
-    });
+      assigned: [environment(21, 'Assigned online', 'online')],
+    })
 
-    await addRepositoryDraft();
-    await change("-repository-name-0", "Draft name");
+    await addRepositoryDraft()
+    await change('-repository-name-0', 'Draft name')
 
     await rerender(api, {
       executionEnvironment: {
         repositories: [
           {
-            name: "Server name",
-            url: "https://github.com/wecode-ai/Wegent.git",
-            ref: "main",
-            path: "wegent",
+            name: 'Server name',
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            ref: 'main',
+            path: 'wegent',
             primary: true,
           },
         ],
-        setup_steps: [{ command: "pnpm install", working_directory: "wegent" }],
-        fingerprint: "environment-v2",
+        setup_steps: [{ command: 'pnpm install', working_directory: 'wegent' }],
+        fingerprint: 'environment-v2',
         devices: {
-          "device-21": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'device-21': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
         },
       },
-    });
+    })
 
     // Server-owned fields follow the prop, but the typed draft survives.
-    expect(element("-21").textContent).toContain("环境已就绪");
-    expect(element<HTMLInputElement>("-repository-name-0").value).toBe(
-      "Draft name",
-    );
-    expect(element<HTMLInputElement>("-repository-url-0").value).toBe("");
-    expect(
-      container?.querySelector(`[data-testid="${prefix}-setup-command-0"]`),
-    ).toBeNull();
-  });
+    expect(element('-21').dataset.preparationState).toBe('ready')
+    expect(element<HTMLInputElement>('-repository-name-0').value).toBe('Draft name')
+    expect(element<HTMLInputElement>('-repository-url-0').value).toBe('')
+    expect(container?.querySelector(`[data-testid="${prefix}-setup-command-0"]`)).toBeNull()
+  })
 
-  it("ignores prop refreshes while an initialization is in flight", async () => {
-    const pending = new Promise<never>(() => {});
+  it('ignores prop refreshes while an initialization is in flight', async () => {
+    const pending = new Promise<never>(() => {})
     const api = await render({
       assigned: [
-        environment(1748, "Wework laptop", "online", "app-record-1748"),
-        environment(1824, "Wework desktop", "online", "app-record-1824"),
+        environment(1748, 'Wework laptop', 'online', 'app-record-1748'),
+        environment(1824, 'Wework desktop', 'online', 'app-record-1824'),
       ],
-    });
-    api.projects.initializeExecutionEnvironment.mockImplementationOnce(
-      () => pending,
-    );
-    await act(async () =>
-      element<HTMLButtonElement>("-initialize-1824").click(),
-    );
-    expect(element("-1824").textContent).toContain("正在初始化环境");
+    })
+    api.projects.initializeExecutionEnvironment.mockImplementationOnce(() => pending)
+    await act(async () => element<HTMLButtonElement>('-initialize-1824').click())
+    expect(element('-1824').textContent).toContain('正在准备项目目录')
 
     // A racing poll arrives while the create owns the status fields; it must
     // not flip the other device to ready or replace the in-flight state.
@@ -1179,19 +1162,19 @@ describe("ProjectExecutionEnvironments", () => {
       executionEnvironment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "environment-v1",
+        fingerprint: 'environment-v1',
         devices: {
-          "app-record-1748": {
-            status: "ready",
-            workspace_path: "/workspace/project-1",
-            prepared_at: "2026-09-16T00:00:00Z",
-            error: "",
+          'app-record-1748': {
+            status: 'ready',
+            workspace_path: '/workspace/project-1',
+            prepared_at: '2026-09-16T00:00:00Z',
+            error: '',
           },
         },
       },
-    });
+    })
 
-    expect(element("-1824").textContent).toContain("正在初始化环境");
-    expect(element("-1748").textContent).toContain("环境未初始化");
-  });
-});
+    expect(element('-1824').textContent).toContain('正在准备项目目录')
+    expect(element('-1748').dataset.preparationState).toBe('uninitialized')
+  })
+})

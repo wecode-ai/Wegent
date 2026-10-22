@@ -1,4 +1,4 @@
-import { ClipboardList, Eye, Paperclip, Plus, Target } from 'lucide-react'
+import { ClipboardList, Eye, Paperclip, Plus, PencilLine, Target } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -12,6 +12,8 @@ export interface AddContextMenuProps {
   translate: CollaborationTranslate
   disabled: boolean
   onFileSelect: (files: File | File[]) => void
+  showAttachmentActions?: boolean
+  onDraw?: () => void
   onSetPlanMode?: () => void
   onSetGoal?: () => void
   onConfigureSupervisor?: () => void
@@ -23,6 +25,8 @@ export function AddContextMenu({
   translate: t,
   disabled,
   onFileSelect,
+  onDraw,
+  showAttachmentActions = true,
   onSetPlanMode,
   onSetGoal,
   onConfigureSupervisor,
@@ -121,6 +125,7 @@ export function AddContextMenu({
               'fixed z-system-popover w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]',
             ].join(' ')}
           >
+            {showAttachmentActions && <>
             <button
               type="button"
               role="menuitem"
@@ -131,6 +136,7 @@ export function AddContextMenu({
               <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
               <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
             </button>
+            </>}
             {onSetPlanMode && (
               <button
                 type="button"
@@ -183,6 +189,24 @@ export function AddContextMenu({
                         ? t('workbench.supervisor_configure')
                         : t('workbench.supervisor_enable')}
                   </span>
+                </span>
+              </button>
+            )}
+            {onDraw && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="draw-attachment-button"
+                onClick={() => {
+                  setOpen(false)
+                  onDraw()
+                }}
+                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal text-text-primary hover:bg-muted"
+              >
+                <PencilLine className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                <span>{t('workbench.drawing.title', '绘图')}</span>
+                <span className="text-text-muted">
+                  {t('workbench.drawing.description', '绘制草图')}
                 </span>
               </button>
             )}

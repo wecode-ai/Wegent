@@ -7,14 +7,15 @@
 //!
 //! Source pipeline: flexible authentication
 //! (`security.get_current_user_flexible` -> `get_auth_context`), the
-//! `120/minute` fixed-window rate limit on Redis, `resp_{task_id}` parsing,
+//! `settings.RATE_LIMIT_GET_RESPONSE` fixed-window rate limit on Redis,
+//! `resp_{task_id}` parsing,
 //! `task_kinds_service.get_task_by_id` (active non-deleted task, membership,
 //! and `convert_to_task_dict`), subtask listing, the model string from the
 //! task's team reference, and `_task_to_response_object`.
-use brz_http_server::StatusCode;
 #[cfg(test)]
 use serde_json::Value;
 
+use super::error::{ResponseError, rate_limit_exceeded};
 use super::http_error::HttpError;
 use super::output_builder::{ResponseObject, task_to_response_object};
 use super::rate_limit::{self, RateLimit};
@@ -23,86 +24,6 @@ use crate::state::AppState;
 
 /// `resp_` prefix of the response id format.
 const RESPONSE_ID_PREFIX: &str = "resp_";
-
-/// The 429 body slowapi's `RateLimitExceeded` handler emits
-/// (`_rate_limit_exceeded_handler`): `{"error": "Rate limit exceeded: 120 per 1 minute"}`.
-fn rate_limit_exceeded() -> RateLimitError {
-    RateLimitError {
-        status: StatusCode::TOO_MANY_REQUESTS,
-        error: format!(
-            "Rate limit exceeded: {} per 1 {}",
-            RateLimit::default().amount,
-            RateLimit::default().granularity
-        ),
-    }
-}
-
-/// The 429 rate-limit failure with its source-specific `{"error": ...}` body
-/// (not the FastAPI `{"detail": ...}` shape). `into_http_error` re-serializes
-/// the error message into the `detail` string like the source handler does.
-struct RateLimitError {
-    status: StatusCode,
-    error: String,
-}
-
-impl RateLimitError {
-    /// The mapped status code.
-    #[cfg(test)]
-    fn status(&self) -> StatusCode {
-        self.status
-    }
-}
-
-impl brz_http_server::IntoHttpError for RateLimitError {
-    fn into_http_error(
-        self,
-        arena: &brz_http_server::EphemeralBytesArena,
-    ) -> brz_http_server::Response {
-        crate::http_compat::FastApiError::json_body(
-            self.status,
-            serde_json::json!({ "error": self.error }),
-        )
-        .into_http_error(arena)
-    }
-}
-
-/// One of the endpoint's failure shapes: the rate-limit 429 body or the
-/// standard FastAPI error.
-enum ResponseError {
-    RateLimit(RateLimitError),
-    Http(HttpError),
-}
-
-impl From<RateLimitError> for ResponseError {
-    fn from(error: RateLimitError) -> Self {
-        Self::RateLimit(error)
-    }
-}
-
-impl From<HttpError> for ResponseError {
-    fn from(error: HttpError) -> Self {
-        Self::Http(error)
-    }
-}
-
-impl From<super::auth_error::AuthError> for ResponseError {
-    fn from(error: super::auth_error::AuthError) -> Self {
-        Self::Http(error.into())
-    }
-}
-
-impl brz_http_server::IntoHttpError for ResponseError {
-    fn into_http_error(
-        self,
-        arena: &brz_http_server::EphemeralBytesArena,
-    ) -> brz_http_server::Response {
-        match self {
-            Self::RateLimit(error) => error.into_http_error(arena),
-            Self::Http(error) => error.into_http_error(arena),
-        }
-    }
-}
-
 /// GET /api/v1/responses/{response_id}: the responses free function, injecting
 /// the process-lifetime application state.
 ///
@@ -124,15 +45,9 @@ async fn get_response(
         .clone()
         .unwrap_or_else(|| format!("ip:{client_ip}"));
     let path = format!("/api/v1/responses/{response_id}");
-    if !rate_limit::hit(
-        state.redis.as_ref(),
-        RateLimit::default(),
-        &limit_key,
-        &path,
-    )
-    .await
-    {
-        return Err(rate_limit_exceeded().into());
+    let limit = RateLimit::get_response();
+    if !rate_limit::hit(state.redis.as_ref(), limit, &limit_key, &path).await {
+        return Err(rate_limit_exceeded(limit).into());
     }
 
     // Response id parsing: `resp_{task_id}`.
@@ -158,19 +73,20 @@ async fn load_response(
     user_id: i32,
 ) -> Result<Option<ResponseObject>, HttpError> {
     let mysql = &state.mysql;
+    let task_store = &*state.task_store;
     let internal = |error: brz_mysql::MysqlError| {
         tracing::error!(%error, "responses database dependency failure");
         HttpError::internal("database query failed")
     };
 
     // `task_kinds_service.get_task_by_id`.
-    let task = repo::get_active_non_deleted_task(mysql, task_id)
+    let task = repo::get_active_non_deleted_task(task_store, task_id)
         .await
         .map_err(internal)?;
     let Some(task) = task else {
         return Ok(None);
     };
-    if !repo::is_member(mysql, task_id, user_id)
+    if !repo::is_member(task_store, mysql, task_id, user_id)
         .await
         .map_err(internal)?
     {
@@ -186,7 +102,7 @@ async fn load_response(
     {
         let name = workspace_ref.name();
         let namespace = workspace_ref.namespace();
-        let _ = repo::get_workspace_by_ref(mysql, state.task_policy, task.user_id, name, namespace)
+        let _ = repo::get_workspace_by_ref(task_store, i64::from(task.user_id), name, namespace)
             .await
             .map_err(internal)?;
     }
@@ -203,52 +119,19 @@ async fn load_response(
         })?;
 
     // `subtask_store.list_by_task_for_user_ordered`.
-    let subtasks = repo::list_subtasks_for_user_ordered(mysql, task_id, user_id)
+    let subtasks = repo::list_subtasks_for_user_ordered(task_store, task_id, user_id)
         .await
         .map_err(internal)?;
 
     // `task_store.get_task_by_states(states=[STATE_ACTIVE],
     // owner_user_id=current_user.id)` + model-string reconstruction.
-    let task_kind = repo::get_task_by_states_active_owned(mysql, task_id, user_id)
+    let task_kind = repo::get_task_by_states_active_owned(task_store, task_id, user_id)
         .await
         .map_err(internal)?;
-    let model_string = model_string_for(&task_kind);
+    let model_string = repo::model_string_for(task_kind.as_ref());
 
-    Ok(Some(task_to_response_object(
-        &task,
-        &model_string,
-        &subtasks,
-        None,
-    )))
-}
-
-/// Model string from the task CRD team reference:
-/// `{team_namespace}#{team_name}` plus `#{model_id}` when the `modelId` label
-/// is set; `unknown` when the task row is absent.
-fn model_string_for(task_kind: &Option<repo::TaskRow>) -> String {
-    let Some(task_kind) = task_kind else {
-        return "unknown".to_string();
-    };
-    let task_crd = crate::crd::CrdDocument::project_opaque(&task_kind.json.0);
-    let Some(team_ref) = task_crd
-        .spec
-        .as_ref()
-        .and_then(|spec| spec.team_ref.as_ref())
-    else {
-        return "unknown".to_string();
-    };
-    let team_name = team_ref.name();
-    let team_namespace = team_ref.namespace();
-    let model_id = task_crd
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.labels.as_ref())
-        .and_then(|labels| labels.model_id.as_ref())
-        .and_then(crate::json_compat::OpaqueJson::project::<String>);
-    match model_id {
-        Some(model_id) => format!("{team_namespace}#{team_name}#{model_id}"),
-        None => format!("{team_namespace}#{team_name}"),
-    }
+    let response = task_to_response_object(&task, &model_string, &subtasks, None, &state.auth)?;
+    Ok(Some(response))
 }
 
 /// The client IP used by the rate-limit fallback key
@@ -274,7 +157,7 @@ mod tests {
         repo::TaskRow {
             id: 1,
             user_id: 89,
-            json: brz_mysql::Json(crate::json_compat::OpaqueJson::from(json)),
+            json: brz_mysql::Json(brz_json::OpaqueJson::from(json)),
             created_at: None,
         }
     }
@@ -286,7 +169,7 @@ mod tests {
             "metadata": {"labels": {"modelId": "gpt"}},
         });
         assert_eq!(
-            model_string_for(&Some(task_row(json))),
+            repo::model_string_for(Some(&task_row(json))),
             "example#example-team#gpt"
         );
 
@@ -294,17 +177,21 @@ mod tests {
             "spec": {"teamRef": {"name": "example-team", "namespace": "example"}},
         });
         assert_eq!(
-            model_string_for(&Some(task_row(json))),
+            repo::model_string_for(Some(&task_row(json))),
             "example#example-team"
         );
 
-        assert_eq!(model_string_for(&None), "unknown");
+        assert_eq!(repo::model_string_for(None), "unknown");
     }
 
     #[test]
     fn rate_limit_error_body_matches_slowapi() {
-        let response = rate_limit_exceeded();
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let response = rate_limit_exceeded(RateLimit::per_minute(10_000));
+        assert_eq!(
+            response.status(),
+            brz_http_server::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(response.error, "Rate limit exceeded: 10000 per 1 minute");
     }
 
     // A dedicated test group, separate from the crate's real `http_apis`

@@ -29,6 +29,9 @@ use super::{
 
 pub(crate) use super::remote_projects::CodexGlobalRemoteProject;
 
+mod migration;
+pub use migration::run_project_state_query;
+
 const CODEX_GLOBAL_STATE_FILENAME: &str = ".codex-global-state.json";
 const CODEX_GLOBAL_STATE_OPLOG_FILENAME: &str = ".codex-global-state.oplog.jsonl";
 const CODEX_GLOBAL_STATE_OPLOG_VERSION: u64 = 1;
@@ -77,6 +80,7 @@ pub(crate) struct CodexGlobalProject {
     pub source: String,
     pub kind: String,
     pub remote_host_id: Option<String>,
+    pub owner_project_key: Option<String>,
     pub pinned: bool,
     pub pinned_order: Option<usize>,
     pub active: bool,
@@ -384,8 +388,16 @@ pub(crate) fn sync_codex_global_remote_projects(
             Some(CodexGlobalRemoteProject {
                 id,
                 host_id,
-                remote_path,
+                remote_path: remote_path.clone(),
                 label: project.label.as_deref().and_then(clean_text),
+                project_key: project.project_key.clone(),
+                roots: if project.roots.is_empty() {
+                    vec![remote_path.clone()]
+                } else {
+                    project.roots.clone()
+                },
+                default_project_space: project.default_project_space.clone(),
+                ai_settings: project.ai_settings.clone(),
             })
         })
         .collect::<Vec<_>>();
@@ -814,33 +826,7 @@ fn read_codex_global_state_oplog_unlocked() -> Vec<CodexGlobalStateOplogRecord> 
     };
     content
         .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() {
-                return None;
-            }
-            let mut record = serde_json::from_str::<CodexGlobalStateOplogRecord>(line).ok()?;
-            if record.version != CODEX_GLOBAL_STATE_OPLOG_VERSION {
-                return None;
-            }
-            record.workspace_path = normalize_workspace_path(&record.workspace_path);
-            if matches!(
-                record.kind.as_str(),
-                OPLOG_KIND_UPSERT
-                    | OPLOG_KIND_RENAME
-                    | OPLOG_KIND_REMOVE
-                    | OPLOG_KIND_UPSERT_REMOTE_PROJECT
-                    | OPLOG_KIND_ACTIVATE_PROJECT
-            ) && record.workspace_path.is_empty()
-            {
-                return None;
-            }
-            record.label = record
-                .label
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty());
-            Some(record)
-        })
+        .filter_map(|line| migration::parse_record(line).ok())
         .collect()
 }
 
@@ -889,6 +875,10 @@ fn apply_codex_global_state_ops(
                             host_id: remote_host_id.to_owned(),
                             remote_path: op.workspace_path.clone(),
                             label: op.label.clone(),
+                            project_key: None,
+                            roots: vec![op.workspace_path.clone()],
+                            default_project_space: None,
+                            ai_settings: None,
                         },
                     );
                     upsert_project_order(payload, project_key);
@@ -1311,6 +1301,7 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 source: "local_project".to_owned(),
                 kind: "local".to_owned(),
                 remote_host_id: None,
+                owner_project_key: None,
                 pinned: false,
                 pinned_order: None,
                 active: false,
@@ -1335,17 +1326,18 @@ fn remote_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobal
             CodexGlobalProject {
                 key: item.key,
                 workspace_path: item.remote_path.clone(),
-                roots: vec![item.remote_path],
+                roots: item.roots,
                 name,
                 source: "remote_project".to_owned(),
                 kind: "remote".to_owned(),
                 remote_host_id: Some(item.host_id),
+                owner_project_key: item.project_key,
                 pinned: false,
                 pinned_order: None,
                 active: false,
                 appearance: None,
-                default_project_space: None,
-                ai_settings: None,
+                default_project_space: item.default_project_space,
+                ai_settings: item.ai_settings,
             }
         })
         .collect()
@@ -1406,6 +1398,7 @@ fn local_project_from_label(workspace_path: &str, label: Option<&str>) -> CodexG
         source: "legacy_root".to_owned(),
         kind: "local".to_owned(),
         remote_host_id: None,
+        owner_project_key: None,
         pinned: false,
         pinned_order: None,
         active: false,
@@ -1914,6 +1907,7 @@ mod tests {
         OPLOG_KIND_UPSERT_REMOTE_PROJECTS, SELECTED_REMOTE_HOST_ID_KEY,
     };
     use crate::runtime_work::remote_projects::CodexGlobalRemoteProject;
+    use crate::runtime_work::util::normalize_workspace_path;
     use serde_json::{json, Map, Value};
 
     fn payload(value: Value) -> Map<String, Value> {
@@ -1971,7 +1965,7 @@ mod tests {
             .expect("device-local project id should resolve");
         assert_eq!(
             project.workspace_path,
-            "/Volumes/OuterHD/OuterIdeaProjects/Wegent"
+            normalize_workspace_path("/Volumes/OuterHD/OuterIdeaProjects/Wegent")
         );
     }
 
@@ -2032,12 +2026,22 @@ mod tests {
             index
                 .projects()
                 .iter()
-                .map(|project| project.key.as_str())
+                .map(|project| project.key.clone())
                 .collect::<Vec<_>>(),
-            vec!["remote-1", "multi", "/repo"]
+            vec![
+                "remote-1".to_owned(),
+                "multi".to_owned(),
+                normalize_workspace_path("/repo")
+            ]
         );
         let multi = index.project_for_key("multi").expect("multi project");
-        assert_eq!(multi.roots, vec!["/repo/nested", "/other"]);
+        assert_eq!(
+            multi.roots,
+            vec![
+                normalize_workspace_path("/repo/nested"),
+                normalize_workspace_path("/other")
+            ]
+        );
         assert!(multi.pinned);
         assert_eq!(multi.pinned_order, Some(0));
         assert_eq!(multi.appearance, Some(json!({"color": "purple"})));
@@ -2045,7 +2049,7 @@ mod tests {
             index
                 .project_for_thread(Some("assigned"), "/repo/nested/file")
                 .map(|project| project.key.as_str()),
-            Some("/repo")
+            Some(normalize_workspace_path("/repo").as_str())
         );
         assert!(index
             .project_for_thread(Some("projectless"), "/repo/nested/file")
@@ -2054,7 +2058,7 @@ mod tests {
             index
                 .project_for_thread(Some("hinted"), "/repo/nested/file")
                 .map(|project| project.key.as_str()),
-            Some("/repo")
+            Some(normalize_workspace_path("/repo").as_str())
         );
         assert_eq!(
             index
@@ -2093,7 +2097,10 @@ mod tests {
             ],
         );
 
-        assert_eq!(payload["project-order"], json!(["remote-1", "/local"]));
+        assert_eq!(
+            payload["project-order"],
+            json!(["remote-1", normalize_workspace_path("/local")])
+        );
         assert_eq!(payload["remote-projects"][0]["id"], "remote-1");
         assert_eq!(payload["remote-projects"][0]["hostId"], "host-1");
         assert_eq!(payload["remote-projects"][0]["remotePath"], "/srv/app");
@@ -2309,6 +2316,10 @@ mod tests {
                 host_id: "new-host".to_owned(),
                 remote_path: "/retained".to_owned(),
                 label: Some("Current".to_owned()),
+                project_key: None,
+                roots: Vec::new(),
+                default_project_space: None,
+                ai_settings: None,
             }],
             ..Default::default()
         };
@@ -2323,7 +2334,11 @@ mod tests {
                     "id": "retained",
                     "hostId": "new-host",
                     "remotePath": "/retained",
-                    "label": "Current"
+                    "label": "Current",
+                    "projectKey": null,
+                    "roots": [],
+                    "defaultProjectSpace": null,
+                    "aiSettings": null
                 }
             ])
         );
@@ -2351,6 +2366,47 @@ mod tests {
     }
 
     #[test]
+    fn remote_project_oplog_projects_full_owner_settings() {
+        let mut payload =
+            payload(json!({"pinned-project-ids": ["sidebar"], "project-order": ["sidebar"]}));
+        let operation = CodexGlobalStateOplogRecord {
+            kind: OPLOG_KIND_UPSERT_REMOTE_PROJECTS.to_owned(),
+            remote_projects: vec![CodexGlobalRemoteProject {
+                id: "sidebar".to_owned(),
+                host_id: "remote".to_owned(),
+                remote_path: "/new".to_owned(),
+                label: Some("Updated".to_owned()),
+                project_key: Some("owner".to_owned()),
+                roots: vec!["/new".to_owned(), "/extra".to_owned()],
+                default_project_space: Some(
+                    json!({"projectStore": "backend", "projectId": "space"}),
+                ),
+                ai_settings: Some(
+                    json!({"instructions": "New", "modelSelection": {"modelName": "model"}}),
+                ),
+            }],
+            ..Default::default()
+        };
+        apply_codex_global_state_ops(&mut payload, &[operation]);
+        let index = index_from_payload(&payload);
+        let project = index.project_for_key("sidebar").unwrap();
+        assert_eq!(project.owner_project_key.as_deref(), Some("owner"));
+        assert_eq!(
+            project.roots,
+            vec![
+                normalize_workspace_path("/new"),
+                normalize_workspace_path("/extra")
+            ]
+        );
+        assert!(project.pinned);
+        assert_eq!(project.ai_settings.as_ref().unwrap()["instructions"], "New");
+        assert_eq!(
+            project.default_project_space.as_ref().unwrap()["projectId"],
+            "space"
+        );
+    }
+
+    #[test]
     fn remote_project_batch_removes_stale_projects_from_synchronized_hosts() {
         let mut payload = payload(json!({
             "remote-projects": [
@@ -2371,6 +2427,10 @@ mod tests {
                 host_id: "host".to_owned(),
                 remote_path: "/retained".to_owned(),
                 label: Some("Current".to_owned()),
+                project_key: None,
+                roots: Vec::new(),
+                default_project_space: None,
+                ai_settings: None,
             }],
             ..Default::default()
         };
@@ -2384,7 +2444,11 @@ mod tests {
                     "id": "retained",
                     "hostId": "host",
                     "remotePath": "/retained",
-                    "label": "Current"
+                    "label": "Current",
+                    "projectKey": null,
+                    "roots": [],
+                    "defaultProjectSpace": null,
+                    "aiSettings": null
                 },
                 {"id": "other-host", "hostId": "other", "remotePath": "/other"}
             ])

@@ -43,6 +43,7 @@ mod cancellation;
 mod capability;
 mod client;
 mod config;
+mod connection;
 mod connection_controller;
 mod extension;
 mod handlers;
@@ -112,6 +113,8 @@ pub(super) type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 pub type EventHandler =
     Arc<dyn Fn(Value) -> Pin<Box<dyn Future<Output = Option<Value>> + Send>> + Send + Sync>;
+/// A synchronous state notification that cannot await transport operations.
+pub type ConnectionClosedHandler = Arc<dyn Fn() + Send + Sync>;
 
 pub trait DeviceUpgradeHandler: Send + Sync + 'static {
     fn handle_upgrade<'a>(
@@ -131,6 +134,8 @@ pub trait LocalBackendTransport: Clone + Send + Sync + 'static {
     ) -> TransportFuture<'a, Value>;
     fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()>;
     fn on(&self, event: &str, handler: EventHandler);
+    /// Observe closure of the current connection without replacing RPC handlers.
+    fn on_close(&self, handler: ConnectionClosedHandler);
 }
 
 pub struct LocalBackendRunner<
@@ -155,6 +160,7 @@ pub struct LocalBackendRunner<
     runtime_event_forwarder: Option<JoinHandle<()>>,
     runtime_event_hub: Option<ExecutorEventHub>,
     connection_status: Arc<AtomicBool>,
+    connection_epoch: Arc<Mutex<u64>>,
     runtime_pull_lock: Arc<AsyncMutex<()>>,
     runtime_pull_pending: Arc<AtomicBool>,
 }
@@ -290,9 +296,7 @@ where
             backend.task_controller.clone(),
             backend.client.config.update.clone(),
         )));
-        backend.extension_handler = Some(Arc::new(default_extension_handler(
-            backend.client.config.local_workspace_root.clone(),
-        )));
+        backend.extension_handler = Some(Arc::new(default_extension_handler()));
         backend
     }
 }
@@ -324,6 +328,7 @@ where
             runtime_event_forwarder: None,
             runtime_event_hub: None,
             connection_status: Arc::new(AtomicBool::new(false)),
+            connection_epoch: Arc::new(Mutex::new(0)),
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
             runtime_pull_pending: Arc::new(AtomicBool::new(false)),
         }
@@ -472,80 +477,10 @@ where
         self.cancellations.is_cancel_requested(task_id, subtask_id)
     }
 
-    pub async fn run_forever(mut self) -> Result<(), String> {
-        self.connection_status.store(false, Ordering::Release);
-        let auth_home = std::env::var_os("WEGENT_EXECUTOR_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-            .ok_or("Executor home is unavailable")?;
-        let _auth_broker = crate::plugin_account_auth::broker::start(
-            self.client.transport.clone(),
-            auth_home,
-            self.connection_status.clone(),
-            matches!(self.client.config.device_type.as_str(), "cloud" | "remote"),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        if let Some(event_hub) = self.runtime_event_hub.take() {
-            self.start_runtime_event_forwarder(event_hub);
-        }
-        self.register_handlers();
-        let _session_gateway = if self.start_session_gateway {
-            match &self.session_handler {
-                Some(handler) => start_session_gateway(Arc::clone(handler)).await?,
-                None => None,
-            }
-        } else {
-            None
-        };
-        let mut retry_delay = self.client.config.reconnect_delay;
-        write_executor_log_line(&local_backend_starting_log_line(
-            &self.client.config.backend_url,
-            &self.client.config.device_id,
-        ));
-
-        loop {
-            match self.connect_and_register().await {
-                Ok(()) => {
-                    self.connection_status.store(true, Ordering::Release);
-                    write_executor_log_line(&local_backend_registered_log_line(
-                        &self.client.config.backend_url,
-                        &self.client.config.device_id,
-                    ));
-                    let stable_connection = self.heartbeat_until_reconnect().await;
-                    self.connection_status.store(false, Ordering::Release);
-                    if let Err(error) = self.client.transport.disconnect().await {
-                        write_executor_error_line(&format_executor_log(
-                            "local backend stale connection cleanup failed",
-                            &[("error", error)],
-                        ));
-                    }
-                    if stable_connection {
-                        retry_delay = self.client.config.reconnect_delay;
-                    } else {
-                        sleep(retry_delay).await;
-                        retry_delay = retry_delay
-                            .saturating_mul(2)
-                            .min(self.client.config.reconnect_delay_max);
-                    }
-                }
-                Err(error) => {
-                    self.connection_status.store(false, Ordering::Release);
-                    let _ = self.client.transport.disconnect().await;
-                    write_executor_error_line(&local_backend_connection_failure_log_line(
-                        &self.client.config.backend_url,
-                        &error,
-                    ));
-                    sleep(retry_delay).await;
-                    retry_delay = retry_delay
-                        .saturating_mul(2)
-                        .min(self.client.config.reconnect_delay_max);
-                }
-            }
-        }
-    }
-
     pub fn register_handlers(&self) {
+        self.client
+            .transport
+            .on_close(self.connection_closed_handler());
         self.client
             .transport
             .on(TASK_EXECUTE_EVENT, self.task_handler());
@@ -601,93 +536,6 @@ where
         self.client
             .transport
             .on(DEVICE_RUN_EXTENSION_EVENT, self.extension_handler());
-    }
-
-    pub async fn connect_and_register(&self) -> Result<(), String> {
-        self.client.connect().await?;
-        match self
-            .client
-            .register_device(self.client.config.registration_timeout)
-            .await
-        {
-            Ok(true) => {
-                if let Err(error) = self.client.emit_liveness_heartbeat().await {
-                    let _ = self.client.disconnect().await;
-                    return Err(error);
-                }
-                if let Some(handler) = &self.session_handler {
-                    handler
-                        .lock()
-                        .expect("session handler lock")
-                        .prepare_terminal_reconnect();
-                }
-                self.trigger_runtime_work_poll();
-                Ok(())
-            }
-            Ok(false) => {
-                let _ = self.client.disconnect().await;
-                Err("device registration was rejected by backend".to_owned())
-            }
-            Err(error) => {
-                let _ = self.client.disconnect().await;
-                Err(error)
-            }
-        }
-    }
-
-    async fn heartbeat_until_reconnect(&self) -> bool {
-        let mut consecutive_failures = 0_u32;
-        let mut observed_successful_heartbeat = false;
-        let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
-        let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
-            handler
-                .lock()
-                .expect("session handler lock")
-                .terminal_event_notifier()
-        });
-        let terminal_relay = self.relay_terminal_events_until_error(terminal_event_notifier);
-        tokio::pin!(terminal_relay);
-        loop {
-            tokio::select! {
-                _ = sleep_until(next_heartbeat_at) => {},
-                result = &mut terminal_relay => {
-                    let error = result.expect_err("terminal relay only stops on error");
-                    write_executor_error_line(&format_executor_log(
-                        "terminal event relay paused until reconnect",
-                        &[("error", error)],
-                    ));
-                    let _ = self.client.disconnect().await;
-                    return observed_successful_heartbeat;
-                }
-            }
-            if let Some(handler) = &self.session_handler {
-                handler
-                    .lock()
-                    .expect("session handler lock")
-                    .reap_expired_sessions();
-            }
-            let failure = match self.client.emit_liveness_heartbeat().await {
-                Ok(()) => {
-                    consecutive_failures = 0;
-                    observed_successful_heartbeat = true;
-                    self.trigger_runtime_work_poll();
-                    next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
-                    continue;
-                }
-                Err(error) => error,
-            };
-
-            consecutive_failures += 1;
-            write_executor_error_line(&local_backend_heartbeat_failure_log_line(
-                &self.client.config.backend_url,
-                &failure,
-            ));
-            if consecutive_failures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES {
-                let _ = self.client.disconnect().await;
-                return observed_successful_heartbeat;
-            }
-            next_heartbeat_at = Instant::now() + self.client.config.heartbeat_timeout;
-        }
     }
 
     fn trigger_runtime_work_poll(&self) {
@@ -748,36 +596,68 @@ async fn drain_available_runtime_work<T>(
 ) where
     T: LocalBackendTransport,
 {
-    let capacity = handler
+    let capacity = match handler
         .handle_runtime_rpc(json!({
             "method": "runtime.capacity.get",
             "payload": {},
         }))
         .await
-        .ok();
-    client.set_runtime_capacity(capacity);
-    // Publish the freshly read snapshot for App-originated HTTP claims too.
-    // The registration heartbeat runs before this asynchronous capacity read.
-    if let Err(error) = client.emit_liveness_heartbeat().await {
-        write_executor_error_line(&format_executor_log(
-            "runtime capacity heartbeat failed",
-            &[("error", error)],
-        ));
+    {
+        Ok(capacity) => capacity,
+        Err(error) => {
+            write_executor_error_line(&format_executor_log(
+                "runtime capacity read failed",
+                &[("error", error.message)],
+            ));
+            return;
+        }
+    };
+    let limit = capacity.get("limit").and_then(Value::as_u64).unwrap_or(0);
+    let active = capacity
+        .get("active")
+        .and_then(Value::as_u64)
+        .unwrap_or(limit);
+    let queued = capacity
+        .get("queued")
+        .and_then(Value::as_u64)
+        .unwrap_or(limit);
+    let available = limit.saturating_sub(active.saturating_add(queued));
+    if available == 0 {
         return;
     }
-
-    loop {
-        let work = match client
-            .pull_runtime_work(client.config.heartbeat_timeout)
-            .await
-        {
-            Ok(work) => work,
-            Err(error) => {
-                write_executor_error_line(&format_executor_log(
-                    "runtime task pull failed",
-                    &[("error", error)],
-                ));
-                return;
+    let catalog = match handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.runner.catalog", "payload": {},
+        }))
+        .await
+    {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            write_executor_error_line(&format_executor_log(
+                "runner catalog read failed",
+                &[("error", error.message)],
+            ));
+            return;
+        }
+    };
+    for _ in 0..available {
+        let mut retried_failed_execution = false;
+        let work = loop {
+            match client
+                .pull_runtime_work(client.config.heartbeat_timeout, catalog.clone())
+                .await
+            {
+                Ok(work) => break work,
+                Err(error) => {
+                    write_executor_error_line(&format_executor_log(
+                        "runtime task pull failed",
+                        &[("error", error)],
+                    ));
+                    if retried_failed_execution {
+                        return;
+                    }
+                    retried_failed_execution = true;
+                }
             }
         };
         for intent in work.workspace_cleanup_intents {
@@ -838,9 +718,17 @@ async fn drain_available_runtime_work<T>(
             write_executor_error_line("runtime task pull returned no payload");
             return;
         };
+        let method =
+            if payload.get("dispatchKind").and_then(Value::as_str) == Some("collaboration_group") {
+                "runtime.collaboration.dispatch"
+            } else if payload.get("runtimeAction").and_then(Value::as_str) == Some("send") {
+                "runtime.tasks.send"
+            } else {
+                "runtime.tasks.create"
+            };
         let response = match handler
             .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.create",
+                "method": method,
                 "payload": payload,
             }))
             .await
@@ -1037,7 +925,7 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
     }
-    crate::agents::rewrite_loopback_model_gateway(request, &config.backend_url);
+    crate::agents::bind_backend_model_gateway(request, &config.backend_url);
 }
 
 fn runtime_error_response(error: AppIpcError) -> Value {

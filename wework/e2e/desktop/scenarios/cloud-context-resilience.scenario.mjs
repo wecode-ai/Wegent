@@ -5,6 +5,7 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   IMAGE_ARTIFACT_BASE64,
   createSingleRootLocalProject,
+  selectE2EModel,
 } from '../modules/shared.mjs'
 
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_CLOUD_CONTEXT_STALL_INITIAL'
@@ -113,6 +114,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
     async verify(control) {
       await createSingleRootLocalProject(control, workspacePath, 'cloud-context-resilience')
+      await selectE2EModel(control)
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: uiTimeoutMs,
       })

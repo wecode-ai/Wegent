@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -17,6 +18,16 @@ from app.schemas.namespace import GroupRole
 from app.services.group_permission import check_group_permission, get_user_group_roles
 
 TEAM_USE_ROLE = BaseRole.RestrictedAnalyst
+
+
+def can_edit_team(db: Session, team: Kind, user_id: int) -> bool:
+    """Match the Team update contract without granting edits through project roles."""
+
+    if not team.is_active or team.kind != "Team":
+        return False
+    if team.namespace == "default":
+        return team.user_id == user_id
+    return check_group_permission(db, user_id, team.namespace, GroupRole.Developer)
 
 
 def can_use_group_teams(db: Session, user_id: int, namespace: str) -> bool:

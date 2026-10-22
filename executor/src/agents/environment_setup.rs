@@ -222,9 +222,7 @@ fn git_metadata_dir(cwd: &Path) -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn platform_shell(command: &str) -> Command {
-    let mut process = Command::new("cmd.exe");
-    process.arg("/D").arg("/S").arg("/C").arg(command);
-    process
+    crate::process::windows_shell_command(command)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -278,7 +276,10 @@ mod tests {
 
     #[tokio::test]
     async fn skips_setup_after_the_same_fingerprint_succeeds_in_a_workspace() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("environment setup ")
+            .tempdir()
+            .unwrap();
         fs::create_dir(directory.path().join(".git")).unwrap();
         let output = directory.path().join("setup-count");
         let mut request = ExecutionRequest {
@@ -289,7 +290,9 @@ mod tests {
             "execution".to_owned(),
             json!({
                 "setup": {
-                    "steps": [{"command": format!("printf x >> '{}'", output.display())}],
+                    "steps": [{"command": if cfg!(windows) {
+                        format!("echo x>>\"{}\"", output.display())
+                    } else { format!("printf x >> '{}'", output.display()) }}],
                     "fingerprint": "environment-v1",
                 }
             }),
@@ -298,6 +301,12 @@ mod tests {
         prepare_execution_environment(&request).await.unwrap();
         prepare_execution_environment(&request).await.unwrap();
 
-        assert_eq!(fs::read_to_string(output).unwrap(), "x");
+        assert_eq!(
+            fs::read_to_string(output)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["x"]
+        );
     }
 }

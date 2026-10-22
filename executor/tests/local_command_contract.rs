@@ -5,12 +5,15 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{Seek, Write},
-    process::{Command, Stdio},
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
 use serde_json::Value;
+#[cfg(unix)]
+use std::{
+    io::{Seek, Write},
+    process::{Command, Stdio},
+};
 use wegent_executor::local::command::{build_env, CommandHandler, CommandRequest};
 
 fn env_lock() -> MutexGuard<'static, ()> {
@@ -72,11 +75,23 @@ async fn execute_command_uses_argv_and_cwd() {
     fs::create_dir_all(&workdir).unwrap();
     fs::write(workdir.join("target.txt"), "ok").unwrap();
 
+    #[cfg(unix)]
+    let argv = vec!["cat".to_owned(), "target.txt".to_owned()];
+    #[cfg(windows)]
+    let argv = [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[Console]::Write([IO.File]::ReadAllText('target.txt'))",
+    ]
+    .map(str::to_owned)
+    .to_vec();
     let result = CommandHandler
         .execute(CommandRequest {
             command_key: None,
-            command: "cat".to_owned(),
-            argv: vec!["cat".to_owned(), "target.txt".to_owned()],
+            command: argv[0].clone(),
+            argv,
             cwd: Some(workdir.display().to_string()),
             timeout_seconds: 5.0,
             max_output_bytes: 1024,
@@ -84,28 +99,45 @@ async fn execute_command_uses_argv_and_cwd() {
         })
         .await;
 
-    assert!(result.success);
+    assert!(result.success, "{result:?}");
     assert_eq!(result.stdout, Value::String("ok".to_owned()));
 }
 
 #[tokio::test]
 async fn execute_command_argv_does_not_invoke_shell() {
+    #[cfg(unix)]
+    let argv = ["printf", "%s", "hello; echo hacked"]
+        .map(str::to_owned)
+        .to_vec();
+    #[cfg(windows)]
+    let fixture = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let argv = {
+        let script = fixture.path().join("literal argument.ps1");
+        fs::write(&script, "param([string]$Value)\n[Console]::Write($Value)").unwrap();
+        vec![
+            "powershell.exe".to_owned(),
+            "-NoProfile".to_owned(),
+            "-NonInteractive".to_owned(),
+            "-ExecutionPolicy".to_owned(),
+            "Bypass".to_owned(),
+            "-File".to_owned(),
+            script.display().to_string(),
+            "hello; echo hacked".to_owned(),
+        ]
+    };
     let result = CommandHandler
         .execute(CommandRequest {
             command_key: None,
-            command: "printf %s".to_owned(),
-            argv: vec![
-                "printf".to_owned(),
-                "%s".to_owned(),
-                "hello; echo hacked".to_owned(),
-            ],
+            command: argv[0].clone(),
+            argv,
             timeout_seconds: 5.0,
             max_output_bytes: 1024,
             ..CommandRequest::default()
         })
         .await;
 
-    assert!(result.success);
+    assert!(result.success, "{result:?}");
     assert_eq!(
         result.stdout,
         Value::String("hello; echo hacked".to_owned())
@@ -114,17 +146,21 @@ async fn execute_command_argv_does_not_invoke_shell() {
 
 #[tokio::test]
 async fn execute_command_returns_completed_process_result() {
+    #[cfg(unix)]
+    let script = "printf 'hello'";
+    #[cfg(windows)]
+    let script = "<nul set /p =hello& exit /b 0";
     let result = CommandHandler
         .execute(CommandRequest {
             command_key: None,
-            command: "printf 'hello'".to_owned(),
+            command: script.to_owned(),
             timeout_seconds: 5.0,
             max_output_bytes: 1024,
             ..CommandRequest::default()
         })
         .await;
 
-    assert!(result.success);
+    assert!(result.success, "{result:?}");
     assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.stdout, Value::String("hello".to_owned()));
     assert_eq!(result.stderr, "");
@@ -183,10 +219,14 @@ async fn execute_command_child_does_not_inherit_executor_stdin() {
 
 #[tokio::test]
 async fn execute_command_times_out_and_returns_error() {
+    #[cfg(unix)]
+    let script = "sleep 2";
+    #[cfg(windows)]
+    let script = "powershell.exe -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 2\"";
     let result = CommandHandler
         .execute(CommandRequest {
             command_key: None,
-            command: "sleep 2".to_owned(),
+            command: script.to_owned(),
             timeout_seconds: 0.1,
             max_output_bytes: 1024,
             ..CommandRequest::default()
@@ -194,8 +234,8 @@ async fn execute_command_times_out_and_returns_error() {
         .await;
 
     assert!(!result.success);
-    assert_eq!(result.exit_code, None);
-    assert!(result.timed_out);
+    assert_eq!(result.exit_code, None, "{result:?}");
+    assert!(result.timed_out, "{result:?}");
     assert!(result
         .error
         .as_deref()

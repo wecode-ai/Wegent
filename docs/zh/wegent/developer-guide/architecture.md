@@ -374,6 +374,8 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 - **运行时**: Claude Code, Agno, Dify
 - **版本控制**: Git
 
+Codex 和 Claude Code 的 MCP 传输配置优先采用显式 `type`：`stdio` 启动本地命令，`http`、`streamable-http` 和 `sse` 使用远程 URL。未指定类型时，只有非空白字符串 `command` 才表示 stdio；带 URL 的远程配置即使包含 `command: ""`、纯空白或 `null`，也按 HTTP 配置处理并移除 stdio 字段。显式 stdio 配置缺少有效命令时仍返回错误。远程配置不会注入 stdio 环境变量，续聊时继续刷新其请求头中的任务上下文。
+
 **Agent 类型**：
 
 | Agent              | 类型         | 说明                                 |

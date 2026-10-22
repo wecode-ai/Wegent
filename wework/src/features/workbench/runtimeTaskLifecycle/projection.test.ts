@@ -20,6 +20,49 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test('accepts completion when its timestamp cannot establish snapshot ordering', () => {
+    const active = task({ running: true, updatedAt: 1_786_676_410_200 })
+    expect(
+      shouldReplaceRuntimeTaskProjection(active, {
+        ...active,
+        running: false,
+        completedAt: 'unparseable',
+      })
+    ).toBe(true)
+  })
+
+  test('rejects completion from an older turn even when its projection was updated later', () => {
+    const active = task({
+      running: true,
+      status: 'running',
+      turnStatus: 'inProgress',
+      updatedAt: 1_786_676_410_200,
+    })
+    const previousCompletion = task({
+      running: false,
+      status: 'done',
+      completedAt: 1_786_676_400_000,
+      updatedAt: 1_786_676_420_000,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(active, previousCompletion)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(active, {
+        ...previousCompletion,
+        completedAt: 1_786_676_410_000,
+      })
+    ).toBe(true)
+  })
+
+  test('accepts completion for an idle task after a later metadata update', () => {
+    expect(
+      shouldReplaceRuntimeTaskProjection(
+        task({ running: false, status: 'active', updatedAt: 1_786_676_420_000 }),
+        task({ running: false, status: 'done', completedAt: 1_786_676_400_000 })
+      )
+    ).toBe(true)
+  })
+
   test('confirms idle only when runtime and every turn are terminal', () => {
     const transcript = projectRuntimePaneTranscript({
       running: false,
@@ -271,6 +314,53 @@ describe('runtimeTaskProjection', () => {
     })
 
     expect(shouldReplaceRuntimeTaskProjection(completed, staleActive)).toBe(false)
+  })
+
+  test('requires an active snapshot to advance past the entire completed projection', () => {
+    const updatedAt = 1_791_473_979_351
+    const completed = task({
+      running: false,
+      status: 'done',
+      completedAt: 1_791_473_979_000,
+      updatedAt,
+    })
+    const active = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, active)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(completed, { ...active, updatedAt: updatedAt + 1 })
+    ).toBe(true)
+  })
+
+  test('rejects the same active snapshot after a second-precision completion', () => {
+    const started = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_791_522_458_204,
+    })
+    const completed = {
+      ...started,
+      running: false,
+      status: 'done',
+      turnStatus: 'completed',
+      completedAt: 1_791_522_458_000,
+    }
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, started)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(completed, {
+        ...started,
+        updatedAt: 1_791_522_459_000,
+      })
+    ).toBe(true)
   })
 
   test('rejects a stale active projection that still carries completion', () => {

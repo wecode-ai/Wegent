@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
+#[path = "support/runtime_project_classification.rs"]
+mod runtime_project_classification;
 #[path = "support/runtime_project_removal.rs"]
 mod runtime_project_removal;
 
@@ -254,7 +256,11 @@ async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
             "id": "remote-1",
             "hostId": "remote-host-1",
             "remotePath": "/srv/remote",
-            "label": "Remote"
+            "label": "Remote",
+            "projectKey": null,
+            "roots": ["/srv/remote"],
+            "defaultProjectSpace": null,
+            "aiSettings": null
         }])
     );
     assert_eq!(state["active-remote-project-id"], "remote-1");

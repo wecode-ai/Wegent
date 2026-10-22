@@ -39,14 +39,12 @@ struct TaskTokenClaims {
 }
 
 /// `users` row used by authentication.
-#[allow(dead_code)]
-#[derive(Debug, brz_mysql::FromMysqlRow)]
-pub struct UserRow {
-    pub id: i32,
-    pub user_name: String,
-    pub email: Option<String>,
-    pub is_active: i8,
-}
+///
+/// The source loads the user through `db.query(User)` / `db.get(User, id)`,
+/// so every statement returns the complete mapped `User` projection. Reusing
+/// the shared [`crate::auth::UserRow`] keeps the labeled column list identical
+/// to the recorded exchanges for both the by-name and by-id lookups.
+pub use crate::auth::UserRow;
 
 /// Authenticated principal for the shared JWT / API-key / task-token
 /// dependency used by task and cloud-project endpoints.
@@ -218,10 +216,7 @@ where
         return Ok(None);
     }
     let user: Option<UserRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_name, email, is_active FROM users WHERE id = ? LIMIT 1",
-            (record.user_id,),
-        )
+        .fetch_optional(crate::user_reader::USER_BY_ID_QUERY, (record.user_id,))
         .await?;
     Ok(match user {
         Some(user) if user.is_active != 0 => Some(user),
@@ -256,11 +251,7 @@ where
         return Ok(None);
     };
     let user: Option<UserRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_name, email, is_active FROM users \
-             WHERE user_name = ? LIMIT 1",
-            (user_name,),
-        )
+        .fetch_optional(crate::auth::USER_BY_NAME_QUERY, (user_name,))
         .await?;
     Ok(match user {
         Some(user) if user.is_active != 0 => Some(user),
@@ -287,10 +278,7 @@ where
         return Ok(None);
     };
     let user: Option<UserRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_name, email, is_active FROM users WHERE id = ? LIMIT 1",
-            (user_id,),
-        )
+        .fetch_optional(crate::user_reader::USER_BY_ID_QUERY, (user_id,))
         .await?;
     Ok(match user {
         Some(user) if user.is_active != 0 => Some(user),

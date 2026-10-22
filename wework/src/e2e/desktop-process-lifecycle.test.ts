@@ -4,6 +4,10 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
+  processInstanceMatches: (
+    expected: { Id: number; ProcessName: string; StartedAt: string },
+    actual: { Id: number; ProcessName: string; StartedAt: string } | null
+  ) => boolean
   processIsAliveFromLinuxStat: (stat: string) => boolean | null
   processGroupHasLiveMembersFromLinuxStats: (
     stats: string[],
@@ -77,6 +81,37 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('distinguishes a surviving executor from a new process that reused its PID', async () => {
+    const { processInstanceMatches } = await loadProcessLifecycle()
+    const original = {
+      Id: 321,
+      ProcessName: 'wegent-executor',
+      StartedAt: '2026-01-01T00:00:00.0000000Z',
+    }
+
+    expect(processInstanceMatches(original, { ...original })).toBe(true)
+    expect(processInstanceMatches(original, null)).toBe(false)
+    expect(
+      processInstanceMatches(original, { ...original, StartedAt: '2026-01-01T00:01:00.0000000Z' })
+    ).toBe(false)
+    expect(processInstanceMatches(original, { ...original, ProcessName: 'powershell' })).toBe(false)
+  })
+
+  test('rejects incomplete process identity instead of treating it as an exited executor', async () => {
+    const { processInstanceMatches } = await loadProcessLifecycle()
+    const original = {
+      Id: 321,
+      ProcessName: 'wegent-executor',
+      StartedAt: '2026-01-01T00:00:00.0000000Z',
+    }
+
+    expect(() => processInstanceMatches(original, { ...original, StartedAt: '' })).toThrow(
+      'creation time'
+    )
+    expect(() => processInstanceMatches({ ...original, StartedAt: '' }, null)).toThrow(
+      'creation time'
+    )
+  })
   test('treats Linux zombie and dead process states as exited', async () => {
     const { processIsAliveFromLinuxStat } = await loadProcessLifecycle()
 

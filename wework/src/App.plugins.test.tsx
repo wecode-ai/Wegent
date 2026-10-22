@@ -223,6 +223,9 @@ vi.mock('@/lib/local-terminal', async importOriginal => {
 })
 
 vi.mock('@/desktop/localExecutor', () => ({
+  getLocalExecutorStatus: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   ensureLocalExecutorAvailable: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
@@ -722,13 +725,15 @@ vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => mockViewport.isMobile,
 }))
 
-function renderApp() {
+async function renderApp() {
   const lifecycleStore = new RuntimeTaskLifecycleStore('app-plugins-test')
-  return render(
-    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
-      <App />
-    </RuntimeTaskLifecycleProvider>
-  )
+  await act(async () => {
+    render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <App />
+      </RuntimeTaskLifecycleProvider>
+    )
+  })
 }
 
 async function createSiteFromMenu() {
@@ -1123,7 +1128,7 @@ describe('App plugins route', () => {
   test('mounts only the active task workbench during startup', async () => {
     window.history.pushState({}, '', '/')
 
-    renderApp()
+    await renderApp()
 
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
@@ -1132,7 +1137,7 @@ describe('App plugins route', () => {
   test('renders an isolated extension child without the global navigation shell', async () => {
     window.history.pushState({}, '', '/test-isolated-surface?isolated=1')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('test-isolated-extension-route')).toBeInTheDocument()
     expect(screen.getByTestId('isolated-surface-route')).toBeInTheDocument()
@@ -1152,7 +1157,7 @@ describe('App plugins route', () => {
   test('automatically observes a Smart App view change when only search changes', async () => {
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
     window.history.pushState({}, '', '/sites?app_type=smart_app')
-    renderApp()
+    await renderApp()
 
     await waitFor(() =>
       expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
@@ -1181,7 +1186,7 @@ describe('App plugins route', () => {
   test('automatically observes an installed Smart App open', async () => {
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
     window.history.pushState({}, '', '/app/harness-research-desk')
-    renderApp()
+    await renderApp()
 
     await waitFor(() =>
       expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
@@ -1197,7 +1202,7 @@ describe('App plugins route', () => {
       '',
       '/sites?app_type=web&view=environment-variables&project_id=project-1'
     )
-    renderApp()
+    await renderApp()
 
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
@@ -1220,7 +1225,7 @@ describe('App plugins route', () => {
 
   test('dispatches application shortcuts from the focused conversation composer', async () => {
     window.history.pushState({}, '', '/')
-    renderApp()
+    await renderApp()
     await screen.findByTestId('app-shell')
     const composer = document.createElement('textarea')
     composer.dataset.testid = 'chat-message-input'
@@ -1245,7 +1250,7 @@ describe('App plugins route', () => {
 
   test('handles the sidebar shortcut before ProseMirror suppresses native bold', async () => {
     window.history.pushState({}, '', '/plugins')
-    renderApp()
+    await renderApp()
     await screen.findByTestId('plugins-workspace', undefined, { timeout: 10_000 })
     const editor = new EditorView(document.body, {
       state: EditorState.create({ schema: composerSchema }),
@@ -1266,7 +1271,7 @@ describe('App plugins route', () => {
 
   test('does not dispatch application shortcuts from editable targets', async () => {
     window.history.pushState({}, '', '/')
-    renderApp()
+    await renderApp()
     await screen.findByTestId('app-shell')
     const input = document.createElement('input')
     document.body.appendChild(input)
@@ -1291,7 +1296,7 @@ describe('App plugins route', () => {
       workbenchProviderMocks.autoReady = false
       window.history.pushState({}, '', '/')
 
-      renderApp()
+      await renderApp()
       await act(async () => {
         for (let index = 0; index < 10; index += 1) {
           await Promise.resolve()
@@ -1319,7 +1324,7 @@ describe('App plugins route', () => {
   test('opens the plugins page from the desktop sidebar', async () => {
     window.history.pushState({}, '', '/')
 
-    renderApp()
+    await renderApp()
 
     await userEvent.click(await screen.findByTestId('plugins-button'))
 
@@ -1345,7 +1350,7 @@ describe('App plugins route', () => {
     vi.stubGlobal('fetch', fetchMock)
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '站点功能尚未推出'
@@ -1445,9 +1450,9 @@ describe('App plugins route', () => {
     vi.stubGlobal('fetch', fetchMock)
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
-    expect(await screen.findByText('云端站点')).toBeInTheDocument()
+    expect(screen.getByText('云端站点')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:9100/api/sites?app_type=web&offset=0&limit=20',
       expect.objectContaining({
@@ -1524,7 +1529,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites?app_type=web')
 
-    renderApp()
+    await renderApp()
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
 
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
@@ -1606,9 +1611,11 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites?app_type=web')
 
-    renderApp()
-    await updateAppPreferences({ experimentalFeaturesEnabled: true })
-    await screen.findByText('产品发布页')
+    await renderApp()
+    await act(async () => {
+      await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    })
+    expect(screen.getByText('产品发布页')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('site-continue-development-site-1'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
@@ -1663,7 +1670,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites?app_type=miniapp')
 
-    renderApp()
+    await renderApp()
     await screen.findByText('还没有小程序')
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
@@ -1724,7 +1731,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites?app_type=miniapp')
 
-    renderApp()
+    await renderApp()
     await screen.findByText('还没有小程序')
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
@@ -1790,7 +1797,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
     expect(await screen.findByText('还没有站点', {}, { timeout: 5_000 })).toBeInTheDocument()
     await createSiteFromMenu()
 
@@ -1852,7 +1859,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
     await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
@@ -1907,7 +1914,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
     await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
@@ -1945,7 +1952,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     await createSiteFromMenu()
 
@@ -1988,7 +1995,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     await createSiteFromMenu()
 
@@ -2019,7 +2026,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     await createSiteFromMenu()
 
@@ -2056,7 +2063,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     await createSiteFromMenu()
 
@@ -2093,7 +2100,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     await createSiteFromMenu()
 
@@ -2113,7 +2120,7 @@ describe('App plugins route', () => {
     cacheApplicationTypes()
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
 
     await screen.findByTestId('sites-unavailable-state')
     await createSiteFromMenu()
@@ -2161,7 +2168,7 @@ describe('App plugins route', () => {
         throw new Error('Backend plugin service unavailable')
       })
       window.history.pushState({}, '', '/sites')
-      renderApp()
+      await renderApp()
       await screen.findByText('Local site')
       if (entry === 'continue')
         await userEvent.click(screen.getByTestId('site-continue-development-site-local'))
@@ -2203,7 +2210,7 @@ describe('App plugins route', () => {
       throw new Error('Unexpected request: ' + url)
     })
     window.history.pushState({}, '', '/sites')
-    renderApp()
+    await renderApp()
     await createSiteFromMenu()
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
       '无法确认目标设备的插件安装状态'
@@ -2247,7 +2254,7 @@ describe('App plugins route', () => {
     }
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     await userEvent.click(await screen.findByTestId('runtime-local-task-row-plugin-task'))
 
@@ -2266,7 +2273,7 @@ describe('App plugins route', () => {
   test('preserves the workbench composer while visiting plugins', async () => {
     window.history.pushState({}, '', '/')
 
-    renderApp()
+    await renderApp()
 
     const composer = await screen.findByTestId('chat-message-input')
     fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
@@ -2284,7 +2291,7 @@ describe('App plugins route', () => {
   test('renders the plugins page on direct /plugins visit', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -2308,7 +2315,7 @@ describe('App plugins route', () => {
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     await userEvent.click(
@@ -2326,7 +2333,7 @@ describe('App plugins route', () => {
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -2343,7 +2350,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
@@ -2360,7 +2367,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -2376,7 +2383,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins/manage')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
@@ -2386,7 +2393,7 @@ describe('App plugins route', () => {
   test('navigates to plugin management from the manage button', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    renderApp()
+    await renderApp()
 
     await userEvent.click(await screen.findByTestId('plugins-manage-button'))
 
@@ -2408,7 +2415,7 @@ describe('App plugins route', () => {
   test('opens Smart apps beside Sites and Mini Programs in Applications', async () => {
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
 
     await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
@@ -2430,7 +2437,7 @@ describe('App plugins route', () => {
   test('returns to the Smart apps marketplace after visiting My workbench and Mini Programs', async () => {
     window.history.pushState({}, '', '/sites')
 
-    renderApp()
+    await renderApp()
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
 
     await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
@@ -2466,7 +2473,7 @@ describe('App plugins route', () => {
   test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {
     window.history.pushState({}, '', '/sites?app_type=smart_app')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     await waitFor(() => {
@@ -2480,7 +2487,7 @@ describe('App plugins route', () => {
   test('renders plugin management on direct /plugins/manage visit', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
@@ -2497,7 +2504,7 @@ describe('App plugins route', () => {
   test('keeps standalone MCP and Skill management out of the plugin page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByRole('heading', { name: '管理插件' })).toBeInTheDocument()
     expect(screen.queryByText('Custom Docs MCP')).not.toBeInTheDocument()
@@ -2509,7 +2516,7 @@ describe('App plugins route', () => {
   test('switches between Codex and Core DSH plugin management tabs', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    renderApp()
+    await renderApp()
 
     expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
@@ -2559,7 +2566,7 @@ describe('App plugins route', () => {
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, pluginStateChanged)
     window.history.pushState({}, '', '/plugins/manage')
 
-    renderApp()
+    await renderApp()
     expect(await screen.findByTestId('plugin-management-installed-list')).not.toHaveClass(
       'overflow-hidden'
     )

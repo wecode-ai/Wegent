@@ -44,6 +44,8 @@ from app.services.runtime_codex_model import (
     build_codex_runtime_model_config,
     is_codex_runtime_model_enabled,
 )
+from app.services.wework_model_config import wework_model_catalog_config
+from app.utils.model_capability import get_model_capability_description
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 logger = logging.getLogger(__name__)
@@ -116,6 +118,7 @@ class UnifiedModel:
         context_window: Optional[int] = None,
         max_output_tokens: Optional[int] = None,
         cost_index: Optional[str] = None,
+        capability: Optional[str] = None,
         model_capabilities: Optional[Dict[str, bool]] = None,
         resource_id: Optional[int] = None,
         resource_user_id: Optional[int] = None,
@@ -141,6 +144,7 @@ class UnifiedModel:
         self.context_window = context_window
         self.max_output_tokens = max_output_tokens
         self.cost_index = cost_index
+        self.capability = capability
         self.model_capabilities = model_capabilities
         self.resource_id = resource_id
         self.resource_user_id = resource_user_id
@@ -186,6 +190,7 @@ class UnifiedModel:
             "contextWindow": self.context_window,
             "maxOutputTokens": self.max_output_tokens,
             "costIndex": self.cost_index,
+            "capability": self.capability,
             "modelCapabilities": self.model_capabilities,
             "runtime": self.runtime,
             "config": safe_config,
@@ -241,6 +246,7 @@ class ModelAggregationService:
                 "context_window": None,
                 "max_output_tokens": None,
                 "cost_index": None,
+                "capability": None,
                 "model_capabilities": None,
             }
 
@@ -266,6 +272,7 @@ class ModelAggregationService:
             codex_catalog_model_id = codex_catalog_model_id_from_config(env)
             if codex_catalog_model_id:
                 config["codex_catalog_model_id"] = codex_catalog_model_id
+            config = wework_model_catalog_config(config)
             if model_crd.spec.protocol:
                 config = {**config, "protocol": model_crd.spec.protocol}
             if model_crd.spec.apiFormat:
@@ -322,6 +329,9 @@ class ModelAggregationService:
                 "context_window": model_crd.spec.context_window,
                 "max_output_tokens": model_crd.spec.max_output_tokens,
                 "cost_index": model_crd.spec.costIndex,
+                "capability": get_model_capability_description(
+                    model_crd.spec.capability
+                ),
                 "model_capabilities": model_capabilities,
             }
         except (ValueError, KeyError, AttributeError) as e:
@@ -339,6 +349,7 @@ class ModelAggregationService:
                 "context_window": None,
                 "max_output_tokens": None,
                 "cost_index": None,
+                "capability": None,
                 "model_capabilities": None,
             }
 
@@ -572,6 +583,8 @@ class ModelAggregationService:
                     continue
                 info = self._extract_model_info_from_crd(model_data)
 
+                if shell_type and info["model_category_type"] == "decision":
+                    continue
                 if shell_type and not self._is_model_compatible_with_shell(
                     info["provider"],
                     support_model,
@@ -612,6 +625,7 @@ class ModelAggregationService:
                     context_window=info.get("context_window"),
                     max_output_tokens=info.get("max_output_tokens"),
                     cost_index=info.get("cost_index"),
+                    capability=info.get("capability"),
                     model_capabilities=info.get("model_capabilities"),
                     resource_id=resource.id,
                     resource_user_id=resource.user_id,
@@ -638,6 +652,8 @@ class ModelAggregationService:
             # Extract model category type from public model data
             public_model_category_type = model_dict.get("model_category_type", "llm")
 
+            if shell_type and public_model_category_type == "decision":
+                continue
             if shell_type and not self._is_model_compatible_with_shell(
                 provider,
                 support_model,
@@ -677,6 +693,7 @@ class ModelAggregationService:
                 context_window=model_dict.get("contextWindow"),
                 max_output_tokens=model_dict.get("maxOutputTokens"),
                 cost_index=model_dict.get("costIndex"),
+                capability=model_dict.get("capability"),
                 model_capabilities=model_dict.get("modelCapabilities"),
                 resource_user_id=0,
                 created_at=model_dict.get("created_at"),
@@ -753,6 +770,7 @@ class ModelAggregationService:
                     context_window=info.get("context_window"),
                     max_output_tokens=info.get("max_output_tokens"),
                     cost_index=info.get("cost_index"),
+                    capability=info.get("capability"),
                     model_capabilities=info.get("model_capabilities"),
                     resource_user_id=resource.user_id,
                     created_at=resource.created_at,
@@ -784,6 +802,7 @@ class ModelAggregationService:
                     is_active=resource.is_active,
                     namespace=namespace,
                     model_category_type=info.get("model_category_type", "llm"),
+                    capability=info.get("capability"),
                     resource_user_id=resource.user_id,
                     updated_at=resource.updated_at,
                 ).to_full_dict()
@@ -822,6 +841,7 @@ class ModelAggregationService:
                     context_window=model_dict.get("contextWindow"),
                     max_output_tokens=model_dict.get("maxOutputTokens"),
                     cost_index=model_dict.get("costIndex"),
+                    capability=model_dict.get("capability"),
                     model_capabilities=model_dict.get("modelCapabilities"),
                     resource_user_id=0,
                     created_at=model_dict.get("created_at"),

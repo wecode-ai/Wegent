@@ -185,28 +185,24 @@ jobs:
             runner: macos-14
             platform: macos
             arch: arm64
-            node_arch: arm64
             cargo_target: aarch64-apple-darwin
             codex_target: aarch64-apple-darwin
           - name: macOS x64
-            runner: macos-14
+            runner: macos-15-intel
             platform: macos
             arch: x64
-            node_arch: x64
             cargo_target: x86_64-apple-darwin
             codex_target: x86_64-apple-darwin
           - name: Windows x64
             runner: windows-latest
             platform: windows
             arch: x64
-            node_arch: x64
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
           - name: Linux x64
             runner: ubuntu-latest
             platform: linux
             arch: x64
-            node_arch: x64
             cargo_target: x86_64-unknown-linux-gnu
             codex_target: x86_64-unknown-linux-gnu
 
@@ -229,19 +225,10 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
-      - name: Install Rosetta 2
-        if: matrix.platform == 'macos' && matrix.arch == 'x64'
-        run: |
-          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
-            sudo softwareupdate --install-rosetta --agree-to-license
-          fi
-          /usr/bin/arch -x86_64 /usr/bin/true
-
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
-          architecture: ${{ matrix.node_arch }}
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
@@ -250,11 +237,13 @@ jobs:
       - name: Verify native build architecture
         env:
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
+          WEWORK_RUNNER_ARCH: ${{ runner.arch }}
         run: |
           node -e '
             const expected = process.env.WEWORK_RELEASE_ARCH
-            if (process.arch !== expected) {
-              throw new Error("Release target " + expected + " requires native Node.js; runner uses " + process.arch)
+            const host = { X64: "x64", ARM64: "arm64" }[process.env.WEWORK_RUNNER_ARCH]
+            if (process.arch !== expected || host !== expected) {
+              throw new Error("Release target " + expected + " requires native hardware and Node.js; runner uses " + host + "/" + process.arch)
             }
           '
 
@@ -360,13 +349,14 @@ jobs:
           CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          # Signed apps unpack separate runtimes; keep cold starts within runner capacity.
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \
-            --parallel-segments release-package-startup,component-update,app-update-differential
-          pnpm --filter wework e2e:desktop -- --segment app-update-baseline
+            --parallel-segments release-package-startup,component-update,app-update-full
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
@@ -445,6 +435,9 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_sha }}
 
+      - name: Set up release script dependencies
+        uses: ./.github/actions/setup-node-workspace
+
       - name: Download release builds
         uses: actions/download-artifact@v4
         with:
@@ -485,10 +478,8 @@ jobs:
             ! -name 'WeworkComponent_*.tar.gz' \
             -print0 |
             xargs -0 gh release upload "$RELEASE_TAG" --clobber
-          while IFS= read -r component_name; do
-            [[ -n "$component_name" ]] || continue
-            gh release upload "$RELEASE_TAG" "release-assets/$component_name" --clobber
-          done < <(node wework/scripts/desktop-component-release.mjs release-assets version)
+          node wework/scripts/upload-desktop-component-assets.mjs \
+            release-assets version "$RELEASE_TAG"
           if [[ "$RELEASE_KIND" == "full" ]]; then
             gh release upload "$RELEASE_TAG" release-manifests/* --clobber
           else
@@ -526,11 +517,6 @@ jobs:
               --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests." \
               --prerelease
           fi
-          gh release edit wework-updater \
-            --target "$RELEASE_SHA" \
-            --title "Wework shared dependencies and updater manifests" \
-            --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests."
-
           existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
           gh release view wework-updater \
             --json assets \

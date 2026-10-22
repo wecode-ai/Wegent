@@ -63,7 +63,8 @@ impl PluginSkillResolver {
             }
 
             let plugin_root = codex_home
-                .join("plugins/cache")
+                .join("plugins")
+                .join("cache")
                 .join(&marketplace)
                 .join(&name)
                 .join(&version);
@@ -115,7 +116,10 @@ fn discover_entry_skill(plugin_root: &Path, plugin_name: &str) -> Option<PluginE
         return None;
     }
 
-    let skills_root = plugin_root.join(skills_path);
+    let skills_root = plugin_root
+        .join(skills_path)
+        .components()
+        .collect::<PathBuf>();
     let mut skills = Vec::new();
     collect_skills(&skills_root, &mut skills, 0);
     select_entry_skill(skills, plugin_name)

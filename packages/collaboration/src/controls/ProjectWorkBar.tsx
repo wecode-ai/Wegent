@@ -157,6 +157,7 @@ export function ProjectWorkBar({
     placement: 'below' | 'above'
     maxHeight: number
     fixedTop?: number
+    fixedBottom?: number
     fixedLeft?: number
   }>({ placement: 'below', maxHeight: PROJECT_MENU_MAX_HEIGHT })
   const closeMenu = useCallback(() => {
@@ -255,11 +256,13 @@ export function ProjectWorkBar({
       0
     )
     const maxHeight = Math.min(PROJECT_MENU_MAX_HEIGHT, availableSpace)
-    const fixedTop = Math.round(
-      placement === 'below'
-        ? triggerRect.bottom + PROJECT_MENU_ANCHOR_GAP
-        : triggerRect.top - PROJECT_MENU_ANCHOR_GAP - maxHeight
-    )
+    const fixedTop =
+      placement === 'below' ? Math.round(triggerRect.bottom + PROJECT_MENU_ANCHOR_GAP) : undefined
+    // Anchor the visible edge; maxHeight limits the menu but is not its rendered height.
+    const fixedBottom =
+      placement === 'above'
+        ? Math.round(window.innerHeight - triggerRect.top + PROJECT_MENU_ANCHOR_GAP)
+        : undefined
     const desiredLeft = externalMenuAnchorElement
       ? triggerRect.left + (triggerRect.width - PROJECT_MENU_WIDTH) / 2
       : triggerRect.left
@@ -275,11 +278,12 @@ export function ProjectWorkBar({
         current.placement === placement &&
         current.maxHeight === maxHeight &&
         current.fixedTop === fixedTop &&
+        current.fixedBottom === fixedBottom &&
         current.fixedLeft === fixedLeft
       ) {
         return current
       }
-      return { placement, maxHeight, fixedTop, fixedLeft }
+      return { placement, maxHeight, fixedTop, fixedBottom, fixedLeft }
     })
   }, [
     availableProjectChoices.length,
@@ -527,6 +531,7 @@ export function ProjectWorkBar({
                         ...portalTheme.style,
                         maxHeight: menuLayout.maxHeight,
                         top: menuLayout.fixedTop,
+                        bottom: menuLayout.fixedBottom,
                         left: menuLayout.fixedLeft,
                       }
                 }

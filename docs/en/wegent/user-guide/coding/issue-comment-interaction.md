@@ -7,6 +7,18 @@ sidebar_position: 11
 This contract covers the main composer in issue activity. Inline reply composers always scroll with their cards.
 “Per frame” means geometry invariants on every rendered frame, not a timed animation. All dimensions are CSS pixels.
 
+## Collaboration Issue activity and execution
+
+Opening an Issue from the Collaboration board shows creation, status changes, and comments in time order in the right detail drawer. An execution belongs to the comment that started it: the comment shows its run status, and its task entry opens the linked transcript, workspace, Terminal, and files. The execution page is read-only and does not expose a second reply composer. Return to the source Issue and reply in the corresponding discussion to add instructions.
+
+A comment initially shows a body preview, with expansion for long content. The author, run status, time, and Reply action remain visible when the body is collapsed. Reply opens that comment's inline composer on demand. Replies remain available while an execution is active: later instructions enter the same execution's message queue, do not start a concurrent run, and do not expose a low-level "task is already running" error. Completed runs display their persisted terminal status instead of an unverified status.
+
+The Issue status describes the current work phase. It moves to In progress when the agent starts or receives a follow-up, then moves to In review after the final queued instruction finishes. Historical AI replies keep the Completed state of their own turn; that state does not imply that the Issue has no newer active run. Use the Issue header and latest execution card as the current progress indicators.
+
+The activity list uses one vertical timeline for creation, status changes, and comments. System events use compact nodes, while comment avatars act as timeline nodes; horizontal separators must not break the continuous flow. A comment header keeps the author and role in the main information column, with run status and time in a separate trailing area. Long author or role text may truncate only within the main column and must not push run status below the author or shift the body start position.
+
+For AI managed workflows, the manager writes an execution prompt for each child task from the Issue. Executors report their outcomes to the manager, who then decides whether the Issue moves to In review or Completed. Finishing a child task does not automatically make either transition. These manager decisions appear alongside manual status changes in the activity timeline. The automation summary shows the current stage and child task progress without repeating the full stage chain.
+
 ## Geometry and states
 
 - `V`: the visible bottom edge of the actual detail scroll container.
@@ -72,4 +84,3 @@ An isolated CSS check proves only layout mechanics. Unit tests, type checks and 
 Under repository policy, run E2E and AI verify only when explicitly requested, and report unexecuted checks as unverified.
 
 Web and desktop activity share the desktop Markdown renderer for headings, numbered lists, highlighted code, table copy/expansion and diagram previews. Hosts provide clipboard, navigation, theme and authenticated attachment services; local files and local HTML previews remain desktop capabilities. Do not add a separate Web body renderer or stylesheet.
-

@@ -102,7 +102,7 @@ class TestRecordFunctions:
         record_callback_success("started")
         assert (
             CALLBACK_RESULTS_TOTAL.labels(
-                callback_type="started", status="success"
+                request_type="started", status="success"
             )._value.get()
             >= 1
         )
@@ -111,7 +111,7 @@ class TestRecordFunctions:
         record_callback_failed("completed")
         assert (
             CALLBACK_RESULTS_TOTAL.labels(
-                callback_type="completed", status="failed"
+                request_type="completed", status="failed"
             )._value.get()
             >= 1
         )
@@ -121,13 +121,13 @@ class TestRecordFunctions:
         record_callback_failed("download")
         assert (
             CALLBACK_RESULTS_TOTAL.labels(
-                callback_type="download", status="success"
+                request_type="download", status="success"
             )._value.get()
             >= 1
         )
         assert (
             CALLBACK_RESULTS_TOTAL.labels(
-                callback_type="download", status="failed"
+                request_type="download", status="failed"
             )._value.get()
             >= 1
         )

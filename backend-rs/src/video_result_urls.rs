@@ -7,7 +7,7 @@
 //! detail response lets a registered video-generation integration refresh the
 //! temporary client-facing playback URLs of its result blocks.
 use async_trait::async_trait;
-use serde_json::value::RawValue;
+use brz_json::RawJson;
 
 /// `VideoGenerationExtension.refresh_result_urls`. The public build registers
 /// no integration, so every result stays unchanged.
@@ -21,7 +21,7 @@ pub trait VideoResultUrlRefresh: Send + Sync {
     async fn refresh_result_urls(
         &self,
         _client: &brz_http::Client,
-        _results: &mut [&mut Box<RawValue>],
+        _results: &mut [&mut RawJson],
     ) -> anyhow::Result<()> {
         Ok(())
     }

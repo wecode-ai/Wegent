@@ -43,7 +43,7 @@ function outputLines(text) {
   return text.replaceAll('\r', '').split('\n')
 }
 
-async function waitForTerminalOutput(readText, marker, description) {
+export async function waitForTerminalOutput(readText, marker, description) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const text = await readText()

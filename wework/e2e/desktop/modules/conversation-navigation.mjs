@@ -40,6 +40,7 @@ import {
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
   QUEUED_FOLLOW_UP,
   QUEUE_CLEAR_INITIAL,
   QUEUE_CLEAR_MANUAL,
@@ -72,10 +73,13 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
-const ACTIVE_TRANSCRIPT_SELECTOR =
-  '[data-workspace-tab-content][aria-hidden="false"] ' +
-  `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
-  '[data-testid="desktop-chat-scroll-content"]'
+function activeTranscriptSelector() {
+  return (
+    '[data-workspace-tab-content][aria-hidden="false"] ' +
+    `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
+    '[data-testid="desktop-chat-scroll-content"]'
+  )
+}
 
 async function waitForActiveTaskIdle(control) {
   const startedAt = Date.now()
@@ -120,6 +124,11 @@ async function sendPromptWithButton(
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs,
   })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+    { enabled: true, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('press', selector, { key: 'Enter', timeoutMs })
   if (confirmCloudModelCatalogSync) {
     await control.command('waitFor', '[data-testid="cloud-model-catalog-sync-dialog"]', {
@@ -151,7 +160,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: userText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const transcriptText = await control.command('getText', activeTranscriptSelector())
   assert.equal(
     countTextOccurrences(transcriptText, userText),
     1,
@@ -163,7 +172,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: assistantText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedTranscriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const completedTranscriptText = await control.command('getText', activeTranscriptSelector())
   const userIndex = completedTranscriptText.indexOf(userText)
   const assistantIndex = completedTranscriptText.indexOf(assistantText)
   assert.ok(userIndex >= 0, `The completed conversation lost "${userText}"`)
@@ -175,7 +184,7 @@ async function assertConversationMessageState(control, { assistantText, userText
 }
 
 async function assertConversationTextOccurrences(control, expectedOccurrences) {
-  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const transcriptText = await control.command('getText', activeTranscriptSelector())
   for (const [text, expectedCount] of Object.entries(expectedOccurrences)) {
     assert.equal(
       countTextOccurrences(transcriptText, text),
@@ -189,7 +198,7 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
 }
 
 async function assertConversationTextNotDuplicated(control, texts) {
-  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const transcriptText = await control.command('getText', activeTranscriptSelector())
   for (const text of texts) {
     const occurrenceCount = countTextOccurrences(transcriptText, text)
     assert.ok(
@@ -427,19 +436,29 @@ async function verifyBackgroundGuidanceNavigation({
     await control.command('getElementCount', '[data-testid="message-user"]')
   )
 
+  control.holdInitialCompletionResponse()
+  control.releaseInitialToolExecution()
+  await control.awaitScenarioRequestCount('initial', 2, MODEL_REQUEST_TIMEOUT_MS)
+  await withTimeout(
+    (async () => {
+      while (control.modelStage !== 'awaiting_guidance') {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The background task did not remain active after its tool output'
+  )
+
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
   await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
-    text: BACKGROUND_GUIDANCE,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const guidanceStatus = await control.command(
-    'getText',
-    '[data-testid="conversation-queue-panel"]'
+  await control.awaitScenarioRequestCount('initial', 3, MODEL_REQUEST_TIMEOUT_MS)
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'Applying background guidance did not clear the source composer'
   )
-  assert.match(guidanceStatus, /引导中|Guiding/, 'The guidance did not enter its sending state')
-  await captureVerificationScreenshot(control, 'guidance-background-01-sending.png')
+  await captureVerificationScreenshot(control, 'guidance-background-01-submitted.png')
 
   await ensureTaskRowVisible(control, otherTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${otherTaskRowTestId}"]`, {
@@ -457,13 +476,6 @@ async function verifyBackgroundGuidanceNavigation({
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
   await captureVerificationScreenshot(control, 'guidance-background-02-other-task.png')
 
-  control.holdInitialCompletionResponse()
-  control.releaseInitialToolExecution()
-  await withTimeout(
-    control.awaitScenarioRequestCount('initial', 2),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The guided background task did not continue after its tool completed'
-  )
   await waitForSnapshot(
     control,
     snapshot =>
@@ -660,11 +672,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   })
 
   await sendPrompt(control, composerSelector, GUIDANCE_SCROLL_PROMPT)
-  await withTimeout(
-    control.awaitScenarioRequestCount('guidance_scroll', 1),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The guidance scroll scenario did not receive its setup prompt'
-  )
+  await control.awaitScenarioRequestCount('guidance_scroll', 1, WORKBENCH_READY_TIMEOUT_MS)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -693,19 +701,34 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   })
   await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.2' })
 
-  await control.command('fill', composerSelector, { value: GUIDANCE_SCROLL_MESSAGE })
-  await control.command('click', '[data-testid="send-mode-menu-button"]')
-  await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
-    text: GUIDANCE_SCROLL_MESSAGE,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-
   control.releaseGuidanceScrollToolExecution()
   await withTimeout(
     control.awaitScenarioRequestCount('guidance_scroll', 3),
     DEFAULT_STEP_TIMEOUT_MS,
-    'The guided turn did not continue after its tool completed'
+    'The active turn did not report its tool output before guidance'
+  )
+  await withTimeout(
+    (async () => {
+      while (control.guidanceScrollStage !== 'awaiting_guidance') {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The active turn did not remain open after reporting its tool output'
+  )
+
+  await control.command('fill', composerSelector, { value: GUIDANCE_SCROLL_MESSAGE })
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('click', '[data-testid="guide-current-turn-option"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('guidance_scroll', 4),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The guided turn did not continue after guidance was applied'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'Applying foreground guidance did not clear the composer'
   )
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: GUIDANCE_SCROLL_MESSAGE,
@@ -772,6 +795,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
   if (returnTaskRowTestId) {
     await ensureTaskRowVisible(control, returnTaskRowTestId)
     await control.command('clickWhenEnabled', `[data-testid="${returnTaskRowTestId}"]`, {
@@ -854,10 +878,15 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 }
 
 async function verifyEnvironmentPanelScrollStability(control) {
+  const previousSize = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1600, height: 900 }),
+    })
+  )
   const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
-  const environmentButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-button"]`
+  const environmentButtonSelector = '[data-testid="environment-info-button"]'
   if (
     Number(
       await control.command(
@@ -866,6 +895,10 @@ async function verifyEnvironmentPanelScrollStability(control) {
       )
     ) === 0
   ) {
+    await control.command('waitFor', environmentButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command('click', environmentButtonSelector, { visible: true })
   }
   await control.command(
@@ -988,6 +1021,7 @@ async function verifyEnvironmentPanelScrollStability(control) {
     })
   )
   await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
+  await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
 }
 
 async function reopenCurrentTurnNavigationTask(

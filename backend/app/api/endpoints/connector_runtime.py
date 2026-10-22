@@ -10,10 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
-from app.core.security import create_access_token, get_current_user
 from app.models.user import User
 from app.schemas.connector import (
-    ConnectorTokenResponse,
     ConnectorToolCallRequest,
     ConnectorToolCallResponse,
     ConnectorToolListResponse,
@@ -59,25 +57,6 @@ def get_connector_runtime_user(
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Connector user unavailable")
     return user
-
-
-@router.post("/token", response_model=ConnectorTokenResponse)
-def issue_connector_token(
-    user: User = Depends(get_current_user),
-) -> ConnectorTokenResponse:
-    token = create_access_token(
-        {
-            "sub": user.user_name,
-            "user_id": user.id,
-            "token_type": "connector",
-            "aud": "wegent-connector-runtime",
-            "scope": "connectors:invoke",
-        },
-        expires_delta=CONNECTOR_TOKEN_MINUTES,
-    )
-    return ConnectorTokenResponse(
-        access_token=token, expires_in=CONNECTOR_TOKEN_MINUTES * 60
-    )
 
 
 @router.get("/tools", response_model=ConnectorToolListResponse)

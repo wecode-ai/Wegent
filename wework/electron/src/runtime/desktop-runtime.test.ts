@@ -8,6 +8,13 @@ import {
   type ManagedExecutorHandle,
 } from './desktop-runtime.js'
 import type { DshRuntimeOptions } from './dsh-runtime.js'
+import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { resolveDesktopDeviceId } from './desktop-device-id.js'
+import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
+
+vi.mock('./workbench-executor-schema.js', () => ({
+  assertExecutorWorkbenchCompatibility: vi.fn(),
+}))
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -149,6 +156,7 @@ async function flush(): Promise<void> {
 
 describe('DesktopRuntime lifecycle generation', () => {
   beforeEach(() => {
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockReset().mockResolvedValue(undefined)
     created.length = 0
     createdOptions.length = 0
     prepareState.prepareCalls = 0
@@ -160,6 +168,64 @@ describe('DesktopRuntime lifecycle generation', () => {
 
   afterEach(async () => {
     prepareState.resolveLaunch = null
+  })
+
+  test('reapplies development configuration after each profile preparation', async () => {
+    const sourceRoot = '/tmp/wework-development-plugin'
+    const ensure = vi
+      .spyOn(CoreDshPluginManager.prototype, 'ensureDevelopmentPlugin')
+      .mockResolvedValue({
+        name: 'development-plugin',
+        displayName: 'Development',
+        description: '',
+        version: '1.0.0',
+        sourceRoot,
+      })
+    const runtime = createRuntime({
+      WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/wework-harness-root',
+      WEWORK_PLUGIN_DEVELOPMENT_ROOT: sourceRoot,
+      WEGENT_APP_IPC_DEVICE_ID: 'test-device-id',
+    })
+    try {
+      for (const generation of [1, 2]) {
+        const started = generation === 1 ? runtime.start() : runtime.restartCoreDsh()
+        await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(generation))
+        prepareState.resolveLaunch?.({
+          command: 'node',
+          entry: 'entry.js',
+          args: [],
+          cwd: '/tmp/wework-harness-root',
+          dshHome: '/tmp/wework-harness-root/home',
+          environment: {},
+          profile: 'test',
+          version: '0.0.0',
+          sourceFingerprint: 'test',
+        })
+        await started
+        expect(ensure).toHaveBeenCalledTimes(generation)
+        expect(ensure).toHaveBeenLastCalledWith(sourceRoot)
+        expect(runtime.state().ready).toBe(true)
+      }
+    } finally {
+      await runtime.stop()
+      ensure.mockRestore()
+    }
+  })
+
+  test('rejects an incompatible executor before constructing its managed Home writer', async () => {
+    vi.mocked(resolveDesktopDeviceId).mockClear()
+    const createExecutor = vi.fn()
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
+      new Error('incompatible schema')
+    )
+    await expect(runtime.start()).rejects.toThrow('incompatible schema')
+    expect(createExecutor).not.toHaveBeenCalled()
+    expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
+    await runtime.stop()
   })
 
   test('a restart continuation cannot publish a runtime after shutdown', async () => {
@@ -342,13 +408,11 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(prepareState.prepareCalls).toBe(1)
     expect(executor.startCalls).toBe(0)
     expect(startupSteps).toContain('core-dsh-prepare:started')
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
 
     deviceIdentityState.resolve?.('test-device-id')
     await vi.waitFor(() => expect(executor.startCalls).toBe(1))
     expect(created).toHaveLength(0)
     expect(runtime.state().ready).toBe(false)
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
     expect(startupSteps).not.toContain('core-dsh-process-start:started')
 
     prepareState.resolveLaunch?.({
@@ -364,19 +428,12 @@ describe('DesktopRuntime lifecycle generation', () => {
     })
     await flush()
     expect(created).toHaveLength(0)
-    expect(startupSteps).not.toContain('core-dsh-port-allocation:started')
 
     executor.startHang.resolve()
     await vi.waitFor(() => expect(created).toHaveLength(1))
     expect(created[0].startCalls).toBe(1)
     expect(startupSteps.indexOf('core-dsh-prepare:started')).toBeLessThan(
       startupSteps.indexOf('executor-start:completed')
-    )
-    expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-port-allocation:started')
-    )
-    expect(startupSteps.indexOf('core-dsh-port-allocation:completed')).toBeLessThan(
-      startupSteps.indexOf('core-dsh-process-start:started')
     )
     expect(startupSteps.indexOf('executor-start:completed')).toBeLessThan(
       startupSteps.indexOf('core-dsh-process-start:started')

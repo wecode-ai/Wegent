@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { commandExecutionPayload, mergeCommandExecutionPayload } from './command-execution'
+
 export type WorkbenchMessageRole = 'user' | 'assistant' | 'system'
 export type WorkbenchMessageStatus = 'pending' | 'streaming' | 'done' | 'failed'
 export type WorkbenchRuntimeMessageStatus = WorkbenchMessageStatus | 'cancelled'
@@ -514,7 +516,7 @@ export function reduceWorkbenchMessages<
   }
 }
 
-function mergeProcessingBlockUpdate<TFileChanges>(
+export function mergeProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
@@ -528,6 +530,17 @@ function mergeProcessingBlockUpdate<TFileChanges>(
       completedAt: block.createdAt + Math.max(0, durationMs)
     })
   } as WorkbenchProcessingBlock<TFileChanges>)
+
+  if (
+    block.type === 'tool' &&
+    nextBlock.type === 'tool' &&
+    updates.renderPayload !== undefined
+  ) {
+    nextBlock = {
+      ...nextBlock,
+      renderPayload: mergeCommandExecutionPayload(block.renderPayload, updates.renderPayload)
+    }
+  }
 
   if (
     typeof contentDelta === 'string' &&
@@ -1554,10 +1567,26 @@ function finalizeBlocks<TFileChanges>(
       return block
     }
 
-    return withBlockCompletionTime(block, {
-      ...block,
-      status: finalStatus
-    } as WorkbenchProcessingBlock<TFileChanges>)
+    return settleWorkbenchProcessingBlock(block, finalStatus)
+  })
+}
+
+export function settleWorkbenchProcessingBlock<TFileChanges>(
+  block: WorkbenchProcessingBlock<TFileChanges>,
+  finalStatus: 'done' | 'error' = 'done'
+): WorkbenchProcessingBlock<TFileChanges> {
+  if (block.status === 'done' || block.status === 'error') return block
+
+  // A turn completing does not prove that its terminal process has exited.
+  if (commandExecutionPayload(block)?.status === 'inProgress') return block
+
+  // Only the compaction completion event proves that context was compacted.
+  return withBlockCompletionTime(block, {
+    ...block,
+    status:
+      block.type === 'tool' && block.toolName === 'context_compaction'
+        ? 'error'
+        : finalStatus
   })
 }
 

@@ -5,7 +5,8 @@ export const queueMessages: Record<'zh-CN' | 'en', Record<string, string>> = {
     'workbench.runtime_follow_up_force_start': '插队',
     'workbench.interrupt_and_send': '打断并立即发送',
     'workbench.interrupt_and_send_short': '立即发送',
-    'workbench.task_activity_inline_placeholder': '回复…',
+    'workbench.task_activity_inline_placeholder':
+      '回复此讨论（继续原执行任务）…',
     'workbench.task_activity_attachment_remove': '移除附件',
     'workbench.task_activity_attachment_uploading': '附件仍在上传中',
     'workbench.project_chat_send_failed': '消息发送失败',
@@ -29,7 +30,8 @@ export const queueMessages: Record<'zh-CN' | 'en', Record<string, string>> = {
     'workbench.runtime_follow_up_force_start': 'Run next',
     'workbench.interrupt_and_send': 'Interrupt and send now',
     'workbench.interrupt_and_send_short': 'Interrupt and send',
-    'workbench.task_activity_inline_placeholder': 'Reply…',
+    'workbench.task_activity_inline_placeholder':
+      'Reply in this thread (continues the existing execution)…',
     'workbench.task_activity_attachment_remove': 'Remove attachment',
     'workbench.task_activity_attachment_uploading': 'Attachments are still uploading',
     'workbench.project_chat_send_failed': 'Failed to send message',

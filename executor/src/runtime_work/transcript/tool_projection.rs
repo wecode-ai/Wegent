@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::runtime_work::codex_user_input::async_question_render_payload;
 use sha2::{Digest, Sha256};
 
 fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
@@ -143,10 +144,28 @@ fn enrich_tool_block(
     if item_type(item) != "imagegeneration" {
         insert_tool_output_fields(object, item, options);
     }
+    insert_command_execution_payload(object, item);
     if include_interaction {
         insert_request_user_input_render_payload(object, item);
     }
     object.insert("status".to_owned(), Value::String(tool_status(item)));
+}
+
+pub(super) fn insert_command_execution_payload(object: &mut Map<String, Value>, item: &Value) {
+    if item_type(item) != "commandexecution" {
+        return;
+    }
+    object.insert(
+        "render_payload".to_owned(),
+        json!({
+            "kind": "command_execution",
+            "processId": item.get("processId").or_else(|| item.get("process_id")),
+            "source": item.get("source"),
+            "status": item.get("status"),
+            "exitCode": command_exit_code(item),
+            "commandActions": item.get("commandActions"),
+        }),
+    );
 }
 
 pub(super) fn insert_tool_output_fields(
@@ -154,6 +173,10 @@ pub(super) fn insert_tool_output_fields(
     item: &Value,
     options: TranscriptBuildOptions,
 ) {
+    // Native command completion notifications can omit the streamed output.
+    if item_type(item) == "commandexecution" && command_output_ref(item).is_none() {
+        return;
+    }
     let output = limited_tool_output(item, options);
     if object.contains_key("tool_output") && !is_meaningful_tool_output(&output.value) {
         return;
@@ -180,7 +203,12 @@ fn is_meaningful_tool_output(output: &Value) -> bool {
 }
 
 fn insert_request_user_input_render_payload(object: &mut Map<String, Value>, item: &Value) {
-    if item_type(item) == "functioncall" && tool_name(item) == "request_user_input" {
+    if item_type(item) == "functioncall"
+        && matches!(
+            tool_name(item).as_str(),
+            "request_user_input" | "request_user_input_async"
+        )
+    {
         let mut payload = parse_json_object_string(item, "arguments")
             .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
@@ -188,8 +216,28 @@ fn insert_request_user_input_render_payload(object: &mut Map<String, Value>, ite
             "kind".to_owned(),
             Value::String("request_user_input".to_owned()),
         );
-        payload.insert("requestId".to_owned(), Value::String(tool_call_id(item)));
-        object.insert("render_payload".to_owned(), Value::Object(payload));
+        let call_id = tool_call_id(item);
+        let async_payload = (tool_name(item) == "request_user_input_async")
+            .then(|| {
+                payload
+                    .get("questions")
+                    .and_then(Value::as_array)
+                    .and_then(|questions| {
+                        async_question_render_payload(call_id.as_str(), questions)
+                    })
+            })
+            .flatten();
+        let render_payload = async_payload.unwrap_or_else(|| {
+            payload.insert("requestId".to_owned(), Value::String(call_id));
+            Value::Object(payload)
+        });
+        // Every request-user-input source renders the same interactive card; the
+        // non-blocking variant is carried by `render_payload.delivery`.
+        object.insert(
+            "tool_name".to_owned(),
+            Value::String("request_user_input".to_owned()),
+        );
+        object.insert("render_payload".to_owned(), render_payload);
         return;
     }
 
@@ -205,6 +253,11 @@ fn insert_request_user_input_render_payload(object: &mut Map<String, Value>, ite
     else {
         return;
     };
+    // Async questions are answered by the next user message, so the tool output
+    // ("accepted") is never the answer.
+    if payload.get("delivery").and_then(Value::as_str) == Some("async") {
+        return;
+    }
     let Some(response) = output_payload_text(item)
         .and_then(|output| serde_json::from_str::<Value>(&output).ok())
         .filter(Value::is_object)

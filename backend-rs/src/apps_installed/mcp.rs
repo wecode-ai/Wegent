@@ -32,8 +32,8 @@ pub struct UpstreamTool {
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    pub input_schema: Option<crate::json_compat::OpaqueJson>,
-    pub annotations: Option<crate::json_compat::OpaqueJson>,
+    pub input_schema: Option<brz_json::OpaqueJson>,
+    pub annotations: Option<brz_json::OpaqueJson>,
 }
 
 /// One JSON-RPC response envelope.
@@ -66,9 +66,9 @@ struct ToolDefinition {
     #[serde(default)]
     description: Option<String>,
     #[serde(default, rename = "inputSchema")]
-    input_schema: Option<crate::json_compat::OpaqueJson>,
+    input_schema: Option<brz_json::OpaqueJson>,
     #[serde(default)]
-    annotations: Option<crate::json_compat::OpaqueJson>,
+    annotations: Option<brz_json::OpaqueJson>,
 }
 
 /// Errors while listing tools from one connector app.
@@ -86,26 +86,21 @@ impl std::fmt::Display for McpError {
     }
 }
 
-/// List every tool from the streamable-HTTP MCP server at `url`.
+/// List every tool from the streamable-HTTP MCP server at `url`, sending
+/// `headers` on every JSON-RPC request of the session.
 ///
 /// A fresh Breeze client and endpoint are created per discovery pass,
 /// mirroring the source's per-discovery
 /// `async with streamablehttp_client(...)` session; the underlying reqwest
 /// pool partitions connections by origin, so no connection churn policy
 /// beyond the session scope is introduced.
-pub async fn list_tools(url: &str) -> Result<Vec<UpstreamTool>, McpError> {
-    list_tools_with_headers(url, &[]).await
-}
-
-/// List every tool from the streamable-HTTP MCP server at `url`, sending
-/// `headers` on every JSON-RPC request of the session.
 ///
 /// The source `ConnectorRuntimeService._server_config` builds the session
 /// headers (decrypted provider headers plus the caller's user context) once
 /// per app and passes them to every request of the MCP client session.
 pub async fn list_tools_with_headers(
     url: &str,
-    headers: &[(&str, String)],
+    headers: &[(String, String)],
 ) -> Result<Vec<UpstreamTool>, McpError> {
     let client = HttpClient::builder()
         .connect_timeout(REQUEST_TIMEOUT)
@@ -207,14 +202,14 @@ pub async fn list_tools_with_headers(
 fn session_request(
     endpoint: &Endpoint,
     body: &impl serde::Serialize,
-    headers: &[(&str, String)],
+    headers: &[(String, String)],
 ) -> brz_http::RequestBuilder {
     let mut request = endpoint
         .post()
         .header("accept", "application/json, text/event-stream")
         .json(body);
     for (name, value) in headers {
-        request = request.header(*name, value);
+        request = request.header(name, value);
     }
     request
 }
@@ -293,7 +288,7 @@ mod tests {
         assert_eq!(
             tool.input_schema
                 .as_ref()
-                .map(crate::json_compat::OpaqueJson::to_value),
+                .map(brz_json::OpaqueJson::to_value),
             Some(json!({
                 "type": "object",
                 "properties": {},
@@ -304,7 +299,7 @@ mod tests {
         assert_eq!(
             tool.annotations
                 .as_ref()
-                .map(crate::json_compat::OpaqueJson::to_value),
+                .map(brz_json::OpaqueJson::to_value),
             Some(json!({
                 "readOnlyHint": true,
                 "destructiveHint": false,

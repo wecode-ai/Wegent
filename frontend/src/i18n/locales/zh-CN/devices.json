@@ -161,6 +161,8 @@
     "unsupportedVersion": "当前版本({{current}})不支持自动升级，请删除设备重建"
   },
   "version": {
+    "upgradeInWework": "请到 Wework 中升级此设备。",
+    "repullRemoteImage": "请重新拉取最新 device 镜像，使用原有数据卷重新创建容器。",
     "current": "当前版本",
     "latest": "最新版本",
     "updateAvailable": "有新版本可用",

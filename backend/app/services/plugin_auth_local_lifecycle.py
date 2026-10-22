@@ -1,7 +1,6 @@
 """Connect the existing local login entry to account-owned authentication."""
 
 import hashlib
-import time
 
 from sqlalchemy.orm import Query, Session
 
@@ -22,6 +21,7 @@ from app.services.plugin_auth_migrations import (
     MIGRATION_KIND,
     PluginAuthMigrationService,
 )
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
 from shared.telemetry.decorators import trace_sync
 
 LOCAL_POLICY_KIND = "ConnectorLocalAuthPolicy"
@@ -54,9 +54,10 @@ def local_login_pending(
 
 
 def finish_local_login(db: Session, user_id: int, source: dict) -> None:
+    acquire_plugin_write_lock(db, user_id)
     row = (
         policy_query(db, user_id, source["source_identity"], source["connector_slug"])
-        .with_for_update()
+        .populate_existing()
         .first()
     )
     if row is None:
@@ -83,6 +84,7 @@ class PluginAuthLocalLifecycleService:
         device_id: str,
         request: PluginNativeLocalLifecycle,
     ) -> dict:
+        self.connections._coordinate_owner(db, user_id)
         identity = resolve_runtime_route_identity(
             db, user_id=user_id, submitted_device_id=device_id
         )
@@ -91,22 +93,27 @@ class PluginAuthLocalLifecycleService:
             DeviceType.APP,
         }:
             raise PluginAccountAuthError("plugin_auth_local_device_required", 403)
-        self.connections._lock_owner(db, user_id)
-        plugin, _ = self.connections._plugin(
-            db, user_id, request.installed_plugin_id, request.connector_slug
-        )
-        connector = next(
-            item
-            for item in plugin.json["spec"]["components"]["connectors"]
-            if item["slug"] == request.connector_slug
-        )
-        if not connector.get("localAuth"):
-            raise PluginAccountAuthError("plugin_auth_not_supported", 422)
+        if request.action == "logout":
+            # Removing access does not require a currently usable auth adapter.
+            # Keep ownership checks so stale definitions can never grant access.
+            plugin = self.connections._installed_plugin(
+                db, user_id, request.installed_plugin_id
+            )
+        else:
+            plugin, _ = self.connections._plugin(
+                db, user_id, request.installed_plugin_id, request.connector_slug
+            )
+            connector = next(
+                item
+                for item in plugin.json["spec"]["components"]["connectors"]
+                if item["slug"] == request.connector_slug
+            )
+            if not connector.get("localAuth"):
+                raise PluginAccountAuthError("plugin_auth_not_supported", 422)
         source = self.connections._source_identity(plugin.json["spec"]["source"])
         rows = (
             self.connections._query(db, user_id)
             .populate_existing()
-            .with_for_update()
             .filter(
                 Kind.json["spec"]["sourceIdentity"].as_string() == source,
                 Kind.json["spec"]["connectorSlug"].as_string()
@@ -151,7 +158,7 @@ class PluginAuthLocalLifecycleService:
     def _set_policy(
         self, db: Session, user_id: int, source: str, slug: str, enabled: bool
     ) -> None:
-        row = policy_query(db, user_id, source, slug).with_for_update().first()
+        row = policy_query(db, user_id, source, slug).populate_existing().first()
         if row is None:
             row = Kind(
                 user_id=user_id,
@@ -243,15 +250,7 @@ class PluginAuthLocalLifecycleService:
             }
         }
         db.flush()
-        for row in self._intents(db, user_id, source, request.connector_slug).all():
-            spec = row.json["spec"]
-            if (
-                spec.get("local_login")
-                and spec["binding"] == binding
-                and spec["expires_at"] > time.time()
-            ):
-                return
-        intent = self.migrations.create(
+        self.migrations.create(
             db,
             user_id=user_id,
             request=PluginMigrationCreate(
@@ -260,13 +259,9 @@ class PluginAuthLocalLifecycleService:
                 device_id=device_id,
                 expected_revision=0,
             ),
+            automatic=True,
+            local_login=True,
         )
-        row = self.migrations._query(db, user_id, intent.id).first()
-        if row is not None:
-            row.json = {
-                "spec": {**row.json["spec"], "automatic": True, "local_login": True}
-            }
-        db.flush()
 
 
 plugin_auth_local_lifecycle = PluginAuthLocalLifecycleService(

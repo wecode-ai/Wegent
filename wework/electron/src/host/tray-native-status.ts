@@ -40,6 +40,14 @@ export interface TrayNativeStatusDependencies {
   preferences: PreferencesStore
   requestExecutor: <Result>(method: string, params?: Record<string, unknown>) => Promise<Result>
   apply: (status: TrayNativeStatus) => void
+  /**
+   * The subscription state captured when the executor environment was built at
+   * app startup. The stored preference can change before the user restarts, so
+   * polling must also wait for an executor that was actually launched with the
+   * subscription enabled; otherwise every refresh issues Codex IPC calls that
+   * are guaranteed to fail until the relaunch happens.
+   */
+  codexSubscriptionActiveAtStartup: boolean
   logError?: (message: string, error: unknown) => void
 }
 
@@ -95,11 +103,23 @@ export class TrayNativeStatusController {
     const preferences = await this.dependencies.preferences.read()
     const language = normalizedLanguage(preferences.language)
     const showRunningStatus = preferences.trayRunningEnabled !== false
+    // Match the executor environment injection in main.ts: an absent field
+    // falls back to enabled, while a present field must be exactly `true`.
+    const codexSubscriptionEnabled = Object.prototype.hasOwnProperty.call(
+      preferences,
+      'localCodexSubscriptionEnabled'
+    )
+      ? preferences.localCodexSubscriptionEnabled === true
+      : true
     const [running, codex, wegent] = await Promise.all([
       showRunningStatus
         ? this.read<RuntimeRunningCountResponse>('runtime.tasks.running_count')
         : Promise.resolve(null),
-      this.readCodexRateLimits(preferences.trayUsageEnabled !== false),
+      this.readCodexRateLimits(
+        preferences.trayUsageEnabled !== false &&
+          codexSubscriptionEnabled &&
+          this.dependencies.codexSubscriptionActiveAtStartup
+      ),
       preferences.trayWegentUsageEnabled !== false
         ? this.read<BackendQuotaResponse>('executor.backend.quota')
         : Promise.resolve(null),

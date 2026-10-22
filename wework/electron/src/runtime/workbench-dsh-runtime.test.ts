@@ -7,10 +7,19 @@ import {
   reconcileProfileBundles,
   resolveWorkbenchProjectPnpmCommand,
   WORKBENCH_DSH_VERSION,
+  workbenchClientRendererPackage,
 } from './workbench-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('workbench DSH runtime', () => {
+  test('selects client modules for both current and legacy app requirements', () => {
+    expect(workbenchClientRendererPackage('0.2.0-rc.2')).toBe('@deepseek-ai/dsh-client-ui-renderer')
+    expect(workbenchClientRendererPackage('>=0.1.0-rc.8')).toBe(
+      '@deepseek-ai/dsh-client-ui-renderer'
+    )
+    expect(workbenchClientRendererPackage('0.1.0-rc.8')).toBe('@deepseek-ai/dsh-client-runtime')
+  })
+
   test('replaces an empty YAML patch list when injecting the selected model', () => {
     expect(injectModelProviderPatch('[]\n')).toBe(
       [
@@ -126,7 +135,14 @@ describe('workbench DSH runtime', () => {
     )
     expect(run).toHaveBeenCalledWith(
       managedNode,
-      expect.arrayContaining([pnpmEntry, 'add', '--ignore-scripts', `file:${hostPlugin}`]),
+      expect.arrayContaining([
+        pnpmEntry,
+        '--store-dir',
+        join(root.path, 'data', 'harness-apps', 'instances', 'test-app', 'pnpm-store'),
+        'add',
+        '--ignore-scripts',
+        `file:${hostPlugin}`,
+      ]),
       expect.objectContaining({
         cwd: join(root.path, 'data', 'harness-apps', 'instances', 'test-app', 'profiles', 'web'),
       })
@@ -370,4 +386,118 @@ describe('workbench DSH runtime', () => {
     })
     await root.remove()
   })
+
+  test('injects the local decision route and overrides hostile pre-set values', async () => {
+    const fixture = await decisionRouteFixture('workbench-dsh-decision-route-')
+    const launch = await prepareWorkbenchDshLaunch({
+      ...decisionRouteOptions(fixture),
+      environment: {
+        WEWORK_DECISION_ROUTER_BASE_URL: 'http://attacker.example.com/v1/decision-router/hijacked',
+        WEWORK_DECISION_ROUTER_KEY: 'attacker-key',
+        WEWORK_DECISION_ROUTER_PROTOCOL_VERSION: '99',
+      },
+      decisionBaseUrl: 'http://127.0.0.1:9300/v1/decision-router/route-token',
+      decisionProtocolVersion: 1,
+    })
+
+    expect(launch.environment.WEWORK_DECISION_ROUTER_BASE_URL).toBe(
+      'http://127.0.0.1:9300/v1/decision-router/route-token'
+    )
+    expect(launch.environment.WEWORK_DECISION_ROUTER_KEY).toBe('wework-local-router')
+    expect(launch.environment.WEWORK_DECISION_ROUTER_PROTOCOL_VERSION).toBe('1')
+    // The generic model route and the login token must not be involved.
+    expect(launch.environment.WEWORK_HARNESS_API_KEY).toBeUndefined()
+    expect(launch.environment.WEWORK_HARNESS_CONTEXT_TOKEN).toBeUndefined()
+    expect(JSON.stringify(launch.environment)).not.toContain('attacker.example.com')
+    expect(JSON.stringify(launch.environment)).not.toContain('attacker-key')
+    await fixture.root.remove()
+  })
+
+  test('keeps the decision route out of settings.yaml and the model provider', async () => {
+    const fixture = await decisionRouteFixture('workbench-dsh-decision-settings-')
+    const launch = await prepareWorkbenchDshLaunch({
+      ...decisionRouteOptions(fixture),
+      modelBaseUrl: 'http://127.0.0.1:9000',
+      decisionBaseUrl: 'http://127.0.0.1:9300/v1/decision-router/route-token',
+      decisionProtocolVersion: 1,
+    })
+
+    const settings = await readFile(join(launch.dshHome, 'settings.yaml'), 'utf8')
+    expect(settings).toContain('llm-pi-ai:')
+    expect(settings).toContain('baseURL: http://127.0.0.1:9000')
+    expect(settings).not.toContain('decision')
+    await fixture.root.remove()
+  })
+
+  test('leaves the decision route out of the environment when none is registered', async () => {
+    const fixture = await decisionRouteFixture('workbench-dsh-no-decision-route-')
+    const launch = await prepareWorkbenchDshLaunch(decisionRouteOptions(fixture))
+
+    expect(launch.environment.WEWORK_DECISION_ROUTER_BASE_URL).toBeUndefined()
+    expect(launch.environment.WEWORK_DECISION_ROUTER_KEY).toBeUndefined()
+    expect(launch.environment.WEWORK_DECISION_ROUTER_PROTOCOL_VERSION).toBeUndefined()
+    await fixture.root.remove()
+  })
 })
+
+interface DecisionRouteFixture {
+  root: { path: string; remove: () => Promise<void> }
+  runtimeRoot: string
+}
+
+async function decisionRouteFixture(prefix: string): Promise<DecisionRouteFixture> {
+  const root = await temporaryDirectory(prefix)
+  const runtimeRoot = join(root.path, 'runtime')
+  const packageRoot = join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh')
+  const pnpmEntry = join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+  const appRoot = join(root.path, 'smart-app', 'profile-bundle')
+  const hostPlugin = join(runtimeRoot, 'plugins', 'wework-electron-host')
+  await mkdir(join(packageRoot, 'lib'), { recursive: true })
+  await mkdir(dirname(pnpmEntry), { recursive: true })
+  await mkdir(appRoot, { recursive: true })
+  await mkdir(hostPlugin, { recursive: true })
+  await writeFile(
+    join(runtimeRoot, 'runtime.json'),
+    JSON.stringify({
+      dshVersion: WORKBENCH_DSH_VERSION,
+      role: 'workbench',
+      sourceFingerprint: 'a'.repeat(64),
+    })
+  )
+  await writeFile(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({ version: WORKBENCH_DSH_VERSION })
+  )
+  await writeFile(join(packageRoot, 'lib', 'bin.js'), '')
+  await writeFile(pnpmEntry, '')
+  await writeFile(join(appRoot, 'package.json'), JSON.stringify({ name: 'profile-bundle' }))
+  await writeFile(join(appRoot, 'cordis.patch.yml'), '[]\n')
+  return { root, runtimeRoot }
+}
+
+function decisionRouteOptions(fixture: DecisionRouteFixture) {
+  return {
+    runtimeRoot: fixture.runtimeRoot,
+    dataDirectory: join(fixture.root.path, 'data'),
+    installationId: 'decision-app',
+    packagePath: join(fixture.root.path, 'smart-app'),
+    manifest: {
+      name: 'decision-app',
+      displayName: 'Decision App',
+      version: '1.0.0',
+      type: 'deepseek-harness-plugin-bundle' as const,
+      description: 'Decision app',
+      entry: {
+        installPackage: 'profile-bundle',
+        profile: 'web',
+      },
+      requirements: {
+        dsh: WORKBENCH_DSH_VERSION,
+        node: '*',
+      },
+    },
+    environment: { PATH: '/usr/bin' },
+    port: 3080,
+    run: vi.fn().mockResolvedValue(undefined),
+  }
+}

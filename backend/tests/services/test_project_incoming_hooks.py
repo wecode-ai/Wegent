@@ -35,6 +35,7 @@ from app.services.project_incoming_hooks import (
     parse_incoming_body,
     project_incoming_hook_service,
 )
+from tests.utils.collaboration import authorize_project
 
 
 def test_normalize_github_failed_check() -> None:
@@ -352,6 +353,7 @@ async def test_unresolved_change_request_event_resumes_after_binding(
         created_by_user_id=test_user.id,
         storage_prefix="projects/late-binding",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     subscription = ProjectIncomingHook(
@@ -510,6 +512,7 @@ def test_change_request_cannot_bind_to_two_active_tasks(
         created_by_user_id=test_user.id,
         storage_prefix="projects/unique-change-request",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     first_item = LoopItem(
@@ -581,6 +584,7 @@ def test_ambiguous_change_request_resolution_does_not_guess(
         created_by_user_id=test_user.id,
         storage_prefix="projects/ambiguous-change-request",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     change_request = {
@@ -635,6 +639,7 @@ async def test_internal_event_is_persisted_before_rule_matching(
         created_by_user_id=test_user.id,
         storage_prefix="projects/internal-event",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
 
@@ -660,3 +665,54 @@ async def test_internal_event_is_persisted_before_rule_matching(
     assert event.parent_id == hook.id
     assert event.status == "processed"
     assert event.metadata_json["normalized_events"][0]["event_type"] == "task.created"
+
+
+@pytest.mark.parametrize("removed", ["unlinked_at", "deleted_at"])
+def test_removed_session_cannot_resume_a_change_request(
+    test_db, test_user, removed: str
+) -> None:
+    from datetime import datetime
+
+    project = CloudProject(
+        project_key="REMOVEDCR",
+        name="Removed session",
+        created_by_user_id=test_user.id,
+    )
+    authorize_project(test_db, project)
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Historical task",
+        status="in_progress",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(item)
+    test_db.flush()
+    binding = LoopItemTaskBinding(
+        cloud_project_id=project.id,
+        loop_item_id=item.id,
+        task_user_id=test_user.id,
+        device_id="electron-device",
+        task_id="historical-session",
+        linked_by_user_id=test_user.id,
+    )
+    test_db.add(binding)
+    test_db.flush()
+    change_request = project_change_request_binding_service.upsert(
+        test_db,
+        binding=binding,
+        values=ChangeRequestBindingInput(
+            provider="github",
+            url="https://github.com/acme/app/pull/7",
+            number=7,
+            source="runtime",
+        ),
+    )
+    setattr(binding, removed, datetime(2026, 10, 16))
+    test_db.commit()
+
+    resolution = project_change_request_binding_service.resolve(
+        test_db, project_id=str(project.id), subject=change_request
+    )
+
+    assert resolution.binding is None
+    assert resolution.reason == "No active task binding was found"

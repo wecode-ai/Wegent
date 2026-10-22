@@ -16,7 +16,7 @@ from app.core.distributed_lock import distributed_lock
 from app.db.session import get_db_session
 from app.models.delivery import loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
-from app.services.device.capacity import validate_runtime_capacity_observation_sync
+from app.services.loop_item_executions.profile import WeworkExecutionProfileError
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     loop_item_execution_service,
@@ -36,20 +36,34 @@ def _unconfirmed_claim(
     runtime_instance_id: str,
     environment: str,
 ) -> LoopItemExecution | None:
-    """Return work reserved by this Runtime but not yet acknowledged."""
+    """Return work reserved by this Runtime but not yet acknowledged.
 
+    Probe without locks before locking an existing claim by its primary key.
+    A locking range read can lock queued rows when no claim exists, reversing
+    the Issue-first lock order used by claim_routing for competing runners.
+    """
+
+    filters = (
+        LoopItemExecution.executor_owner_user_id == owner_user_id,
+        LoopItemExecution.runtime_device_id == runtime_device_id,
+        LoopItemExecution.runtime_instance_id == runtime_instance_id,
+        LoopItemExecution.execution_environment == environment,
+        LoopItemExecution.status == "claimed",
+        loop_datetime_is_unset(LoopItemExecution.start_requested_at),
+    )
+    candidate = (
+        db.query(LoopItemExecution.id)
+        .filter(*filters)
+        .order_by(LoopItemExecution.claimed_at.asc(), LoopItemExecution.id.asc())
+        .first()
+    )
+    if candidate is None:
+        return None
     return (
         db.query(LoopItemExecution)
-        .filter(
-            LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.runtime_device_id == runtime_device_id,
-            LoopItemExecution.runtime_instance_id == runtime_instance_id,
-            LoopItemExecution.execution_environment == environment,
-            LoopItemExecution.status == "claimed",
-            loop_datetime_is_unset(LoopItemExecution.start_requested_at),
-        )
-        .order_by(LoopItemExecution.claimed_at.asc(), LoopItemExecution.id.asc())
+        .filter(LoopItemExecution.id == candidate.id, *filters)
         .with_for_update()
+        .populate_existing()
         .first()
     )
 
@@ -69,19 +83,8 @@ def _claim_execution(
     runtime_device_id: str,
     runtime_instance_id: str,
     environment: str,
-    runtime_capacity: dict[str, Any] | None,
 ) -> dict[str, Any]:
     with get_db_session() as db:
-        capacity = validate_runtime_capacity_observation_sync(
-            db,
-            owner_user_id=owner_user_id,
-            device_id=runtime_device_id,
-            runtime_instance_id=runtime_instance_id,
-            runtime_capacity=runtime_capacity,
-        )
-        if capacity is None:
-            return {"success": True, "task": None}
-
         row = _unconfirmed_claim(
             db,
             owner_user_id=owner_user_id,
@@ -110,9 +113,6 @@ def _claim_execution(
                 runtime_device_id=runtime_device_id,
                 environment=environment,
                 runtime_instance_id=runtime_instance_id,
-                device_capacity=capacity.limit,
-                runtime_active=capacity.active,
-                runtime_active_task_ids=capacity.active_task_ids,
                 owner_user_id=owner_user_id,
             )
         if row is None:
@@ -125,7 +125,7 @@ def _claim_execution(
                 execution_target_id=execution_target_id,
                 executor_device_id=runtime_device_id,
             )
-        except WeworkRuntimeConfigurationError as exc:
+        except (WeworkRuntimeConfigurationError, WeworkExecutionProfileError) as exc:
             loop_item_execution_service.fail_runtime_preflight(
                 db,
                 execution_id=row.id,
@@ -151,7 +151,7 @@ def _claim_execution(
         execution_request = payload.get("executionRequest")
         if isinstance(execution_request, dict):
             execution_request["task_id"] = runtime_task_id
-            execution_request["subtask_id"] = f"{runtime_task_id}-assistant"
+            execution_request["subtask_id"] = f"{runtime_task_id}-execution-{row.id}"
 
         # Claiming and materializing a payload does not prove that the
         # Socket.IO acknowledgement reached the Executor. Keep
@@ -182,9 +182,29 @@ def pull_execution(
     runtime_device_id: str,
     runtime_instance_id: str,
     environment: str,
-    runtime_capacity: dict[str, Any] | None,
+    runner_catalog: dict | None = None,
 ) -> dict[str, Any]:
     """Atomically claim and materialize one execution for this Runtime."""
+
+    if runner_catalog is not None:
+        from pydantic import ValidationError
+
+        from app.schemas.runner_routing import RunnerCatalog
+        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.runner_routing import save_catalog
+
+        try:
+            report = RunnerCatalog.model_validate(runner_catalog)
+        except ValidationError:
+            return {"success": False, "error": "Invalid runner capability report"}
+        with get_db_session() as db:
+            device = resolve_owned_device_alias(
+                db, user_id=owner_user_id, device_id=execution_target_id
+            )
+            if device is None:
+                return {"success": False, "error": "Runner is no longer authorized"}
+            save_catalog(db, device, report)
+            db.commit()
 
     runtime_lock = f"robot_exec:{owner_user_id}:runtime:{runtime_instance_id}"
     with distributed_lock.acquire_context(
@@ -198,7 +218,6 @@ def pull_execution(
                 runtime_device_id=runtime_device_id,
                 runtime_instance_id=runtime_instance_id,
                 environment=environment,
-                runtime_capacity=runtime_capacity,
             )
             if runtime_acquired
             else {"success": True, "task": None}

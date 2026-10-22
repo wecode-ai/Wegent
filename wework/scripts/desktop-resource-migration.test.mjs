@@ -23,6 +23,16 @@ const scripts = [
 ]
 
 describe('desktop resource migration', () => {
+  test('isolated Electron dependencies use the repository package manager version', async () => {
+    const [repositoryPackage, electronPackage] = await Promise.all([
+      readFile(join(weworkRoot, '..', 'package.json'), 'utf8').then(JSON.parse),
+      readFile(join(weworkRoot, 'electron', 'package.json'), 'utf8').then(JSON.parse),
+    ])
+
+    expect(repositoryPackage.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/)
+    expect(electronPackage.packageManager).toBe(repositoryPackage.packageManager)
+  })
+
   test('desktop entrypoints install the isolated Electron workspace', async () => {
     const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const devMacScript = await readFile(join(weworkRoot, 'scripts/dev-mac-app.sh'), 'utf8')
@@ -61,14 +71,14 @@ describe('desktop resource migration', () => {
       'node e2e/desktop/run-checkpoints.mjs --segment embedded-browser',
       'node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions',
       'node e2e/desktop/run-checkpoints.mjs --segment local-harness',
-      'node e2e/desktop/run-checkpoints.mjs --segment rendering-extensions',
+      'node e2e/desktop/run-checkpoints.mjs --segment streaming-text',
     ])
     expect(packageJson.scripts['build:release']).toBe(
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
+    expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:codex', '--materialize']")
+    expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
     expect(aiVerifyBuildScript).toContain('resolveHarnessRuntimeAssetCacheEnvironment(')
     expect(aiVerifyBuildScript).toContain('isolateAiVerifyRuntimeEnvironment(process.env)')
@@ -199,7 +209,12 @@ describe('desktop resource migration', () => {
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
     expect(source).toContain('resolveHarnessRuntimeCachePaths(')
-    expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
+    expect(source).toContain("join(harnessRuntimeMaterializedRoot, 'runtimes.json')")
+    expect(source).not.toContain(
+      "join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json')"
+    )
+    expect(source).toContain('new Set(packagedRuntimes.map(runtime => runtime.assetName))')
+    expect(source).toContain('join(harnessRuntimeAssetDirectory, assetName)')
     expect(harnessRuntimeSource).toContain('`wework-harness-runtime-${runtime.sourceFingerprint}`')
     expect(harnessRuntimeSource).not.toContain(
       '`wework-harness-runtime-${runtime.dshVersion}-${process.pid}`'
@@ -287,15 +302,14 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain('async function findDirectory')
   })
 
-  test('requires differential update blockmaps in formal release assets', async () => {
+  test('copies only installable update artifacts into formal release assets', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
-    expect(source).toContain('const blockmap = `${path}.blockmap`')
-    expect(source).toContain('await requireFile(blockmap)')
-    expect(source).not.toContain('if (await isFile(blockmap))')
+    expect(source).toContain('await cp(path, join(output, basename(path)))')
+    expect(source).not.toContain('`${path}.blockmap`')
   })
 
   test('desktop E2E reuses packaged Harness runtime assets', async () => {
@@ -331,6 +345,21 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain("['run', 'prepare:dws']")
     expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
     expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
+  })
+
+  test('allows the packaged CI build to opt into a prebuilt executor', async () => {
+    const [buildSource, packageSource] = await Promise.all([
+      readFile(join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
+    ])
+
+    expect(buildSource).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_PATH')
+    expect(buildSource).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS')
+    expect(buildSource).toContain('WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath)')
+    expect(buildSource).toContain('WEWORK_EXECUTOR_WAIT_SECONDS: prebuiltExecutorWaitSeconds')
+    expect(packageSource).toContain('waitForConfiguredExecutor(')
+    expect(packageSource).toContain('process.env.WEWORK_EXECUTOR_WAIT_SECONDS')
+    expect(packageSource).toContain('await delay(250)')
   })
 
   test.each([

@@ -2,19 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { CollaborationTranslate } from "../i18n";
-import {
-  executionEnvironmentStatuses,
-  executionEnvironmentStatusLabel,
-} from "../execution-environment/status";
+import type { CollaborationTranslate } from '../i18n'
 import type {
   SharedWorkspaceApi,
   WorkspaceGitBranch,
   WorkspaceGitRepository,
-  WorkspaceGitRepositoryRef,
-} from "../ports/SharedWorkspaceApi";
+} from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationExecutionEnvironment,
   CollaborationExecutionEnvironmentDeviceState,
@@ -22,96 +18,105 @@ import type {
   CollaborationExecutionEnvironmentSetupStep,
   CollaborationProject,
   CollaborationWorkspace,
-} from "../types";
+} from '../types'
+import { ProjectEnvironmentConfiguration } from './ProjectEnvironmentConfiguration'
+import { ProjectEnvironmentDevices } from './ProjectEnvironmentDevices'
+import { repositoryKey } from './environmentConfiguration'
+import { environmentAuthorizationError } from './environmentAuthorization'
+import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
+import { compareExecutionEnvironments } from '../execution-environment/compareExecutionEnvironments'
+import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensureWorkspaceEnvironmentSharing'
 
 type RepositoryDraft = CollaborationExecutionEnvironmentRepository & {
-  id: string;
-};
+  id: string
+}
 type SetupStepDraft = CollaborationExecutionEnvironmentSetupStep & {
-  id: string;
-};
-
-let nextDraftId = 0;
-
-function draftId(prefix: string) {
-  nextDraftId += 1;
-  return `${prefix}-${nextDraftId}`;
+  id: string
 }
 
-function repositoryKey(repository: WorkspaceGitRepositoryRef) {
-  return `${repository.provider}::${repository.gitDomain}::${repository.fullName}`;
+let nextDraftId = 0
+
+function draftId(prefix: string) {
+  nextDraftId += 1
+  return `${prefix}-${nextDraftId}`
 }
 
 // Device errors embed the executor's absolute paths and the whole git stderr;
 // keep the stage prefix and git's decisive line, the full text stays in title.
 const LEGACY_REPOSITORY_FREE_ERROR =
-  "Execution environment must have exactly one primary repository";
+  'Execution environment must have exactly one primary repository'
 
 function executionEnvironmentErrorSummary(
   message: string,
   repositoryFree: boolean,
-  translate: CollaborationTranslate,
+  translate: CollaborationTranslate
 ): string {
   if (repositoryFree && message.includes(LEGACY_REPOSITORY_FREE_ERROR)) {
     return translate(
-      "todo.execution_environment_blank_workspace_upgrade_required",
-      "当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试；也可以先添加一个主代码仓库。",
-    );
+      'todo.execution_environment_blank_workspace_upgrade_required',
+      '当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试；也可以先添加一个主代码仓库。'
+    )
   }
-  const fatalLines = message.match(/fatal: [^\n]+/g);
+  const fatalLines = message.match(/fatal: [^\n]+/g)
   if (!fatalLines?.length) {
-    return message;
+    return message
   }
-  const detail = fatalLines[fatalLines.length - 1];
-  const stage = message.match(/^(Failed to [^:\n]+):/);
-  return stage ? `${stage[1]}: ${detail}` : detail;
+  const detail = fatalLines[fatalLines.length - 1]
+  const stage = message.match(/^(Failed to [^:\n]+):/)
+  return stage ? `${stage[1]}: ${detail}` : detail
 }
 
 // Short name used for both the display name and the clone directory, for
 // example "wegent" for "wecode-ai/Wegent".
 function repositoryShortName(repository: WorkspaceGitRepository) {
-  const segment =
-    repository.fullName.split("/").filter(Boolean).pop() ?? repository.name;
-  return segment.replace(/\.git$/, "") || repository.name;
+  const segment = repository.fullName.split('/').filter(Boolean).pop() ?? repository.name
+  return segment.replace(/\.git$/, '') || repository.name
+}
+
+function repositoryShortNameFromUrl(url: string) {
+  return (
+    url
+      .split(/[/:]/)
+      .filter(Boolean)
+      .pop()
+      ?.replace(/\.git$/, '') ?? ''
+  )
 }
 
 type BranchState = {
-  status: "loading" | "ready" | "error";
-  branches: WorkspaceGitBranch[];
-};
-
-// Marks select options that represent a value typed before the repository
-// catalog was available, so the current draft stays visible and selectable.
-const CUSTOM_REPOSITORY_VALUE = "__custom_repository__";
-const CUSTOM_REF_VALUE = "__custom_ref__";
+  status: 'loading' | 'ready' | 'error'
+  branches: WorkspaceGitBranch[]
+}
 
 // Stable empty map so the prop-sync effect does not re-run on every render
 // when the environment has never been prepared on any device.
-type DeviceStateMap = Record<
-  string,
-  CollaborationExecutionEnvironmentDeviceState
->;
-const NO_DEVICE_STATES: DeviceStateMap = {};
+type DeviceStateMap = Record<string, CollaborationExecutionEnvironmentDeviceState>
+const NO_DEVICE_STATES: DeviceStateMap = {}
 
 type ExecutionEnvironmentScope =
   | {
       project: Pick<
         CollaborationProject,
-        | "id"
-        | "workspace_id"
-        | "access_role"
-        | "version"
-        | "execution_environment"
-      >;
-      workspace?: never;
+        | 'id'
+        | 'workspace_id'
+        | 'project_store'
+        | 'access_role'
+        | 'version'
+        | 'execution_environment'
+      >
+      workspace?: never
     }
   | {
-      project?: never;
+      project?: never
       workspace: Pick<
         CollaborationWorkspace,
-        "id" | "access_role" | "version" | "execution_environment" | "location"
-      >;
-    };
+        'id' | 'access_role' | 'version' | 'execution_environment' | 'location'
+      >
+    }
+
+function canManageEnvironment(role: string | undefined, workspaceScope: boolean) {
+  return role === 'Owner' || role === 'Maintainer' || (workspaceScope && role === 'Developer')
+}
 
 export function ProjectExecutionEnvironments({
   api,
@@ -121,63 +126,80 @@ export function ProjectExecutionEnvironments({
   translate,
   workspace,
 }: {
-  api: SharedWorkspaceApi;
-  onManageDevices?(): void;
-  onProjectChange?(project: CollaborationProject): void;
-  translate: CollaborationTranslate;
+  api: SharedWorkspaceApi
+  onManageDevices?(): void
+  onProjectChange?(project: CollaborationProject): void
+  translate: CollaborationTranslate
 } & ExecutionEnvironmentScope) {
-  const isWorkspaceScope = workspace != null;
-  const scopeId = workspace?.id ?? project!.id;
+  const isWorkspaceScope = workspace != null
+  const scopeId = workspace?.id ?? project!.id
   const testIdPrefix = isWorkspaceScope
-    ? "collaboration-workspace-execution-environment"
-    : "collaboration-project-execution-environment";
-  const [workspaceItems, setWorkspaceItems] = useState<
-    CollaborationExecutionEnvironment[]
-  >([]);
-  const [personalItems, setPersonalItems] = useState<
-    CollaborationExecutionEnvironment[]
-  >([]);
-  const [assignedItems, setAssignedItems] = useState<
-    CollaborationExecutionEnvironment[]
-  >([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const initialConfig =
-    workspace?.execution_environment ?? project?.execution_environment;
+    ? 'collaboration-workspace-execution-environment'
+    : 'collaboration-project-execution-environment'
+  const accessRole = workspace?.access_role ?? project?.access_role
+  const canManage = canManageEnvironment(accessRole, isWorkspaceScope)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const assigned = useExecutionEnvironmentList(
+    api,
+    isWorkspaceScope ? 'workspace' : 'project',
+    scopeId
+  )
+  const shared = useExecutionEnvironmentList(
+    api,
+    'workspace',
+    project?.workspace_id ?? '',
+    !isWorkspaceScope && Boolean(project?.workspace_id)
+  )
+  // Cloud grants require registered cloud IDs; local placeholder IDs are only valid locally.
+  const localScope = workspace?.location === 'local' || project?.project_store === 'local'
+  const requireWorkspaceSharing = !isWorkspaceScope && !localScope && Boolean(project?.workspace_id)
+  const environmentAddInFlight = useRef(false)
+  const personal = useExecutionEnvironmentList(
+    api,
+    localScope ? 'device-local' : 'device-cloud',
+    '',
+    pickerOpen && canManage
+  )
+  const assignedItems = assigned.items ?? []
+  const workspaceItems = shared.items ?? []
+  const personalItems = personal.items ?? []
+  const loading = assigned.loading
+  const pickerLoading = personal.loading || shared.loading
+  const pickerError = personal.error || shared.error
+  const initialConfig = workspace?.execution_environment ?? project?.execution_environment
+  const [workspacePolicy, setWorkspacePolicy] = useState<'git_worktree' | 'project'>(
+    initialConfig?.workspace_policy ?? 'git_worktree'
+  )
   const [repositories, setRepositories] = useState<RepositoryDraft[]>(() => {
-    const configured = initialConfig?.repositories ?? [];
-    return configured.map((repository) => ({
+    const configured = initialConfig?.repositories ?? []
+    return configured.map(repository => ({
       ...repository,
-      id: draftId("repository"),
-    }));
-  });
+      id: draftId('repository'),
+    }))
+  })
   const [setupSteps, setSetupSteps] = useState<SetupStepDraft[]>(() =>
-    (initialConfig?.setup_steps ?? []).map((step) => ({
+    (initialConfig?.setup_steps ?? []).map(step => ({
       ...step,
-      id: draftId("setup"),
-    })),
-  );
-  const [configVersion, setConfigVersion] = useState(
-    workspace?.version ?? project!.version,
-  );
-  const [configurationDirty, setConfigurationDirty] = useState(false);
-  const [configurationSaved, setConfigurationSaved] = useState(false);
-  const [configurationError, setConfigurationError] = useState("");
+      id: draftId('setup'),
+    }))
+  )
+  const [configVersion, setConfigVersion] = useState(workspace?.version ?? project!.version)
+  const [configurationDirty, setConfigurationDirty] = useState(false)
+  const [configurationSaved, setConfigurationSaved] = useState(false)
+  const [configurationError, setConfigurationError] = useState('')
   const [deviceStates, setDeviceStates] = useState<DeviceStateMap>(
-    initialConfig?.devices ?? NO_DEVICE_STATES,
-  );
+    initialConfig?.devices ?? NO_DEVICE_STATES
+  )
   // The bottom error line follows the device the user last tried to create
   // on. A ref, so tracking it never re-triggers the prop-sync effect below.
-  const environmentErrorDeviceKey = useRef("");
-  const [environmentError, setEnvironmentError] = useState("");
+  const environmentErrorDeviceKey = useRef('')
+  const [environmentError, setEnvironmentError] = useState('')
   const [statusFilter, setStatusFilter] = useState<
-    "all" | CollaborationExecutionEnvironment["status"]
-  >("all");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [initializingDeviceId, setInitializingDeviceId] = useState<
-    number | null
-  >(null);
-  const [error, setError] = useState("");
+    'all' | CollaborationExecutionEnvironment['status']
+  >('all')
+  const [saving, setSaving] = useState(false)
+  const [initializingDeviceId, setInitializingDeviceId] = useState<number | null>(null)
+  const [error, setError] = useState('')
   const configuredRepositories = useMemo(
     () =>
       repositories.map(({ id: _id, ...repository }) => ({
@@ -187,8 +209,8 @@ export function ProjectExecutionEnvironments({
         ref: repository.ref.trim(),
         path: repository.path.trim(),
       })),
-    [repositories],
-  );
+    [repositories]
+  )
   const configuredSetupSteps = useMemo(
     () =>
       setupSteps
@@ -196,40 +218,29 @@ export function ProjectExecutionEnvironments({
           command: step.command.trim(),
           workingDirectory: step.working_directory.trim(),
         }))
-        .filter((step) => step.command),
-    [setupSteps],
-  );
-  const accessRole = workspace?.access_role ?? project!.access_role;
-  const canManage =
-    accessRole === "Owner" ||
-    accessRole === "Maintainer" ||
-    (isWorkspaceScope && accessRole === "Developer");
+        .filter(step => step.command),
+    [setupSteps]
+  )
 
   // The repository catalog is cloud-only; local workspaces keep the free-text
   // inputs even when the shared api object carries the cloud capability.
-  const gitRepositoriesApi =
-    workspace?.location === "local" ? undefined : api.gitRepositories;
-  const [repositoryOptions, setRepositoryOptions] = useState<
-    WorkspaceGitRepository[] | null
-  >(null);
-  const [repositoriesLoadFailed, setRepositoriesLoadFailed] = useState(false);
-  const [branchesByRepository, setBranchesByRepository] = useState<
-    Record<string, BranchState>
-  >({});
+  const gitRepositoriesApi = workspace?.location === 'local' ? undefined : api.gitRepositories
+  const [repositoryOptions, setRepositoryOptions] = useState<WorkspaceGitRepository[] | null>(null)
+  const [repositoriesLoadFailed, setRepositoriesLoadFailed] = useState(false)
+  const [branchesByRepository, setBranchesByRepository] = useState<Record<string, BranchState>>({})
   // Last auto-derived values per draft, so a repository switch only replaces
   // fields the user has not customized.
-  const derivedDefaults = useRef(
-    new Map<string, { name: string; path: string; ref: string }>(),
-  );
-  const branchesInFlight = useRef(new Set<string>());
+  const derivedDefaults = useRef(new Map<string, { name: string; path: string; ref: string }>())
+  const branchesInFlight = useRef(new Set<string>())
+  const repositoriesInFlight = useRef(false)
   // `saving` is async React state, so two initialize clicks in the same tick
   // would both pass a state-based guard; the ref flips synchronously and also
   // blocks a second device's button while one initialization is in flight.
-  const initializationInFlight = useRef(false);
-  const configurationSaveInFlight = useRef(false);
+  const initializationInFlight = useRef(false)
+  const configurationSaveInFlight = useRef(false)
 
-  const incomingVersion = workspace?.version ?? project!.version;
-  const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES;
+  const incomingVersion = workspace?.version ?? project!.version
+  const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES
 
   // The parent re-fetches the project on a poll, so the server-owned per-device
   // states must follow the prop instead of staying stuck at the mount-time
@@ -237,325 +248,280 @@ export function ProjectExecutionEnvironments({
   // device response, and the form drafts are user input and never re-seeded
   // here.
   useEffect(() => {
-    if (initializationInFlight.current || saving) return;
-    setConfigVersion(incomingVersion);
-    setDeviceStates(incomingDevices);
-    const errorKey = environmentErrorDeviceKey.current;
-    setEnvironmentError(
-      errorKey ? (incomingDevices[errorKey]?.error ?? "") : "",
-    );
-  }, [incomingVersion, incomingDevices]);
+    if (initializationInFlight.current || saving) return
+    if (!configurationDirty) {
+      setWorkspacePolicy(initialConfig?.workspace_policy ?? 'git_worktree')
+    }
+    setConfigVersion(incomingVersion)
+    setDeviceStates(incomingDevices)
+    const errorKey = environmentErrorDeviceKey.current
+    setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? '') : '')
+  }, [incomingVersion, incomingDevices, initialConfig?.workspace_policy])
 
   const loadRepositoryOptions = useCallback(async () => {
-    if (!gitRepositoriesApi) return;
-    setRepositoriesLoadFailed(false);
+    if (!gitRepositoriesApi || repositoriesInFlight.current) return
+    repositoriesInFlight.current = true
+    setRepositoriesLoadFailed(false)
     try {
-      setRepositoryOptions(await gitRepositoriesApi.list());
+      setRepositoryOptions(await gitRepositoriesApi.list())
     } catch {
-      setRepositoriesLoadFailed(true);
+      setRepositoriesLoadFailed(true)
+    } finally {
+      repositoriesInFlight.current = false
     }
-  }, [gitRepositoriesApi]);
-
-  useEffect(() => {
-    void loadRepositoryOptions();
-  }, [loadRepositoryOptions]);
+  }, [gitRepositoriesApi])
 
   const repositoriesByUrl = useMemo(() => {
-    const byUrl = new Map<string, WorkspaceGitRepository>();
+    const byUrl = new Map<string, WorkspaceGitRepository>()
     for (const option of repositoryOptions ?? []) {
-      byUrl.set(option.cloneUrl, option);
+      byUrl.set(option.cloneUrl, option)
     }
-    return byUrl;
-  }, [repositoryOptions]);
+    return byUrl
+  }, [repositoryOptions])
 
   const loadBranches = useCallback(
     async (option: WorkspaceGitRepository) => {
-      const key = repositoryKey(option);
-      if (!gitRepositoriesApi || branchesInFlight.current.has(key)) return;
-      branchesInFlight.current.add(key);
-      setBranchesByRepository((current) => ({
+      const key = repositoryKey(option)
+      if (!gitRepositoriesApi || branchesInFlight.current.has(key)) return
+      branchesInFlight.current.add(key)
+      setBranchesByRepository(current => ({
         ...current,
-        [key]: { status: "loading", branches: current[key]?.branches ?? [] },
-      }));
+        [key]: { status: 'loading', branches: current[key]?.branches ?? [] },
+      }))
       try {
-        const branches = await gitRepositoriesApi.listBranches(option);
-        setBranchesByRepository((current) => ({
+        const branches = await gitRepositoriesApi.listBranches(option)
+        setBranchesByRepository(current => ({
           ...current,
-          [key]: { status: "ready", branches },
-        }));
-        const defaultBranch =
-          branches.find((branch) => branch.default) ?? branches[0];
+          [key]: { status: 'ready', branches },
+        }))
+        const defaultBranch = branches.find(branch => branch.default) ?? branches[0]
         if (defaultBranch) {
-          setRepositories((current) =>
-            current.map((draft) => {
-              if (draft.url !== option.cloneUrl) return draft;
-              const derived = derivedDefaults.current.get(draft.id);
-              if (draft.ref && draft.ref !== derived?.ref) return draft;
+          setRepositories(current =>
+            current.map(draft => {
+              if (draft.url !== option.cloneUrl) return draft
+              const derived = derivedDefaults.current.get(draft.id)
+              if (draft.ref && draft.ref !== derived?.ref) return draft
               derivedDefaults.current.set(draft.id, {
-                name: derived?.name ?? "",
-                path: derived?.path ?? "",
+                name: derived?.name ?? '',
+                path: derived?.path ?? '',
                 ref: defaultBranch.name,
-              });
-              return { ...draft, ref: defaultBranch.name };
-            }),
-          );
+              })
+              return { ...draft, ref: defaultBranch.name }
+            })
+          )
         }
       } catch {
-        setBranchesByRepository((current) => ({
+        setBranchesByRepository(current => ({
           ...current,
-          [key]: { status: "error", branches: [] },
-        }));
+          [key]: { status: 'error', branches: [] },
+        }))
       } finally {
-        branchesInFlight.current.delete(key);
+        branchesInFlight.current.delete(key)
       }
     },
-    [gitRepositoriesApi],
-  );
+    [gitRepositoriesApi]
+  )
 
   // Resolve branches for drafts that already point at a known repository,
   // including drafts restored from a saved configuration.
   useEffect(() => {
-    if (!repositoryOptions) return;
+    if (!repositoryOptions) return
     for (const draft of repositories) {
-      const match = repositoriesByUrl.get(draft.url);
+      const match = repositoriesByUrl.get(draft.url)
       if (match && !branchesByRepository[repositoryKey(match)]) {
-        void loadBranches(match);
+        void loadBranches(match)
       }
     }
-  }, [
-    repositoryOptions,
-    repositories,
-    repositoriesByUrl,
-    branchesByRepository,
-    loadBranches,
-  ]);
+  }, [repositoryOptions, repositories, repositoriesByUrl, branchesByRepository, loadBranches])
 
   function selectRepository(id: string, key: string) {
-    const option = (repositoryOptions ?? []).find(
-      (candidate) => repositoryKey(candidate) === key,
-    );
-    if (!option) return;
-    const shortName = repositoryShortName(option);
-    const derivedName = option.name || shortName;
-    setRepositories((current) =>
-      current.map((draft) => {
-        if (draft.id !== id) return draft;
-        const derived = derivedDefaults.current.get(id);
-        const name =
-          !draft.name || draft.name === derived?.name
-            ? derivedName
-            : draft.name;
-        const path =
-          !draft.path || draft.path === derived?.path ? shortName : draft.path;
+    const option = (repositoryOptions ?? []).find(candidate => repositoryKey(candidate) === key)
+    if (!option) return
+    const shortName = repositoryShortName(option)
+    const derivedName = option.name || shortName
+    setRepositories(current =>
+      current.map(draft => {
+        if (draft.id !== id) return draft
+        const derived = derivedDefaults.current.get(id)
+        const name = !draft.name || draft.name === derived?.name ? derivedName : draft.name
+        const path = !draft.path || draft.path === derived?.path ? shortName : draft.path
         // A previously auto-filled branch is unlikely to exist on the new
         // repository; the fetched default branch replaces it.
-        const ref = !draft.ref || draft.ref === derived?.ref ? "" : draft.ref;
-        derivedDefaults.current.set(id, { name, path, ref });
-        return { ...draft, url: option.cloneUrl, name, path, ref };
-      }),
-    );
-    setConfigurationDirty(true);
-    setConfigurationSaved(false);
-    setConfigurationError("");
-    void loadBranches(option);
+        const ref = !draft.ref || draft.ref === derived?.ref ? '' : draft.ref
+        derivedDefaults.current.set(id, { name, path, ref })
+        return { ...draft, url: option.cloneUrl, name, path, ref }
+      })
+    )
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
+    void loadBranches(option)
   }
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [assignedEnvironments, personalResources, workspaceEnvironments] =
-        await Promise.all([
-          isWorkspaceScope
-            ? (api.workspaces?.listExecutionEnvironments(scopeId) ?? [])
-            : api.projects.listExecutionEnvironments(scopeId),
-          api.resources?.list() ?? {
-            agents: [],
-            execution_environments: [],
-          },
-          !isWorkspaceScope && project.workspace_id && api.workspaces
-            ? api.workspaces.listExecutionEnvironments(project.workspace_id)
-            : [],
-        ]);
-      setWorkspaceItems(workspaceEnvironments);
-      setPersonalItems(personalResources.execution_environments);
-      setAssignedItems(assignedEnvironments);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : translate(
-              "todo.execution_environments_load_failed",
-              "加载执行环境失败",
-            ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [api, isWorkspaceScope, project?.workspace_id, scopeId, translate]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const selectedDeviceIds = useMemo(
     () =>
       new Set(
         assignedItems
-          .map((environment) => environment.device_id)
-          .filter((deviceId): deviceId is number => deviceId != null),
+          .map(environment => environment.device_id)
+          .filter((deviceId): deviceId is number => deviceId != null)
       ),
-    [assignedItems],
-  );
+    [assignedItems]
+  )
   const workspaceDeviceIds = useMemo(
     () =>
       new Set(
         workspaceItems
-          .map((environment) => environment.device_id)
-          .filter((deviceId): deviceId is number => deviceId != null),
+          .map(environment => environment.device_id)
+          .filter((deviceId): deviceId is number => deviceId != null)
       ),
-    [workspaceItems],
-  );
+    [workspaceItems]
+  )
   const availableItems = useMemo(() => {
-    const environments = new Map<number, CollaborationExecutionEnvironment>();
+    const environments = new Map<number, CollaborationExecutionEnvironment>()
     for (const environment of [...personalItems, ...workspaceItems]) {
       if (environment.device_id != null) {
-        environments.set(environment.device_id, environment);
+        environments.set(environment.device_id, environment)
       }
     }
-    return [...environments.values()];
-  }, [personalItems, workspaceItems]);
+    return [...environments.values()].sort(compareExecutionEnvironments)
+  }, [personalItems, workspaceItems])
   const candidates = availableItems.filter(
-    (environment) =>
+    environment =>
       environment.device_id != null &&
-      environment.status === "online" &&
-      !selectedDeviceIds.has(environment.device_id),
-  );
+      environment.status === 'online' &&
+      !selectedDeviceIds.has(environment.device_id)
+  )
   const matchesStatus = (environment: CollaborationExecutionEnvironment) =>
-    statusFilter === "all" || environment.status === statusFilter;
-  const visibleAssignedItems = assignedItems.filter(matchesStatus);
-  const hasReadyDevice = assignedItems.some((environment) => {
-    if (environment.status !== "online") return false;
-    const deviceKey =
-      environment.device_key ?? String(environment.device_id ?? "");
-    const deviceState = deviceStates[deviceKey];
-    return (
-      deviceState?.status === "ready" &&
-      Boolean(deviceState.workspace_path?.trim())
-    );
-  });
-
+    statusFilter === 'all' || environment.status === statusFilter
+  const visibleAssignedItems = assignedItems
+    .filter(matchesStatus)
+    .sort(compareExecutionEnvironments)
   function updateRepository(
     id: string,
-    patch: Partial<CollaborationExecutionEnvironmentRepository>,
+    patch: Partial<CollaborationExecutionEnvironmentRepository>
   ) {
-    setRepositories((current) =>
-      current.map((repository) => {
+    setRepositories(current =>
+      current.map(repository => {
         if (patch.primary === true) {
           return {
             ...repository,
             primary: repository.id === id,
             ...(repository.id === id ? patch : {}),
-          };
+          }
         }
-        return repository.id === id ? { ...repository, ...patch } : repository;
-      }),
-    );
-    setConfigurationDirty(true);
-    setConfigurationSaved(false);
-    setConfigurationError("");
+        return repository.id === id ? { ...repository, ...patch } : repository
+      })
+    )
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
+  }
+
+  function updateRepositoryUrl(id: string, url: string) {
+    const shortName = repositoryShortNameFromUrl(url)
+    setRepositories(current =>
+      current.map(repository => {
+        if (repository.id !== id) return repository
+        const derived = derivedDefaults.current.get(id)
+        const name =
+          !repository.name || repository.name === derived?.name ? shortName : repository.name
+        const path =
+          !repository.path || repository.path === derived?.path ? shortName : repository.path
+        derivedDefaults.current.set(id, {
+          name,
+          path,
+          ref: derived?.ref ?? '',
+        })
+        return { ...repository, url, name, path }
+      })
+    )
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
   }
 
   function addRepository() {
-    setRepositories((current) => [
+    setRepositories(current => [
       ...current,
       {
-        id: draftId("repository"),
-        name: "",
-        url: "",
-        ref: "",
-        path: "",
+        id: draftId('repository'),
+        name: '',
+        url: '',
+        ref: '',
+        path: '',
         primary: current.length === 0,
       },
-    ]);
-    setConfigurationDirty(true);
-    setConfigurationSaved(false);
-    setConfigurationError("");
+    ])
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
   }
 
   function removeRepository(id: string) {
-    setRepositories((current) => {
-      const remaining = current.filter((repository) => repository.id !== id);
-      if (
-        remaining.length > 0 &&
-        !remaining.some((repository) => repository.primary)
-      ) {
-        remaining[0] = { ...remaining[0], primary: true };
+    setRepositories(current => {
+      const remaining = current.filter(repository => repository.id !== id)
+      if (remaining.length > 0 && !remaining.some(repository => repository.primary)) {
+        remaining[0] = { ...remaining[0], primary: true }
       }
-      return remaining;
-    });
-    setConfigurationDirty(true);
-    setConfigurationSaved(false);
-    setConfigurationError("");
+      return remaining
+    })
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
   }
 
-  function updateSetupStep(
-    id: string,
-    patch: Partial<CollaborationExecutionEnvironmentSetupStep>,
-  ) {
-    setSetupSteps((current) =>
-      current.map((step) => (step.id === id ? { ...step, ...patch } : step)),
-    );
-    setConfigurationDirty(true);
-    setConfigurationSaved(false);
-    setConfigurationError("");
+  function updateSetupStep(id: string, patch: Partial<CollaborationExecutionEnvironmentSetupStep>) {
+    setSetupSteps(current => current.map(step => (step.id === id ? { ...step, ...patch } : step)))
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
+  }
+
+  function markConfigurationDirty() {
+    setConfigurationDirty(true)
+    setConfigurationSaved(false)
+    setConfigurationError('')
   }
 
   async function saveConfiguration() {
-    if (
-      !canManage ||
-      !configurationDirty ||
-      saving ||
-      configurationSaveInFlight.current
-    )
-      return;
+    if (!canManage || !configurationDirty || saving || configurationSaveInFlight.current) return
     if (
       configuredRepositories.some(
-        (repository) => !repository.name || !repository.url || !repository.path,
+        repository => !repository.name || !repository.url || !repository.path
       )
     ) {
       setConfigurationError(
         translate(
-          "todo.execution_environment_repository_incomplete",
-          "请补全仓库的名称、Git 仓库和目录，或移除该仓库。",
-        ),
-      );
-      return;
+          'todo.execution_environment_repository_incomplete',
+          '请补全仓库的名称、Git 仓库和目录，或移除该仓库。'
+        )
+      )
+      return
     }
     if (
       configuredRepositories.length > 0 &&
-      configuredRepositories.filter((repository) => repository.primary)
-        .length !== 1
+      configuredRepositories.filter(repository => repository.primary).length !== 1
     ) {
       setConfigurationError(
         translate(
-          "todo.execution_environment_primary_repository_required",
-          "请为已添加的代码仓库设置一个主仓库。",
-        ),
-      );
-      return;
+          'todo.execution_environment_primary_repository_required',
+          '请为已添加的代码仓库设置一个主仓库。'
+        )
+      )
+      return
     }
 
-    configurationSaveInFlight.current = true;
-    setSaving(true);
-    setError("");
-    setConfigurationError("");
-    setConfigurationSaved(false);
+    configurationSaveInFlight.current = true
+    setSaving(true)
+    setError('')
+    setConfigurationError('')
+    setConfigurationSaved(false)
     try {
       const executionEnvironment = {
+        workspacePolicy,
         repositories: configuredRepositories,
         setupSteps: configuredSetupSteps,
-      };
+      }
       const updated = isWorkspaceScope
         ? await api.workspaces!.update(scopeId, {
             version: configVersion,
@@ -566,115 +532,131 @@ export function ProjectExecutionEnvironments({
               version: configVersion,
               executionEnvironment,
             })
-            .then((updatedProject) => {
-              onProjectChange?.(updatedProject);
-              return updatedProject;
-            });
-      setConfigVersion(updated.version);
-      setDeviceStates(
-        updated.execution_environment?.devices ?? NO_DEVICE_STATES,
-      );
-      setConfigurationDirty(false);
-      setConfigurationSaved(true);
-      setEnvironmentError("");
-      environmentErrorDeviceKey.current = "";
+            .then(updatedProject => {
+              onProjectChange?.(updatedProject)
+              return updatedProject
+            })
+      setConfigVersion(updated.version)
+      setDeviceStates(updated.execution_environment?.devices ?? NO_DEVICE_STATES)
+      setConfigurationDirty(false)
+      setConfigurationSaved(true)
+      setEnvironmentError('')
+      environmentErrorDeviceKey.current = ''
     } catch (saveError) {
-      setConfigurationError(
-        saveError instanceof Error ? saveError.message : String(saveError),
-      );
+      setConfigurationError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
-      configurationSaveInFlight.current = false;
-      setSaving(false);
+      configurationSaveInFlight.current = false
+      setSaving(false)
     }
   }
 
-  async function addEnvironment(
-    environment: CollaborationExecutionEnvironment,
-  ) {
-    const deviceId = environment.device_id;
-    if (deviceId == null || saving) return;
-    setSaving(true);
-    setError("");
+  async function addEnvironment(environment: CollaborationExecutionEnvironment) {
+    const deviceId = environment.device_id
+    if (
+      deviceId == null ||
+      !canManage ||
+      saving ||
+      environmentAddInFlight.current ||
+      (requireWorkspaceSharing && shared.items === undefined)
+    )
+      return
+    environmentAddInFlight.current = true
+    setSaving(true)
+    setError('')
+    let sharing = isWorkspaceScope
+    let sharedDuringAdd = false
     try {
+      if (requireWorkspaceSharing && !workspaceDeviceIds.has(deviceId)) {
+        sharing = true
+        const sharedEnvironment = await ensureWorkspaceEnvironmentSharing(
+          api,
+          project!.workspace_id!,
+          deviceId,
+          workspaceDeviceIds
+        )
+        if (sharedEnvironment) {
+          shared.update(current => [
+            ...current.filter(item => item.device_id !== deviceId),
+            sharedEnvironment,
+          ])
+          sharedDuringAdd = true
+        }
+      }
+      sharing = isWorkspaceScope
       const created = isWorkspaceScope
         ? await api.workspaces!.addExecutionEnvironment(scopeId, { deviceId })
-        : await api.projects.addExecutionEnvironment(scopeId, deviceId);
-      setAssignedItems((current) => [...current, created]);
-      setPickerOpen(false);
+        : await api.projects.addExecutionEnvironment(scopeId, deviceId)
+      assigned.update(current => [...current.filter(item => item.device_id !== deviceId), created])
+      setPickerOpen(false)
     } catch (saveError) {
+      const reason = environmentAuthorizationError(saveError, translate)
       setError(
-        saveError instanceof Error
-          ? saveError.message
-          : translate("todo.execution_device_add_failed", "添加设备失败"),
-      );
+        sharedDuringAdd
+          ? translate(
+              'todo.execution_environment_shared_add_failed',
+              '环境已共享到空间，但添加到项目失败：{{reason}}。请重试添加。',
+              { reason }
+            )
+          : sharing
+            ? translate('todo.execution_environment_share_failed', '共享环境失败：{{reason}}', {
+                reason,
+              })
+            : reason
+      )
     } finally {
-      setSaving(false);
+      environmentAddInFlight.current = false
+      setSaving(false)
     }
   }
 
-  async function removeEnvironment(
-    environment: CollaborationExecutionEnvironment,
-  ) {
-    if (environment.device_id == null) return;
-    setSaving(true);
-    setError("");
+  async function removeEnvironment(environment: CollaborationExecutionEnvironment) {
+    if (environment.device_id == null) return
+    setSaving(true)
+    setError('')
     try {
       if (isWorkspaceScope) {
-        await api.workspaces!.removeExecutionEnvironment(
-          scopeId,
-          environment.device_id,
-        );
+        await api.workspaces!.removeExecutionEnvironment(scopeId, environment.device_id)
       } else {
-        await api.projects.removeExecutionEnvironment(
-          scopeId,
-          environment.device_id,
-        );
+        await api.projects.removeExecutionEnvironment(scopeId, environment.device_id)
       }
-      setAssignedItems((current) =>
-        current.filter((item) => item.id !== environment.id),
-      );
+      assigned.update(current => current.filter(item => item.id !== environment.id))
     } catch (saveError) {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : translate(
-              "todo.execution_environment_remove_failed",
-              "移除执行环境失败",
-            ),
-      );
+          : translate('todo.execution_environment_remove_failed', '移除执行环境失败')
+      )
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
-  async function createEnvironmentOnDevice(
-    device: CollaborationExecutionEnvironment,
-  ) {
+  async function createEnvironmentOnDevice(device: CollaborationExecutionEnvironment) {
     if (
       initializationInFlight.current ||
       saving ||
       device.device_id == null ||
-      device.status !== "online"
+      device.status !== 'online'
     )
-      return;
+      return
     if (configurationDirty) {
       setEnvironmentError(
         translate(
-          "todo.execution_environment_save_before_initialization",
-          "配置有未保存的修改，请先保存配置再初始化环境。",
-        ),
-      );
-      return;
+          'todo.execution_environment_save_before_initialization',
+          '配置有未保存的修改，请先保存配置再准备项目目录。'
+        )
+      )
+      return
     }
-    initializationInFlight.current = true;
-    setSaving(true);
-    setInitializingDeviceId(device.device_id);
-    setError("");
-    const deviceKey = device.device_key ?? String(device.device_id);
+    initializationInFlight.current = true
+    setSaving(true)
+    setInitializingDeviceId(device.device_id)
+    setError('')
+    const deviceKey = device.device_key ?? String(device.device_id)
     try {
       // The in-flight state belongs to the clicked device (initializingDeviceId);
       // other devices keep showing their own persisted per-device state.
-      setEnvironmentError("");
+      setEnvironmentError('')
       const initialized = isWorkspaceScope
         ? await api.workspaces!.initializeExecutionEnvironment(scopeId, {
             deviceId: device.device_id,
@@ -685,35 +667,30 @@ export function ProjectExecutionEnvironments({
               deviceId: device.device_id,
               version: configVersion,
             })
-            .then((initializedProject) => {
-              onProjectChange?.(initializedProject);
-              return initializedProject;
-            });
-      const initializedConfig = initialized.execution_environment;
-      const nextDeviceStates = initializedConfig?.devices ?? NO_DEVICE_STATES;
-      const deviceState = nextDeviceStates[deviceKey];
-      setConfigVersion(initialized.version);
-      setDeviceStates(nextDeviceStates);
-      environmentErrorDeviceKey.current = deviceKey;
-      setEnvironmentError(deviceState?.error ?? "");
-      if (deviceState?.status !== "ready") {
+            .then(initializedProject => {
+              onProjectChange?.(initializedProject)
+              return initializedProject
+            })
+      const initializedConfig = initialized.execution_environment
+      const nextDeviceStates = initializedConfig?.devices ?? NO_DEVICE_STATES
+      const deviceState = nextDeviceStates[deviceKey]
+      setConfigVersion(initialized.version)
+      setDeviceStates(nextDeviceStates)
+      environmentErrorDeviceKey.current = deviceKey
+      setEnvironmentError(deviceState?.error ?? '')
+      if (deviceState?.status !== 'ready') {
         throw new Error(
           deviceState?.error ||
-            translate(
-              "todo.execution_environment_initialization_failed",
-              "执行环境初始化失败",
-            ),
-        );
+            translate('todo.execution_environment_initialization_failed', '项目目录准备失败')
+        )
       }
     } catch (saveError) {
-      environmentErrorDeviceKey.current = deviceKey;
-      setEnvironmentError(
-        saveError instanceof Error ? saveError.message : String(saveError),
-      );
+      environmentErrorDeviceKey.current = deviceKey
+      setEnvironmentError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
-      initializationInFlight.current = false;
-      setSaving(false);
-      setInitializingDeviceId(null);
+      initializationInFlight.current = false
+      setSaving(false)
+      setInitializingDeviceId(null)
     }
   }
 
@@ -723,913 +700,178 @@ export function ProjectExecutionEnvironments({
         <h1 className="text-heading-lg font-semibold">
           {translate(
             isWorkspaceScope
-              ? "todo.workspace_execution_environments"
-              : "todo.project_execution_environments",
-            "执行环境",
+              ? 'todo.workspace_execution_environments'
+              : 'todo.project_execution_environments',
+            '执行环境'
           )}
         </h1>
         <p className="mt-1 text-sm text-text-muted">
           {translate(
             isWorkspaceScope
-              ? "todo.workspace_execution_environments_description"
-              : "todo.project_execution_environments_description",
+              ? 'todo.workspace_execution_environments_intro'
+              : 'todo.project_execution_environments_intro',
             isWorkspaceScope
-              ? "管理空间级环境配置，并在在线设备上初始化可供项目复用的执行环境。"
-              : "管理项目环境配置，并在在线设备上初始化执行环境。",
+              ? '管理共享给空间内项目的执行环境。'
+              : '选择此项目可以使用的执行环境，项目目录会在首次运行时自动准备。'
           )}
         </p>
 
-        <section className="mt-6 overflow-hidden rounded-xl border border-border">
-          <div className="px-5 py-5">
-            <h2 className="text-sm font-medium">
-              {translate(
-                "todo.execution_environment_configuration",
-                "环境配置",
-              )}
-            </h2>
-            <p className="mt-1 text-sm text-text-muted">
-              {translate(
-                "todo.execution_environment_configuration_description",
-                "定义初始化执行环境时使用的代码来源和初始化命令。",
+        <section className="mt-6">
+          <ProjectEnvironmentDevices
+            {...{
+              testIdPrefix,
+              translate,
+              isWorkspaceScope,
+              requireWorkspaceSharing,
+              canManage,
+              saving,
+              loading,
+              error:
+                error ||
+                (assigned.error instanceof Error
+                  ? environmentAuthorizationError(assigned.error, translate)
+                  : assigned.error
+                    ? translate('todo.execution_environments_load_failed', '加载执行环境失败')
+                    : ''),
+              pickerLoading,
+              pickerError:
+                pickerError instanceof Error
+                  ? environmentAuthorizationError(pickerError, translate)
+                  : pickerError
+                    ? translate('todo.execution_environments_load_failed', '加载执行环境失败')
+                    : '',
+              assignedItems,
+              visibleAssignedItems,
+              candidates,
+              workspaceDeviceIds: shared.items ? workspaceDeviceIds : undefined,
+              deviceStates,
+              initializingDeviceId,
+              configurationDirty,
+              statusFilter,
+              pickerOpen,
+              onManageDevices,
+              addEnvironment,
+              removeEnvironment,
+              createEnvironmentOnDevice,
+            }}
+            onRetry={() => {
+              setError('')
+              void assigned.refresh()
+              if (requireWorkspaceSharing) void shared.refresh()
+            }}
+            onRetryPicker={() => {
+              void personal.refresh()
+              if (!isWorkspaceScope && project?.workspace_id) void shared.refresh()
+            }}
+            onStatusFilterChange={setStatusFilter}
+            onTogglePicker={() => setPickerOpen(current => !current)}
+          />
+          {environmentError ? (
+            <p
+              className="mt-3 text-sm text-destructive"
+              data-testid={`${testIdPrefix}-environment-error`}
+              role="alert"
+              title={environmentError}
+            >
+              {executionEnvironmentErrorSummary(
+                environmentError,
+                configuredRepositories.length === 0,
+                translate
               )}
             </p>
-
-            <div className="mt-5">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="flex items-center gap-2 text-sm font-medium">
-                  {translate(
-                    "todo.execution_environment_repositories",
-                    "代码仓库",
-                  )}
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
-                    {translate("common.optional", "可选")}
-                  </span>
-                </h3>
-                {canManage ? (
-                  <button
-                    className="collaboration-link-button"
-                    data-testid={`${testIdPrefix}-add-repository`}
-                    disabled={saving}
-                    type="button"
-                    onClick={addRepository}
-                  >
-                    ＋ {translate("todo.add_repository", "添加仓库")}
-                  </button>
-                ) : null}
-              </div>
-              <p className="mt-1 text-xs text-text-muted">
-                {translate(
-                  "todo.execution_environment_repositories_description",
-                  "添加仓库后，主仓库是智能体默认工作目录；不添加则创建空白工作目录。",
-                )}
-              </p>
-              {repositories.length > 0 && repositoriesLoadFailed ? (
-                <p className="mt-2 text-xs text-red-600" role="alert">
-                  {translate(
-                    "todo.repositories_load_failed",
-                    "仓库列表加载失败，可直接填写仓库地址。",
-                  )}{" "}
-                  <button
-                    className="collaboration-link-button"
-                    data-testid={`${testIdPrefix}-repositories-retry`}
-                    type="button"
-                    onClick={() => void loadRepositoryOptions()}
-                  >
-                    {translate("common.retry", "重试")}
-                  </button>
-                </p>
-              ) : null}
-
-              <div className="mt-3 space-y-3">
-                {repositories.length === 0 ? (
-                  <p
-                    className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted"
-                    data-testid={`${testIdPrefix}-repositories-empty`}
-                  >
-                    {translate(
-                      "todo.execution_environment_no_repositories",
-                      "未添加代码仓库。初始化时会创建一个空白工作目录。",
-                    )}
-                  </p>
-                ) : null}
-                {repositories.map((repository, index) => {
-                  const matchedOption = repositoriesByUrl.get(repository.url);
-                  const branchState = matchedOption
-                    ? branchesByRepository[repositoryKey(matchedOption)]
-                    : undefined;
-                  const branchOptions =
-                    branchState?.status === "ready" ? branchState.branches : [];
-                  const branchesReady = branchState?.status === "ready";
-                  const branchesFailed = branchState?.status === "error";
-                  const knownRef = branchOptions.some(
-                    (branch) => branch.name === repository.ref,
-                  );
-                  const repositorySelectValue = matchedOption
-                    ? repositoryKey(matchedOption)
-                    : repository.url
-                      ? CUSTOM_REPOSITORY_VALUE
-                      : "";
-                  const refSelectValue = knownRef
-                    ? repository.ref
-                    : repository.ref
-                      ? CUSTOM_REF_VALUE
-                      : "";
-                  return (
-                    <div
-                      className="rounded-lg border border-border p-4"
-                      data-testid={`${testIdPrefix}-repository-${index}`}
-                      key={repository.id}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 text-sm font-medium">
-                          <input
-                            checked={repository.primary}
-                            disabled={!canManage || saving}
-                            name={`${testIdPrefix}-primary-repository`}
-                            type="radio"
-                            onChange={() =>
-                              updateRepository(repository.id, { primary: true })
-                            }
-                          />
-                          {repository.primary
-                            ? translate(
-                                "todo.execution_environment_primary_repository",
-                                "主仓库",
-                              )
-                            : translate(
-                                "todo.execution_environment_dependency_repository",
-                                "依赖仓库",
-                              )}
-                        </label>
-                        {canManage ? (
-                          <button
-                            className="text-sm text-text-secondary hover:text-text-primary"
-                            data-testid={`${testIdPrefix}-remove-repository-${index}`}
-                            disabled={saving}
-                            type="button"
-                            onClick={() => removeRepository(repository.id)}
-                          >
-                            {translate("common.remove", "移除")}
-                          </button>
-                        ) : null}
-                      </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                        <label className="text-sm">
-                          <span className="mb-1 block">
-                            {translate("todo.repository_name", "名称")}
-                          </span>
-                          <input
-                            className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                            data-testid={`${testIdPrefix}-repository-name-${index}`}
-                            disabled={!canManage || saving}
-                            placeholder="Wegent"
-                            value={repository.name}
-                            onChange={(event) =>
-                              updateRepository(repository.id, {
-                                name: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block">
-                            {translate("todo.repository_path", "目录")}
-                          </span>
-                          <input
-                            className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                            data-testid={`${testIdPrefix}-repository-path-${index}`}
-                            disabled={!canManage || saving}
-                            placeholder={
-                              repository.primary
-                                ? "wegent"
-                                : "deps/internal-sdk"
-                            }
-                            value={repository.path}
-                            onChange={(event) =>
-                              updateRepository(repository.id, {
-                                path: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                      </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
-                        <label className="text-sm">
-                          <span className="mb-1 block">
-                            {translate("todo.repository_url", "Git 仓库")}
-                          </span>
-                          {repositoryOptions != null &&
-                          repositoryOptions.length > 0 ? (
-                            <select
-                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                              data-testid={`${testIdPrefix}-repository-url-${index}`}
-                              disabled={!canManage || saving}
-                              value={repositorySelectValue}
-                              onChange={(event) => {
-                                if (
-                                  event.target.value !== CUSTOM_REPOSITORY_VALUE
-                                ) {
-                                  selectRepository(
-                                    repository.id,
-                                    event.target.value,
-                                  );
-                                }
-                              }}
-                            >
-                              <option disabled value="">
-                                {translate(
-                                  "todo.repository_select_placeholder",
-                                  "选择仓库",
-                                )}
-                              </option>
-                              {repository.url && !matchedOption ? (
-                                <option value={CUSTOM_REPOSITORY_VALUE}>
-                                  {repository.url}
-                                </option>
-                              ) : null}
-                              {repositoryOptions.map((option) => (
-                                <option
-                                  key={repositoryKey(option)}
-                                  value={repositoryKey(option)}
-                                >
-                                  {option.fullName}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                              data-testid={`${testIdPrefix}-repository-url-${index}`}
-                              disabled={!canManage || saving}
-                              placeholder="https://github.com/org/repository.git"
-                              value={repository.url}
-                              onChange={(event) =>
-                                updateRepository(repository.id, {
-                                  url: event.target.value,
-                                })
-                              }
-                            />
-                          )}
-                        </label>
-                        <label className="text-sm">
-                          <span className="mb-1 block">
-                            {translate(
-                              "todo.execution_environment_repository_ref",
-                              "分支或 Tag",
-                            )}
-                          </span>
-                          {matchedOption && !branchesFailed ? (
-                            <select
-                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                              data-testid={`${testIdPrefix}-repository-ref-${index}`}
-                              disabled={!canManage || saving || !branchesReady}
-                              value={refSelectValue}
-                              onChange={(event) => {
-                                if (event.target.value !== CUSTOM_REF_VALUE) {
-                                  updateRepository(repository.id, {
-                                    ref: event.target.value,
-                                  });
-                                }
-                              }}
-                            >
-                              <option disabled value="">
-                                {branchesReady
-                                  ? translate(
-                                      "todo.repository_ref_placeholder",
-                                      "选择分支或 Tag",
-                                    )
-                                  : translate("common.loading", "加载中…")}
-                              </option>
-                              {repository.ref && !knownRef ? (
-                                <option value={CUSTOM_REF_VALUE}>
-                                  {repository.ref}
-                                </option>
-                              ) : null}
-                              {branchOptions.map((branch) => (
-                                <option key={branch.name} value={branch.name}>
-                                  {branch.name}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                              data-testid={`${testIdPrefix}-repository-ref-${index}`}
-                              disabled={!canManage || saving}
-                              placeholder="main"
-                              value={repository.ref}
-                              onChange={(event) =>
-                                updateRepository(repository.id, {
-                                  ref: event.target.value,
-                                })
-                              }
-                            />
-                          )}
-                          {matchedOption && branchesFailed ? (
-                            <p
-                              className="mt-1 text-xs text-red-600"
-                              role="alert"
-                            >
-                              {translate(
-                                "todo.repository_branches_load_failed",
-                                "分支加载失败，可手动填写。",
-                              )}{" "}
-                              <button
-                                className="collaboration-link-button"
-                                data-testid={`${testIdPrefix}-repository-ref-retry-${index}`}
-                                type="button"
-                                onClick={() => void loadBranches(matchedOption)}
-                              >
-                                {translate("common.retry", "重试")}
-                              </button>
-                            </p>
-                          ) : null}
-                        </label>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-medium">
-                  {translate("todo.execution_environment_setup", "初始化步骤")}
-                </h3>
-                {canManage ? (
-                  <button
-                    className="collaboration-link-button"
-                    data-testid={`${testIdPrefix}-add-setup-step`}
-                    disabled={saving}
-                    type="button"
-                    onClick={() => {
-                      setSetupSteps((current) => [
-                        ...current,
-                        {
-                          id: draftId("setup"),
-                          command: "",
-                          working_directory: "",
-                        },
-                      ]);
-                      setConfigurationDirty(true);
-                      setConfigurationSaved(false);
-                      setConfigurationError("");
-                    }}
-                  >
-                    ＋ {translate("todo.add_setup_step", "添加步骤")}
-                  </button>
-                ) : null}
-              </div>
-              <p className="mt-1 text-xs text-text-muted">
-                {translate(
-                  repositories.length > 0
-                    ? "todo.execution_environment_setup_description"
-                    : "todo.execution_environment_setup_without_repository_description",
-                  repositories.length > 0
-                    ? "步骤按顺序执行；工作目录为空时在主仓库执行，也可以指定任一仓库目录。"
-                    : "步骤按顺序在空白环境中执行；工作目录为空时使用环境根目录。",
-                )}
-              </p>
-              <div className="mt-3 space-y-2">
-                {setupSteps.map((step, index) => (
-                  <div
-                    className="grid gap-2 md:grid-cols-[minmax(0,1fr)_220px_auto]"
-                    data-testid={`${testIdPrefix}-setup-step-${index}`}
-                    key={step.id}
-                  >
-                    <input
-                      className="h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
-                      data-testid={`${testIdPrefix}-setup-command-${index}`}
-                      disabled={!canManage || saving}
-                      placeholder="pnpm install"
-                      value={step.command}
-                      onChange={(event) =>
-                        updateSetupStep(step.id, {
-                          command: event.target.value,
-                        })
-                      }
-                    />
-                    <input
-                      className="h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
-                      data-testid={`${testIdPrefix}-setup-directory-${index}`}
-                      disabled={!canManage || saving}
-                      placeholder="工作目录（默认主仓库）"
-                      value={step.working_directory}
-                      onChange={(event) =>
-                        updateSetupStep(step.id, {
-                          working_directory: event.target.value,
-                        })
-                      }
-                    />
-                    {canManage ? (
-                      <button
-                        className="px-2 text-sm text-text-secondary hover:text-text-primary"
-                        disabled={saving}
-                        type="button"
-                        onClick={() => {
-                          setSetupSteps((current) =>
-                            current.filter(
-                              (candidate) => candidate.id !== step.id,
-                            ),
-                          );
-                          setConfigurationDirty(true);
-                          setConfigurationSaved(false);
-                          setConfigurationError("");
-                        }}
-                      >
-                        {translate("common.remove", "移除")}
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-                {setupSteps.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted">
-                    {translate(
-                      repositories.length > 0
-                        ? "todo.no_setup_steps"
-                        : "todo.no_setup_steps_without_repository",
-                      repositories.length > 0
-                        ? "没有初始化步骤，仓库克隆完成后即可使用。"
-                        : "没有初始化步骤，空白工作目录创建后即可使用。",
-                    )}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-
-            {canManage ? (
-              <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
-                {configurationError ? (
-                  <p
-                    className="mr-auto text-sm text-red-600"
-                    data-testid={`${testIdPrefix}-configuration-error`}
-                    role="alert"
-                  >
-                    {configurationError}
-                  </p>
-                ) : configurationSaved ? (
-                  <span
-                    className="mr-auto text-sm text-green-600"
-                    data-testid={`${testIdPrefix}-configuration-status`}
-                    role="status"
-                  >
-                    {translate(
-                      "todo.execution_environment_configuration_saved",
-                      "配置已保存",
-                    )}
-                  </span>
-                ) : configurationDirty ? (
-                  <span className="mr-auto text-sm text-text-muted">
-                    {translate(
-                      "todo.execution_environment_configuration_unsaved",
-                      "配置有未保存的修改",
-                    )}
-                  </span>
-                ) : null}
-                <button
-                  className="collaboration-primary-button"
-                  data-testid={`${testIdPrefix}-save-configuration`}
-                  disabled={saving || !configurationDirty}
-                  type="button"
-                  onClick={() => void saveConfiguration()}
-                >
-                  {translate(
-                    "todo.execution_environment_save_configuration",
-                    "保存配置",
-                  )}
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="border-t border-border px-5 py-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-sm font-medium">
-                    {translate(
-                      isWorkspaceScope
-                        ? "todo.configured_workspace_execution_environments"
-                        : "todo.project_environment_initialization",
-                      isWorkspaceScope ? "运行设备" : "设备环境初始化",
-                    )}
-                  </h2>
-                  {!isWorkspaceScope ? (
-                    <span
-                      className="rounded bg-text-primary px-1.5 py-0.5 text-xs font-medium text-background"
-                      data-testid={`${testIdPrefix}-required`}
-                    >
-                      {translate("todo.execution_environment_required", "必需")}
-                    </span>
-                  ) : null}
-                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-text-muted">
-                    {assignedItems.length}
-                  </span>
-                  {!isWorkspaceScope ? (
-                    <span
-                      className={
-                        hasReadyDevice
-                          ? "text-xs font-medium text-green-600"
-                          : "text-xs font-medium text-text-secondary"
-                      }
-                      data-testid={`${testIdPrefix}-readiness`}
-                      role="status"
-                    >
-                      {hasReadyDevice
-                        ? translate(
-                            "todo.execution_environment_readiness_ready",
-                            "已完成",
-                          )
-                        : translate(
-                            "todo.execution_environment_readiness_pending",
-                            "待完成",
-                          )}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-1 text-xs text-text-muted">
-                  {translate(
-                    isWorkspaceScope
-                      ? "todo.workspace_execution_devices_description"
-                      : "todo.execution_environment_required_description",
-                    isWorkspaceScope
-                      ? "空间内项目可以使用这里的在线设备执行任务。"
-                      : "至少在一台在线设备上完成初始化，项目任务才能使用此环境运行。",
-                  )}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {assignedItems.length > 1 ? (
-                  <label className="flex items-center gap-2 text-xs text-text-secondary">
-                    {translate(
-                      "todo.execution_environment_status_filter",
-                      "状态",
-                    )}
-                    <select
-                      className="h-8 rounded-lg border border-border bg-background px-2 text-sm text-text-primary"
-                      data-testid={`${testIdPrefix}-status-filter`}
-                      value={statusFilter}
-                      onChange={(event) =>
-                        setStatusFilter(
-                          event.target.value as typeof statusFilter,
-                        )
-                      }
-                    >
-                      <option value="all">
-                        {translate(
-                          "todo.execution_environment_all_statuses",
-                          "全部",
-                        )}
-                      </option>
-                      {executionEnvironmentStatuses.map((status) => (
-                        <option key={status} value={status}>
-                          {executionEnvironmentStatusLabel(status, translate)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                {canManage ? (
-                  <button
-                    type="button"
-                    className={
-                      assignedItems.length === 0
-                        ? "collaboration-primary-button"
-                        : "collaboration-secondary-button"
-                    }
-                    data-testid={`${testIdPrefix}-add`}
-                    disabled={loading || saving}
-                    onClick={() => setPickerOpen((current) => !current)}
-                  >
-                    {pickerOpen
-                      ? translate("common.cancel", "取消")
-                      : `＋ ${translate("todo.add_execution_device", "添加设备")}`}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="pt-3">
-              {loading ? (
-                <p className="text-sm text-text-muted">
-                  {translate("common.loading", "加载中…")}
-                </p>
-              ) : error ? (
-                <div
-                  className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700"
-                  data-testid={`${testIdPrefix}s-error`}
-                  role="alert"
-                >
-                  {error}
-                </div>
-              ) : assignedItems.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border px-4 py-3">
-                  <p className="text-sm font-medium">
-                    {translate(
-                      isWorkspaceScope
-                        ? "todo.no_workspace_execution_environments"
-                        : "todo.no_project_execution_environments",
-                      "尚未添加运行设备",
-                    )}
-                  </p>
-                  <p className="mt-0.5 text-xs text-text-muted">
-                    {candidates.length === 0
-                      ? translate(
-                          isWorkspaceScope
-                            ? "todo.configure_workspace_environment"
-                            : "todo.configure_project_environment",
-                          "当前没有在线设备，请先在资源库添加或启动设备。",
-                        )
-                      : translate(
-                          isWorkspaceScope
-                            ? "todo.select_workspace_environment"
-                            : "todo.select_project_environment",
-                          "添加一台在线设备，用于完成环境初始化和运行任务。",
-                        )}
-                  </p>
-                  {candidates.length === 0 && canManage && onManageDevices ? (
-                    <button
-                      className="collaboration-secondary-button mt-3"
-                      data-testid={`${testIdPrefix}-manage-devices`}
-                      type="button"
-                      onClick={onManageDevices}
-                    >
-                      {translate(
-                        "todo.manage_execution_devices",
-                        "添加或启动设备",
-                      )}
-                    </button>
-                  ) : null}
-                </div>
-              ) : visibleAssignedItems.length === 0 ? (
-                <p className="text-sm text-text-muted" role="status">
-                  {translate(
-                    "todo.execution_environment_no_matches",
-                    "没有符合当前状态的执行环境",
-                  )}
-                </p>
-              ) : (
-                <div className="overflow-hidden rounded-lg border border-border">
-                  {visibleAssignedItems.map((environment, index) => {
-                    const deviceKey =
-                      environment.device_key ??
-                      String(environment.device_id ?? "");
-                    const deviceState = deviceStates[deviceKey];
-                    const isPreparingDevice =
-                      initializingDeviceId === environment.device_id;
-                    const hasEnvironment =
-                      isPreparingDevice || deviceState != null;
-                    const instanceStatus = isPreparingDevice
-                      ? "preparing"
-                      : deviceState?.status === "ready"
-                        ? "ready"
-                        : deviceState?.status === "error"
-                          ? "error"
-                          : "uninitialized";
-                    return (
-                      <div
-                        className={`flex items-center gap-3 px-4 py-3 ${
-                          index > 0 ? "border-t border-border" : ""
-                        }`}
-                        data-testid={`${testIdPrefix}-${environment.device_id}`}
-                        key={environment.id}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {environment.name}
-                          </span>
-                          <span className="block text-xs text-text-muted">
-                            {environment.kind === "cloud_host"
-                              ? translate("todo.cloud_host", "云主机")
-                              : translate("todo.local_device", "本地设备")}
-                            {" · "}
-                            {isWorkspaceScope ||
-                            (environment.device_id != null &&
-                              workspaceDeviceIds.has(environment.device_id))
-                              ? translate("todo.workspace_shared", "空间共享")
-                              : translate(
-                                  "todo.project_direct",
-                                  "项目直接添加",
-                                )}
-                            {" · "}
-                            {executionEnvironmentStatusLabel(
-                              environment.status,
-                              translate,
-                            )}
-                          </span>
-                        </span>
-                        <span className="text-xs text-text-secondary">
-                          {instanceStatus === "ready"
-                            ? translate(
-                                "todo.execution_environment_ready",
-                                "环境已就绪",
-                              )
-                            : instanceStatus === "preparing"
-                              ? translate(
-                                  "todo.execution_environment_preparing",
-                                  "正在初始化环境",
-                                )
-                              : instanceStatus === "error"
-                                ? translate(
-                                    "todo.execution_environment_initialization_error",
-                                    "环境初始化失败",
-                                  )
-                                : translate(
-                                    "todo.execution_environment_uninitialized",
-                                    "环境未初始化",
-                                  )}
-                        </span>
-                        {canManage && environment.status === "online" ? (
-                          <button
-                            type="button"
-                            className={
-                              instanceStatus === "ready"
-                                ? "collaboration-secondary-button shrink-0"
-                                : "collaboration-primary-button shrink-0"
-                            }
-                            data-testid={`${testIdPrefix}-initialize-${environment.device_id}`}
-                            disabled={saving || configurationDirty}
-                            onClick={() =>
-                              void createEnvironmentOnDevice(environment)
-                            }
-                          >
-                            {hasEnvironment
-                              ? translate(
-                                  "todo.execution_environment_reinitialize",
-                                  "重新初始化",
-                                )
-                              : translate(
-                                  "todo.execution_environment_create",
-                                  "初始化环境",
-                                )}
-                          </button>
-                        ) : null}
-                        {canManage ? (
-                          <button
-                            type="button"
-                            className="text-sm text-text-secondary hover:text-text-primary"
-                            data-testid={`${testIdPrefix}-remove-${environment.device_id}`}
-                            disabled={saving}
-                            onClick={() => void removeEnvironment(environment)}
-                          >
-                            {translate("common.remove", "移除")}
-                          </button>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {canManage ? (
-              <div>
-                {pickerOpen ? (
-                  <div
-                    className="mt-3 overflow-hidden rounded-lg border border-border"
-                    data-testid={`${testIdPrefix}-picker`}
-                  >
-                    <div className="border-b border-border bg-muted px-4 py-3">
-                      <h3 className="text-sm font-medium">
-                        {translate(
-                          "todo.select_execution_device",
-                          "选择在线设备",
-                        )}
-                      </h3>
-                      <p className="mt-0.5 text-xs text-text-muted">
-                        {isWorkspaceScope
-                          ? translate(
-                              "todo.select_workspace_environment",
-                              "从我的资源中选择设备，授权给这个空间共享使用。",
-                            )
-                          : translate(
-                              "todo.select_project_environment",
-                              "从我的资源或空间共享资源中选择设备，授权给这个项目使用。",
-                            )}
-                      </p>
-                    </div>
-                    {candidates.length === 0 ? (
-                      <div className="px-4 py-5">
-                        <p className="text-sm text-text-muted" role="status">
-                          {translate(
-                            "todo.no_available_execution_environments",
-                            "没有可添加的在线执行环境",
-                          )}
-                        </p>
-                        {canManage && onManageDevices ? (
-                          <button
-                            className="collaboration-secondary-button mt-3"
-                            data-testid={`${testIdPrefix}-manage-devices-picker`}
-                            type="button"
-                            onClick={onManageDevices}
-                          >
-                            {translate(
-                              "todo.manage_execution_devices",
-                              "添加或启动设备",
-                            )}
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-border">
-                        {candidates.map((environment) => (
-                          <div
-                            className="flex items-center gap-4 px-4 py-3"
-                            key={environment.id}
-                          >
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium">
-                                {environment.name}
-                              </span>
-                              <span className="block text-xs text-text-muted">
-                                {environment.kind === "cloud_host"
-                                  ? translate("todo.cloud_host", "云主机")
-                                  : translate("todo.local_device", "本地设备")}
-                                {" · "}
-                                {executionEnvironmentStatusLabel(
-                                  environment.status,
-                                  translate,
-                                )}
-                                {" · "}
-                                {environment.device_id != null &&
-                                workspaceDeviceIds.has(environment.device_id)
-                                  ? translate(
-                                      "todo.workspace_shared",
-                                      "空间共享",
-                                    )
-                                  : translate(
-                                      "todo.personal_resource",
-                                      "我的资源",
-                                    )}
-                              </span>
-                            </span>
-                            <button
-                              type="button"
-                              className="collaboration-link-button"
-                              data-testid={`${testIdPrefix}-candidate-${environment.device_id}`}
-                              disabled={saving}
-                              onClick={() => void addEnvironment(environment)}
-                            >
-                              ＋ {translate("common.add", "添加")}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="border-t border-border bg-muted px-5 py-4">
-            {environmentError ? (
-              <p
-                className="mb-3 text-sm text-red-600"
-                data-testid={`${testIdPrefix}-environment-error`}
-                role="alert"
-                title={environmentError}
-              >
-                {executionEnvironmentErrorSummary(
-                  environmentError,
-                  configuredRepositories.length === 0,
-                  translate,
-                )}
-              </p>
-            ) : null}
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-text-muted">
-                {translate(
-                  "todo.execution_environment_create_hint",
-                  "先保存配置，再在一台在线设备上初始化环境；未添加代码仓库时会创建空白工作目录。",
-                )}
-              </p>
-              {!isWorkspaceScope ? (
-                <span
-                  className={
-                    hasReadyDevice
-                      ? "shrink-0 text-sm font-medium text-green-600"
-                      : "shrink-0 text-sm font-medium text-text-primary"
-                  }
-                  data-testid={`${testIdPrefix}-completion-status`}
-                  role="status"
-                >
-                  {hasReadyDevice
+          ) : null}
+          <details
+            className="group mt-6 border-t border-border"
+            data-testid={`${testIdPrefix}-preparation`}
+            onToggle={event => {
+              if (
+                event.currentTarget.open &&
+                repositoryOptions === null &&
+                !repositoriesLoadFailed
+              ) {
+                void loadRepositoryOptions()
+              }
+            }}
+          >
+            <summary
+              className="flex min-h-11 cursor-pointer list-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              data-testid={`${testIdPrefix}-preparation-toggle`}
+            >
+              <ChevronRight
+                className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">
+                  {translate('todo.execution_environment_preparation', '项目准备')}
+                </span>
+                <span className="mt-1 block truncate text-xs text-text-muted">
+                  {repositories.length || setupSteps.length
                     ? translate(
-                        "todo.execution_environment_initialized",
-                        "环境已初始化",
+                        'todo.execution_environment_preparation_summary',
+                        '{{repositories}} 个仓库 · {{steps}} 个初始化步骤',
+                        {
+                          repositories: repositories.length,
+                          steps: setupSteps.length,
+                        }
                       )
                     : translate(
-                        "todo.execution_environment_readiness_pending",
-                        "待完成",
+                        'todo.execution_environment_preparation_default',
+                        '默认使用空白工作目录，可按需添加仓库和初始化命令。'
                       )}
                 </span>
+              </span>
+              {configurationDirty ? (
+                <span className="text-xs text-text-secondary">
+                  {translate('todo.execution_environment_configuration_unsaved', '有未保存的修改')}
+                </span>
               ) : null}
-            </div>
-          </div>
+            </summary>
+            <ProjectEnvironmentConfiguration
+              {...{
+                testIdPrefix,
+                translate,
+                canManage,
+                saving,
+                workspacePolicy,
+                repositories,
+                setupSteps,
+                repositoryOptions,
+                repositoriesByUrl,
+                repositoriesLoadFailed,
+                branchesByRepository,
+                loadRepositoryOptions,
+                loadBranches,
+                selectRepository,
+                updateRepository,
+                updateRepositoryUrl,
+                removeRepository,
+                addRepository,
+                updateSetupStep,
+                configurationError,
+                configurationSaved,
+                configurationDirty,
+                saveConfiguration,
+              }}
+              onWorkspacePolicyChange={value => {
+                setWorkspacePolicy(value)
+                markConfigurationDirty()
+              }}
+              addSetupStep={() => {
+                setSetupSteps(current => [
+                  ...current,
+                  { id: draftId('setup'), command: '', working_directory: '' },
+                ])
+                markConfigurationDirty()
+              }}
+              removeSetupStep={id => {
+                setSetupSteps(current => current.filter(step => step.id !== id))
+                markConfigurationDirty()
+              }}
+            />
+          </details>
         </section>
       </div>
     </div>
-  );
+  )
 }

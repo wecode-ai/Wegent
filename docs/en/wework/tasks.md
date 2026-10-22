@@ -20,9 +20,17 @@ Hover over a message table to copy its Markdown or expand it; press `Esc` to clo
 
 ## Add a conversation to a project-space board
 
-After enabling Experimental features, open the composer's **+** menu and select **Project space**. The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. Sending the first message creates the corresponding board task and links the conversation. A project space inherited from the local-project automatic-join setting appears through the same control.
+After enabling Experimental features, open the composer's **+** menu and select **Project space**. Selecting a space opens the **Add to "Project space name"** dialog even before a new task sends its first message. Choose **Create board task** or **Link an existing board task**. Confirmation saves the choice; the first message creates the card or links the selected Issue. Cancelling keeps the previous selection. Select the current space again to change the association choice or target Issue.
+
+The selected destination appears as **Add to board · Project space name** below the composer so you can confirm it before sending. A project space inherited from the local-project automatic-join setting appears through the same control and creates a new board task after the first message by default.
 
 For an existing task, open the right-side **Environment** panel and select **Link project space**. You can link the current project or task to a local or cloud project space, or quickly create a task in that space. Local-space operations remain on the current device; cloud-space operations use shared cloud data.
+
+When creating an issue in Collaboration, enter at least a title or content. If you enter content only, Wework preserves the complete content as the description and generates a title using the same rule as the regular task composer. A manually entered title takes precedence when both fields are present.
+
+After selecting **Let AI handle it** in an issue detail, use the task composer to choose a local project, workspace or worktree, and branch before creating a local run linked to the issue. Project spaces and local code projects are separate resources. After a task is created successfully, Wework remembers the most recently used local project and workspace for that project space on the current device. The next task created from the same project space preselects that location, and a successful task created after a temporary selection change updates the mapping. The mapping does not sync to other devices.
+
+When an issue already has linked tasks, the **Linked tasks** section directly shows every running task and the two most recent tasks. If more history is available, use **Expand** and **Collapse** instead of opening a separate task-list view. The action for creating another task appears beside the section heading.
 
 After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
 
@@ -98,6 +106,13 @@ After a conversation starts, you can still switch between official GPT/Codex mod
 If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
 
 ## Control a running task
+
+The sidebar keeps running tasks visible with their running indicators. Collapsing or expanding a project or its history list does not change execution state. When you continue a conversation, completion from an earlier turn does not end the new running turn; its indicator clears when the current turn ends.
+
+Context compaction is shown as complete only after its turn succeeds. Plugin synchronization and idle-only process restarts wait during compaction, and a failed or interrupted compaction is not shown as successful.
+A response timeout does not mean compaction has stopped. A live compaction retains its activity protection until its native turn ends; use Pause to interrupt it.
+
+While a start request remains unconfirmed, a previous completion snapshot cannot clear its running indicator. Once the executor confirms execution has started, completion of the current turn ends the running state normally.
 
 | Action                  | Shortcut                       | Use it when                             |
 | ----------------------- | ------------------------------ | --------------------------------------- |

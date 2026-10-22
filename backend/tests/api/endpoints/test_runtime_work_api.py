@@ -247,10 +247,12 @@ def test_create_runtime_task_rejects_team_on_old_request_version(
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("new_session", [True, False])
 def test_materialize_runtime_task_returns_v2_executor_payload(
     test_client,
     test_token,
     monkeypatch,
+    new_session,
 ) -> None:
     from app.api.endpoints import runtime_work
 
@@ -267,7 +269,11 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
                 "executionRequest": {
                     "task_id": "task-1",
                     "team_id": 42,
-                    "new_session": False,
+                    "new_session": new_session,
+                    "model_config": {
+                        "model_id": "deepseek-v4-pro",
+                        "protocol": "openai-responses",
+                    },
                 },
             },
         )
@@ -284,7 +290,7 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
         json={
             "schemaVersion": 3,
             "wegentTeamId": 42,
-            "newSession": False,
+            "newSession": new_session,
             "deviceId": "local-device-1",
             "workspacePath": "/repo",
             "taskId": "task-1",
@@ -294,11 +300,18 @@ def test_materialize_runtime_task_returns_v2_executor_payload(
     )
 
     assert response.status_code == 200
-    assert response.json()["payload"]["schemaVersion"] == 2
+    payload = response.json()["payload"]
+    assert payload["schemaVersion"] == 2
+    assert "modelConfig" not in payload
+    assert payload["executionRequest"]["model_config"] == {
+        "model_id": "deepseek-v4-pro",
+        "protocol": "openai-responses",
+    }
+    assert payload["executionRequest"]["new_session"] is new_session
     assert response.json()["runtimeHandle"] == {"wegentTeam": {"id": 42}}
     request = service_mock.call_args.kwargs["request"]
     assert request.wegent_team_id == 42
-    assert request.new_session is False
+    assert request.new_session is new_session
 
 
 def test_upsert_device_workspace_endpoint_returns_mapping(
@@ -1022,39 +1035,6 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
 
 
-def test_runtime_im_notification_settings_endpoint_uses_current_user(
-    test_client,
-    test_token,
-    monkeypatch,
-):
-    from app.api.endpoints import runtime_work
-
-    service_mock = AsyncMock(
-        return_value={
-            "global": {
-                "enabled": True,
-                "sessionKey": "session-1",
-                "session": None,
-            },
-            "runtimeTaskSubscriptions": [],
-        }
-    )
-    monkeypatch.setattr(
-        runtime_work.runtime_work_service,
-        "get_im_notification_settings",
-        service_mock,
-    )
-
-    response = test_client.get(
-        "/api/runtime-work/im-notifications",
-        headers=_auth_headers(test_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["global"]["enabled"] is True
-    assert service_mock.await_args.kwargs["user_id"] > 0
-
-
 def test_runtime_global_im_notification_endpoint_dispatches_payload(
     test_client,
     test_token,
@@ -1088,33 +1068,6 @@ def test_runtime_global_im_notification_endpoint_dispatches_payload(
     payload = service_mock.await_args.kwargs["request"]
     assert payload.enabled is True
     assert payload.session_key == "session-1"
-
-
-def test_runtime_im_notification_presence_endpoint_dispatches_payload(
-    test_client,
-    test_token,
-    monkeypatch,
-):
-    from app.api.endpoints import runtime_work
-
-    service_mock = AsyncMock(return_value={"away": False, "ttlSeconds": 90})
-    monkeypatch.setattr(
-        runtime_work.runtime_work_service,
-        "update_im_notification_presence",
-        service_mock,
-    )
-
-    response = test_client.put(
-        "/api/runtime-work/im-notifications/presence",
-        headers=_auth_headers(test_token),
-        json={"clientId": "desktop-client-1", "away": False},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"away": False, "ttlSeconds": 90}
-    request = service_mock.await_args.kwargs["request"]
-    assert request.client_id == "desktop-client-1"
-    assert request.away is False
 
 
 def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(

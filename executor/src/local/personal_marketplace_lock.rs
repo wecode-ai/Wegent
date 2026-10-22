@@ -8,7 +8,7 @@ use fs2::FileExt;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-pub(super) fn acquire_personal_marketplace_lock(
+pub(crate) fn acquire_personal_marketplace_lock(
     marketplace_root: &Path,
 ) -> Result<fs::File, String> {
     let parent = marketplace_root

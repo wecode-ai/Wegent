@@ -11,7 +11,7 @@ which provides a unified interface for both REST API and MCP tools.
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import (
     APIRouter,
@@ -19,7 +19,6 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
-    Response,
     status,
 )
 from sqlalchemy.exc import IntegrityError
@@ -50,7 +49,6 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
-    DocumentProtectionResponse,
     ExternalDocumentBatchImportRequest,
     ExternalDocumentBatchImportResponse,
     ExternalDocumentImportRequest,
@@ -85,9 +83,6 @@ from app.services.knowledge import (
 from app.services.knowledge.dingtalk_auto_sync import (
     is_copy_sync_enabled,
     queue_dingtalk_scan,
-)
-from app.services.knowledge.document_download_policy import (
-    is_original_download_allowed,
 )
 from app.services.knowledge.external_document_import import (
     ExternalDocumentImportError,
@@ -558,36 +553,6 @@ def create_knowledge_base(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-
-
-@router.get(
-    "/{knowledge_base_id}/document-protection",
-    response_model=DocumentProtectionResponse,
-)
-def get_document_protection(
-    knowledge_base_id: int,
-    response: Response,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-) -> DocumentProtectionResponse:
-    """Return UI-only protection state; file exits still authorize independently."""
-    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
-        db=db,
-        knowledge_base_id=knowledge_base_id,
-        user_id=current_user.id,
-    )
-    if not knowledge_base or not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
-
-    download_allowed = is_original_download_allowed(db, knowledge_base)
-    response.headers["Cache-Control"] = "private, no-store"
-    return DocumentProtectionResponse(
-        original_download_allowed=download_allowed,
-        watermark_text=None if download_allowed else current_user.user_name,
-    )
 
 
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -1207,6 +1172,8 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     """Delete a document from the knowledge base."""
+    from app.services.rag.remote_gateway import RemoteRagGatewayError
+
     try:
         result = KnowledgeService.delete_document(
             db=db,
@@ -1243,6 +1210,13 @@ def delete_document(
             )
 
         return None
+    except RemoteRagGatewayError as e:
+        # The remote index removal failed, so the document was kept. Surface the
+        # runtime failure instead of reporting a successful delete.
+        raise HTTPException(
+            status_code=e.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1417,32 +1391,6 @@ def create_folder(
             knowledge_base_id=knowledge_base_id,
             user_id=current_user.id,
             data=data,
-        )
-    except ValueError as e:
-        _raise_document_detail_http_error(e)
-
-
-@router.get(
-    "/{knowledge_base_id}/folders",
-    response_model=list[KnowledgeFolderResponse],
-)
-@trace_sync("get_folder_tree", "knowledge.api")
-def get_folder_tree(
-    knowledge_base_id: int,
-    origin: Optional[ContentOrigin] = Query(
-        default=None,
-        description="Filter folders by content origin",
-    ),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-) -> List[KnowledgeFolderResponse]:
-    """Get the full folder tree for a knowledge base."""
-    try:
-        return KnowledgeFolderService.get_folder_tree(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=current_user.id,
-            content_origin=origin.value if origin is not None else None,
         )
     except ValueError as e:
         _raise_document_detail_http_error(e)
@@ -1830,83 +1778,6 @@ async def refresh_kb_summary(
         message="Summary refresh started",
         status="generating",
     )
-
-
-@summary_router.get(
-    "/{kb_id}/documents/{doc_id}/detail", response_model=DocumentDetailResponse
-)
-@trace_async("get_document_detail", "knowledge.api")
-async def get_document_detail(
-    kb_id: int,
-    doc_id: int,
-    include_content: bool = Query(
-        default=True, description="Include document content in response"
-    ),
-    include_summary: bool = Query(
-        default=True, description="Include document summary in response"
-    ),
-    offset: int = Query(
-        default=0, ge=0, description="Content read offset (for pagination)"
-    ),
-    limit: int = Query(
-        default=MAX_DOCUMENT_READ_LIMIT,
-        ge=1,
-        le=MAX_DOCUMENT_READ_LIMIT,
-        description=f"Content read limit (max: {MAX_DOCUMENT_READ_LIMIT})",
-    ),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Get document detail including content and summary.
-
-    Query parameters:
-    - include_content: Whether to include extracted text content (default: true)
-    - include_summary: Whether to include AI-generated summary (default: true)
-    - offset: Content read offset for pagination (default: 0)
-    - limit: Maximum characters to return (default: 100000, max: 100000)
-
-    Returns:
-    - document_id: Document ID
-    - content: Extracted text content (if include_content=true)
-    - content_length: Total length of content in characters (if include_content=true)
-    - truncated: Whether more content is available (if include_content=true)
-    - summary: Document summary object (if include_summary=true)
-    """
-    from app.models.knowledge import KnowledgeDocument
-
-    _validate_knowledge_base_access_or_raise(
-        db,
-        knowledge_base_id=kb_id,
-        user=current_user,
-    )
-
-    document = (
-        db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == doc_id,
-            KnowledgeDocument.kind_id == kb_id,
-        )
-        .first()
-    )
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found in the specified knowledge base",
-        )
-
-    try:
-        return await knowledge_orchestrator.get_document_detail(
-            db=db,
-            user=current_user,
-            document_id=doc_id,
-            include_content=include_content,
-            include_summary=include_summary,
-            offset=offset,
-            limit=limit,
-        )
-    except ValueError as error:
-        _raise_document_detail_http_error(error)
 
 
 @summary_router.get("/{kb_id}/documents/{doc_id}/summary")

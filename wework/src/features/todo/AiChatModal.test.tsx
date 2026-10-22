@@ -42,16 +42,23 @@ vi.mock('./ConnectedIssueProjectWork', () => ({
     project,
     selectedDeviceWorkspaceId,
     showProjectSelector,
+    onSelectProject,
     onSelectProjectWorkspace,
     children,
   }: {
     project: ProjectWithTasks | null
     selectedDeviceWorkspaceId: number | null
     showProjectSelector?: boolean
+    onSelectProject: (projectId: number | null) => void
     onSelectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
     children: (projectWork: {
       currentProject: ProjectWithTasks | null
       selectedDeviceWorkspaceId: number | null
+      executionMode: 'current_workspace'
+      executionModeLocked: false
+      worktreeBranch: null
+      onExecutionModeChange: (mode: 'current_workspace' | 'git_worktree') => void
+      onWorktreeBranchChange: (branch: string | null) => void
       worktreeAvailability: { available: boolean }
     }) => React.ReactNode
   }) => (
@@ -60,17 +67,31 @@ vi.mock('./ConnectedIssueProjectWork', () => ({
       data-show-project-selector={showProjectSelector === false ? 'false' : 'true'}
     >
       {showProjectSelector !== false ? (
-        <button
-          type="button"
-          data-testid="mock-select-project-workspace"
-          onClick={() => onSelectProjectWorkspace(92, 202)}
-        >
-          select workspace
-        </button>
+        <>
+          <button
+            type="button"
+            data-testid="mock-select-project"
+            onClick={() => onSelectProject(92)}
+          >
+            select project
+          </button>
+          <button
+            type="button"
+            data-testid="mock-select-project-workspace"
+            onClick={() => onSelectProjectWorkspace(92, 202)}
+          >
+            select workspace
+          </button>
+        </>
       ) : null}
       {children({
         currentProject: project,
         selectedDeviceWorkspaceId,
+        executionMode: 'current_workspace',
+        executionModeLocked: false,
+        worktreeBranch: null,
+        onExecutionModeChange: vi.fn(),
+        onWorktreeBranchChange: vi.fn(),
         worktreeAvailability: { available: mocks.worktreeAvailable },
       })}
     </div>
@@ -88,6 +109,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     runtimeContext,
     allowInitialGoal,
     sendEphemeral,
+    projectWork,
     testId,
   }: {
     currentProject: ProjectWithTasks | null
@@ -113,6 +135,13 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
     allowInitialGoal?: boolean
     sendEphemeral?: boolean
+    projectWork?: {
+      executionMode: 'current_workspace' | 'git_worktree'
+      executionModeLocked?: boolean
+      worktreeBranch?: string | null
+      onExecutionModeChange: (mode: 'current_workspace' | 'git_worktree') => void
+      onWorktreeBranchChange?: (branch: string | null) => void
+    }
     testId?: string
   }) => {
     const mountId = useRef(++mocks.chatPanelMounts).current
@@ -172,6 +201,27 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
         >
           send goal
         </button>
+        <button
+          type="button"
+          data-testid="mock-select-current-workspace-mode"
+          onClick={() => projectWork?.onExecutionModeChange('current_workspace')}
+        >
+          select current workspace
+        </button>
+        <button
+          type="button"
+          data-testid="mock-select-worktree-mode"
+          onClick={() => projectWork?.onExecutionModeChange('git_worktree')}
+        >
+          select worktree
+        </button>
+        <button
+          type="button"
+          data-testid="mock-select-worktree-branch"
+          onClick={() => projectWork?.onWorktreeBranchChange?.('feature/issue-task')}
+        >
+          select worktree branch
+        </button>
         <div
           data-testid="mock-chat-panel"
           data-project-id={currentProject?.id ?? ''}
@@ -186,6 +236,9 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           data-loop-item-id={runtimeContext?.origin?.loopItemId ?? ''}
           data-panel-testid={testId}
           data-allow-initial-goal={allowInitialGoal ? 'yes' : 'no'}
+          data-execution-mode={projectWork?.executionMode ?? ''}
+          data-execution-mode-locked={projectWork?.executionModeLocked ? 'yes' : 'no'}
+          data-worktree-branch={projectWork?.worktreeBranch ?? ''}
         />
       </>
     )
@@ -235,6 +288,8 @@ const task = {
 
 describe('AiChatModal', () => {
   beforeEach(() => {
+    mocks.createProjectRuntimeTask.mockReset()
+    mocks.createProjectRuntimeTask.mockResolvedValue(false)
     mocks.runtimeWork = undefined
     mocks.worktreeAvailable = true
   })
@@ -260,7 +315,7 @@ describe('AiChatModal', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('opens a blank embedded task composer in the right sidebar', () => {
+  it('opens the bound Issue composer in the right sidebar', () => {
     render(
       <AiChatModal
         project={project}
@@ -286,7 +341,7 @@ describe('AiChatModal', () => {
       'bg-background'
     )
     expect(sidebar).not.toHaveClass('fixed', 'inset-0')
-    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('新建任务')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('WEG-1 · Implement cloud MCP')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-panel-testid',
       'work-item-new-task-chat-panel'
@@ -313,6 +368,45 @@ describe('AiChatModal', () => {
       'Implement cloud MCP'
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'no')
+  })
+
+  it('preserves assignment identity in both the task request and runtime context', async () => {
+    const origin = {
+      type: 'issue_dispatch' as const,
+      cloudProjectId: String(project.id),
+      loopItemId: task.id,
+      projectStore: 'backend' as const,
+      humanAssignmentId: 'human-work',
+      dispatchId: 'dispatch',
+      roundId: 'round',
+      assignmentId: 'assignment',
+    }
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskRequest={{
+          runtime: 'codex',
+          message: 'Assigned work',
+          title: 'Assigned title',
+          origin,
+        }}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        origin,
+        taskRequest: expect.objectContaining({ title: 'Assigned title', origin }),
+        additionalContext: expect.objectContaining({ issueEnvironment: expect.any(Object) }),
+      })
+    )
   })
 
   it('always creates private AI conversations with the Codex runtime', async () => {
@@ -342,11 +436,7 @@ describe('AiChatModal', () => {
           modelType: 'user',
           modelOptions: { reasoningEffort: 'high' },
         },
-        workspaceExecution: {
-          workspace: {
-            source: 'git_worktree',
-          },
-        },
+        workspaceExecution: null,
         cloudProjectId: '11',
         origin: {
           type: 'board_task',
@@ -364,7 +454,7 @@ describe('AiChatModal', () => {
     mocks.createProjectRuntimeTask.mockClear()
   })
 
-  it('uses the current workspace when the executor cannot create a worktree', async () => {
+  it('uses the current workspace for a non-Git project', async () => {
     mocks.worktreeAvailable = false
     render(
       <AiChatModal
@@ -635,7 +725,165 @@ describe('AiChatModal', () => {
 
     expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('问AI')
     expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('WEG-1 · Implement cloud MCP')
+    expect(screen.getByTestId('mock-connected-project-work')).toBeInTheDocument()
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '')
+  })
+
+  it('lets the user select a project when the Issue has no code project association', async () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-select-project'))
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '92')
+  })
+
+  it('uses the selected worktree mode and branch for task creation', async () => {
+    const gitProject: ProjectWithTasks = {
+      ...localProjects[0],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'local-device' },
+        workspace: { source: 'local_path', localPath: '/workspace/operations' },
+      },
+    }
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={[gitProject]}
+        task={task}
+        initialLocalProjectId={gitProject.id}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-execution-mode',
+      'current_workspace'
+    )
+    await userEvent.click(screen.getByTestId('mock-select-worktree-mode'))
+    await userEvent.click(screen.getByTestId('mock-select-worktree-branch'))
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-execution-mode',
+      'git_worktree'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-worktree-branch',
+      'feature/issue-task'
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        workspaceExecution: {
+          workspace: {
+            source: 'git_worktree',
+            branch: 'feature/issue-task',
+          },
+        },
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('does not inherit the Agent prepared environment workspace policy', () => {
+    const gitProject: ProjectWithTasks = {
+      ...localProjects[0],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'local-device' },
+        workspace: { source: 'local_path', localPath: '/workspace/operations' },
+      },
+    }
+    render(
+      <AiChatModal
+        project={{
+          ...project,
+          execution_environment: {
+            workspace_policy: 'git_worktree',
+            repositories: [],
+            setup_steps: [],
+            devices: {},
+          },
+        }}
+        localProjects={[gitProject]}
+        task={task}
+        initialLocalProjectId={gitProject.id}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-execution-mode',
+      'current_workspace'
+    )
+  })
+
+  it('keeps workspace selection editable when the task request only carries metadata', async () => {
+    const gitProject: ProjectWithTasks = {
+      ...localProjects[0],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'local-device' },
+        workspace: { source: 'local_path', localPath: '/workspace/operations' },
+      },
+    }
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={[gitProject]}
+        task={task}
+        initialLocalProjectId={gitProject.id}
+        initialTaskRequest={{
+          schemaVersion: 2,
+          runtime: 'codex',
+          message: '',
+          title: 'Personal dispatch task',
+        }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-execution-mode-locked',
+      'no'
+    )
+    await userEvent.click(screen.getByTestId('mock-select-worktree-mode'))
+    await userEvent.click(screen.getByTestId('mock-select-worktree-branch'))
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        taskRequest: expect.objectContaining({
+          title: 'Personal dispatch task',
+          execution: {
+            workspace: {
+              source: 'git_worktree',
+              branch: 'feature/issue-task',
+            },
+          },
+        }),
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
   })
 
   it('uses the Issue code project association when one exists', () => {
@@ -696,6 +944,37 @@ describe('AiChatModal', () => {
       })
     )
     mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('restores a saved workspace and reports it after successful task creation', async () => {
+    const address = { deviceId: 'local-device', taskId: 'runtime-created' }
+    const onTaskCreated = vi.fn()
+    mocks.createProjectRuntimeTask.mockResolvedValue(address)
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialLocalProjectId={92}
+        initialDeviceWorkspaceId={202}
+        onTaskCreated={onTaskCreated}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        project: localProjects[1],
+        deviceWorkspaceId: 202,
+      })
+    )
+    expect(onTaskCreated).toHaveBeenCalledWith(address, localProjects[1], 202)
   })
 
   it('starts a new temporary conversation and can switch back', async () => {
@@ -804,6 +1083,7 @@ describe('AiChatModal', () => {
 
   it('opens a focused bound task as a split detail and persistent conversation', async () => {
     const onOpenRuntimeTask = vi.fn()
+    const onClose = vi.fn()
     const address = { deviceId: 'local-device', taskId: 'runtime-1' }
 
     render(
@@ -814,7 +1094,7 @@ describe('AiChatModal', () => {
         taskTitle="实现云端交付"
         initialAddress={address}
         open
-        onClose={vi.fn()}
+        onClose={onClose}
         onOpenRuntimeTask={onOpenRuntimeTask}
       />
     )
@@ -830,8 +1110,36 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       ...address,
+      issueExecution: { projectId: String(project.id), issueId: task.id },
       projectSession: { projectId: String(project.id), issueId: task.id },
     })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('marks a local bound task as an Issue execution without cloud session routing', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const onClose = vi.fn()
+    const address = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    render(
+      <AiChatModal
+        project={{ ...project, project_store: 'local' }}
+        localProjects={localProjects}
+        task={task}
+        taskTitle="实现本地交付"
+        initialAddress={address}
+        open
+        onClose={onClose}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      ...address,
+      issueExecution: { projectId: String(project.id), issueId: task.id },
+    })
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('uses a bound task address received after the composer was mounted', () => {
@@ -868,6 +1176,41 @@ describe('AiChatModal', () => {
       'data-initial-task-id',
       'resolved-task'
     )
+  })
+
+  it('remounts a bound task conversation when its device alias resolves', () => {
+    const { rerender } = render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'app-record-65', taskId: 'resolved-task' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+    const firstMount = Number(screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id'))
+
+    rerender(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'electron-runtime-device', taskId: 'resolved-task' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-device-id',
+      'electron-runtime-device'
+    )
+    expect(
+      Number(screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id'))
+    ).toBeGreaterThan(firstMount)
   })
 
   it('separates returning to the Issue from closing the unified sidebar', async () => {

@@ -7,5 +7,5 @@
 mod cors;
 mod request_id;
 
-pub(crate) use cors::server_config;
-pub(crate) use request_id::RequestIdFilter;
+pub(crate) use cors::{gateway_cors, server_config};
+pub use request_id::RequestIdFilter;

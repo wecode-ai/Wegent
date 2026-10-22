@@ -1,7 +1,7 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,11 +19,56 @@ vi.mock('electron', () => ({
 
 const roots: string[] = []
 
+const DECISION_ROUTE_TOKEN = `decision-${'a'.repeat(64)}`
+const DECISION_ROUTE_URL = `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
 describe('SmartAppManager', () => {
+  test('creates a workbench under Documents/WeworkSmartApps when no parent is selected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-default-'))
+    roots.push(root)
+    const manager = createManager(root)
+
+    const created = await manager.createDirectory({
+      parentPath: '',
+      name: 'default-app',
+      displayName: '默认工作台',
+      description: '',
+      template: 'web',
+    })
+
+    expect(created.packagePath).toBe(
+      join(await realpath(root), 'Documents', 'WeworkSmartApps', 'default-app')
+    )
+    expect(created.manifest.description).toBe('')
+    expect((await stat(created.packagePath)).isDirectory()).toBe(true)
+  })
+
+  test('reports an unavailable default folder and accepts a chosen folder on retry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-default-error-'))
+    roots.push(root)
+    await writeFile(join(root, 'Documents'), 'not a directory')
+    const manager = createManager(root)
+    const input = {
+      parentPath: '',
+      name: 'chosen-app',
+      displayName: 'Chosen App',
+      description: '',
+      template: 'web',
+    }
+
+    await expect(manager.createDirectory(input)).rejects.toThrow(
+      'Smart app default save location is unavailable'
+    )
+    const chosenParent = join(root, 'chosen')
+    await mkdir(chosenParent)
+    const created = await manager.createDirectory({ ...input, parentPath: chosenParent })
+    expect(created.packagePath).toBe(join(await realpath(chosenParent), 'chosen-app'))
+  })
+
   test('previews, installs and exports a compatible Smart app', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-'))
     roots.push(root)
@@ -373,6 +418,238 @@ describe('SmartAppManager', () => {
     )
   })
 
+  test('grants the decision capability from the manifest declaration alone', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-capability-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+
+    const manager = createManager(root)
+    const installation = await manager.createDirectory({
+      parentPath: parent,
+      name: 'decision-linked',
+      displayName: 'Decision Linked',
+      description: 'Requests the decision router',
+      template: 'web',
+    })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: false })
+
+    const manifestPath = join(installation.packagePath, 'plugin-manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as WorkbenchAppManifest
+    manifest.capabilities = { decisionModel: true }
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    await expect(manager.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: installation.id,
+        grantedCapabilities: { decisionModel: true },
+      })
+    )
+
+    // Neither a build-time allowlist nor a development switch takes part.
+    const otherBuild = createManager(root, undefined, {
+      WEWORK_DECISION_PROXY_GRANTED_SMART_APP_IDS_JSON: '[]',
+      WEWORK_DECISION_PROXY_ALLOW_LINKED_APPS: 'false',
+    })
+    await expect(otherBuild.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: installation.id,
+        grantedCapabilities: { decisionModel: true },
+      })
+    )
+  })
+
+  test('grants a zip-imported install that declares the capability', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-market-capability-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+    })
+
+    expect(installation).toMatchObject({
+      source: 'managed',
+      grantedCapabilities: { decisionModel: true },
+    })
+  })
+
+  test('never grants a capability the manifest does not request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-no-request-'))
+    roots.push(root)
+    const withoutRequest = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
+
+    const preview = await manager.preview(withoutRequest)
+    const silent = await manager.install({
+      archivePath: withoutRequest,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+    expect(silent.grantedCapabilities).toEqual({ decisionModel: false })
+  })
+
+  test('refuses a decision route when the manifest never requested the capability', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-unauthorized-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: false })
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        decisionBaseUrl: DECISION_ROUTE_URL,
+        decisionProtocolVersion: 1,
+      })
+    ).rejects.toThrow('Smart app is not authorized to use the Wework decision router')
+  })
+
+  test('rejects malformed decision routes even for a granted installation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-malformed-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: true })
+
+    const rejected = [
+      `https://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://attacker.example.com/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://user:pass@127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}?token=leak`,
+      `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}#fragment`,
+      'http://127.0.0.1:9500/v1/decision-router/short',
+      `http://127.0.0.1:9500/v2/decision-router/${DECISION_ROUTE_TOKEN}`,
+      `http://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}/extra`,
+      'http://127.0.0.1:9500/v1/decision-router/',
+    ]
+
+    for (const decisionBaseUrl of rejected) {
+      await expect(
+        manager.start({
+          installationId: installation.id,
+          decisionBaseUrl,
+          decisionProtocolVersion: 1,
+        })
+      ).rejects.toThrow(/Wework decision router base URL/)
+    }
+  })
+
+  test('rejects an unsupported decision router protocol version', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-version-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        decisionBaseUrl: DECISION_ROUTE_URL,
+        decisionProtocolVersion: 2,
+      })
+    ).rejects.toThrow('Wework decision router protocol version is not supported')
+  })
+
+  test('accepts a granted decision route and only then prepares the runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-accepted-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, {
+      ...validManifest(),
+      capabilities: { decisionModel: true },
+    })
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 1,
+    })
+
+    // The fixture has no bundled runtime, so the launch fails later; the point
+    // is that the address passed validation instead of being rejected here.
+    const failure = await manager
+      .start({
+        installationId: installation.id,
+        decisionBaseUrl: DECISION_ROUTE_URL,
+        decisionProtocolVersion: 1,
+      })
+      .then(() => null)
+      .catch((error: unknown) => String(error))
+    expect(failure).not.toBeNull()
+    expect(failure).not.toMatch(/decision router/i)
+  })
+
+  test('keeps decision route tokens separate from the generic routes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-token-'))
+    roots.push(root)
+    const manager = createManager(root)
+    manager.storeProxyToken('app-1', 'proxy-token')
+    manager.storeContextToken('app-1', 'context-token')
+    manager.storeDecisionToken('app-1', 'decision-token')
+
+    expect(manager.takeDecisionToken('app-1')).toBe('decision-token')
+    expect(manager.takeDecisionToken('app-1')).toBeNull()
+    // Taking the decision route must not consume the generic model routes.
+    expect(manager.takeProxyToken('app-1')).toBe('proxy-token')
+    expect(manager.takeContextToken('app-1')).toBe('context-token')
+  })
+
+  test('drops cached route tokens when an installation is deleted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-token-cleanup-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+    })
+    manager.storeProxyToken(installation.id, 'proxy-token')
+    manager.storeContextToken(installation.id, 'context-token')
+    manager.storeDecisionToken(installation.id, 'decision-token')
+
+    await manager.delete(installation.id, false)
+
+    expect(manager.takeProxyToken(installation.id)).toBeNull()
+    expect(manager.takeContextToken(installation.id)).toBeNull()
+    expect(manager.takeDecisionToken(installation.id)).toBeNull()
+  })
+
   test('rejects unknown scaffold templates before creating a destination', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-template-'))
     roots.push(root)
@@ -509,14 +786,16 @@ function createManager(
       manifest: WorkbenchAppManifest
       report: SmartAppVerificationReport
     }>
-  }
+  },
+  environment: NodeJS.ProcessEnv = {}
 ): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
+    documentsDirectory: () => join(root, 'Documents'),
     downloadsDirectory: () => join(root, 'downloads'),
     logDirectory: join(root, 'logs'),
     runtimeRoot: join(root, 'runtime'),
-    environment: {},
+    environment,
     runtimeHost: () => ({
       open: vi.fn(),
       close: vi.fn(),

@@ -32,6 +32,12 @@ pub struct CurrentUser {
     pub id: i64,
     #[allow(dead_code)]
     pub user_name: String,
+    /// `users.preferences`, read by the source media-uid resolver.
+    pub preferences: String,
+    /// `_extract_subtask_id_from_task_token`: the task token's `subtask_id`
+    /// when it is positive, otherwise `None` (the endpoint then treats the
+    /// attachment as unlinked).
+    pub subtask_id: Option<i64>,
 }
 
 pub struct AuthenticatedUser(pub CurrentUser);
@@ -130,7 +136,7 @@ struct UserRow {
     email: Option<String>,
     #[allow(dead_code)]
     #[mysql(rename = "users_git_info")]
-    git_info: brz_mysql::Json<crate::json_compat::OpaqueJson>,
+    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
     #[mysql(rename = "users_is_active")]
     is_active: i8,
     #[allow(dead_code)]
@@ -139,7 +145,6 @@ struct UserRow {
     #[allow(dead_code)]
     #[mysql(rename = "users_auth_source")]
     auth_source: String,
-    #[allow(dead_code)]
     #[mysql(rename = "users_preferences")]
     preferences: String,
     #[allow(dead_code)]
@@ -178,6 +183,7 @@ struct TaskTokenClaims {
     #[serde(rename = "type")]
     token_type: Option<String>,
     user_id: Option<i64>,
+    subtask_id: Option<i64>,
 }
 
 /// `is_api_key`: a token is an API key when it starts with `wg-`.
@@ -293,6 +299,8 @@ async fn verify_api_key<M: Mysql>(mysql: &M, api_key: &str) -> Result<CurrentUse
         Some(user) if user.is_active != 0 => Ok(CurrentUser {
             id: user.id,
             user_name: user.user_name,
+            preferences: user.preferences,
+            subtask_id: None,
         }),
         _ => Err(HttpError::invalid_api_key()),
     }
@@ -328,9 +336,10 @@ async fn verify_jwt_token_with_db<M: Mysql>(
         .map(|user| CurrentUser {
             id: user.id,
             user_name: user.user_name,
+            preferences: user.preferences,
+            subtask_id: None,
         }))
 }
-
 /// `verify_task_token` fallback: `type=task_token` JWT resolving a user id.
 async fn verify_task_token_user<M: Mysql>(
     config: &AuthConfig,
@@ -346,12 +355,15 @@ async fn verify_task_token_user<M: Mysql>(
     let Some(user_id) = claims.user_id else {
         return Ok(None);
     };
+    let subtask_id = claims.subtask_id.filter(|value| *value > 0);
     let user = user_by_id(mysql, user_id).await?;
     Ok(user
         .filter(|user| user.is_active != 0)
         .map(|user| CurrentUser {
             id: user.id,
             user_name: user.user_name,
+            preferences: user.preferences,
+            subtask_id,
         }))
 }
 

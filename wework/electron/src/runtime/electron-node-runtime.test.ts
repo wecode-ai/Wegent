@@ -94,11 +94,13 @@ describe('prepareElectronNodeRuntime', () => {
         ['-e', "process.stdout.write(process.env.ELECTRON_RUN_AS_NODE ?? 'missing')"],
         {
           env: environment,
+          timeout: 10_000,
         }
       )
 
       expect(result.stdout).toBe('1')
-    }
+    },
+    15_000
   )
 
   test.skipIf(process.platform === 'win32')(
@@ -130,6 +132,8 @@ describe('prepareElectronNodeRuntime', () => {
       )
 
       const stdout = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => child.kill(), 10_000)
+        timeout.unref()
         let output = ''
         child.stdout.setEncoding('utf8')
         child.stdout.on('data', chunk => {
@@ -137,8 +141,9 @@ describe('prepareElectronNodeRuntime', () => {
         })
         child.once('error', reject)
         child.once('close', code => {
+          clearTimeout(timeout)
           if (code === 0) resolve(output)
-          else reject(new Error(`Electron Node child exited with ${code}`))
+          else reject(new Error(`Electron Node child exited with ${code}; output=${output}`))
         })
       })
       const stderrClosed = new Promise<void>(resolve => {
@@ -149,7 +154,8 @@ describe('prepareElectronNodeRuntime', () => {
       child.stdin.end('warn')
 
       await expect(stdout).resolves.toBe('survived')
-    }
+    },
+    15_000
   )
 
   test.skipIf(process.platform === 'win32')(

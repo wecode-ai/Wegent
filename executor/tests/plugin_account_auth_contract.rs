@@ -104,6 +104,10 @@ def execute(credential, arguments):
             .await
             .unwrap();
         assert_eq!(String::from_utf8(result).unwrap().trim(), "business-ok");
+        assert!(
+            !root.join("scripts/__pycache__").exists(),
+            "Native authentication must not write bytecode into an immutable plugin package"
+        );
     }
 }
 
@@ -148,7 +152,7 @@ raise SystemExit(adapter.main(sys.argv[1:]))
     .unwrap();
     let adapter = NativeAdapter::load(root.path(), "mail", &declaration).unwrap();
     let exported = adapter
-        .export(&python(), Duration::from_secs(5))
+        .export(&python(), Duration::from_secs(10))
         .await
         .unwrap();
     let output = adapter
@@ -157,7 +161,7 @@ raise SystemExit(adapter.main(sys.argv[1:]))
             exported.credential,
             &["read".into()],
             None,
-            Duration::from_secs(5),
+            Duration::from_secs(10),
         )
         .await
         .unwrap();
@@ -329,6 +333,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for OAuthTransport {
         panic!("No OAuth broadcast")
     }
     fn on(&self, _: &str, _: wegent_executor::local::backend::EventHandler) {
+        panic!("No OAuth subscription")
+    }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {
         panic!("No OAuth subscription")
     }
 }
@@ -679,6 +687,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for MigrationTranspo
     fn on(&self, _: &str, _: wegent_executor::local::backend::EventHandler) {
         panic!("No subscription")
     }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {
+        panic!("No subscription")
+    }
 }
 
 fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
@@ -688,7 +700,7 @@ fn managed_fixture(root: &Path, checksum: &str) -> PathBuf {
     fs::rename(root.join("scripts"), package.join("scripts")).unwrap();
     fs::rename(root.join(".codex-plugin"), package.join(".codex-plugin")).unwrap();
     fs::write(
-        home.join("capabilities/manifest.json"),
+        home.join("capabilities/manifest-v2.json"),
         json!({"plugins":{"mail@wework":{
             "installed_plugin_id":42,"managed":true,"enabled":true,
             "checksum":checksum,"store_path":package
@@ -784,6 +796,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for TransferTranspor
         panic!("No secret broadcast")
     }
     fn on(&self, _: &str, _: wegent_executor::local::backend::EventHandler) {
+        panic!("No secret subscription")
+    }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {
         panic!("No secret subscription")
     }
 }

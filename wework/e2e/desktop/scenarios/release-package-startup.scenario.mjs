@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 
 const PROFILE_NAME = 'wework-core'
@@ -61,7 +61,7 @@ async function seedNativeDshProfile(userDataDirectory) {
       dsh: {
         bundle: { patch: './cordis.patch.yml' },
         client: {
-          inject: ['@deepseek-ai/dsh-client-runtime'],
+          inject: ['@deepseek-ai/dsh-client-ui-renderer'],
           platform: 'web',
         },
       },
@@ -116,7 +116,7 @@ async function seedNativeDshProfile(userDataDirectory) {
       dsh: {
         bundle: { patch: './cordis.patch.yml' },
         client: {
-          inject: ['@deepseek-ai/dsh-client-runtime'],
+          inject: ['@deepseek-ai/dsh-client-ui-renderer'],
           platform: 'web',
         },
       },
@@ -152,20 +152,45 @@ export function apply(ctx) {
 }
 
 async function assertReleasePackageResources() {
-  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') return
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
+  const resourcesRoot =
+    process.platform === 'darwin'
+      ? resolve(appBinary, '..', '..', 'Resources')
+      : resolve(appBinary, '..', 'resources')
+  const components = JSON.parse(await readFile(join(resourcesRoot, 'components.json'), 'utf8'))
+  const catalog = JSON.parse(
+    await readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json'), 'utf8')
+  )
+  const currentRuntimes = catalog.runtimes.filter(runtime => runtime.dshVersion === '0.2.0-rc.2')
+  assert.deepEqual(currentRuntimes.map(runtime => runtime.role).sort(), ['core', 'workbench'])
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.sourceFingerprint)).size, 1)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.assetName)).size, 1)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.archiveSha256)).size, 1)
+  assert.equal(new Set(currentRuntimes.map(runtime => runtime.archiveBytes)).size, 1)
+  assert.deepEqual(catalog.runtimes, currentRuntimes)
+  const legacy = catalog.downloadableRuntimes.find(
+    runtime => runtime.role === 'workbench' && runtime.dshVersion === '0.1.0-rc.8'
+  )
+  assert.ok(legacy, 'The packaged catalog must retain the legacy Smart app download descriptor')
+  await assert.rejects(lstat(join(resourcesRoot, 'harness-runtime', legacy.assetName)), {
+    code: 'ENOENT',
+  })
+  assert.match(
+    components.sourceSha,
+    /^[0-9a-f]{40,64}$/i,
+    'The packaged component manifest must identify its source commit'
+  )
+
+  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') {
+    return components
+  }
   assert.match(
     appBinary,
     /release-installer/,
     `Release startup E2E was not given a formal release binary: ${appBinary}`
   )
   if (process.platform === 'darwin') await assertMacosMicrophoneSigning(appBinary)
-  const resourcesRoot =
-    process.platform === 'darwin'
-      ? resolve(appBinary, '..', '..', 'Resources')
-      : resolve(appBinary, '..', 'resources')
-  const [components] = await Promise.all([
-    readFile(join(resourcesRoot, 'components.json'), 'utf8').then(JSON.parse),
+  await Promise.all([
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
@@ -216,6 +241,7 @@ async function assertReleasePackageResources() {
       )
     ),
   ])
+  return components
 }
 
 async function assertMacosMicrophoneSigning(appBinary) {
@@ -250,13 +276,54 @@ async function assertMacosMicrophoneSigning(appBinary) {
   assert.ok(description.trim(), 'The release package must explain microphone access')
 }
 
+async function assertCompressedHostUpdatePackage(appVersion) {
+  if (process.env.WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE !== 'true') return null
+  assert.equal(process.platform, 'darwin', 'Compressed Host update verification requires macOS')
+
+  const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
+  const appRoot = resolve(appBinary, '..', '..', '..')
+  const installerRoot = resolve(appRoot, '..', '..')
+  const onlineUpdateRoot = resolve(installerRoot, '..', 'release-online-update')
+  const archiveName = `WeWorkHostUpdate_${appVersion}_macos_${process.arch}.zip`
+  const archivePath = join(onlineUpdateRoot, archiveName)
+  const summary = execFileSync('zipinfo', ['-l', archivePath], { encoding: 'utf8' })
+  const match = /(\d+) files, (\d+) bytes uncompressed, (\d+) bytes compressed:\s*([\d.]+)%/.exec(
+    summary
+  )
+  assert.ok(match, `Could not read compression summary for ${archiveName}`)
+
+  const uncompressedBytes = Number(match[2])
+  const compressedBytes = Number(match[3])
+  assert.ok(uncompressedBytes > 0, `The Host update archive is empty: ${archiveName}`)
+  assert.ok(
+    compressedBytes < uncompressedBytes,
+    `The Host update archive is not compressed: ${compressedBytes} of ${uncompressedBytes} bytes`
+  )
+  return {
+    archiveName,
+    entries: Number(match[1]),
+    uncompressedBytes,
+    compressedBytes,
+    savingsPercent: Number(match[4]),
+  }
+}
+
 export async function createDesktopScenario({
   electronUserDataDirectory,
   resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
-  await assertReleasePackageResources()
+  const packagedComponents = await assertReleasePackageResources()
+  const hostUpdateCompression = await assertCompressedHostUpdatePackage(
+    packagedComponents.appVersion
+  )
+  if (hostUpdateCompression) {
+    await writeFile(
+      join(resultDir, 'host-update-compression.json'),
+      `${JSON.stringify(hostUpdateCompression, null, 2)}\n`
+    )
+  }
   await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
@@ -273,7 +340,38 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await verifyWindowsProfileDirectoryLinks(electronUserDataDirectory)
+      await control.command('navigate', 'body', { value: '/settings/about' })
+      await control.command('waitFor', '[data-testid="about-commit-id"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const displayedCommit = (
+        await control.command('getText', '[data-testid="about-commit-id"]')
+      ).trim()
+      const fullCommit = await control.command('getAttribute', '[data-testid="about-commit-id"]', {
+        value: 'title',
+      })
+      assert.ok(
+        displayedCommit.endsWith(packagedComponents.sourceSha.slice(0, 12)),
+        `About displayed ${displayedCommit} instead of packaged commit ${packagedComponents.sourceSha}`
+      )
+      assert.equal(
+        fullCommit,
+        packagedComponents.sourceSha.toLowerCase(),
+        'About did not expose the complete packaged source commit'
+      )
+      await writeFile(
+        join(resultDir, 'about-build-identity.json'),
+        `${JSON.stringify(
+          {
+            displayedCommit,
+            fullCommit,
+            packagedSourceSha: packagedComponents.sourceSha,
+          },
+          null,
+          2
+        )}\n`
+      )
+      await verifyWindowsProfileOwnedAssets(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
         timeoutMs: uiTimeoutMs,
@@ -313,12 +411,13 @@ export async function createDesktopScenario({
       return {
         nativeDshPluginCompatibility: true,
         seededNativeDshProfile: true,
+        hostUpdateCompression,
       }
     },
   }
 }
 
-async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
+async function verifyWindowsProfileOwnedAssets(userDataDirectory) {
   if (process.platform !== 'win32') return
   const assets = join(
     userDataDirectory,
@@ -331,26 +430,14 @@ async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
     'web',
     'assets'
   )
-  const linkType = await captureCommand(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      '[Console]::Out.Write((Get-Item -LiteralPath $env:WEWORK_E2E_PROFILE_ASSETS -Force).LinkType)',
-    ],
-    {
-      env: {
-        ...process.env,
-        WEWORK_E2E_PROFILE_ASSETS: assets,
-      },
-    }
-  )
+  const metadata = await lstat(assets)
+  assert.equal(metadata.isDirectory(), true, 'Windows Core DSH profile assets must be a directory')
   assert.equal(
-    linkType.trim(),
-    'Junction',
-    'Windows Core DSH profile assets must use a junction that does not require symlink privilege'
+    metadata.isSymbolicLink(),
+    false,
+    'Windows Core DSH profile assets must own their files so pnpm cannot delete shared resources'
   )
+  assert.ok((await readdir(assets)).length > 0, 'Windows Core DSH profile assets must not be empty')
 }
 
 async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
@@ -366,31 +453,6 @@ async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
     /^electron-node:\d+\.\d+\.\d+$/m,
     'A Codex skill TypeScript script did not run through Electron embedded Node'
   )
-}
-
-function captureCommand(command, args, options = {}) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
-      ...options,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', chunk => {
-      stdout += String(chunk)
-    })
-    child.stderr.on('data', chunk => {
-      stderr += String(chunk)
-    })
-    child.once('error', reject)
-    child.once('close', code => {
-      if (code === 0) resolvePromise(stdout)
-      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
-    })
-  })
 }
 
 function runNodeSkill(script, binDirectory) {

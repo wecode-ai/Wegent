@@ -38,10 +38,11 @@ export function projectSpaceRouteMatchesProject(
   )
 }
 
-export function projectSpaceContentRoute(project: RuntimeProjectSpaceRef): string {
+export function projectSpaceContentRoute(project: RuntimeProjectSpaceRef, itemId?: string): string {
   const params = new URLSearchParams()
   params.set('projectStore', project.projectStore)
   params.set('projectId', project.projectId)
+  if (itemId) params.set('itemId', itemId)
   return `/todo?${params.toString()}`
 }
 

@@ -149,3 +149,36 @@ def test_profile_health_rejects_incomplete_stored_profile_without_query() -> Non
 
     assert health == {"status": "invalid", "fallback_reason": "profile_incomplete"}
     assert db.query_count == 0
+
+
+def test_profile_health_rejects_a_non_embedding_model_reference() -> None:
+    """A referenced Model must be an embedding model, not any Model."""
+    db = _Db(
+        [
+            SimpleNamespace(
+                kind="Retriever",
+                name="shared-milvus",
+                namespace="default",
+                json={},
+            ),
+            SimpleNamespace(
+                kind="Model",
+                name="shared-chat",
+                namespace="default",
+                json={"spec": {"modelType": "llm"}},
+            ),
+        ]
+    )
+
+    health = profile_health(
+        db,  # type: ignore[arg-type]
+        {
+            "retriever_name": "shared-milvus",
+            "embedding_config": {"model_name": "shared-chat"},
+        },
+    )
+
+    assert health == {
+        "status": "invalid",
+        "fallback_reason": "embedding_model_unavailable",
+    }

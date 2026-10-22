@@ -1,3 +1,11 @@
+import {
+  builtinCodexCatalogModel,
+  codexCatalogModelIdForUpstream,
+} from "@wegent/chat-core/codex-catalog";
+import {
+  getCloudModelReasoning,
+  getCloudModelUpstreamApiFormat,
+} from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
 export interface ModelControlOption {
@@ -63,10 +71,10 @@ const REGION_LABELS: Record<string, string> = {
 };
 
 const FAMILY_ORDER = [
-  "claude",
   "codex-official",
   "codex-provider",
   "model-interface",
+  "claude",
   "gpt",
   "gemini",
   "kimi",
@@ -228,7 +236,7 @@ export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
   { id: "claude", label: "Claude", order: 10, controls: [] },
   {
     id: "codex-official",
-    label: "我的CodeX",
+    label: "本机 ChatGPT 账户",
     order: 20,
     controls: OPENAI_RESPONSES_CONTROLS,
   },
@@ -264,6 +272,17 @@ function getConfigUi(model: UnifiedModel): Record<string, unknown> {
   return ui && typeof ui === "object" && !Array.isArray(ui)
     ? (ui as Record<string, unknown>)
     : {};
+}
+
+export function isModelPickerDefault(model: UnifiedModel | null): boolean {
+  if (!model) return false;
+  const ui = getConfigUi(model);
+  return (
+    model.config?.codexIsDefault === true ||
+    model.config?.modelPickerDefault === true ||
+    ui.defaultModel === true ||
+    ui.isDefault === true
+  );
 }
 
 export function getWeworkModelKind(model: UnifiedModel): string {
@@ -484,8 +503,91 @@ function modelInterfaceReasoningOptions(
   });
 }
 
+export interface CatalogReasoningLevels {
+  efforts: string[];
+  defaultEffort?: string;
+}
+
+function rawConfigString(
+  config: Record<string, unknown> | null | undefined,
+  key: string,
+): string {
+  const value = config?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function resolveCodexCatalogModelId(model: UnifiedModel): string | null {
+  const explicit =
+    rawConfigString(model.config, "codex_catalog_model_id") ||
+    rawConfigString(model.config, "codexCatalogModelId");
+  if (explicit) return explicit;
+
+  const upstreamCandidates = [
+    model.modelId,
+    rawConfigString(model.config, "model_id"),
+    rawConfigString(model.config, "modelId"),
+    rawConfigString(model.config, "model"),
+  ];
+  const candidates = upstreamCandidates.some((candidate) => candidate?.trim())
+    ? upstreamCandidates
+    : [model.name];
+  return codexCatalogModelIdForUpstream(
+    candidates,
+    getCloudModelUpstreamApiFormat(model) ?? "",
+  );
+}
+
+function catalogReasoningLevels(
+  catalog: Record<string, unknown> | null,
+): CatalogReasoningLevels | null {
+  if (!catalog) return null;
+  const rawLevels = catalog.supported_reasoning_levels;
+  if (!Array.isArray(rawLevels)) return null;
+  const efforts = Array.from(
+    new Set(
+      rawLevels
+        .flatMap((level) => {
+          if (typeof level === "string") return [level];
+          if (!level || typeof level !== "object" || Array.isArray(level)) {
+            return [];
+          }
+          const effort = (level as Record<string, unknown>).effort;
+          return typeof effort === "string" ? [effort] : [];
+        })
+        .map(
+          (effort) => normalizeModelOptionValue("reasoning", effort) ?? effort,
+        )
+        .filter(Boolean),
+    ),
+  );
+  if (efforts.length === 0) return null;
+  const defaultLevel = catalog.default_reasoning_level;
+  return {
+    efforts,
+    defaultEffort:
+      typeof defaultLevel === "string"
+        ? normalizeModelOptionValue("reasoning", defaultLevel)
+        : undefined,
+  };
+}
+
+export function resolveModelCatalogReasoning(
+  model: UnifiedModel,
+): CatalogReasoningLevels | null {
+  if (model.provider === "local") return null;
+  const catalogId = resolveCodexCatalogModelId(model);
+  if (!catalogId) return null;
+  return catalogReasoningLevels(builtinCodexCatalogModel(catalogId));
+}
+
+export function hasCatalogReasoningEfforts(model: UnifiedModel): boolean {
+  return resolveModelCatalogReasoning(model) !== null;
+}
+
 export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
   const ui = getConfigUi(model);
+  const defaultReasoningEffort =
+    ui.defaultReasoningEffort ?? getCloudModelReasoning(model).effort;
   const reasoningEfforts = ui.reasoningEfforts ?? ui.supportedReasoningEfforts;
   const modelLabel =
     typeof ui.modelLabel === "string" && ui.modelLabel.trim()
@@ -507,8 +609,8 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
     reasoningEffortsDeclared: Array.isArray(reasoningEfforts),
     supportedReasoningEfforts: getSupportedReasoningEfforts(ui),
     defaultReasoningEffort:
-      typeof ui.defaultReasoningEffort === "string"
-        ? normalizeModelOptionValue("reasoning", ui.defaultReasoningEffort)
+      typeof defaultReasoningEffort === "string"
+        ? normalizeModelOptionValue("reasoning", defaultReasoningEffort)
         : undefined,
   };
 }
@@ -519,17 +621,33 @@ export function getControlsForModel(
   if (!model) return [];
   const metadata = getModelUiMetadata(model);
   const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel);
-  const controls = familyConfig.controls
+  const familyControls =
+    (metadata.reasoningEffortsDeclared ||
+      metadata.defaultReasoningEffort !== undefined) &&
+    !familyConfig.controls.some((control) => control.id === "reasoning")
+      ? [OPENAI_RESPONSES_CONTROLS[0], ...familyConfig.controls]
+      : familyConfig.controls;
+  const controls = familyControls
     .filter((control) => {
       if ((control.scope ?? "family") === "family") return true;
       return metadata.supportedControls.has(control.id);
     })
     .flatMap((control) => {
       if (control.id !== "reasoning") return [control];
-      if (isModelInterfaceModel(model) && metadata.reasoningEffortsDeclared) {
-        const options = modelInterfaceReasoningOptions(
-          metadata.supportedReasoningEfforts,
-        );
+      if (metadata.reasoningEffortsDeclared) {
+        const options = isModelInterfaceModel(model)
+          ? modelInterfaceReasoningOptions(metadata.supportedReasoningEfforts)
+          : metadata.supportedReasoningEfforts.map((value, index) => {
+              const standardOption = control.options.find(
+                (option) => option.value === value,
+              );
+              return standardOption
+                ? { ...standardOption, order: (index + 1) * 10 }
+                : {
+                    ...modelInterfaceReasoningOptions([value])[0],
+                    order: (index + 1) * 10,
+                  };
+            });
         if (options.length === 0) return [];
         const configuredDefault = metadata.defaultReasoningEffort;
         const defaultValue =
@@ -570,7 +688,44 @@ export function getControlsForModel(
       ];
     });
 
-  return controls;
+  if (metadata.reasoningEffortsDeclared) return controls;
+
+  const existingReasoning = controls.find(
+    (control) => control.id === "reasoning",
+  );
+  const reasoningControl = existingReasoning ?? OPENAI_RESPONSES_CONTROLS[0];
+  const catalogReasoning = resolveModelCatalogReasoning(model);
+  if (!catalogReasoning) return controls;
+  const catalogOptions = modelInterfaceReasoningOptions(
+    catalogReasoning.efforts,
+  );
+  if (catalogOptions.length === 0) return controls;
+  const catalogDefault =
+    metadata.defaultReasoningEffort &&
+    catalogOptions.some(
+      (option) => option.value === metadata.defaultReasoningEffort,
+    )
+      ? metadata.defaultReasoningEffort
+      : catalogReasoning.defaultEffort &&
+          catalogOptions.some(
+            (option) => option.value === catalogReasoning.defaultEffort,
+          )
+        ? catalogReasoning.defaultEffort
+        : catalogOptions.some(
+              (option) => option.value === reasoningControl.defaultValue,
+            )
+          ? reasoningControl.defaultValue
+          : catalogOptions[0].value;
+  const catalogControl = {
+    ...reasoningControl,
+    defaultValue: catalogDefault,
+    options: catalogOptions,
+  };
+  return existingReasoning
+    ? controls.map((control) =>
+        control.id === "reasoning" ? catalogControl : control,
+      )
+    : [...controls, catalogControl];
 }
 
 export function getModelDisplayLabel(
@@ -762,6 +917,29 @@ function compareVersionDesc(leftLabel: string, rightLabel: string): number {
   return 0;
 }
 
+function codexVariantOrder(label: string): number {
+  const normalized = label.toLowerCase();
+  if (/\bastra\b/.test(normalized)) return 0;
+  if (/\bsol\b/.test(normalized)) return 1;
+  if (/\bterra\b/.test(normalized)) return 2;
+  if (/\bluna\b/.test(normalized)) return 3;
+  return 4;
+}
+
+function compareCodexPickerModels(
+  leftModel: UnifiedModel,
+  rightModel: UnifiedModel,
+): number {
+  const left = getModelUiMetadata(leftModel);
+  const right = getModelUiMetadata(rightModel);
+  return (
+    compareVersionDesc(left.modelLabel, right.modelLabel) ||
+    codexVariantOrder(left.modelLabel) - codexVariantOrder(right.modelLabel) ||
+    left.sortOrder - right.sortOrder ||
+    left.modelLabel.localeCompare(right.modelLabel)
+  );
+}
+
 export function groupModelsByFamily(models: UnifiedModel[]) {
   const groups = new Map<
     string,
@@ -781,16 +959,22 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
   return [...groups.entries()]
     .map(([familyId, group]) => ({
       config: getFamilyConfig(familyId, group.familyLabel),
-      models: [...group.models].sort((a, b) => {
-        const left = getModelUiMetadata(a);
-        const right = getModelUiMetadata(b);
-        return (
-          regionPriority(left.region) - regionPriority(right.region) ||
-          compareVersionDesc(left.modelLabel, right.modelLabel) ||
-          left.sortOrder - right.sortOrder ||
-          left.modelLabel.localeCompare(right.modelLabel)
-        );
-      }),
+      models:
+        familyId === "codex-official"
+          ? [...group.models].sort(compareCodexPickerModels)
+          : familyId === "codex-provider" ||
+              familyId.startsWith("codex-provider:")
+            ? group.models
+            : [...group.models].sort((a, b) => {
+                const left = getModelUiMetadata(a);
+                const right = getModelUiMetadata(b);
+                return (
+                  regionPriority(left.region) - regionPriority(right.region) ||
+                  compareVersionDesc(left.modelLabel, right.modelLabel) ||
+                  left.sortOrder - right.sortOrder ||
+                  left.modelLabel.localeCompare(right.modelLabel)
+                );
+              }),
     }))
     .sort((a, b) => {
       const normalizedLeft = familyOrderValue(a.config.id, a.config.order);

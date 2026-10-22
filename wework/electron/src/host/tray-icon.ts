@@ -66,6 +66,10 @@ export interface NativeImageFactory {
   createFromPath(path: string): NativeImage
 }
 
+export function trayIconFilename(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' || platform === 'linux' ? 'tray-rounded.png' : '128x128.png'
+}
+
 export function convertToTemplateBitmap(bitmap: Buffer): Buffer {
   const template = Buffer.from(bitmap)
   for (let offset = 0; offset + 3 < template.length; offset += 4) {

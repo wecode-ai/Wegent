@@ -120,9 +120,18 @@ async def test_new_backend_relays_old_and_new_endpoint_combinations(
         assert result == {"success": True}
         if selected == 2:
             payload["consumer_id"] = "consumer-1"
-        relay.sio.emit.assert_awaited_with(
-            f"terminal:{event}", payload, to="device-sid", namespace="/local-executor"
-        )
+        if event == "resize":
+            relay.sio.call.assert_awaited_with(
+                "terminal:resize",
+                payload,
+                to="device-sid",
+                namespace="/local-executor",
+                timeout=terminal_namespace.TERMINAL_ATTACH_TIMEOUT_SECONDS,
+            )
+        else:
+            relay.sio.emit.assert_awaited_with(
+                "terminal:input", payload, to="device-sid", namespace="/local-executor"
+            )
 
     relay.sio.call.reset_mock()
     ack = await relay.browser.on_terminal_ack(

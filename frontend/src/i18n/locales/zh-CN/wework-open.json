@@ -1,0 +1,10 @@
+{
+  "brand": "Wegent 协作空间",
+  "title": "在 Wework 中打开任务",
+  "description": "点击下方按钮，让浏览器打开 Wework 并定位到任务。",
+  "open_wework": "在 Wework 中打开",
+  "view_task": "查看任务",
+  "browser_hint": "如果没有弹出打开 Wework 的提示，请在系统浏览器中打开本页后重试；也可以直接查看网页任务。",
+  "invalid_title": "链接无效",
+  "invalid_description": "无法确定要打开的任务，请返回通知重新打开。"
+}

@@ -7,7 +7,6 @@
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.kind import kind_service
 
 
 def load_direct_models_by_namespace(
@@ -16,8 +15,12 @@ def load_direct_models_by_namespace(
     """Keep personal ownership filtering and batch the visible group models."""
     result: dict[str, list[Kind]] = {name: [] for name in namespaces}
     if "default" in result:
-        result["default"] = kind_service.list_resources(
-            user_id=user_id, kind="Model", namespace="default"
+        result["default"] = (
+            db.query(Kind)
+            .filter_by(
+                user_id=user_id, kind="Model", namespace="default", is_active=True
+            )
+            .all()
         )
     group_names = [name for name in result if name != "default"]
     if group_names:

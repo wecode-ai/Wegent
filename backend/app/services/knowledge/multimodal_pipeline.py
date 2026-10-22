@@ -23,7 +23,6 @@ Helpers:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -210,7 +209,6 @@ def schedule_multimodal_indexing_or_none(
         )
 
     document.index_status = DocumentIndexStatus.PENDING_CONVERSION
-    document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
 
     task_kwargs = build_multimodal_conversion_kwargs(

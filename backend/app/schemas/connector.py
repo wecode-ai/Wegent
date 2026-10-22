@@ -300,29 +300,6 @@ class ConnectorAppReadResponse(BaseModel):
     missing_app_ids: list[str] = Field(default_factory=list)
 
 
-class ConnectorInstalledApp(BaseModel):
-    id: str
-    slug: str
-    name: str
-    description: str = ""
-    icon_url: str | None = None
-    runtime_name: str | None = None
-    enabled: bool
-    callable: bool
-    connection: ConnectorConnectionResponse
-    tool_summaries: list[ConnectorToolSummary] = Field(default_factory=list)
-
-
-class ConnectorInstalledResponse(BaseModel):
-    apps: list[ConnectorInstalledApp]
-
-
-class ConnectorTokenResponse(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"] = "bearer"
-    expires_in: int
-
-
 class ConnectorTool(BaseModel):
     name: str
     title: str | None = None

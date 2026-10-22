@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentStatus, KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
 
 logger = logging.getLogger(__name__)
@@ -25,16 +25,22 @@ class DocumentReadService:
     def _load_documents(
         db: Session,
         document_ids: list[int],
+        *,
+        searchable_only: bool,
     ) -> dict[int, KnowledgeDocument]:
         """Load documents in bulk and index them by ID."""
         if not document_ids:
             return {}
 
-        documents = (
-            db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id.in_(document_ids))
-            .all()
+        query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.id.in_(document_ids)
         )
+        if searchable_only:
+            query = query.filter(
+                KnowledgeDocument.status == DocumentStatus.ENABLED,
+                KnowledgeDocument.is_active.is_(True),
+            )
+        documents = query.all()
         return {document.id: document for document in documents}
 
     @staticmethod
@@ -156,12 +162,15 @@ class DocumentReadService:
         knowledge_base_ids: Optional[list[int]] = None,
         user_subtask_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        searchable_only: bool = True,
     ) -> list[Dict[str, Any]]:
-        """Read multiple documents while preserving input order."""
+        """Read searchable bodies, or stored bodies for authorized management preview."""
         if not document_ids:
             return []
 
-        documents_by_id = self._load_documents(db, document_ids)
+        documents_by_id = self._load_documents(
+            db, document_ids, searchable_only=searchable_only
+        )
 
         # Collect all attachment_ids to load (original + converted)
         all_attachment_ids: set[int] = set()

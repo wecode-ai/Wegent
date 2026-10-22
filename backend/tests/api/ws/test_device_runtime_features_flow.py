@@ -56,6 +56,12 @@ def _runtime_features(*, managed: bool) -> dict:
             "codeServer": False,
             "terminal": True,
         },
+        "projectEditing": {
+            "multiRoots": True,
+            "aiSettings": True,
+            "defaultProjectSpace": True,
+            "plugins": False,
+        },
         "worktrees": {
             "version": 1,
             "managed": managed,
@@ -144,6 +150,10 @@ def _patch_namespace(
     monkeypatch.setattr(
         "app.tasks.robot_queue_tasks.reconcile_device_executions",
         reconcile,
+    )
+    monkeypatch.setattr(
+        "app.services.device.plugin_removal_sync.sync_pending_plugin_removals",
+        AsyncMock(),
     )
     return reconcile
 
@@ -264,6 +274,7 @@ async def test_app_heartbeat_reconciles_wegent_tasks(
     namespace = DeviceNamespace()
     session = {"user_id": test_user.id, "client_ip": "198.51.100.40"}
     reconcile = _patch_namespace(monkeypatch, namespace, session)
+    from app.services.device import plugin_removal_sync
 
     registered = await namespace.on_device_register(
         "socket-app",
@@ -300,6 +311,65 @@ async def test_app_heartbeat_reconciles_wegent_tasks(
         device_id=device_id,
         needs_confirmation_only=True,
     )
+    plugin_removal_sync.sync_pending_plugin_removals.assert_awaited_once_with(
+        test_user.id, device_id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformed", [{"worktrees": {"version": "invalid"}}, {"schemaVersion": "invalid"}]
+)
+async def test_registration_and_heartbeat_preserve_explicit_project_denials(
+    test_db, test_user, monkeypatch, malformed
+):
+    device_id = "legacy-explicit-project-denials"
+    test_db.add(_device(test_user.id, device_id, DeviceType.REMOTE))
+    test_db.commit()
+    _patch_device_cache(monkeypatch)
+    namespace = DeviceNamespace()
+    _patch_namespace(monkeypatch, namespace, {"user_id": test_user.id})
+    monkeypatch.setattr(
+        "app.services.device.remote_provider.executor_version_service.get_latest_version",
+        AsyncMock(return_value="1.8.6"),
+    )
+    denials = {
+        "multiRoots": False,
+        "aiSettings": False,
+        "defaultProjectSpace": False,
+        "plugins": False,
+    }
+    features = {"schemaVersion": 4, "projectEditing": denials, **malformed}
+    registered = await namespace.on_device_register(
+        "socket-explicit-project-denials",
+        {
+            "device_id": device_id,
+            "name": "Legacy Runtime",
+            "device_type": "remote",
+            "executor_version": "1.8.6",
+            "runtime_instance_id": "legacy-runtime",
+            "runtime_features": features,
+        },
+    )
+    await _wait_for_registration_followups(namespace)
+    devices = await RemoteDeviceProvider().list_devices(test_db, test_user.id)
+    assert registered == {"success": True, "device_id": device_id}
+    assert devices[0]["runtime_features"]["projectEditing"] == denials
+    assert "worktrees" not in devices[0]["runtime_features"]
+
+    heartbeat = await namespace.on_device_heartbeat(
+        "socket-explicit-project-denials",
+        {
+            "device_id": device_id,
+            "executor_version": "1.8.6",
+            "runtime_instance_id": "legacy-runtime",
+            "runtime_features": features,
+        },
+    )
+    devices = await RemoteDeviceProvider().list_devices(test_db, test_user.id)
+    assert heartbeat == {"success": True}
+    assert devices[0]["runtime_features"]["projectEditing"] == denials
+    assert "worktrees" not in devices[0]["runtime_features"]
 
 
 @pytest.mark.asyncio

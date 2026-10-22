@@ -278,6 +278,26 @@ describe('composer mention icons', () => {
     expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/dingtalk.png')
   })
 
+  test('uses the GitHub logo for an account-specific app reference', () => {
+    publishComposerApps([
+      {
+        id: 'connector_github_icon_test',
+        name: 'GitHub',
+        pluginKey: 'github',
+        description: null,
+        logoUrl: 'https://example.com/github.png',
+        isAccessible: true,
+        isEnabled: true,
+        source: 'wegent-connector',
+      },
+    ])
+    const reference = '[$GitHub](app://connector_github_icon_test)'
+    const element = createComposerMentionElement(parseComposerMentions(reference)[0])
+
+    expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
+    expect(element.textContent).toBe('GitHub')
+  })
+
   test('keeps the generic cube icon for skill mentions without a brand logo', () => {
     const reference = '[$gmail](/tmp/gmail/SKILL.md)'
     const element = createComposerMentionElement({

@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const collaborationAppMocks = vi.hoisted(() => ({
   useController: vi.fn(),
+  stateSetters: [] as Array<{
+    initialValue: unknown;
+    setter: ReturnType<typeof vi.fn>;
+  }>,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -23,12 +27,18 @@ vi.mock("react", async (importOriginal) => {
     useEffect: vi.fn(),
     useMemo: <T,>(factory: () => T) => factory(),
     useRef: <T,>(initialValue: T) => ({ current: initialValue }),
-    useState: <T,>(initialValue: T | (() => T)) => [
-      typeof initialValue === "function"
-        ? (initialValue as () => T)()
-        : initialValue,
-      vi.fn(),
-    ],
+    useState: <T,>(initialValue: T | (() => T)) => {
+      const resolvedValue =
+        typeof initialValue === "function"
+          ? (initialValue as () => T)()
+          : initialValue;
+      const setter = vi.fn();
+      collaborationAppMocks.stateSetters.push({
+        initialValue: resolvedValue,
+        setter,
+      });
+      return [resolvedValue, setter];
+    },
   };
 });
 
@@ -42,11 +52,12 @@ vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
 }));
 
 import { CollaborationApp } from "./CollaborationApp";
+import { IssueDetail } from "./IssueDetail";
 import { CollaborationSettings } from "./CollaborationSettings";
+import { collaborationTestIds } from "./testIds";
 import {
   CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
-  ProjectCollaborationParticipants,
   ProjectAutomaticProcessing,
   ProjectSettingsShell,
 } from "./project-manage";
@@ -61,6 +72,10 @@ import {
   buildCollaborationProjectViewOptions,
   collaborationProjectViewIds,
 } from "./project-shell";
+import {
+  ProjectCalendarView,
+  ProjectGanttView,
+} from "./project-schedule/ProjectScheduleViews";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type {
   CollaborationCapabilities,
@@ -127,9 +142,12 @@ function createApi(): SharedWorkspaceApi {
   } as unknown as SharedWorkspaceApi;
 }
 
-function renderApp(host: CollaborationHostAdapter) {
+function renderApp(
+  host: CollaborationHostAdapter,
+  api: SharedWorkspaceApi = createApi(),
+) {
   return CollaborationApp({
-    api: createApi(),
+    api,
     host,
   });
 }
@@ -144,6 +162,7 @@ function createProject(version: number): CollaborationProject {
     project_store: "backend",
     task_provider: "local",
     provider_config: {},
+    access_role: "Maintainer",
     created_by_user_id: 1,
     status: "active",
     tags: [],
@@ -176,6 +195,10 @@ function controllerWithProject(project: CollaborationProject) {
       reportError: vi.fn(),
       replaceProject: vi.fn(),
       markIssueRead: vi.fn().mockResolvedValue(null),
+      confirmIssueRead: vi.fn(),
+      replaceIssue: vi.fn(),
+      updateProject: vi.fn().mockResolvedValue(project),
+      updateIssue: vi.fn().mockResolvedValue(null),
     },
   };
 }
@@ -204,6 +227,7 @@ function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
 describe("CollaborationApp API boundary", () => {
   beforeEach(() => {
     collaborationAppMocks.useController.mockReset();
+    collaborationAppMocks.stateSetters.length = 0;
     collaborationAppMocks.useController.mockReturnValue({
       state: {
         projects: [],
@@ -268,6 +292,119 @@ describe("CollaborationApp API boundary", () => {
     expect(collaborationProjectViewIds).not.toContain("automation");
   });
 
+  it("registers calendar and Gantt as project views that preserve their route", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "calendar",
+    };
+    const project = createProject(1);
+    const controller = controllerWithProject(project);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Scheduled issue",
+      description: "",
+      status: "pending",
+      priority: "none",
+      due_at: "2026-10-20T08:00:00Z",
+      tags: [],
+      sort_order: 0,
+      version: 1,
+      created_at: "2026-10-10T08:00:00Z",
+      updated_at: "2026-10-10T08:00:00Z",
+      completed_at: null,
+      can_edit: true,
+    } satisfies CollaborationIssue;
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: { ...controller.state, issues: [issue] },
+    });
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const calendar = shell?.props.extensions.find(
+      (extension: { id: string }) => extension.id === "calendar",
+    );
+    const gantt = shell?.props.extensions.find(
+      (extension: { id: string }) => extension.id === "gantt",
+    );
+
+    expect(calendar?.content.type).toBe(ProjectCalendarView);
+    expect(gantt?.content.type).toBe(ProjectGanttView);
+    expect(calendar?.content.props.viewOptions).toEqual({
+      status: "",
+      assignee: "",
+      tag: "",
+      groupBy: "none",
+      sortBy: "start_asc",
+    });
+    expect(calendar?.content.props.onSaveProjectViewOptions).toBeTypeOf(
+      "function",
+    );
+    calendar?.content.props.onOpen(issue);
+    gantt?.content.props.onOpen(issue);
+    await calendar?.content.props.onSchedule(issue, {
+      startAt: "2026-10-19",
+      dueAt: "2026-10-21",
+    });
+    await gantt?.content.props.onSchedule(issue, {
+      startAt: "2026-10-20",
+      dueAt: "2026-10-22",
+    });
+    expect(host.navigate).toHaveBeenNthCalledWith(1, {
+      projectId: project.id,
+      issueId: issue.id,
+      view: "calendar",
+    });
+    expect(host.navigate).toHaveBeenNthCalledWith(2, {
+      projectId: project.id,
+      issueId: issue.id,
+      view: "gantt",
+    });
+    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(
+      1,
+      issue.id,
+      {
+        version: issue.version,
+        startAt: "2026-10-19",
+        dueAt: "2026-10-21",
+      },
+    );
+    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(
+      2,
+      issue.id,
+      {
+        version: issue.version,
+        startAt: "2026-10-20",
+        dueAt: "2026-10-22",
+      },
+    );
+    await calendar?.content.props.onSaveProjectViewOptions({
+      status: "pending",
+      assignee: "",
+      tag: "",
+      groupBy: "status",
+      sortBy: "due_asc",
+    });
+    expect(controller.commands.updateProject).toHaveBeenCalledWith(project.id, {
+      version: project.version,
+      boardConfig: expect.objectContaining({
+        schedule_view: {
+          status_filter: "pending",
+          assignee_filter: null,
+          tag_filter: null,
+          group_by: "status",
+          sort_by: "due_asc",
+        },
+      }),
+    });
+  });
+
   it("keeps project settings mounted across polling refreshes", () => {
     const host = createHost(false, "home");
     host.location = {
@@ -311,6 +448,100 @@ describe("CollaborationApp API boundary", () => {
     expect(refreshedSettings?.props.project.version).toBe(2);
   });
 
+  it("allows Issue creation without redirecting before environment initialization", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({
+        ...createProject(1),
+        project_store: "local",
+        access_role: "Owner",
+      }),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    expect(createButton).toBeDefined();
+    await createButton?.props.onClick();
+
+    expect(host.notify).not.toHaveBeenCalled();
+    expect(host.navigate).not.toHaveBeenCalled();
+  });
+
+  it("does not require an environment refresh before creating an Issue", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    const project = {
+      ...createProject(1),
+      access_role: "Owner" as const,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "",
+        devices: {
+          "device-21": {
+            status: "ready" as const,
+            workspace_path: "/workspace/project-1",
+          },
+        },
+      },
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(project),
+    );
+    const api = createApi();
+    api.projects.get = vi.fn(async () => project);
+    api.projects.listExecutionEnvironments = vi.fn(async () => [
+      {
+        id: "environment-21",
+        device_id: 21,
+        device_key: "device-21",
+        name: "Device",
+        kind: "local_device",
+        coding_tools: ["codex"],
+        owner_type: "user",
+        owner_id: "1",
+        owner_name: "Owner",
+        status: "online",
+        updated_at: "2026-09-26T00:00:00Z",
+      },
+    ]);
+
+    const shell = findByType(
+      renderApp(host, api),
+      CollaborationProjectViewShell,
+    );
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    await createButton?.props.onClick();
+
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.listExecutionEnvironments).not.toHaveBeenCalled();
+    expect(host.notify).not.toHaveBeenCalled();
+    expect(host.navigate).not.toHaveBeenCalled();
+  });
+
   it("uses the shared project settings content as the vertical scroller", () => {
     const shell = ProjectSettingsShell({
       ariaLabel: "项目设置",
@@ -336,7 +567,7 @@ describe("CollaborationApp API boundary", () => {
     expect(content?.props.className).not.toContain("overflow-hidden");
   });
 
-  it("keeps project settings limited to the four project-level concerns", () => {
+  it("exposes agents, members and collaboration teams as grouped settings pages", () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -360,8 +591,8 @@ describe("CollaborationApp API boundary", () => {
     const sectionIds = settingsShell?.props.sections.map(
       (section: { id: string }) => section.id,
     );
-    const participantsSection = settingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "collaboration-participants",
+    const groupsSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "groups",
     );
     const automaticProcessingSection = settingsShell?.props.sections.find(
       (section: { id: string }) => section.id === "automatic-processing",
@@ -369,16 +600,16 @@ describe("CollaborationApp API boundary", () => {
 
     expect(sectionIds).toEqual([
       "project",
-      "collaboration-participants",
+      "agents",
+      "members",
+      "groups",
       "environments",
       "automatic-processing",
     ]);
-    expect(participantsSection?.content.type).toBe(
-      ProjectCollaborationParticipants,
-    );
+    expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 团队" });
     expect(
       findByType(
-        participantsSection?.content.props.groupsContent,
+        groupsSection?.content.props.children,
         ProjectCollaborationGroups,
       ),
     ).toBeDefined();
@@ -386,7 +617,7 @@ describe("CollaborationApp API boundary", () => {
     expect(automaticProcessingSection?.content.type).toBe(
       ProjectAutomaticProcessing,
     );
-    expect(participantsSection?.content).not.toBe(
+    expect(groupsSection?.content).not.toBe(
       automaticProcessingSection?.content,
     );
   });
@@ -614,6 +845,18 @@ describe("CollaborationApp API boundary", () => {
         taskBindings: [selectedBinding],
       }),
     );
+    const read = { ...issue, is_unread: false };
+    renderIssueDetail.mock.calls[0][0].onRead(read);
+    expect(
+      controller.commands.confirmIssueRead,
+    ).toHaveBeenCalledExactlyOnceWith(read);
+    expect(controller.commands.replaceIssue).not.toHaveBeenCalled();
+
+    const app = CollaborationApp({ api: createApi(), host });
+    const detail = findByType(app, IssueDetail);
+    detail?.props.onRead(read);
+    expect(controller.commands.confirmIssueRead).toHaveBeenCalledTimes(2);
+    expect(controller.commands.replaceIssue).not.toHaveBeenCalled();
   });
 
   it("keeps Issue deletion hidden until the host enables it", () => {
@@ -639,7 +882,7 @@ describe("CollaborationApp API boundary", () => {
     expect(table?.props.onDelete).toBeUndefined();
   });
 
-  it("wires Issue deletion into board, table, and detail when enabled", () => {
+  it("wires completed Issue archiving into board, table, and detail", () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -656,7 +899,7 @@ describe("CollaborationApp API boundary", () => {
       assignee_user_id: null,
       title: "Issue",
       description: "",
-      status: "inbox",
+      status: "completed",
       priority: "none",
       due_at: null,
       tags: [],
@@ -681,7 +924,7 @@ describe("CollaborationApp API boundary", () => {
     const app = CollaborationApp({
       api: createApi(),
       host,
-      issueDeleteEnabled: true,
+      issueArchiveEnabled: true,
       renderIssueDetail,
     });
     const shell = findByType(app, CollaborationProjectViewShell);
@@ -693,6 +936,98 @@ describe("CollaborationApp API boundary", () => {
     expect(renderIssueDetail).toHaveBeenCalledWith(
       expect.objectContaining({ onDelete: expect.any(Function) }),
     );
+  });
+
+  it("ignores a stale archive page after the archive drawer reopens", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      view: "board",
+    };
+    const project = createProject(1);
+    const controller = controllerWithProject(project);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "completed",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      can_edit: true,
+      version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      completed_at: null,
+    } satisfies CollaborationIssue;
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        selectedIssue: issue,
+      },
+    });
+    let resolveFirst:
+      | ((value: { items: CollaborationIssue[]; nextCursor: null }) => void)
+      | undefined;
+    let resolveSecond:
+      | ((value: { items: CollaborationIssue[]; nextCursor: null }) => void)
+      | undefined;
+    const first = new Promise<{
+      items: CollaborationIssue[];
+      nextCursor: null;
+    }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<{
+      items: CollaborationIssue[];
+      nextCursor: null;
+    }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const api = createApi();
+    api.issues = {
+      ...api.issues,
+      listArchived: vi
+        .fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second),
+    };
+
+    const app = CollaborationApp({
+      api,
+      host,
+      issueArchiveEnabled: true,
+    });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    const archivedIssuesSetter = collaborationAppMocks.stateSetters.find(
+      ({ initialValue }) => Array.isArray(initialValue),
+    )?.setter;
+
+    expect(board?.props.onOpenArchive).toEqual(expect.any(Function));
+    board?.props.onOpenArchive();
+    board?.props.onOpenArchive();
+    expect(api.issues.listArchived).toHaveBeenCalledTimes(2);
+    expect(archivedIssuesSetter).toHaveBeenCalledTimes(2);
+    resolveSecond?.({ items: [], nextCursor: null });
+    await vi.waitFor(() => {
+      expect(archivedIssuesSetter).toHaveBeenCalledTimes(3);
+    });
+    resolveFirst?.({ items: [], nextCursor: null });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(api.issues.listArchived).toHaveBeenCalledTimes(2);
+    expect(archivedIssuesSetter).toHaveBeenCalledTimes(3);
   });
 
   it("keeps detail deletion unavailable for a read-only Issue", () => {
@@ -712,7 +1047,7 @@ describe("CollaborationApp API boundary", () => {
       assignee_user_id: null,
       title: "Issue",
       description: "",
-      status: "inbox",
+      status: "completed",
       priority: "none",
       due_at: null,
       tags: [],
@@ -737,7 +1072,7 @@ describe("CollaborationApp API boundary", () => {
     CollaborationApp({
       api: createApi(),
       host,
-      issueDeleteEnabled: true,
+      issueArchiveEnabled: true,
       renderIssueDetail,
     });
 

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   ProjectManageApi,
@@ -11,135 +11,134 @@ import type {
   ProjectManageMember,
   ProjectManageProject,
   ProjectManageUser,
-} from "./types";
+} from './types'
 
-type Effect = () => void | (() => void);
+type Effect = () => void | (() => void)
 
 const hookRuntime = vi.hoisted(() => {
-  let hookIndex = 0;
-  let hooks: Array<Record<string, unknown>> = [];
-  let pendingEffects: Array<{ effect: Effect; index: number }> = [];
+  let hookIndex = 0
+  let hooks: Array<Record<string, unknown>> = []
+  let pendingEffects: Array<{ effect: Effect; index: number }> = []
 
-  const dependenciesChanged = (
-    previous: unknown[] | undefined,
-    next: unknown[],
-  ) =>
+  const dependenciesChanged = (previous: unknown[] | undefined, next: unknown[]) =>
     !previous ||
     previous.length !== next.length ||
-    previous.some((value, index) => !Object.is(value, next[index]));
+    previous.some((value, index) => !Object.is(value, next[index]))
 
   return {
     reset() {
-      hookIndex = 0;
-      hooks = [];
-      pendingEffects = [];
+      hookIndex = 0
+      hooks = []
+      pendingEffects = []
     },
     beginRender() {
-      hookIndex = 0;
-      pendingEffects = [];
+      hookIndex = 0
+      pendingEffects = []
     },
     flushEffects() {
       for (const { effect, index } of pendingEffects) {
-        const hook = hooks[index];
-        const cleanup = hook.cleanup;
-        if (typeof cleanup === "function") cleanup();
-        hook.cleanup = effect();
+        const hook = hooks[index]
+        const cleanup = hook.cleanup
+        if (typeof cleanup === 'function') cleanup()
+        hook.cleanup = effect()
       }
-      pendingEffects = [];
+      pendingEffects = []
     },
     useCallback<T>(callback: T, dependencies: unknown[]) {
-      const index = hookIndex++;
-      const hook = hooks[index] ?? {};
-      hooks[index] = hook;
-      const previous = hook.dependencies as unknown[] | undefined;
+      const index = hookIndex++
+      const hook = hooks[index] ?? {}
+      hooks[index] = hook
+      const previous = hook.dependencies as unknown[] | undefined
       if (dependenciesChanged(previous, dependencies)) {
-        hook.dependencies = dependencies;
-        hook.value = callback;
+        hook.dependencies = dependencies
+        hook.value = callback
       }
-      return hook.value as T;
+      return hook.value as T
     },
     useEffect(effect: Effect, dependencies: unknown[]) {
-      const index = hookIndex++;
-      const hook = hooks[index] ?? {};
-      hooks[index] = hook;
-      const previous = hook.dependencies as unknown[] | undefined;
+      const index = hookIndex++
+      const hook = hooks[index] ?? {}
+      hooks[index] = hook
+      const previous = hook.dependencies as unknown[] | undefined
       if (dependenciesChanged(previous, dependencies)) {
-        hook.dependencies = dependencies;
-        pendingEffects.push({ effect, index });
+        hook.dependencies = dependencies
+        pendingEffects.push({ effect, index })
       }
     },
     useMemo<T>(factory: () => T, dependencies: unknown[]) {
-      const index = hookIndex++;
-      const hook = hooks[index] ?? {};
-      hooks[index] = hook;
-      const previous = hook.dependencies as unknown[] | undefined;
+      const index = hookIndex++
+      const hook = hooks[index] ?? {}
+      hooks[index] = hook
+      const previous = hook.dependencies as unknown[] | undefined
       if (dependenciesChanged(previous, dependencies)) {
-        hook.dependencies = dependencies;
-        hook.value = factory();
+        hook.dependencies = dependencies
+        hook.value = factory()
       }
-      return hook.value as T;
+      return hook.value as T
     },
     useRef<T>(initialValue: T) {
-      const index = hookIndex++;
-      const hook = hooks[index] ?? { current: initialValue };
-      hooks[index] = hook;
-      return hook as { current: T };
+      const index = hookIndex++
+      const hook = hooks[index] ?? { current: initialValue }
+      hooks[index] = hook
+      return hook as { current: T }
     },
     useState<T>(initialValue: T | (() => T)) {
-      const index = hookIndex++;
+      const index = hookIndex++
       const hook = hooks[index] ?? {
-        value:
-          typeof initialValue === "function"
-            ? (initialValue as () => T)()
-            : initialValue,
-      };
-      hooks[index] = hook;
+        value: typeof initialValue === 'function' ? (initialValue as () => T)() : initialValue,
+      }
+      hooks[index] = hook
       const setValue = (next: T | ((current: T) => T)) => {
         hook.value =
-          typeof next === "function"
-            ? (next as (current: T) => T)(hook.value as T)
-            : next;
-      };
-      return [hook.value as T, setValue] as const;
+          typeof next === 'function' ? (next as (current: T) => T)(hook.value as T) : next
+      }
+      return [hook.value as T, setValue] as const
     },
-  };
-});
+  }
+})
 
-vi.mock("react", () => ({
+vi.mock('react', async () => ({
+  ...(await vi.importActual<typeof import('react')>('react')),
   useCallback: hookRuntime.useCallback,
   useEffect: hookRuntime.useEffect,
+  useLayoutEffect: hookRuntime.useEffect,
   useMemo: hookRuntime.useMemo,
   useRef: hookRuntime.useRef,
   useState: hookRuntime.useState,
-}));
+}))
 
-import { ProjectManageView } from "./ProjectManageView";
+import { createCollaborationTranslator } from '../i18n'
+import { ProjectManageView } from './ProjectManageView'
+import { ProjectMembersSection } from './ProjectMembersSection'
+import { ProjectTagsSection } from './ProjectManageSections'
 
 function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
 }
 
-function project(
-  id: string,
-  visibility: "private" | "public_restricted" | "public",
-  version = 1,
-): ProjectManageProject {
+function project(id: string, visibility: 'private' | 'public', version = 1): ProjectManageProject {
   return {
     id,
-    task_provider: "local",
+    name: 'Project',
+    description: '',
+    project_key: 'PR',
+    access_role: 'Maintainer',
+    task_provider: 'local',
+    membership_mode: 'inherit',
     provider_config: {},
     visibility,
     tags: [],
     version,
-  };
+  }
 }
 
 function createApi() {
   return {
+    getProject: vi.fn(),
     listMembers: vi.fn().mockResolvedValue([]),
     listItems: vi.fn().mockResolvedValue({ items: [] }),
     searchUsers: vi.fn().mockResolvedValue({ users: [] }),
@@ -153,10 +152,10 @@ function createApi() {
     ProjectManageMember,
     ProjectManageItem,
     ProjectManageUser
-  >;
+  >
 }
 
-const Icon = () => null;
+const Icon = () => null
 
 function createHost(): ProjectManageHost {
   return {
@@ -170,18 +169,18 @@ function createHost(): ProjectManageHost {
       X: Icon,
     },
     translate: (_key, fallback, options) => {
-      let value = fallback;
+      let value = fallback
       for (const [name, replacement] of Object.entries(options ?? {})) {
-        value = value.split(`{{${name}}}`).join(String(replacement));
+        value = value.split(`{{${name}}}`).join(String(replacement))
       }
-      return value;
+      return value
     },
     confirm: () => true,
     trackCompleted: vi.fn(),
     trackFailed: vi.fn(),
     renderTooltip: ({ children }) => children,
     renderActionMenu: () => null,
-  };
+  }
 }
 
 function renderView(
@@ -190,259 +189,508 @@ function renderView(
   currentProject: ProjectManageProject,
   onProjectUpdated: (project: ProjectManageProject) => void,
   quickAdd?: {
-    requestId: number;
-    onConsumed(requestId: number): void;
+    requestId: number
+    onConsumed(requestId: number): void
   },
+  section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
 ) {
-  hookRuntime.beginRender();
+  hookRuntime.beginRender()
   const tree = ProjectManageView({
     api,
+    section,
     host,
     project: currentProject,
     onProjectUpdated,
     openMembersRequestId: quickAdd?.requestId,
     onOpenMembersRequestConsumed: quickAdd?.onConsumed,
-  });
-  hookRuntime.flushEffects();
-  return tree;
+  })
+  hookRuntime.flushEffects()
+  return tree
 }
 
 function findByTestId(node: unknown, testId: string): any {
   if (Array.isArray(node)) {
     for (const child of node) {
-      const match = findByTestId(child, testId);
-      if (match) return match;
+      const match = findByTestId(child, testId)
+      if (match) return match
     }
-    return null;
+    return null
   }
-  if (!node || typeof node !== "object") return null;
+  if (!node || typeof node !== 'object') return null
+  const component = node as { type?: unknown; props?: any }
+  if (component.type === ProjectMembersSection) {
+    return findByTestId(ProjectMembersSection(component.props), testId)
+  }
+  if (component.type === ProjectTagsSection) {
+    return findByTestId(ProjectTagsSection(component.props), testId)
+  }
   const element = node as {
-    props?: { children?: unknown; "data-testid"?: string };
-  };
-  if (element.props?.["data-testid"] === testId) return element;
-  const children = element.props?.children;
-  for (const child of Array.isArray(children) ? children : [children]) {
-    const match = findByTestId(child, testId);
-    if (match) return match;
+    props?: { children?: unknown; 'data-testid'?: string }
   }
-  return null;
+  if (element.props?.['data-testid'] === testId) return element
+  const children = element.props?.children
+  for (const child of Array.isArray(children) ? children : [children]) {
+    const match = findByTestId(child, testId)
+    if (match) return match
+  }
+  return null
 }
 
 async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
-describe("ProjectManageView project scope", () => {
+describe('ProjectManageView project scope', () => {
   beforeEach(() => {
-    hookRuntime.reset();
-  });
+    hookRuntime.reset()
+  })
 
-  it("opens and consumes a host-requested member action", () => {
-    const api = createApi();
-    const host = createHost();
-    const onConsumed = vi.fn();
-    const currentProject = project("project-a", "private");
-    const quickAdd = { requestId: 23, onConsumed };
+  it('opens and consumes a host-requested member action', () => {
+    const api = createApi()
+    const host = createHost()
+    const onConsumed = vi.fn()
+    const currentProject = project('project-a', 'private')
+    const quickAdd = { requestId: 23, onConsumed }
 
-    renderView(api, host, currentProject, vi.fn(), quickAdd);
-    const tree = renderView(api, host, currentProject, vi.fn(), quickAdd);
+    renderView(api, host, currentProject, vi.fn(), quickAdd)
+    const tree = renderView(api, host, currentProject, vi.fn(), quickAdd)
 
-    expect(onConsumed).toHaveBeenCalledTimes(1);
-    expect(onConsumed).toHaveBeenCalledWith(23);
-    expect(findByTestId(tree, "cloud-member-search")).toBeTruthy();
-  });
+    expect(onConsumed).toHaveBeenCalledTimes(1)
+    expect(onConsumed).toHaveBeenCalledWith(23)
+    expect(findByTestId(tree, 'cloud-member-search')).toBeTruthy()
+  })
 
-  it("reloads the authoritative member list after adding a member", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("window", globalThis);
-    const api = createApi();
-    const host = createHost();
+  it('reloads the authoritative member list after adding a member', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', globalThis)
+    const api = createApi()
+    const host = createHost()
     const owner = {
       id: 1,
       user_id: 1,
-      user_name: "owner",
+      user_name: 'owner',
       email: null,
-      role: "Owner" as const,
-      capability_description: "",
-    };
+      role: 'Owner' as const,
+      capability_description: '',
+    }
     const addedMember = {
       id: 2,
       user_id: 2,
-      user_name: "member",
+      user_name: 'member',
       email: null,
-      role: "Reporter" as const,
-      capability_description: "",
-    };
+      role: 'Viewer' as const,
+      capability_description: '',
+    }
     const user = {
       id: 2,
-      user_name: "member",
+      user_name: 'member',
       email: null,
-    };
+    }
     vi.mocked(api.listMembers)
       .mockResolvedValueOnce([owner])
-      .mockResolvedValueOnce([owner, addedMember]);
-    vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] });
-    vi.mocked(api.addMember).mockResolvedValue(addedMember);
-    const currentProject = project("project-a", "private");
+      .mockResolvedValueOnce([owner, addedMember])
+    vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] })
+    vi.mocked(api.addMember).mockResolvedValue(addedMember)
+    const currentProject = project('project-a', 'private')
 
     try {
-      let tree = renderView(api, host, currentProject, vi.fn());
-      await flushPromises();
-      tree = renderView(api, host, currentProject, vi.fn());
+      let tree = renderView(api, host, currentProject, vi.fn())
+      await flushPromises()
+      tree = renderView(api, host, currentProject, vi.fn())
 
-      findByTestId(tree, "cloud-project-members-toggle").props.onClick();
-      tree = renderView(api, host, currentProject, vi.fn());
-      findByTestId(tree, "cloud-member-search").props.onChange({
-        target: { value: "member" },
-      });
-      renderView(api, host, currentProject, vi.fn());
-      await vi.advanceTimersByTimeAsync(250);
-      await flushPromises();
-      tree = renderView(api, host, currentProject, vi.fn());
+      findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
+      tree = renderView(api, host, currentProject, vi.fn())
+      findByTestId(tree, 'cloud-member-search').props.onChange({
+        target: { value: 'member' },
+      })
+      renderView(api, host, currentProject, vi.fn())
+      await vi.advanceTimersByTimeAsync(250)
+      await flushPromises()
+      tree = renderView(api, host, currentProject, vi.fn())
 
-      findByTestId(tree, "cloud-member-role").props.onChange({
-        target: { value: "Reporter" },
-      });
-      tree = renderView(api, host, currentProject, vi.fn());
-      findByTestId(tree, "cloud-member-result-2").props.onClick();
-      await flushPromises();
-      tree = renderView(api, host, currentProject, vi.fn());
+      findByTestId(tree, 'cloud-member-role').props.onChange({
+        target: { value: 'Viewer' },
+      })
+      tree = renderView(api, host, currentProject, vi.fn())
+      findByTestId(tree, 'cloud-member-result-2').props.onClick()
+      await flushPromises()
+      tree = renderView(api, host, currentProject, vi.fn())
 
-      expect(api.addMember).toHaveBeenCalledWith("project-a", 2, "Reporter");
-      expect(api.listMembers).toHaveBeenCalledTimes(2);
-      expect(findByTestId(tree, "cloud-project-member-2")).toBeTruthy();
+      expect(api.addMember).toHaveBeenCalledWith('project-a', 2, 'Viewer')
+      expect(api.listMembers).toHaveBeenCalledTimes(2)
+      expect(findByTestId(tree, 'cloud-project-member-2')).toBeTruthy()
     } finally {
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
     }
-  });
+  })
 
-  it("explains and saves project member capabilities", async () => {
-    const api = createApi();
-    const host = createHost();
+  it('explains and saves project member capabilities', async () => {
+    const api = createApi()
+    const host = createHost()
     const member = {
       id: 2,
       user_id: 2,
-      user_name: "member",
-      email: "member@example.com",
-      role: "Developer" as const,
-      capability_description: "",
-    };
-    vi.mocked(api.listMembers).mockResolvedValue([member]);
+      user_name: 'member',
+      email: 'member@example.com',
+      role: 'Developer' as const,
+      capability_description: '',
+    }
+    vi.mocked(api.listMembers).mockResolvedValue([member])
     vi.mocked(api.updateMember).mockResolvedValue({
       ...member,
-      capability_description: "前端实现与交互验收",
-    });
-    const currentProject = project("project-a", "private");
+      capability_description: '前端实现与交互验收',
+    })
+    const currentProject = project('project-a', 'private')
 
-    let tree = renderView(api, host, currentProject, vi.fn());
-    await flushPromises();
-    tree = renderView(api, host, currentProject, vi.fn());
-    findByTestId(tree, "cloud-project-members-toggle").props.onClick();
-    tree = renderView(api, host, currentProject, vi.fn());
+    let tree = renderView(api, host, currentProject, vi.fn())
+    await flushPromises()
+    tree = renderView(api, host, currentProject, vi.fn())
+    findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
+    tree = renderView(api, host, currentProject, vi.fn())
 
-    const capability = findByTestId(tree, "cloud-project-member-capability-2");
-    expect(capability.props.placeholder).toBe("例如：前端开发、产品验收");
-    expect(capability.props["aria-label"]).toBe("member 的职责与能力");
-    expect(
-      findByTestId(tree, "cloud-project-member-capability-heading"),
-    ).toBeTruthy();
+    const capability = findByTestId(tree, 'cloud-project-member-capability-2')
+    expect(capability.props.placeholder).toBe('例如：前端开发、产品验收')
+    expect(capability.props['aria-label']).toBe('member 的职责与能力')
+    expect(findByTestId(tree, 'cloud-project-member-capability-heading')).toBeTruthy()
 
     capability.props.onBlur({
-      target: { value: "  前端实现与交互验收  " },
-    });
-    await flushPromises();
+      target: { value: '  前端实现与交互验收  ' },
+    })
+    await flushPromises()
 
-    expect(api.updateMember).toHaveBeenCalledWith("project-a", 2, {
-      capability_description: "前端实现与交互验收",
-    });
-  });
+    expect(api.updateMember).toHaveBeenCalledWith('project-a', 2, {
+      capability_description: '前端实现与交互验收',
+    })
+  })
 
-  it("does not write an old project mutation response into the new project", async () => {
-    const api = createApi();
-    const host = createHost();
-    const updateA = deferred<ProjectManageProject>();
-    vi.mocked(api.updateProject).mockReturnValue(updateA.promise);
-    const onProjectUpdated = vi.fn();
-    const projectA = project("project-a", "private");
-    const projectB = project("project-b", "private");
+  it('does not apply an old self-role refresh after navigating to another project', async () => {
+    const api = createApi()
+    const host = createHost()
+    const member: ProjectManageMember = {
+      user_id: 2,
+      user_name: 'member',
+      email: null,
+      role: 'Maintainer',
+      direct_role: 'Maintainer',
+      inherited_role: 'Developer',
+    }
+    vi.mocked(api.listMembers).mockResolvedValue([member])
+    vi.mocked(api.updateMember).mockResolvedValue({
+      ...member,
+      role: 'Viewer',
+      direct_role: 'Viewer',
+    })
+    const refresh = deferred<ProjectManageProject>()
+    vi.mocked(api.getProject).mockReturnValue(refresh.promise)
+    const projectA = { ...project('project-a', 'private'), current_user_id: 2 }
+    const projectB = project('project-b', 'private')
+    const onProjectUpdated = vi.fn()
+    renderView(api, host, projectA, onProjectUpdated)
+    await flushPromises()
+    const tree = renderView(api, host, projectA, onProjectUpdated)
+    findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+      target: { value: 'Viewer' },
+    })
+    await flushPromises()
+    expect(api.getProject).toHaveBeenCalledWith('project-a')
 
-    let tree = renderView(api, host, projectA, onProjectUpdated);
-    findByTestId(
-      tree,
-      "cloud-project-manage-visibility-public",
-    ).props.onClick();
-    await flushPromises();
+    renderView(api, host, projectB, onProjectUpdated)
+    refresh.resolve({ ...projectA, access_role: 'Viewer' })
+    await flushPromises()
 
-    renderView(api, host, projectB, onProjectUpdated);
-    tree = renderView(api, host, projectB, onProjectUpdated);
-    expect(
-      findByTestId(tree, "cloud-project-manage-visibility-private").props
-        .className,
-    ).toContain("bg-background");
+    expect(onProjectUpdated).not.toHaveBeenCalled()
+    expect(host.trackFailed).not.toHaveBeenCalled()
+  })
 
-    updateA.resolve(project("project-a", "public", 2));
-    await flushPromises();
-    tree = renderView(api, host, projectB, onProjectUpdated);
+  it('does not write an old project mutation response into the new project', async () => {
+    const api = createApi()
+    const host = createHost()
+    const updateA = deferred<ProjectManageProject>()
+    vi.mocked(api.updateProject).mockReturnValue(updateA.promise)
+    const onProjectUpdated = vi.fn()
+    const projectA = project('project-a', 'private')
+    const projectB = project('project-b', 'private')
 
-    expect(api.updateProject).toHaveBeenCalledWith("project-a", {
+    let tree = renderView(api, host, projectA, onProjectUpdated)
+    findByTestId(tree, 'cloud-project-manage-visibility-public').props.onClick()
+    await flushPromises()
+
+    renderView(api, host, projectB, onProjectUpdated)
+    tree = renderView(api, host, projectB, onProjectUpdated)
+    expect(findByTestId(tree, 'cloud-project-manage-visibility-private').props.className).toContain(
+      'bg-background'
+    )
+
+    updateA.resolve(project('project-a', 'public', 2))
+    await flushPromises()
+    tree = renderView(api, host, projectB, onProjectUpdated)
+
+    expect(api.updateProject).toHaveBeenCalledWith('project-a', {
       version: 1,
-      visibility: "public",
-    });
-    expect(onProjectUpdated).not.toHaveBeenCalled();
+      visibility: 'public',
+    })
+    expect(onProjectUpdated).not.toHaveBeenCalled()
+    expect(findByTestId(tree, 'cloud-project-manage-visibility-private').props.className).toContain(
+      'bg-background'
+    )
     expect(
-      findByTestId(tree, "cloud-project-manage-visibility-private").props
-        .className,
-    ).toContain("bg-background");
-    expect(
-      findByTestId(tree, "cloud-project-manage-visibility-public").props
-        .className,
-    ).not.toContain("bg-background");
-  });
+      findByTestId(tree, 'cloud-project-manage-visibility-public').props.className
+    ).not.toContain('bg-background')
+  })
 
-  it("offers related-task visibility for built-in projects", async () => {
-    const api = createApi();
-    const host = createHost();
-    vi.mocked(api.updateProject).mockResolvedValue(
-      project("project-a", "public_restricted", 2),
-    );
+  it('separates public role from issue security', async () => {
+    const api = createApi()
+    const host = createHost()
+    vi.mocked(api.updateProject).mockResolvedValue(project('project-a', 'public', 2))
 
-    let tree = renderView(api, host, project("project-a", "private"), vi.fn());
-    findByTestId(
-      tree,
-      "cloud-project-manage-visibility-public-restricted",
-    ).props.onClick();
-    await flushPromises();
-    tree = renderView(
-      api,
-      host,
-      project("project-a", "public_restricted", 2),
-      vi.fn(),
-    );
+    let tree = renderView(api, host, project('project-a', 'private'), vi.fn())
+    findByTestId(tree, 'cloud-project-manage-visibility-public').props.onClick()
+    await flushPromises()
+    tree = renderView(api, host, project('project-a', 'public', 2), vi.fn())
 
-    expect(api.updateProject).toHaveBeenCalledWith("project-a", {
+    expect(api.updateProject).toHaveBeenCalledWith('project-a', {
       version: 1,
-      visibility: "public_restricted",
-    });
-    expect(
-      findByTestId(tree, "cloud-project-manage-visibility-public-restricted")
-        .props.className,
-    ).toContain("bg-background");
-  });
+      visibility: 'public',
+    })
+    expect(findByTestId(tree, 'cloud-project-manage-visibility-public').props.className).toContain(
+      'bg-background'
+    )
+    expect(findByTestId(tree, 'cloud-project-public-access-role')).not.toBeNull()
+    expect(findByTestId(tree, 'cloud-project-default-issue-security')).not.toBeNull()
+  })
 
-  it("does not offer related-task visibility for external projects", () => {
-    const api = createApi();
-    const host = createHost();
+  it('offers the same access settings for external projects', () => {
+    const api = createApi()
+    const host = createHost()
     const externalProject = {
-      ...project("project-a", "private"),
-      task_provider: "github",
-    };
+      ...project('project-a', 'public'),
+      task_provider: 'github',
+    }
 
-    const tree = renderView(api, host, externalProject, vi.fn());
+    const tree = renderView(api, host, externalProject, vi.fn())
 
-    expect(
-      findByTestId(tree, "cloud-project-manage-visibility-public-restricted"),
-    ).toBeNull();
-  });
-});
+    expect(findByTestId(tree, 'cloud-project-default-issue-security')).not.toBeNull()
+  })
+
+  it('uses DingTalk permissions for table records', () => {
+    const tree = renderView(
+      createApi(),
+      createHost(),
+      { ...project('project-a', 'public'), task_provider: 'dingtalk_aitable' },
+      vi.fn()
+    )
+    expect(findByTestId(tree, 'cloud-project-public-access-role')).not.toBeNull()
+    expect(findByTestId(tree, 'cloud-project-default-issue-security')).toBeNull()
+  })
+})
+
+it('CP08 keeps inherited roles read-only and exposes the parent source', async () => {
+  hookRuntime.reset()
+  const api = createApi()
+  const host = createHost()
+  const current = project('inherited-project', 'private')
+  vi.mocked(api.listMembers).mockResolvedValue([
+    {
+      user_id: 7,
+      user_name: 'Space member',
+      email: null,
+      role: 'Maintainer',
+      direct_role: null,
+      inherited_role: 'Maintainer',
+      inherited_from_workspace_id: 'space-1',
+    },
+  ])
+  renderView(api, host, current, vi.fn())
+  await flushPromises()
+  const tree = renderView(api, host, current, vi.fn())
+  expect(findByTestId(tree, 'cloud-project-member-source-7')).toBeTruthy()
+  expect(findByTestId(tree, 'cloud-project-member-role-7')).toBeNull()
+  expect(findByTestId(tree, 'cloud-project-member-remove-7')).toBeNull()
+  expect(api.updateMember).not.toHaveBeenCalled()
+})
+
+it('CP03 saves restricted membership with the current project version', async () => {
+  hookRuntime.reset()
+  const api = createApi()
+  const host = createHost()
+  const current = project('restricted-project', 'private')
+  vi.mocked(api.updateProject).mockResolvedValue({
+    ...current,
+    membership_mode: 'restricted',
+    version: current.version + 1,
+  })
+  const tree = renderView(api, host, current, vi.fn())
+  findByTestId(tree, 'cloud-project-membership-mode').props.onChange({
+    target: { value: 'restricted' },
+  })
+  await flushPromises()
+  expect(api.updateProject).toHaveBeenCalledWith(current.id, {
+    version: current.version,
+    membership_mode: 'restricted',
+  })
+})
+
+it('does not offer membership mode when the old backend omits that capability', () => {
+  hookRuntime.reset()
+  const api = createApi()
+  const current = {
+    ...project('legacy-project', 'private'),
+    membership_mode: undefined,
+  }
+  const tree = renderView(api, createHost(), current, vi.fn())
+  expect(findByTestId(tree, 'cloud-project-membership-mode')).toBeNull()
+  expect(api.updateProject).not.toHaveBeenCalled()
+})
+
+it('keeps member responses scoped to the project where editing started', async () => {
+  hookRuntime.reset()
+  const api = createApi()
+  const host = createHost()
+  const delayed = deferred<ProjectManageMember>()
+  const member = {
+    user_id: 2,
+    user_name: 'Member',
+    email: null,
+    role: 'Developer' as const,
+  }
+  vi.mocked(api.listMembers).mockImplementation(async id => [
+    {
+      ...member,
+      capability_description: id === 'project-a' ? 'Original A' : 'Original B',
+    },
+  ])
+  vi.mocked(api.updateMember).mockReturnValue(delayed.promise)
+  const a = project('project-a', 'private')
+  const b = project('project-b', 'private')
+  renderView(api, host, a, vi.fn())
+  await flushPromises()
+  let tree = renderView(api, host, a, vi.fn())
+  findByTestId(tree, 'cloud-project-member-capability-2').props.onBlur({
+    target: { value: 'Changed A' },
+  })
+  renderView(api, host, b, vi.fn())
+  await flushPromises()
+  delayed.resolve({ ...member, capability_description: 'Changed A' })
+  await flushPromises()
+  tree = renderView(api, host, b, vi.fn())
+  expect(findByTestId(tree, 'cloud-project-member-capability-2').props.defaultValue).toBe(
+    'Original B'
+  )
+  expect(findByTestId(tree, 'cloud-project-member-capability-2').props.disabled).toBe(false)
+})
+
+it('retains the existing role and releases saving controls after a rejected change', async () => {
+  hookRuntime.reset()
+  const api = createApi()
+  const host = createHost()
+  const member = {
+    user_id: 2,
+    user_name: 'Member',
+    email: null,
+    role: 'Developer' as const,
+  }
+  vi.mocked(api.listMembers).mockResolvedValue([member])
+  vi.mocked(api.updateMember).mockRejectedValue(new Error('Permission denied'))
+  const current = project('project-a', 'private')
+  renderView(api, host, current, vi.fn())
+  await flushPromises()
+  let tree = renderView(api, host, current, vi.fn())
+  findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+    target: { value: 'Maintainer' },
+  })
+  await flushPromises()
+  tree = renderView(api, host, current, vi.fn())
+  expect(findByTestId(tree, 'cloud-project-member-role-2').props.value).toBe('Developer')
+  expect(findByTestId(tree, 'cloud-project-member-role-2').props.disabled).toBe(false)
+  expect(host.trackFailed).toHaveBeenCalledOnce()
+})
+
+it('loads only resources needed by the selected settings section', async () => {
+  const api = createApi()
+  const host = createHost()
+  const current = project('project-a', 'private')
+  renderView(api, host, current, vi.fn(), undefined, 'agents')
+  await flushPromises()
+  expect(api.listItems).not.toHaveBeenCalled()
+  expect(api.listMembers).not.toHaveBeenCalled()
+  renderView(api, host, current, vi.fn(), undefined, 'members')
+  await flushPromises()
+  expect(api.listMembers).toHaveBeenCalledOnce()
+  expect(api.listItems).not.toHaveBeenCalled()
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  expect(api.listItems).not.toHaveBeenCalled()
+  const tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+    currentTarget: { open: true },
+  })
+  renderView(api, host, current, vi.fn(), undefined, 'overview')
+  await flushPromises()
+  expect(api.listItems).toHaveBeenCalledOnce()
+  expect(api.listMembers).toHaveBeenCalledOnce()
+})
+
+it.each(['en', 'zh-CN'] as const)(
+  'uses tag-specific %s copy for non-Error failures and recovers on retry',
+  async locale => {
+    const api = createApi()
+    const host = createHost()
+    const current = project('project-a', 'private')
+    host.translate = createCollaborationTranslator(locale)
+    vi.mocked(api.listItems)
+      .mockRejectedValueOnce({ status: 503 })
+      .mockResolvedValueOnce({
+        items: [{ id: 'item-1', version: 1, tags: ['task-only-tag'] }],
+      })
+    let tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+    findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+      currentTarget: { open: true },
+    })
+    renderView(api, host, current, vi.fn(), undefined, 'overview')
+    await flushPromises()
+    tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+    expect(findByTestId(tree, 'cloud-project-manage-tags-error').props.children[0]).toBe(
+      locale === 'en' ? 'Failed to load tag catalog' : '加载标签目录失败'
+    )
+    expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).toBeNull()
+    findByTestId(tree, 'cloud-project-manage-tags-retry').props.onClick()
+    renderView(api, host, current, vi.fn(), undefined, 'overview')
+    await flushPromises()
+    tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
+    expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).not.toBeNull()
+    expect(findByTestId(tree, 'cloud-project-manage-tags-error')).toBeNull()
+    expect(api.listItems).toHaveBeenCalledTimes(2)
+    renderView(api, { ...host }, current, vi.fn(), undefined, 'overview')
+    await flushPromises()
+    expect(api.listItems).toHaveBeenCalledTimes(2)
+  }
+)
+
+it('discards late tag discovery after switching projects and leaves the next overview metadata-only', async () => {
+  const api = createApi()
+  const host = createHost()
+  const first = project('project-a', 'private')
+  const second = project('project-b', 'private')
+  let resolveTags!: (result: { items: ProjectManageItem[] }) => void
+  vi.mocked(api.listItems).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        resolveTags = resolve
+      })
+  )
+  let tree = renderView(api, host, first, vi.fn(), undefined, 'overview')
+  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+    currentTarget: { open: true },
+  })
+  renderView(api, host, first, vi.fn(), undefined, 'overview')
+  renderView(api, host, second, vi.fn(), undefined, 'overview')
+  resolveTags({
+    items: [{ id: 'item-1', version: 1, tags: ['old-task-tag'] }],
+  })
+  await flushPromises()
+  tree = renderView(api, host, second, vi.fn(), undefined, 'overview')
+  expect(findByTestId(tree, 'cloud-project-tag-old-task-tag')).toBeNull()
+  expect(api.listItems).toHaveBeenCalledOnce()
+})

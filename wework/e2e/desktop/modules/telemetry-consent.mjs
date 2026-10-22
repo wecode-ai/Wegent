@@ -1,6 +1,8 @@
 const TELEMETRY_CONSENT_CHECKPOINTS = new Set([
   'telemetry-consent',
-  'harness-apps',
+  'harness-app-development',
+  'harness-app-lifecycle',
+  'native-window-startup',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
 ])

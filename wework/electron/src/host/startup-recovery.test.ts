@@ -2,7 +2,6 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   assertStartupRecoverySender,
   StartupRecoveryService,
-  WORKBENCH_RECOVERY_STORAGE_PREFIXES,
   type StartupRecoveryDependencies,
 } from './startup-recovery.js'
 
@@ -10,7 +9,6 @@ function createFixture() {
   const dependencies = {
     rendererStorage: {
       clear: vi.fn(async () => undefined),
-      removeByPrefixes: vi.fn(async () => undefined),
     },
     preferences: {
       clear: vi.fn(async () => undefined),
@@ -18,8 +16,12 @@ function createFixture() {
     cloudCredentials: {
       clear: vi.fn(async () => undefined),
     },
+    prepareCleanup: vi.fn(async () => undefined),
+    clearRuntimeFiles: vi.fn(async () => undefined),
+    clearUserFiles: vi.fn(async () => undefined),
     clearCache: vi.fn(async () => undefined),
     clearAppStorage: vi.fn(async () => undefined),
+    clearUserStorage: vi.fn(async () => undefined),
     disablePlugin: vi.fn(async () => undefined),
     log: vi.fn(),
     relaunch: vi.fn(),
@@ -42,13 +44,18 @@ describe('StartupRecoveryService', () => {
     )
   })
 
-  test('recovers workbench restore state without clearing sign-in or preferences', async () => {
+  test('rebuilds runtime without clearing user state', async () => {
     const { dependencies, recovery } = createFixture()
 
     await recovery.run('workbench')
 
-    expect(dependencies.rendererStorage.removeByPrefixes).toHaveBeenCalledWith(
-      WORKBENCH_RECOVERY_STORAGE_PREFIXES
+    expect(dependencies.prepareCleanup).toHaveBeenCalledOnce()
+    expect(dependencies.clearRuntimeFiles).toHaveBeenCalledOnce()
+    expect(dependencies.clearUserFiles).not.toHaveBeenCalled()
+    expect(dependencies.clearUserStorage).not.toHaveBeenCalled()
+    expect(dependencies.clearCache).toHaveBeenCalledOnce()
+    expect(dependencies.prepareCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      dependencies.clearRuntimeFiles.mock.invocationCallOrder[0]
     )
     expect(dependencies.rendererStorage.clear).not.toHaveBeenCalled()
     expect(dependencies.preferences.clear).not.toHaveBeenCalled()
@@ -57,7 +64,7 @@ describe('StartupRecoveryService', () => {
     expect(dependencies.shutdown).toHaveBeenCalledOnce()
   })
 
-  test('clears application state without deleting runtime-owned data', async () => {
+  test('clears runtime, user settings, and plugins', async () => {
     const { dependencies, recovery } = createFixture()
 
     await recovery.run('app-state')
@@ -67,8 +74,10 @@ describe('StartupRecoveryService', () => {
     expect(dependencies.cloudCredentials.clear).toHaveBeenCalledOnce()
     expect(dependencies.clearCache).toHaveBeenCalledOnce()
     expect(dependencies.clearAppStorage).toHaveBeenCalledOnce()
+    expect(dependencies.clearUserStorage).toHaveBeenCalledOnce()
     expect(dependencies.disablePlugin).not.toHaveBeenCalled()
-    expect(dependencies.rendererStorage.removeByPrefixes).not.toHaveBeenCalled()
+    expect(dependencies.clearUserFiles).toHaveBeenCalledOnce()
+    expect(dependencies.clearRuntimeFiles).toHaveBeenCalledOnce()
     expect(dependencies.relaunch).toHaveBeenCalledOnce()
     expect(dependencies.shutdown).toHaveBeenCalledOnce()
   })
@@ -79,6 +88,8 @@ describe('StartupRecoveryService', () => {
     await Promise.all([recovery.run('retry'), recovery.run('app-state')])
 
     expect(dependencies.rendererStorage.clear).not.toHaveBeenCalled()
+    expect(dependencies.prepareCleanup).not.toHaveBeenCalled()
+    expect(dependencies.clearRuntimeFiles).not.toHaveBeenCalled()
     expect(dependencies.relaunch).toHaveBeenCalledOnce()
     expect(dependencies.shutdown).toHaveBeenCalledOnce()
   })
@@ -96,9 +107,7 @@ describe('StartupRecoveryService', () => {
 
   test('logs cleanup failures without relaunching', async () => {
     const { dependencies, recovery } = createFixture()
-    dependencies.rendererStorage.removeByPrefixes.mockRejectedValueOnce(
-      new Error('storage unavailable')
-    )
+    dependencies.clearRuntimeFiles.mockRejectedValueOnce(new Error('storage unavailable'))
 
     await expect(recovery.run('workbench')).rejects.toThrow('storage unavailable')
 
@@ -109,5 +118,10 @@ describe('StartupRecoveryService', () => {
     )
     expect(dependencies.relaunch).not.toHaveBeenCalled()
     expect(dependencies.shutdown).not.toHaveBeenCalled()
+    expect(dependencies.clearCache).not.toHaveBeenCalled()
+
+    await recovery.run('workbench')
+    expect(dependencies.clearRuntimeFiles).toHaveBeenCalledTimes(2)
+    expect(dependencies.relaunch).toHaveBeenCalledOnce()
   })
 })

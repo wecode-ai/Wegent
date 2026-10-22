@@ -47,6 +47,9 @@ describe("project agent configuration model", () => {
       wegentTeamId: null,
       capabilityDescription: "实现需求",
       deletable: true,
+      canEdit: false,
+      canUse: true,
+      unavailableReason: null,
       executionEnvironment: "cloud",
       executionDeviceId: "cloud-1",
       model: null,
@@ -61,10 +64,11 @@ describe("project agent configuration model", () => {
       name: "研发团队",
       runtime: "wegent",
       wegentTeamId: 12,
+      shareWithWorkspace: true,
     });
   });
 
-  it("uses the project binding payload supplied by a local Agent resource", () => {
+  it("preserves the local Agent resource identity and display name", () => {
     expect(
       createResourceAgentBindingInput({
         id: "local-agent",
@@ -76,12 +80,14 @@ describe("project agent configuration model", () => {
         execution_environment_ids: [],
         project_binding_input: {
           name: "local-agent",
+          displayName: "Local Agent",
           runtime: "codex",
           model: null,
         },
       }),
     ).toEqual({
       name: "local-agent",
+      displayName: "Local Agent",
       runtime: "codex",
       model: null,
     });

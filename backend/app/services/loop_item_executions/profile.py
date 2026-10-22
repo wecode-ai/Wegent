@@ -86,6 +86,7 @@ def _execution_environment_config(
     devices = selected_config.get("devices")
     return {
         "repositories": repositories,
+        "workspace_policy": selected_config.get("workspace_policy", "git_worktree"),
         "setup_steps": setup_steps,
         "fingerprint": selected_config.get("fingerprint"),
         "devices": (
@@ -100,31 +101,23 @@ def _execution_environment_config(
     }
 
 
-def _merge_environment_execution(
-    execution: dict[str, Any] | None,
-    environment: dict[str, Any],
+def _apply_project_workspace_intent(
+    execution: object, *, isolated: bool
 ) -> dict[str, Any] | None:
-    """Merge immutable environment preparation into the existing execution intent."""
-
-    merged = dict(execution or {})
-    repositories = environment.get("repositories")
-    if isinstance(repositories, list) and repositories:
-        workspace = (
-            dict(merged.get("workspace"))
-            if isinstance(merged.get("workspace"), dict)
-            else {}
-        )
-        workspace["repositories"] = list(repositories)
-        merged["workspace"] = workspace
-    setup_steps = environment.get("setup_steps")
-    if isinstance(setup_steps, list) and setup_steps:
-        setup = (
-            dict(merged.get("setup")) if isinstance(merged.get("setup"), dict) else {}
-        )
-        setup["steps"] = list(setup_steps)
-        setup["fingerprint"] = str(environment.get("fingerprint") or "")
-        merged["setup"] = setup
-    return merged or None
+    """Apply the project-owned source without discarding other execution settings."""
+    intent = dict(execution) if isinstance(execution, dict) else {}
+    workspace = (
+        dict(intent["workspace"]) if isinstance(intent.get("workspace"), dict) else {}
+    )
+    if isolated:
+        workspace["source"] = "git_worktree"
+    elif workspace.get("source") == "git_worktree":
+        workspace.pop("source")
+    if workspace:
+        intent["workspace"] = workspace
+    else:
+        intent.pop("workspace", None)
+    return intent or None
 
 
 def native_runtime_contract(runtime: object) -> tuple[RuntimeName, str]:
@@ -284,8 +277,6 @@ class WeworkExecutionProfile:
     agent_id: str = ""
     local_project_id: int = 0
     max_concurrent_executions: int = 1
-    manager_mode: bool = False
-    workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
     additional_skills: tuple[Any, ...] = ()
     mcp_servers: dict[str, Any] | None = None
@@ -370,11 +361,6 @@ class WeworkExecutionProfile:
             agent_id=agent.id,
             local_project_id=local_project_id,
             max_concurrent_executions=bot_max_concurrent_executions(agent),
-            workspace_policy=str(
-                profile_metadata.get("workspace_policy")
-                or config.get("workspace_policy")
-                or "project"
-            ),
             plugins=tuple(
                 plugin
                 for plugin in config.get("plugins", [])
@@ -392,32 +378,6 @@ class WeworkExecutionProfile:
                 if workspace_binding_override
                 else None
             ),
-        )
-
-    @classmethod
-    def for_automation_manager(
-        cls,
-        *,
-        owner_user_id: int,
-        display_name: str,
-        instruction: str,
-        model: str,
-        model_type: str | None = None,
-        model_options: dict[str, str] | None = None,
-        local_project_id: int = 0,
-    ) -> "WeworkExecutionProfile":
-        if not model:
-            raise ValueError("Custom AI manager model is required")
-        return cls(
-            owner_user_id=owner_user_id,
-            display_name=display_name or "AI 托管",
-            execution_prompt="",
-            instruction=instruction,
-            model=model,
-            model_type=model_type,
-            model_options=dict(model_options or {}),
-            local_project_id=local_project_id,
-            manager_mode=True,
         )
 
     @classmethod
@@ -447,7 +407,6 @@ class WeworkExecutionProfile:
                 model_options_override or metadata.get("model_options") or {}
             ),
             local_project_id=local_project_id,
-            workspace_policy=str(metadata.get("workspace_policy") or "project"),
             workspace_binding_override=(
                 ProjectChatWorkspaceBindingView.model_validate(
                     {
@@ -466,28 +425,12 @@ class WeworkExecutionProfile:
         project_id: str,
         task_id: str,
         execution_id: int,
-        workflow_stage_input: dict[str, Any] | None = None,
     ) -> str:
-        if self.manager_mode:
-            return self.instruction.strip()
-        from app.services.workflow_stage_context import compiled_workflow_stage_input
-
-        stage_instruction = (
-            str(
-                compiled_workflow_stage_input(workflow_stage_input).get(
-                    "compiled_task_instruction"
-                )
-                or ""
-            )
-            if workflow_stage_input
-            else ""
-        )
         return build_project_robot_user_input(
             project_id=project_id,
             task_id=task_id,
             execution_id=execution_id,
             execution_prompt=self.execution_prompt,
-            stage_instruction=stage_instruction,
         )
 
     def build_runtime_request(
@@ -568,20 +511,26 @@ class WeworkExecutionProfile:
             project_id=str(project.id),
             task_id=task_id,
             execution_id=execution_id,
-            workflow_stage_input=(
-                workflow_stage_input if isinstance(workflow_stage_input, dict) else None
-            ),
         )
         if origin_context.get("comment_trigger_message_id"):
-            prompt = str(origin_context["comment_prompt"])
-        title = str(getattr(task, "title", "") or "")
+            prompt = build_project_robot_user_input(
+                project_id=str(project.id),
+                task_id=task_id,
+                execution_id=execution_id,
+                execution_prompt=str(origin_context["comment_prompt"]),
+            )
+        title = str(
+            origin_context.get("workflow_task_title")
+            or getattr(task, "title", "")
+            or ""
+        )
         bot_id: int | str = self.agent_id or 0
         origin = {
             **origin_context,
             "type": (
                 "board_comment"
                 if origin_context.get("comment_trigger_message_id")
-                else "project_automation" if self.manager_mode else "board_task"
+                else "board_task"
             ),
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
@@ -591,6 +540,19 @@ class WeworkExecutionProfile:
                 f"{str(getattr(task, 'id', ''))}"
             ),
         }
+        dispatch_id = str(origin_context.get("dispatch_id") or "")
+        dispatch_task_id = str(origin_context.get("dispatch_task_id") or "")
+        dispatch_role = str(origin_context.get("dispatch_role") or "")
+        manager_agent_id = str(origin_context.get("manager_agent_id") or "")
+        if dispatch_id and dispatch_task_id and dispatch_role:
+            origin.update(
+                {
+                    "dispatchId": dispatch_id,
+                    "taskId": dispatch_task_id,
+                    "dispatchRole": dispatch_role,
+                    "managerAgentId": manager_agent_id,
+                }
+            )
         if isinstance(workflow_stage_input, dict):
             target_stage = workflow_stage_input.get("target_stage")
             if isinstance(target_stage, dict):
@@ -599,9 +561,6 @@ class WeworkExecutionProfile:
                 origin["workflowStageName"] = str(
                     target_stage.get("name") or workflow_stage_id
                 )
-        origin["workspacePolicy"] = workspace_policy or self.workspace_policy
-        if self.manager_mode:
-            origin["automationRole"] = "manager"
         configured_runtime = origin_context.get("runtime")
         runtime, shell_type = native_runtime_contract(
             configured_runtime if configured_runtime is not None else self.runtime
@@ -628,6 +587,24 @@ class WeworkExecutionProfile:
                 ],
             }
         ]
+        coordinate_bots = origin_context.get("coordinate_bots")
+        if coordinate_bots is not None:
+            if not isinstance(coordinate_bots, list) or not all(
+                isinstance(value, dict) for value in coordinate_bots
+            ):
+                raise WeworkExecutionProfileError(
+                    "Coordinate bots must be a list of objects"
+                )
+            if not coordinate_bots:
+                raise WeworkExecutionProfileError(
+                    "Coordinate execution requires at least one bot"
+                )
+            bot = [dict(value) for value in coordinate_bots]
+            origin["collaborationMode"] = str(
+                origin_context.get("collaborationMode")
+                or origin_context.get("collaboration_mode")
+                or "coordinate"
+            )
         configured_additional_context = origin_context.get("additional_context")
         additional_context: dict[str, dict[str, Any]] = (
             dict(configured_additional_context)
@@ -653,44 +630,45 @@ class WeworkExecutionProfile:
 
         configured_execution = origin_context.get("execution")
         environment_config = _execution_environment_config(db, project)
+        project_workspace_policy = environment_config["workspace_policy"]
+        origin["workspacePolicy"] = workspace_policy or project_workspace_policy
         device_states = environment_config["devices"]
-        # A configured environment only runs on devices that finished preparing
-        # it; every other device stops at preflight so it never clones a fresh
-        # copy outside the prepared workspace.
         environment_configured = bool(
             environment_config["repositories"]
+            or environment_config["setup_steps"]
             or environment_config["fingerprint"]
             or device_states
         )
-        environment_workspace_path = ""
-        if environment_configured:
-            device_state = device_states.get(execution_device_id)
-            device_state = device_state if isinstance(device_state, dict) else {}
-            if str(device_state.get("status") or "") != "ready":
-                raise WeworkExecutionProfileError(
-                    "Project execution environment is not ready"
-                )
-            environment_workspace_path = str(device_state.get("workspace_path") or "")
-        environment_uses_worktree = bool(
-            environment_workspace_path and environment_config.get("repositories")
+        device_state = device_states.get(execution_device_id) or {}
+        environment_workspace_path = (
+            str(device_state.get("workspace_path") or "")
+            if device_state.get("status") == "ready"
+            else ""
         )
-        generated_execution = (
-            {"workspace": {"source": "git_worktree"}}
-            if environment_uses_worktree
-            or (
-                (has_bound_workspace or workspace_source_task)
-                and self.workspace_policy == "git_worktree"
+        isolated_workspace = (
+            workspace_source_task is None
+            and project_workspace_policy == "git_worktree"
+            and (
+                bool(environment_config["repositories"])
+                or (not environment_configured and has_bound_workspace)
             )
-            else None
         )
-        execution = _merge_environment_execution(
-            (
-                configured_execution
-                if isinstance(configured_execution, dict)
-                else generated_execution
-            ),
-            environment_config,
+        execution = _apply_project_workspace_intent(
+            configured_execution, isolated=isolated_workspace
         )
+        if environment_configured and workspace_source_task is None:
+            execution = dict(execution or {})
+            # The claimed runner prepares this immutable snapshot before starting
+            # a turn. Historical paths are reused only on their own installation.
+            execution["environment"] = {
+                "environmentId": f"project-{project.id}",
+                "repositories": environment_config["repositories"],
+                "setupSteps": environment_config["setup_steps"],
+                "fingerprint": environment_config["fingerprint"],
+                "workspacePath": environment_workspace_path or None,
+            }
+        if workspace_source_task is not None:
+            execution = None
         origin["executionEnvironment"] = environment_config
         configured_plugins = origin_context.get("project_plugins")
         configured_system_prompt = origin_context.get("system_prompt")
@@ -735,6 +713,7 @@ class WeworkExecutionProfile:
             origin=origin,
             standaloneChatWorkspace=(
                 not has_bound_workspace
+                and not environment_configured
                 and workspace_source_task is None
                 and not environment_workspace_path
             ),

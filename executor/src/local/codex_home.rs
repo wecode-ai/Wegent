@@ -12,7 +12,6 @@ use toml_edit::{table, value, DocumentMut};
 
 use crate::agents::replace_config;
 
-const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
@@ -67,6 +66,7 @@ pub struct CodexLocalConfig {
     codex_home: String,
     config_path: String,
     remote_apps_enabled: bool,
+    enabled_plugin_keys: Vec<String>,
 }
 
 fn default_remote_apps_enabled() -> bool {
@@ -156,9 +156,7 @@ fn wework_codex_home_path() -> Result<PathBuf, String> {
     if let Some(path) = non_empty_path(CODEX_HOME_ENV) {
         return Ok(path);
     }
-    let executor_home = non_empty_path(EXECUTOR_HOME_ENV)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| "Unable to resolve executor home".to_owned())?;
+    let executor_home = crate::config::paths::executor_home();
     Ok(executor_home.join("codex"))
 }
 
@@ -198,7 +196,34 @@ fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConf
                 config_path.display()
             )
         })?,
+        enabled_plugin_keys: read_enabled_plugin_keys(&content).map_err(|error| {
+            format!(
+                "Failed to parse Codex config {}: {error}",
+                config_path.display()
+            )
+        })?,
     })
+}
+
+fn read_enabled_plugin_keys(content: &str) -> Result<Vec<String>, String> {
+    let config = content
+        .parse::<DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    let mut keys = config
+        .get("plugins")
+        .and_then(|plugins| plugins.as_table_like())
+        .map(|plugins| {
+            plugins
+                .iter()
+                .filter(|(_, plugin)| {
+                    plugin.get("enabled").and_then(|enabled| enabled.as_bool()) == Some(true)
+                })
+                .map(|(key, _)| key.to_owned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    keys.sort();
+    Ok(keys)
 }
 
 fn read_remote_apps_enabled(content: &str) -> Result<bool, String> {
@@ -226,7 +251,7 @@ fn write_remote_apps_enabled(codex_home: &Path, enabled: bool) -> Result<(), Str
     replace_config(&config_path, updated)
 }
 
-fn read_optional_config(config_path: &Path) -> Result<String, String> {
+pub(crate) fn read_optional_config(config_path: &Path) -> Result<String, String> {
     match fs::read_to_string(config_path) {
         Ok(content) => Ok(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -337,6 +362,10 @@ fn copy_codex_config_for_wework(source: &Path, destination: &Path) -> Result<(),
             source.display()
         )
     })?;
+    // Plugin synchronization reads and replaces this same config under this lock.
+    let _lock = super::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &destination.join("plugins/cache/wework-personal"),
+    )?;
     fs::create_dir_all(destination)
         .map_err(|error| format!("Failed to create {}: {error}", destination.display()))?;
     replace_config(&destination.join("config.toml"), sanitized)
@@ -515,12 +544,18 @@ mod tests {
         assert!(read_remote_apps_enabled("model = \"gpt-5\"\n").unwrap());
         fs::write(
             codex_home.join("config.toml"),
-            "model = \"gpt-5\"\n\n[features]\napps = true # enabled\n",
+            concat!(
+                "model = \"gpt-5\"\n\n",
+                "[features]\napps = true # enabled\n\n",
+                "[plugins.\"enabled@wework-personal\"]\nenabled = true\n\n",
+                "[plugins.\"disabled@wework-personal\"]\nenabled = false\n",
+            ),
         )
         .unwrap();
 
         let current = read_codex_local_config_from_path(&codex_home).unwrap();
         assert!(current.remote_apps_enabled);
+        assert_eq!(current.enabled_plugin_keys, vec!["enabled@wework-personal"]);
 
         write_remote_apps_enabled(&codex_home, false).unwrap();
 
@@ -632,6 +667,49 @@ mod tests {
             "example"
         );
         assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+    }
+
+    #[test]
+    fn import_waits_for_a_pending_plugin_config_write() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model = \"imported\"\n").unwrap();
+        let plugin_lock =
+            super::super::personal_marketplace_lock::acquire_personal_marketplace_lock(
+                &destination.join("plugins/cache/wework-personal"),
+            )
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let import_destination = destination.clone();
+        let importer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            finished_tx
+                .send(import_external_content_from_paths(
+                    "codex",
+                    &home,
+                    &import_destination,
+                ))
+                .unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        // Finish the stale plugin transaction before letting the import commit.
+        fs::write(destination.join("config.toml"), "model = \"old\"\n").unwrap();
+        drop(plugin_lock);
+        finished_rx.recv().unwrap().unwrap();
+        importer.join().unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("config.toml")).unwrap(),
+            "model = \"imported\"\n"
+        );
     }
 
     #[test]

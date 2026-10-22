@@ -64,6 +64,13 @@ fi
 
 cd "$POLICY_ROOT"
 
+git ls-files -- '.live-architecture' ':(glob)**/.live-architecture/**' \
+    > "$TMP_DIR/tracked-local-architecture.txt"
+if [ -s "$TMP_DIR/tracked-local-architecture.txt" ]; then
+    echo "Local architecture records must not be tracked: .live-architecture/" >&2
+    exit 1
+fi
+
 set +e
 git grep --full-name -n -E --untracked --exclude-standard -f "$PATTERN_FILE" -- . \
     ':(exclude)scripts/hooks/check-repository-policy.sh' \

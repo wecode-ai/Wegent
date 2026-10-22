@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyCollaborationScheduleViews } from '../modules/collaboration-schedule-views.mjs'
 import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
-  selectCollaborationDomain,
+  configureFirstProjectExecutionEnvironment,
+  openProjectAgentCreator,
+  selectProjectRunnerModel,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -13,7 +16,6 @@ const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const CLOUD_WORKSPACE_ID = 'offline-cloud-workspace'
 const PROJECT_NAME = '离线本地项目空间'
 const ISSUE_NAME = '离线本地 Issue'
-const MODEL_NAME = 'wework-custom-desktop-e2e-responses'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -137,17 +139,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
           timeoutMs: uiTimeoutMs,
         }
       )
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`)
-          )
-        ),
-        0,
-        'The local collaboration domain mixed in a cloud Workspace'
-      )
-      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'cloud')
       await control.command(
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
@@ -160,20 +151,13 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         Number(
           await control.command(
             'getElementCount',
-            sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
+            scoped(
+              '[data-testid="collaboration-domain-local"], [data-testid="collaboration-domain-cloud"]'
+            )
           )
         ),
         0,
-        'The cloud collaboration domain mixed in the device-owned local Workspace'
-      )
-      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'local')
-      await control.command(
-        'waitFor',
-        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
-        {
-          text: '本地空间',
-          timeoutMs: uiTimeoutMs,
-        }
+        'The unified collaboration board still exposed local/cloud mode selectors'
       )
 
       const platformSnapshot = await snapshot(control)
@@ -258,7 +242,16 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       assertLocalIsolation()
 
-      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await configureFirstProjectExecutionEnvironment(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
+      )
+      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="collaboration-issue-create"]')
+      )
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -280,9 +273,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         ISSUE_NAME,
         'The newly created local Issue did not open in the shared Issue detail'
       )
-      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-      await control.command('waitFor', scoped('[data-testid^="collaboration-issue-"]'), {
-        text: ISSUE_NAME,
+      await verifyCollaborationScheduleViews({
+        capture: (targetControl, name) =>
+          captureVerificationScreenshot(targetControl, name, ACTIVE_WORKBENCH_SELECTOR),
+        control,
+        issueTitle: ISSUE_NAME,
+        scoped,
         timeoutMs: uiTimeoutMs,
       })
       assertLocalIsolation()
@@ -300,20 +296,17 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
-      await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await openProjectAgentCreator(
+        control,
+        scoped('[data-testid="project-agent-add"]'),
+        uiTimeoutMs
+      )
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体',
       })
-      await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
-        value: MODEL_NAME,
-      })
+      await selectProjectRunnerModel(control, uiTimeoutMs)
       await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -368,7 +361,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await captureVerificationScreenshot(
         control,
-        'offline-local-project-space-02-local-project-settings.png',
+        'offline-local-project-space-05-local-project-settings.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
       assertLocalIsolation()
@@ -396,16 +389,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: '本地空间',
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`)
-          )
-        ),
-        0,
-        'Returning to the local domain mixed in a cloud Workspace'
-      )
 
       assert.equal(
         cloudWorkspaceListFailures,

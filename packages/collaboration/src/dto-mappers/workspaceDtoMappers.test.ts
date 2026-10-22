@@ -9,14 +9,22 @@ import {
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapCollaborationOwnedAgentDto,
+  mapCollaborationWorkspaceDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
-  mapWorkspaceWorkflowPlanDto,
-  mapWorkspaceWorkflowStageContextDto,
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("maps v1 read-only roles without manufacturing ownership capabilities", () => {
+    const workspace = mapCollaborationWorkspaceDto({
+      id: "old-space",
+      access_role: "Reporter",
+      created_by_user_id: 1,
+    });
+    expect(workspace.access_role).toBe("Viewer");
+    expect(workspace.owner_user_id).toBeUndefined();
+  });
   it("uses resource identifiers instead of authorization binding identifiers", () => {
     expect(
       mapCollaborationOwnedAgentDto({
@@ -67,7 +75,6 @@ describe("workspace DTO mappers", () => {
         target_type: "agent",
         target_id: "12",
         target_name: "Codex",
-        workflow_step: "implementation",
         body: "请实现接口",
         comment_id: "comment-9",
         created_by_user_id: 7,
@@ -79,7 +86,6 @@ describe("workspace DTO mappers", () => {
       issue_id: "issue-1",
       target_type: "agent",
       target_id: "12",
-      workflow_step: "implementation",
       body: "请实现接口",
       status: "active",
     });
@@ -96,8 +102,14 @@ describe("workspace DTO mappers", () => {
           task_id: "task-1",
           task_title: "Task",
           backend_task_id: "99",
-          modelSelection: { model: "gpt" },
-          workflow_node_id: "node-1",
+          modelSelection: {
+            modelName: "gpt-5.6-sol",
+            modelType: "runtime",
+          },
+          execution_context: {
+            runtime: "codex",
+            workspacePath: "/workspace/task-1",
+          },
           binding_type: "user",
           linked_at: "2026-09-10T00:00:00Z",
         },
@@ -112,8 +124,18 @@ describe("workspace DTO mappers", () => {
       taskId: "task-1",
       taskTitle: "Task",
       backendTaskId: 99,
-      modelSelection: { model: "gpt" },
-      workflowNodeId: "node-1",
+      humanAssignmentId: null,
+      dispatchId: null,
+      dispatchRoundId: null,
+      assignmentId: null,
+      modelSelection: {
+        modelName: "gpt-5.6-sol",
+        modelType: "runtime",
+      },
+      executionContext: {
+        runtime: "codex",
+        workspacePath: "/workspace/task-1",
+      },
       bindingType: "user",
       linkedAt: "2026-09-10T00:00:00Z",
     });
@@ -122,27 +144,7 @@ describe("workspace DTO mappers", () => {
     );
   });
 
-  it("normalizes workflow plans and collaborators without sharing transport types", () => {
-    expect(
-      mapWorkspaceWorkflowPlanDto({
-        run_id: "run-1",
-        issue_id: "issue-1",
-        stage_id: "stage-1",
-        plan_version: 2,
-        approval_policy: "automatic",
-        status: "running",
-        summary: "Plan",
-        items: [{ id: "item-1" }],
-        manager_run: { id: "manager-1" },
-      }),
-    ).toMatchObject({
-      runId: "run-1",
-      issueId: "issue-1",
-      stageId: "stage-1",
-      planVersion: 2,
-      approvalPolicy: "automatic",
-      status: "running",
-    });
+  it("normalizes collaborators without sharing transport types", () => {
     expect(
       mapWorkspaceIssueCollaboratorDto({
         id: 5,
@@ -164,32 +166,6 @@ describe("workspace DTO mappers", () => {
       addedByUserId: 1,
       createdAt: "2026-09-10T00:00:00Z",
     });
-  });
-
-  it("normalizes workflow stage context instruction casing", () => {
-    expect(
-      mapWorkspaceWorkflowStageContextDto({
-        compiled_task_instruction: "Run the deployment",
-        source: "delivery",
-      }),
-    ).toEqual({
-      compiledTaskInstruction: "Run the deployment",
-      source: "delivery",
-    });
-    expect(
-      mapWorkspaceWorkflowStageContextDto({
-        compiledTaskInstruction: "Already normalized",
-        source: "shared",
-      }),
-    ).toEqual({
-      compiledTaskInstruction: "Already normalized",
-      source: "shared",
-    });
-    expect(() =>
-      mapWorkspaceWorkflowStageContextDto({ source: "delivery" }),
-    ).toThrow(
-      "Workspace workflow stage context is missing compiled_task_instruction",
-    );
   });
 
   it("normalizes delivery details and nested assets", () => {

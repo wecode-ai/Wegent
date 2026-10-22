@@ -204,10 +204,8 @@ def test_subscription_event_matches_external_rule_and_creates_one_run(
                 "execution_target": "create_issue",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text
@@ -445,10 +443,8 @@ def test_hybrid_webhook_and_poll_inputs_share_one_automation_run(
                 "execution_target": "create_issue",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text
@@ -586,10 +582,8 @@ def test_webhook_continue_binding_succeeds_with_preexisting_binding(
                 "execution_target": "continue_binding",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text
@@ -713,10 +707,8 @@ def test_webhook_continue_binding_preserves_bound_task_model(
                 "execution_target": "continue_binding",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text
@@ -802,10 +794,8 @@ def test_poll_only_subscription_matches_rule_and_dispatches_one_run(
                 "execution_target": "create_issue",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text

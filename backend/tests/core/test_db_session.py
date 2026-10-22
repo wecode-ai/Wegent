@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest_mock import MockerFixture
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.db import session
@@ -74,5 +75,24 @@ async def test_mysql_async_engine_uses_independent_pool_limits(monkeypatch):
         assert engine.pool._max_overflow == 2
         assert engine.pool._timeout == 13
         assert engine.pool._recycle == 2345
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_mysql_connection_initializes_configured_timezone(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.setattr(
+        session, "SQLALCHEMY_DATABASE_URL", "mysql+pymysql://unit:unit@localhost/unit"
+    )
+    create = mocker.spy(session, "create_async_engine")
+
+    engine = session._create_async_engine()
+    try:
+        assert create.call_args.kwargs["connect_args"]["init_command"] == (
+            "SET time_zone = '" + session.MYSQL_SESSION_TIMEZONE_OFFSET + "'"
+        )
     finally:
         await engine.dispose()

@@ -23,7 +23,6 @@ from app.core.security import (
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
 )
-from app.models.delivery import LoopItem
 from app.models.user import User
 from app.schemas.cloud_file import (
     CloudFileAccessResponse,
@@ -37,7 +36,6 @@ from app.schemas.cloud_file import (
 )
 from app.schemas.cloud_project import (
     CloudProjectCreate,
-    CloudProjectListResponse,
     CloudProjectMemberCreate,
     CloudProjectMemberResponse,
     CloudProjectMemberUpdate,
@@ -65,14 +63,10 @@ from app.schemas.work_queue import MessageContentSnapshot
 from app.schemas.workspace import (
     ExecutionEnvironmentInitialize,
     WorkspaceExecutionEnvironmentCreate,
-    WorkspaceExecutionEnvironmentListResponse,
     WorkspaceExecutionEnvironmentResponse,
 )
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
-from app.services.cloud_projects.responses import (
-    list_project_responses,
-)
 from app.services.cloud_projects.responses import project_response as _project_response
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -84,6 +78,7 @@ from app.services.project_chat.service import project_chat_service
 from app.stores.tasks import subtask_store, task_access_store, task_store
 
 router = APIRouter()
+legacy_router = APIRouter()
 
 
 def _collaboration_message_body(
@@ -210,18 +205,7 @@ def create_cloud_project(
     return _project_response(db, project, current_user)
 
 
-@router.get("", response_model=CloudProjectListResponse)
-def list_cloud_projects(
-    workspace_id: int | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> CloudProjectListResponse:
-    return CloudProjectListResponse(
-        items=list_project_responses(db, current_user, workspace_id)
-    )
-
-
-@router.get("/{project_id}", response_model=CloudProjectResponse)
+@legacy_router.get("/{project_id}", response_model=CloudProjectResponse)
 def get_cloud_project(
     project_id: int,
     db: Session = Depends(get_db),
@@ -240,25 +224,6 @@ def update_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
-
-
-@router.get(
-    "/{project_id}/execution-environments",
-    response_model=WorkspaceExecutionEnvironmentListResponse,
-)
-async def list_project_execution_environments(
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> WorkspaceExecutionEnvironmentListResponse:
-    return WorkspaceExecutionEnvironmentListResponse(
-        items=[
-            WorkspaceExecutionEnvironmentResponse.model_validate(item)
-            for item in await cloud_project_service.list_execution_environments(
-                db, project_id, current_user.id
-            )
-        ]
-    )
 
 
 @router.post(
@@ -317,11 +282,15 @@ async def initialize_project_execution_environment(
 @router.get("/{project_id}/chat-agents", response_model=list[ProjectChatAgentView])
 def list_project_chat_agents(
     project_id: int,
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[ProjectChatAgentView]:
     return project_chat_service.list_agents(
-        db, user_id=current_user.id, project_id=str(project_id)
+        db,
+        user_id=current_user.id,
+        project_id=str(project_id),
+        include_archived=include_archived,
     )
 
 
@@ -394,16 +363,6 @@ async def assign_loop_item(
         response = external_loop_item_provider.assign(
             db, item_id, current_user.id, values
         )
-        if values.assignee_type == "agent":
-            from app.services.board_team_execution import (
-                dispatch_board_team_assignment,
-            )
-
-            item = db.get(LoopItem, item_id)
-            if item is None:
-                raise RuntimeError("External Team assignment index is unavailable")
-            await dispatch_board_team_assignment(db, item=item, user=current_user)
-            response = external_loop_item_provider.get(db, item_id, current_user.id)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
@@ -415,11 +374,6 @@ async def assign_loop_item(
         user_id=current_user.id,
         values=values,
     )
-    if values.assignee_type == "agent":
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        await dispatch_board_team_assignment(db, item=item, user=current_user)
-        db.refresh(item)
     from app.tasks.robot_queue_tasks import consume_queues_background
 
     background_tasks.add_task(consume_queues_background)

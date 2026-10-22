@@ -47,8 +47,8 @@ export interface AppPreferences {
   telemetryEnabled: boolean
   supervisorPrinciples: string
   supervisorModelSelection: ModelSelectionConfig | null
+  projectAiModelSelection: ModelSelectionConfig | null
   supervisorIntervalSeconds: number
-  taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
   trayUsageEnabled: boolean
@@ -63,6 +63,7 @@ export interface AppPreferences {
   popoutWindowProjectlessDefaultEnabled: boolean
   friendlyTaskTitlesEnabled: boolean
   friendlyTaskTitleModel: FriendlyTaskTitleModelConfig | null
+  replyPredictionsEnabled: boolean
   changeRequestStatusEnabled: boolean
   quickPhrases: QuickPhrase[]
   localHarnesses: LocalHarnessPreference[]
@@ -98,13 +99,15 @@ export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type AppearanceModePreference = 'light' | 'dark' | 'system'
 export type BrowserLinkTarget = 'system' | 'wework'
 export type WorkbenchMode = 'focus' | 'developer'
-export type FixedWorkspaceTabKind = 'task' | 'board' | 'agent' | 'smart_app'
+export type FixedWorkspaceTabKind = 'task' | 'board' | 'agent' | 'auxiliary' | 'smart_app'
 
 export interface FixedWorkspaceTabPreference {
   id: string
   kind: FixedWorkspaceTabKind
   installationId?: string
   title?: string
+  contentRoute?: string
+  windowLabel?: string
 }
 
 export interface AppPreferencesPatch {
@@ -126,8 +129,8 @@ export interface AppPreferencesPatch {
   telemetryEnabled?: boolean
   supervisorPrinciples?: string
   supervisorModelSelection?: ModelSelectionConfig | null
+  projectAiModelSelection?: ModelSelectionConfig | null
   supervisorIntervalSeconds?: number
-  taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
   trayUsageEnabled?: boolean
@@ -142,6 +145,7 @@ export interface AppPreferencesPatch {
   popoutWindowProjectlessDefaultEnabled?: boolean
   friendlyTaskTitlesEnabled?: boolean
   friendlyTaskTitleModel?: FriendlyTaskTitleModelConfig | null
+  replyPredictionsEnabled?: boolean
   changeRequestStatusEnabled?: boolean
   quickPhrases?: QuickPhrase[]
   localHarnesses?: LocalHarnessPreference[]
@@ -171,8 +175,8 @@ export const defaultAppPreferences: AppPreferences = {
   telemetryEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
+  projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -187,6 +191,7 @@ export const defaultAppPreferences: AppPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
+  replyPredictionsEnabled: false,
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
@@ -203,6 +208,7 @@ const supportedFixedWorkspaceTabKinds = new Set<FixedWorkspaceTabKind>([
   'task',
   'board',
   'agent',
+  'auxiliary',
   'smart_app',
 ])
 
@@ -220,7 +226,21 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
         : null
     const installationId =
       typeof record.installationId === 'string' ? record.installationId.trim() : ''
-    if (!id || ids.has(id) || !kind || (kind === 'smart_app' && !installationId)) return []
+    const contentRoute = typeof record.contentRoute === 'string' ? record.contentRoute.trim() : ''
+    const windowLabel =
+      typeof record.windowLabel === 'string' &&
+      /^workspace-[a-zA-Z0-9_-]+$/.test(record.windowLabel.trim())
+        ? record.windowLabel.trim()
+        : ''
+    if (
+      !id ||
+      ids.has(id) ||
+      !kind ||
+      (kind === 'smart_app' && !installationId) ||
+      (kind === 'auxiliary' && !contentRoute)
+    ) {
+      return []
+    }
     ids.add(id)
     const title = typeof record.title === 'string' ? record.title.trim() : ''
     return [
@@ -229,12 +249,14 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
         kind,
         ...(installationId && { installationId }),
         ...(title && { title }),
+        ...(contentRoute && { contentRoute }),
+        ...(windowLabel && { windowLabel }),
       },
     ]
   })
 }
 
-function mergeAppPreferences(value: unknown): AppPreferences {
+export function mergeAppPreferences(value: unknown): AppPreferences {
   if (!value || typeof value !== 'object') {
     return defaultAppPreferences
   }
@@ -245,10 +267,9 @@ function mergeAppPreferences(value: unknown): AppPreferences {
     typeof (record as Record<string, unknown>).defaultWorkspaceTab === 'string'
       ? String((record as Record<string, unknown>).defaultWorkspaceTab)
       : 'task'
-  const fixedWorkspaceTabs =
-    storedFixedWorkspaceTabs.length > 0
-      ? storedFixedWorkspaceTabs
-      : defaultAppPreferences.fixedWorkspaceTabs
+  const fixedWorkspaceTabs = Array.isArray(record.fixedWorkspaceTabs)
+    ? storedFixedWorkspaceTabs
+    : defaultAppPreferences.fixedWorkspaceTabs
   return {
     workbenchMode:
       typeof record.workbenchMode === 'string' &&
@@ -270,13 +291,14 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         : defaultAppPreferences.showMainWindowOnLaunch,
     fixedWorkspaceTabs,
     startupWorkspaceTabId: (() => {
+      if (fixedWorkspaceTabs.length === 0) return ''
       const requested =
         typeof record.startupWorkspaceTabId === 'string' ? record.startupWorkspaceTabId.trim() : ''
       if (fixedWorkspaceTabs.some(tab => tab.id === requested)) return requested
       return (
         fixedWorkspaceTabs.find(tab => tab.kind === legacyDefaultWorkspaceTab)?.id ??
         fixedWorkspaceTabs[0]?.id ??
-        'fixed-task'
+        ''
       )
     })(),
     systemDragEnabled:
@@ -326,13 +348,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.supervisorPrinciples
         : defaultAppPreferences.supervisorPrinciples,
     supervisorModelSelection: normalizeModelSelection(record.supervisorModelSelection),
+    projectAiModelSelection: normalizeModelSelection(record.projectAiModelSelection),
     supervisorIntervalSeconds: [10, 30, 60, 300].includes(record.supervisorIntervalSeconds ?? 0)
       ? (record.supervisorIntervalSeconds as number)
       : defaultAppPreferences.supervisorIntervalSeconds,
-    taskCompletionNotificationsEnabled:
-      typeof record.taskCompletionNotificationsEnabled === 'boolean'
-        ? record.taskCompletionNotificationsEnabled
-        : defaultAppPreferences.taskCompletionNotificationsEnabled,
     trayUnreadEnabled:
       typeof record.trayUnreadEnabled === 'boolean'
         ? record.trayUnreadEnabled
@@ -390,6 +409,7 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.friendlyTaskTitlesEnabled
         : defaultAppPreferences.friendlyTaskTitlesEnabled,
     friendlyTaskTitleModel: normalizeFriendlyTaskTitleModel(record.friendlyTaskTitleModel),
+    replyPredictionsEnabled: record.replyPredictionsEnabled === true,
     changeRequestStatusEnabled:
       typeof record.changeRequestStatusEnabled === 'boolean'
         ? record.changeRequestStatusEnabled
@@ -510,7 +530,7 @@ function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
   ]
 }
 
-function emitAppPreferencesChanged(preferences: AppPreferences) {
+export function emitAppPreferencesChanged(preferences: AppPreferences) {
   window.dispatchEvent(new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, { detail: preferences }))
 }
 

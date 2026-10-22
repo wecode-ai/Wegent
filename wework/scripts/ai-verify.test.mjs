@@ -19,7 +19,22 @@ import {
   resolveStartupTimeout,
   startupFailureMessage,
   validateStartOptions,
+  takeWindowCommand,
 } from './ai-verify.mjs'
+
+describe('takeWindowCommand', () => {
+  test('keeps commands isolated between main and detached clients', () => {
+    const main = { id: 'main-command', windowLabel: 'main' }
+    const detached = { id: 'detached-command', windowLabel: 'workspace-task' }
+    const queue = [main, detached]
+    expect(takeWindowCommand(queue, undefined)).toBeNull()
+    expect(takeWindowCommand(queue, 'workspace-task')).toBe(detached)
+    expect(queue).toEqual([main])
+    expect(takeWindowCommand(queue, 'workspace-task')).toBeNull()
+    expect(takeWindowCommand(queue, 'main')).toBe(main)
+    expect(queue).toEqual([])
+  })
+})
 
 describe('AI_VERIFY_ACTIONS', () => {
   test('preserves the complete legacy command surface', () => {
@@ -30,6 +45,8 @@ describe('AI_VERIFY_ACTIONS', () => {
       'capture-workspace': 'captureWorkspaceWindow',
       snapshot: 'snapshot',
       debug: 'getWorkbenchDebugSnapshot',
+      'conversation-diagnostics': 'getConversationDiagnosticsSnapshot',
+      'conversation-frame-probe': 'setConversationFrameProbeEnabled',
       'active-element': 'getActiveElementTestId',
       'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
       click: 'click',
@@ -275,10 +292,50 @@ describe('validateStartOptions', () => {
     )
   })
 
+  test('accepts rollout replay and rejects mixing it with first-run migration', () => {
+    expect(() => validateStartOptions({ rollout: '/tmp/history.jsonl' })).not.toThrow()
+    expect(() =>
+      validateStartOptions({ rollout: '/tmp/history.jsonl', 'codex-home-initialization': 'true' })
+    ).toThrow('--rollout cannot be combined')
+  })
+
   test('rejects an invalid packaged option', () => {
     expect(() => validateStartOptions({ packaged: 'yes' })).toThrow(
       '--packaged must be "true" or "false"'
     )
+  })
+
+  test('keeps rollout replay restricted to an isolated executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        rollout: '/tmp/history.jsonl',
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+      })
+    ).toThrow('--rollout cannot be combined with --executor-home')
+  })
+
+  test('accepts an explicitly selected shared executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+        'codex-home-initialization': 'false',
+      })
+    ).not.toThrow()
+  })
+
+  test.each(['', '   ', 'relative/executor-home'])('rejects invalid executor home %s', path => {
+    expect(() => validateStartOptions({ 'executor-home': path })).toThrow(
+      '--executor-home must be a nonempty absolute path'
+    )
+  })
+
+  test('keeps first-run Codex migration restricted to an isolated executor home', () => {
+    expect(() =>
+      validateStartOptions({
+        'executor-home': join(tmpdir(), 'wework-shared-home'),
+        'codex-home-initialization': 'true',
+      })
+    ).toThrow('--executor-home cannot be combined with --codex-home-initialization true')
   })
 })
 
@@ -431,10 +488,12 @@ describe('buildSourceRuntimeEnvironment', () => {
 
     expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
     expect(environment.WEWORK_EXECUTOR_PATH).toContain(
-      '/executor/target/ai-verify/debug/wegent-executor'
+      join('executor', 'target', 'ai-verify', 'debug', 'wegent-executor')
     )
-    expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toContain('/electron/resources')
-    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toContain('/electron/resources/wework-core-plugins')
+    expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toContain(join('electron', 'resources'))
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toContain(
+      join('electron', 'resources', 'wework-core-plugins')
+    )
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
   })
 })

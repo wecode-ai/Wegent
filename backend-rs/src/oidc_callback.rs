@@ -115,24 +115,43 @@ pub async fn callback_response_with_state(
         mysql,
     };
     let app = &app;
-    if let Some(error) = query.error.as_deref() {
+    // FastAPI validates every required query parameter before the handler
+    // body runs, so an `error` value does not short-circuit a missing
+    // `code`/`state`. Report each missing parameter in declaration order.
+    let mut missing_parameters = Vec::new();
+    if query.code.is_none() {
+        missing_parameters.push("code");
+    }
+    if query.state.is_none() {
+        missing_parameters.push("state");
+    }
+    if !missing_parameters.is_empty() {
+        let detail = missing_parameters
+            .into_iter()
+            .map(|name| {
+                serde_json::json!({
+                    "type": "missing", "loc": ["query", name], "msg": "Field required",
+                    "input": brz_json::JsonNull
+                })
+            })
+            .collect::<Vec<_>>();
+        return Err(crate::http_compat::FastApiError::validation(detail));
+    }
+    let code = query
+        .code
+        .expect("required query parameter validated above");
+    let state = query
+        .state
+        .expect("required query parameter validated above");
+
+    // `if error:` is Python truthiness: an empty query value falls through.
+    if let Some(error) = query.error.as_deref().filter(|value| !value.is_empty()) {
         tracing::error!(error, "OIDC callback error");
         return Ok(redirect(
             &app.oidc_config.frontend_url,
             &format!("/login?error=oidc_error&message={error}"),
         ));
     }
-
-    // Missing required query parameters surface as FastAPI's 422 validation
-    // response before the handler body runs.
-    let (Some(code), Some(state)) = (query.code, query.state) else {
-        return Err(crate::http_compat::FastApiError::validation(
-            serde_json::json!([
-                { "type": "missing", "loc": ["query", "state"], "msg": "Field required",
-                  "input": crate::json_compat::JsonNull }
-            ]),
-        ));
-    };
 
     // Verify the state parameter (HS256 JWT), including its short expiry and
     // required nonce, exactly as the source callback does.
@@ -155,7 +174,10 @@ pub async fn callback_response_with_state(
             let mut path = format!(
                 "/login/oidc?access_token={access_token}&token_type=bearer&login_success=true"
             );
-            if let Some(redirect_after_login) = claims.redirect.as_deref() {
+            // `if redirect_after_login:` — an empty claim appends nothing.
+            if let Some(redirect_after_login) =
+                claims.redirect.as_deref().filter(|value| !value.is_empty())
+            {
                 path.push_str("&redirect=");
                 let encoded = url::form_urlencoded::byte_serialize(redirect_after_login.as_bytes())
                     .collect::<String>()
@@ -521,17 +543,12 @@ mod tests {
             pub(super) frontend_url: String,
             pub(super) discovery_url: String,
         }
-        brz_http_server::registry!(
-            group = oidc_probe,
-            dependencies(cfg: OidcProbeState)
-        );
+        brz_http_server::registry!(group = oidc_probe, dependencies(cfg: OidcProbeState));
 
         #[brz_http_server::get("/api/auth/oidc/callback", group = super::probe::oidc_probe, access = public)]
         async fn callback(
             #[inject(cfg)] cfg: &OidcProbeState,
-            code: Option<String>,
-            state: Option<String>,
-            error: Option<String>,
+            query: brz_http_server::Query<CallbackQuery>,
         ) -> Result<brz_http_server::Redirect, FastApiError> {
             let config = OidcConfig {
                 state_key: cfg.state_key.clone(),
@@ -540,7 +557,7 @@ mod tests {
                 ..OidcConfig::default()
             };
             let oidc = OidcService::new(&config).expect("valid discovery URL");
-            callback_response(&config, &oidc, CallbackQuery { code, state, error }).await
+            callback_response(&config, &oidc, query.0).await
         }
 
         pub(super) fn handler(
@@ -611,6 +628,12 @@ mod tests {
         line["location:".len()..].trim().to_string()
     }
 
+    fn body_of(raw: &str) -> &str {
+        raw.split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or_default()
+    }
+
     #[tokio::test]
     async fn metadata_failure_returns_recorded_502_body_shape() {
         let app = app_with("test-key", TEST_FRONTEND_URL);
@@ -625,12 +648,26 @@ mod tests {
     #[tokio::test]
     async fn error_query_redirects_to_frontend() {
         let app = app_with("test-key", TEST_FRONTEND_URL);
-        let raw = callback(&app, "error=access_denied").await;
+        let raw = callback(&app, "code=c&state=x&error=access_denied").await;
         assert_eq!(status_of(&raw), 302);
         assert_eq!(
             location_of(&raw),
             frontend_login_url("oidc_error", "access_denied")
         );
+    }
+
+    /// `if error:` uses Python truthiness, so an empty value does not take
+    /// the provider-error branch. A valid state then reaches the provider
+    /// metadata fetch, whose failure renders the source's 502 body.
+    #[tokio::test]
+    async fn empty_error_query_does_not_short_circuit() {
+        let app = app_with("test-key", TEST_FRONTEND_URL);
+        let state = sign_state(&json!({
+            "nonce": "n", "iat": 0, "exp": 4_102_444_800_i64,
+            "redirect": "/chat", "frontend_base_path": ""
+        }));
+        let raw = callback(&app, &format!("code=c&state={state}&error=")).await;
+        assert_eq!(status_of(&raw), 502);
     }
 
     #[tokio::test]
@@ -663,6 +700,37 @@ mod tests {
         let app = app_with("test-key", TEST_FRONTEND_URL);
         let raw = callback(&app, "code=c").await;
         assert_eq!(status_of(&raw), 422);
+        assert_eq!(
+            body_of(&raw),
+            r#"{"detail":[{"type":"missing","loc":["query","state"],"msg":"Field required","input":null}]}"#
+        );
+    }
+
+    /// FastAPI reports every missing required parameter at once, in
+    /// declaration order, before the handler body (and its `error` branch)
+    /// runs.
+    #[tokio::test]
+    async fn missing_parameters_are_reported_in_declaration_order() {
+        let app = app_with("test-key", TEST_FRONTEND_URL);
+        let raw = callback(&app, "error=access_denied").await;
+        assert_eq!(status_of(&raw), 422);
+        assert_eq!(
+            body_of(&raw),
+            r#"{"detail":[{"type":"missing","loc":["query","code"],"msg":"Field required","input":null},{"type":"missing","loc":["query","state"],"msg":"Field required","input":null}]}"#
+        );
+    }
+
+    /// The route binds the query model by its serde field names; the
+    /// recorded request carries `code` and `state` and no `error`.
+    #[test]
+    fn query_model_binds_source_parameter_names() {
+        let query = brz_http_server::__private::query_object::<CallbackQuery>(Some(
+            "code=vwvkhcesls2jtlnj2px55dx2l&state=eyJhbGciOiJIUzI1NiJ9.e30.sig",
+        ))
+        .expect("recorded query decodes");
+        assert_eq!(query.code.as_deref(), Some("vwvkhcesls2jtlnj2px55dx2l"));
+        assert_eq!(query.state.as_deref(), Some("eyJhbGciOiJIUzI1NiJ9.e30.sig"));
+        assert_eq!(query.error, None);
     }
 
     #[test]

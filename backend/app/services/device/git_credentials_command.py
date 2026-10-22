@@ -6,14 +6,21 @@
 
 import shlex
 
+from app.services.device.git_credential_paths import GIT_CREDENTIAL_PATHS_SCRIPT
+
 GIT_CREDENTIALS_SECRET_ENV = "WEGENT_SECRET_GIT_CREDENTIALS"
 
-GIT_CREDENTIAL_SYNC_SCRIPT = r'''
+GIT_CREDENTIAL_SYNC_SCRIPT = (
+    GIT_CREDENTIAL_PATHS_SCRIPT
+    + "\n"
+    + r'''
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -101,9 +108,9 @@ def identity_source(name, email):
     )
 
 
-def build_git_config(accounts, identity_paths):
+def build_git_config(accounts, identity_paths, root):
     lines = []
-    helper = '!f() { exec "$HOME/.wecode/git-auth/current/credential-helper" "$@"; }; f'
+    helper = '!f() { exec %s "$@"; }; f' % shlex.quote(str(root / "current" / "credential-helper"))
     for account in accounts:
         domain = account["domain"]
         host = account["host"]
@@ -326,7 +333,7 @@ def strip_managed_blocks(content):
     return content.rstrip() + ("\n" if content.strip() else "")
 
 
-def update_profile(path, enabled):
+def update_profile(path, enabled, root):
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     content = strip_managed_blocks(content)
@@ -336,8 +343,8 @@ def update_profile(path, enabled):
         content += (
             MANAGED_START
             + "\n"
-            + 'if [ -f "$HOME/.wecode/git-auth/env.sh" ]; then\n'
-            + '  . "$HOME/.wecode/git-auth/env.sh"\n'
+            + ('if [ -f %s ]; then\n' % shlex.quote(str(root / "env.sh")))
+            + ('  . %s\n' % shlex.quote(str(root / "env.sh")))
             + "fi\n"
             + MANAGED_END
             + "\n"
@@ -369,6 +376,8 @@ def exact_value_pattern(value):
 
 
 def update_global_git_config(global_config, include_path, enabled, home):
+    if global_config is None:
+        return
     if not global_config.exists() and not enabled:
         return
     if not global_config.exists():
@@ -378,6 +387,11 @@ def update_global_git_config(global_config, include_path, enabled, home):
         "--unset-all",
         "include.path",
         exact_value_pattern(str(include_path)),
+        allow_missing=True,
+    )
+    git_config(
+        global_config, "--unset-all", "include.path",
+        exact_value_pattern(str(home / ".wecode/git-auth/current/gitconfig")),
         allow_missing=True,
     )
     legacy_askpass = str(home / ".wecode" / "git-askpass.sh")
@@ -413,6 +427,12 @@ def remove_legacy_files(home, warnings):
             path.unlink(missing_ok=True)
         except OSError:
             warnings.append("legacy_cleanup_failed")
+    legacy_root = home / ".wecode" / "git-auth"
+    if legacy_root.exists():
+        try:
+            shutil.rmtree(legacy_root)
+        except OSError:
+            warnings.append("legacy_cleanup_failed")
 
 
 def configured_cli_exports(cli_results, root):
@@ -423,15 +443,15 @@ def configured_cli_exports(cli_results, root):
     }
     lines = ["#!/bin/sh"]
     if "gh" in providers:
-        lines.append('export GH_CONFIG_DIR="$HOME/.wecode/git-auth/current/gh"')
+        lines.append('export GH_CONFIG_DIR=%s' % shlex.quote(str(root / "current" / "gh")))
     if "glab" in providers:
-        lines.append('export GLAB_CONFIG_DIR="$HOME/.wecode/git-auth/current/glab"')
+        lines.append('export GLAB_CONFIG_DIR=%s' % shlex.quote(str(root / "current" / "glab")))
     return "\n".join(lines) + "\n" if len(lines) > 1 else ""
 
 
 def clear_managed_state(home, root, current, revisions, global_config, profile_paths):
-    previous_domains = read_previous_domains(current, revisions)
-    tracked_paths = [global_config, *profile_paths]
+    previous_domains = previous_account_domains(home, current, revisions, global_config)
+    tracked_paths = [path for path in [global_config, *profile_paths] if path is not None]
     backups = {path: snapshot(path) for path in tracked_paths}
     removed_root = None
     try:
@@ -440,17 +460,18 @@ def clear_managed_state(home, root, current, revisions, global_config, profile_p
             os.replace(root, removed_root)
         update_global_git_config(
             global_config,
-            home / ".wecode" / "git-auth" / "current" / "gitconfig",
+            root / "current" / "gitconfig",
             False,
             home,
         )
         for path in profile_paths:
             if path.exists():
-                update_profile(path, False)
+                update_profile(path, False, root)
         warnings = []
-        remove_legacy_files(home, warnings)
         if removed_root:
             shutil.rmtree(removed_root)
+        if global_config is not None:
+            remove_legacy_files(home, warnings)
         return previous_domains, warnings
     except Exception:
         for path, saved in backups.items():
@@ -461,7 +482,7 @@ def clear_managed_state(home, root, current, revisions, global_config, profile_p
 
 
 def apply_accounts(home, root, current, revisions, global_config, profile_paths, accounts):
-    previous_domains = read_previous_domains(current, revisions)
+    previous_domains = previous_account_domains(home, current, revisions, global_config)
     revision_name = "%d-%s" % (int(time.time()), uuid.uuid4().hex)
     staging = revisions / (".staging-" + revision_name)
     revision = revisions / revision_name
@@ -502,7 +523,7 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
     }
     write_file(staging / "manifest.json", json.dumps(manifest, separators=(",", ":")), 0o600)
     write_file(staging / "credential-helper", credential_helper_source(), 0o700)
-    write_file(staging / "gitconfig", build_git_config(accounts, identity_paths), 0o600)
+    write_file(staging / "gitconfig", build_git_config(accounts, identity_paths, root), 0o600)
 
     environment = os.environ.copy()
     environment["HOME"] = str(home)
@@ -527,10 +548,11 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
     secure_tree(staging)
     os.replace(staging, revision)
 
-    tracked_paths = [global_config, *profile_paths, root / "env.sh"]
+    tracked_paths = [path for path in [global_config, *profile_paths, root / "env.sh"] if path is not None]
     backups = {path: snapshot(path) for path in tracked_paths}
     previous_target = os.readlink(current) if current.is_symlink() else None
     switched = False
+    next_link = None
     try:
         include_path = root / "current" / "gitconfig"
         update_global_git_config(global_config, include_path, True, home)
@@ -541,7 +563,7 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
             (root / "env.sh").unlink(missing_ok=True)
         for path in profile_paths:
             if path == home / ".profile" or path.exists():
-                update_profile(path, bool(env_source))
+                update_profile(path, bool(env_source), root)
 
         next_link = root / (".current-" + uuid.uuid4().hex)
         next_link.symlink_to(Path("revisions") / revision_name)
@@ -550,6 +572,8 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
     except Exception:
         for path, saved in backups.items():
             restore(path, saved)
+        if next_link is not None:
+            next_link.unlink(missing_ok=True)
         if switched:
             current.unlink(missing_ok=True)
             if previous_target:
@@ -558,7 +582,8 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
         raise
 
     warnings = []
-    remove_legacy_files(home, warnings)
+    if global_config is not None:
+        remove_legacy_files(home, warnings)
     for child in revisions.iterdir():
         if child == revision:
             continue
@@ -579,6 +604,59 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
     }
 
 
+def previous_account_domains(home, current, revisions, global_config):
+    if global_config is not None and not current.is_symlink():
+        legacy = home / ".wecode" / "git-auth"
+        return read_previous_domains(legacy / "current", legacy / "revisions")
+    return read_previous_domains(current, revisions)
+
+
+def private_directory(path):
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        fail("credential_directory_invalid")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_mode(path, 0o700)
+
+
+def validate_legacy_store(root, error_code="legacy_credentials_unmanaged"):
+    if not root.exists():
+        return
+    current = root / "current"
+    try:
+        if not current.is_symlink():
+            raise ValueError
+        current.resolve(strict=True).relative_to((root / "revisions").resolve(strict=True))
+        manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("version") != 1 or not isinstance(manifest.get("credentials"), dict):
+            raise ValueError
+        if any(child.name not in {"current", "revisions", "env.sh"} for child in root.iterdir()):
+            raise ValueError
+    except (OSError, ValueError, TypeError, AttributeError):
+        fail(error_code)
+
+
+def validate_target_store(root):
+    if not root.exists():
+        return
+    if not root.is_dir() or any(
+        child.name not in {"current", "revisions", "env.sh"} for child in root.iterdir()
+    ):
+        fail("credential_directory_invalid")
+    if (root / "current").exists() or (root / "current").is_symlink():
+        validate_legacy_store(root, "credential_directory_invalid")
+
+
+def acquire_lock(stack, path):
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    lock = stack.enter_context(os.fdopen(descriptor, "r+"))
+    if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+        fail("credential_lock_invalid")
+    try:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fail("sync_in_progress")
+
+
 def main():
     os.umask(0o077)
     raw_payload = os.environ.pop(SECRET_ENV, "")
@@ -593,29 +671,34 @@ def main():
         fail("credential_payload_invalid")
     raw_payload = None
 
-    home = Path(os.environ.get("HOME") or str(Path.home())).expanduser().resolve()
-    wecode_root = home / ".wecode"
-    wecode_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    ensure_mode(wecode_root, 0o700)
-    root = wecode_root / "git-auth"
+    try:
+        home, workbench, root, isolated = credential_paths()
+    except ValueError:
+        fail("invalid_workbench_home")
+    private_directory(workbench)
+    private_directory(workbench / "runtime")
+    private_directory(workbench / "runtime" / "git-auth")
+    if root.is_symlink():
+        fail("credential_directory_invalid")
+    legacy_root = home / ".wecode" / "git-auth"
+    if not isolated and (legacy_root.is_symlink() or legacy_root.parent.is_symlink()):
+        fail("credential_directory_invalid")
     revisions = root / "revisions"
     current = root / "current"
-    global_config = home / ".gitconfig"
-    profile_paths = [
+    global_config = None if isolated else home / ".gitconfig"
+    profile_paths = [] if isolated else [
         home / ".profile",
         home / ".bashrc",
         home / ".bash_profile",
         home / ".zshrc",
     ]
-    lock_path = wecode_root / "git-auth-sync.lock"
-    lock_path.touch(mode=0o600, exist_ok=True)
-    ensure_mode(lock_path, 0o600)
-
-    with lock_path.open("r+") as lock_file:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            fail("sync_in_progress")
+    with ExitStack() as stack:
+        acquire_lock(stack, workbench / "runtime" / "git-auth" / "sync.lock")
+        legacy_lock = home / ".wecode" / "git-auth-sync.lock"
+        if not isolated and (legacy_root.exists() or legacy_lock.exists()):
+            acquire_lock(stack, legacy_lock)
+            validate_legacy_store(legacy_root)
+        validate_target_store(root)
         try:
             if not accounts:
                 removed_domains, warnings = clear_managed_state(
@@ -636,10 +719,8 @@ def main():
                     }
                 )
 
-            root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            revisions.mkdir(parents=True, exist_ok=True, mode=0o700)
-            ensure_mode(root, 0o700)
-            ensure_mode(revisions, 0o700)
+            private_directory(root)
+            private_directory(revisions)
             result = apply_accounts(
                 home,
                 root,
@@ -658,6 +739,7 @@ def main():
 
 main()
 '''.strip()
+)
 
 
 SYNC_GIT_CREDENTIALS_COMMAND = f"python3 -c {shlex.quote(GIT_CREDENTIAL_SYNC_SCRIPT)}"

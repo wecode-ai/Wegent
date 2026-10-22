@@ -24,6 +24,7 @@ from app.api.endpoints import (
     im_sessions,
     installed_mcps,
     installed_plugins,
+    issue_activity_comments,
     knowledge,
     knowledge_artifacts,
     knowledge_open,
@@ -31,7 +32,6 @@ from app.api.endpoints import (
     knowledge_video_upload,
     local_executor,
     loop_item_executions,
-    mcp_identity,
     mcp_providers,
     oauth_clients,
     oauth_provider,
@@ -44,7 +44,6 @@ from app.api.endpoints import (
     project_incoming_hooks,
     projects,
     prompt_optimization,
-    quota,
     remote_devices,
     repository,
     resource_library,
@@ -58,6 +57,7 @@ from app.api.endpoints import (
     subtasks,
     system_skills,
     token_issuers,
+    user_mcp_oauth,
     users,
     utils,
     web_scraper,
@@ -98,9 +98,6 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
-from app.api.endpoints.internal import (
-    api_keys_internal_router,
-)
 from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -120,7 +117,6 @@ from app.api.endpoints.internal import (
 from app.api.endpoints.internal import robot_queue as internal_robot_queue
 from app.api.endpoints.internal import (
     services_router,
-    skills_router,
     workspace_archives_router,
 )
 
@@ -162,6 +158,8 @@ api_router.include_router(
     prefix="/connector-runtime",
     tags=["connector-runtime"],
 )
+api_router.include_router(user_mcp_oauth.router, tags=["mcp-oauth"])
+api_router.include_router(user_mcp_oauth.public_router, tags=["mcp-oauth"])
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(
@@ -177,6 +175,9 @@ api_router.include_router(
 )
 api_router.include_router(
     cloud_projects.router, prefix="/v1/projects", tags=["projects"]
+)
+api_router.include_router(
+    cloud_projects.legacy_router, prefix="/v1/projects", tags=["projects"]
 )
 api_router.include_router(
     workspaces.router, prefix="/v1/workspaces", tags=["workspaces"]
@@ -219,12 +220,10 @@ api_router.include_router(
     prefix="/v1/cloud-projects",
     tags=["cloud-projects"],
 )
-api_router.include_router(
-    loop_item_executions.claim_router,
-    prefix="/v1",
-    tags=["cloud-projects"],
-)
 api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
+api_router.include_router(
+    issue_activity_comments.router, prefix="/v1", tags=["deliveries"]
+)
 api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
@@ -269,7 +268,6 @@ api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
 )
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
-api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
@@ -399,7 +397,6 @@ api_router.include_router(
     system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
-api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",
@@ -425,7 +422,6 @@ api_router.include_router(external_wiki_router, tags=["external-wiki"])
 api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]
 )
-api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
 )
@@ -468,12 +464,6 @@ api_router.include_router(
     prefix="/internal",
     tags=["internal-model-config"],
 )
-api_router.include_router(
-    api_keys_internal_router,
-    prefix="/internal",
-    tags=["internal-api-keys"],
-)
-
 api_router.include_router(
     wework_notifications.router,
     prefix="/v1/wework-notifications",

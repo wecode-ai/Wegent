@@ -9,6 +9,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
+import { selectCollaborationProjectView } from '../../utils/collaboration-test-support'
 import {
   authHeaders,
   clearToolScenario,
@@ -165,6 +167,8 @@ test.describe('Collaboration agent execution', () => {
   }, testInfo) => {
     expect(project?.id).toBeTruthy()
     const projectId = project!.id
+    await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
+    await initializeProjectExecutionEnvironment(page)
     const agent = await createProjectAgentThroughUi(page, request, projectId)
     const agentCase: AgentCase = {
       agent,
@@ -188,8 +192,8 @@ test.describe('Collaboration agent execution', () => {
     testInfo: TestInfo
   ): Promise<void> {
     const runtimeCapabilityCommand = [
-      `cat .codex/skills/${SKILL_NAME}/SKILL.md`,
-      `plugin_skill="$(find "$WEGENT_EXECUTOR_HOME/capabilities/store/plugins" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
+      `cat ".codex/skills/${SKILL_NAME}/SKILL.md"`,
+      `plugin_skill="$(find "$CODEX_HOME/plugins/cache/${plugin!.marketplaceId}/${PLUGIN_NAME}" -type f -path '*/skills/${PLUGIN_NAME}/SKILL.md' -print -quit)"`,
       'test -n "$plugin_skill"',
       'cat "$plugin_skill"',
     ].join('\n')
@@ -247,7 +251,7 @@ test.describe('Collaboration agent execution', () => {
     expect(execution.syncState).toBe('in_sync')
     expect(execution.teamId).toBeNull()
     expect(execution.backendTaskId).toBeNull()
-    expect(execution.executionEnvironment).toBe('cloud')
+    expect(execution.executionEnvironment).toBe('local')
     expect(execution.executionDeviceId).toBeTruthy()
     expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
     expect(execution.runtimeTaskId).toMatch(/^codex-queue-\d+$/)
@@ -463,17 +467,28 @@ test.describe('Collaboration agent execution', () => {
   ): Promise<CollaborationAgent> {
     const displayName = 'Wegent capability agent'
     await page.goto(`/collaboration/workspaces/${workspace!.id}/projects/${projectId}`)
-    await page.getByTestId('collaboration-tab-manage').click()
-    await page.getByTestId('collaboration-project-settings-participants').click()
-    await page.getByTestId('collaboration-participants-tab-agents').click()
+    await selectCollaborationProjectView(page, 'manage')
+    await page.getByTestId('collaboration-project-settings-agents').click()
     await expect(page.getByTestId('project-agent-config')).toBeVisible()
     await page.getByTestId('project-agent-add').click()
+    await expect(page.getByTestId('project-agent-dialog')).toBeVisible()
+    await expect(page.getByTestId('project-agent-search')).toBeFocused()
+    await expect(page.getByTestId('project-agent-wegent-create')).toBeDisabled()
+    const prematureCatalogRequests: string[] = []
+    const observeCatalog = (request: import('@playwright/test').Request) => {
+      const path = new URL(request.url()).pathname
+      if (path.includes('/kinds/skills/unified') || path.endsWith('/plugins/installed'))
+        prematureCatalogRequests.push(path)
+    }
+    page.on('request', observeCatalog)
     await page.getByTestId('project-agent-mode-create').click()
     await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
     await page.getByTestId('web-agent-display-name').fill(displayName)
     await page.getByTestId('web-agent-model').selectOption({
       label: resources.modelName,
     })
+    page.off('request', observeCatalog)
+    expect(prematureCatalogRequests).toEqual([])
     await page.getByTestId('web-agent-resource-creator-advanced-toggle').click()
     await page.getByTestId('web-agent-capability-mode-manual').click()
     await page.getByTestId('web-agent-skills-add').click()

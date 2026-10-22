@@ -6,7 +6,25 @@ use super::codex_config::optional_proxy_url;
 use super::*;
 use ignore::WalkBuilder;
 
+use crate::server::local_decision_proxy::DECISION_PROXY_PROTOCOL_VERSION;
+
 const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
+/// Base path shared with the Executor HTTP router.
+const DECISION_PROXY_ROUTE_PREFIX: &str = "/v1/decision-router";
+/// Fields only Executor-controlled configuration may decide.
+const DECISION_PROXY_REGISTER_FORBIDDEN_FIELDS: &[&str] = &[
+    "upstream",
+    "upstreamUrl",
+    "apiKey",
+    "api_key",
+    "authorization",
+    "credential",
+    "credentialSource",
+    "models",
+    "allowedModels",
+    "defaultModel",
+    "enabled",
+];
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn reconcile_and_resume_persisted_turns(&self) {
@@ -765,6 +783,70 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({"unregistered": true}))
     }
 
+    /// Registers a local decision route for one Smart App scope.
+    ///
+    /// The backend owns the model catalog and provider configuration. A caller
+    /// only supplies scope and can never redirect or widen the route.
+    pub(super) async fn register_decision_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let loopback = executor_loopback_base_url();
+        self.decision_proxy_launch(payload, loopback.as_deref())
+    }
+
+    /// Test seam: exercises the launch payload without a bound HTTP server.
+    #[cfg(test)]
+    pub(super) fn register_decision_proxy_at(
+        &self,
+        payload: Value,
+        loopback: &str,
+    ) -> Result<Value, AppIpcError> {
+        self.decision_proxy_launch(payload, Some(loopback))
+    }
+
+    fn decision_proxy_launch(
+        &self,
+        payload: Value,
+        loopback: Option<&str>,
+    ) -> Result<Value, AppIpcError> {
+        for forbidden in DECISION_PROXY_REGISTER_FORBIDDEN_FIELDS {
+            if payload.get(*forbidden).is_some() {
+                return Err(AppIpcError::new(
+                    "invalid_request",
+                    format!("{forbidden} must not be provided by the caller"),
+                ));
+            }
+        }
+        let scope = string_field(&payload, "scope")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
+        let Some(loopback) = loopback else {
+            return Err(AppIpcError::new(
+                "runtime_unavailable",
+                "Executor HTTP server is not available",
+            ));
+        };
+        // Each request uses the current login snapshot to access the backend.
+        let token = local_decision_proxy::register(&scope, Arc::clone(&self.backend_connection));
+        Ok(json!({
+            "token": token,
+            "baseUrl": format!("{loopback}{DECISION_PROXY_ROUTE_PREFIX}/{token}"),
+            "protocolVersion": DECISION_PROXY_PROTOCOL_VERSION,
+        }))
+    }
+
+    pub(super) async fn unregister_decision_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let token = string_field(&payload, "token")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
+        local_decision_proxy::unregister(&token);
+        Ok(json!({"unregistered": true}))
+    }
+
     pub(super) async fn write_custom_codex_catalog(
         &self,
         payload: Value,
@@ -802,11 +884,13 @@ impl RuntimeWorkRpcHandler {
             .count();
         let force = bool_field(&payload, "force").unwrap_or(false);
         let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
-        if active_task_count > 0 && if_idle && !force {
+        let background_terminal_count = self.background_terminal_count();
+        if (active_task_count > 0 || background_terminal_count > 0) && if_idle && !force {
             return Ok(json!({
                 "restarted": false,
                 "requiresConfirmation": true,
                 "activeTaskCount": active_task_count,
+                "backgroundTerminalCount": background_terminal_count,
                 "pendingRequestCount": 0,
             }));
         }

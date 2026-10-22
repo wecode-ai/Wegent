@@ -23,7 +23,16 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{response::RuntimeTaskLink, store::runtime_work_dir};
+use super::{
+    response::RuntimeTaskLink,
+    store::{atomic_write_file, runtime_work_dir},
+};
+
+mod diagnostics;
+use diagnostics::measure_stage;
+
+#[cfg(test)]
+mod persistence_tests;
 
 const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
@@ -335,15 +344,17 @@ impl WorktreeManager {
         git_ref: Option<&str>,
     ) -> Result<WorktreePlan, String> {
         self.ensure_persistent_storage_verified()?;
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+        let _guard = measure_stage(worktree_id, "plan_lock", || {
+            self.mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())
+        })?;
         validate_worktree_id(worktree_id)?;
         let state = self.load();
         let root = PathBuf::from(&state.settings.resolved_worktree_root);
-        let preflight = worktree_preflight(source_path, git_ref, &root);
-        let repository = validated_repository_from_preflight(&preflight)?;
+        let repository = measure_stage(worktree_id, "plan_preflight", || {
+            validated_repository_from_preflight(&worktree_preflight(source_path, git_ref, &root))
+        })?;
         let repository_name = repository
             .repo_root
             .file_name()
@@ -467,13 +478,16 @@ impl WorktreeManager {
             "worktree_target_conflict: Planned worktree path is required".to_owned()
         })?;
         let worktree_lock = self.worktree_lock(planned_path)?;
-        let _worktree_guard = worktree_lock
-            .lock()
-            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+        let _worktree_guard = measure_stage(worktree_id, "prepare_worktree_lock", || {
+            worktree_lock
+                .lock()
+                .map_err(|_| "Worktree operation lock is unavailable".to_owned())
+        })?;
+        let _guard = measure_stage(worktree_id, "prepare_mutation_lock", || {
+            self.mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())
+        })?;
         validate_worktree_id(worktree_id)?;
         let mut state = self.load();
         let root = planned_path
@@ -481,8 +495,9 @@ impl WorktreeManager {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .ok_or_else(|| format!("Invalid planned worktree path {}", planned_path.display()))?;
-        let preflight = worktree_preflight(source_path, git_ref, &root);
-        let repository = validated_repository_from_preflight(&preflight)?;
+        let repository = measure_stage(worktree_id, "prepare_preflight", || {
+            validated_repository_from_preflight(&worktree_preflight(source_path, git_ref, &root))
+        })?;
         if expected_repo_root_fingerprint
             .is_some_and(|expected| expected != repository.repo_root_fingerprint)
         {
@@ -526,7 +541,7 @@ impl WorktreeManager {
         record.last_error = None;
         state.records.insert(key.clone(), record.clone());
         remember_root(&mut state.known_roots, &root);
-        self.save(&state)?;
+        measure_stage(worktree_id, "persist_preparing", || self.save(&state))?;
 
         let prepared = (|| {
             fs::create_dir_all(&root)
@@ -544,7 +559,9 @@ impl WorktreeManager {
                         format!("Failed to create {}: {error}", parent.display())
                     })?;
                 }
-                add_git_worktree(&source_path, path, git_ref)?;
+                measure_stage(worktree_id, "git_worktree_add", || {
+                    add_git_worktree(&source_path, path, git_ref)
+                })?;
                 validate_existing_worktree_identity(
                     &source_path,
                     path,
@@ -562,7 +579,7 @@ impl WorktreeManager {
                 record.updated_at = now_ms();
                 record.last_error = None;
                 state.records.insert(key, record.clone());
-                self.save(&state)?;
+                measure_stage(worktree_id, "persist_active", || self.save(&state))?;
                 Ok(record)
             }
             Err(error) => {
@@ -957,36 +974,8 @@ impl WorktreeManager {
     }
 
     fn save(&self, state: &WorktreeState) -> Result<(), String> {
-        if let Some(parent) = self.state_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-        }
         let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-        let temporary =
-            self.state_path
-                .with_extension(format!("json.{}.{}.tmp", std::process::id(), now_ms()));
-        let result = (|| {
-            let mut file = OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temporary)
-                .map_err(|error| error.to_string())?;
-            file.write_all(&payload)
-                .and_then(|_| file.sync_all())
-                .map_err(|error| error.to_string())?;
-            fs::rename(&temporary, &self.state_path).map_err(|error| error.to_string())?;
-            #[cfg(unix)]
-            if let Some(parent) = self.state_path.parent() {
-                fs::File::open(parent)
-                    .and_then(|directory| directory.sync_all())
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
+        atomic_write_file(&self.state_path, &payload).map_err(|error| error.to_string())
     }
 }
 
@@ -1075,15 +1064,11 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 }
 
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     let value = path.to_str().ok_or("Invalid worktree path")?;
     let common_dir = git_common_dir(path)?;
-    let mut command = Command::new("git");
-    command
-        .arg("--git-dir")
-        .arg(common_dir)
-        .args(["worktree", "remove", "--force", value]);
-    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = git_common_dir_command(&common_dir);
+    command.args(["worktree", "remove", "--force", value]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
@@ -1114,35 +1099,51 @@ fn remove_empty_directory(path: &Path) -> Result<(), String> {
 }
 
 fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> Result<(), String> {
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = Command::new("git");
+    let mut command = git_common_dir_command(git_common_dir);
     command
-        .arg("--git-dir")
-        .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
         .arg(reference);
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let mut command = Command::new("git");
-    command
-        .arg("--git-dir")
-        .arg(git_common_dir)
-        .args(["update-ref", "-d", reference]);
-    crate::process::hide_windows_console(&mut command);
+    let mut command = git_common_dir_command(git_common_dir);
+    command.args(["update-ref", "-d", reference]);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
-fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+fn git_common_dir_command(common_dir: &Path) -> Command {
+    let mut command = git_command();
+    // Git rejects an explicit GIT_DIR longer than PATH_MAX - 40 before loading
+    // core.longpaths. Enter the directory and identify it with a short name.
+    command.current_dir(common_dir).args(["--git-dir", "."]);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(common_dir));
+    command
+}
+
+fn git_command() -> Command {
     let mut command = Command::new("git");
+    #[cfg(windows)]
+    command.args(["-c", "core.longpaths=true"]);
     crate::process::hide_windows_console(&mut command);
+    command
+}
+
+fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+    let mut command = git_command();
+    configure_git_common_dir(&mut command, path);
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1157,11 +1158,34 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
     command_result(output)
 }
 
+fn configure_git_common_dir(command: &mut Command, _path: &Path) {
+    command.env_remove("GIT_COMMON_DIR");
+    #[cfg(windows)]
+    if let Some((_, _, common_dir)) = super::util::git_metadata_directories(_path) {
+        // Git for Windows disables long paths until repository config is loaded.
+        // Its checkout child must find shared objects before reading commondir.
+        // Git appends slash-separated config paths, which verbatim Windows
+        // paths do not normalize. Pass the ordinary path to its path layer.
+        command.env("GIT_COMMON_DIR", strip_windows_verbatim_prefix(&common_dir));
+    }
+}
+
 fn command_result(output: std::process::Output) -> Result<String, String> {
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
     }
-    Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    crate::logging::log_executor_event(
+        "runtime worktree git command failed",
+        &[
+            ("exit_code", output.status.to_string()),
+            (
+                "stderr",
+                crate::agents::git_workspace::git_output_summary(&stderr),
+            ),
+        ],
+    );
+    Err(stderr.trim().to_owned())
 }
 
 #[derive(Clone, Debug)]
@@ -1457,8 +1481,7 @@ fn git_ref_exists(repo_root: &Path, git_ref: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let commit = format!("{git_ref}^{{commit}}");
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = git_command();
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1892,32 +1915,7 @@ fn resolve_worktree_root(configured: &str) -> PathBuf {
 }
 
 fn default_worktree_root() -> PathBuf {
-    default_worktree_root_from_paths(
-        env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR").map(PathBuf::from),
-        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
-        env::var_os("WECODE_HOME").map(PathBuf::from),
-        home_dir(),
-    )
-}
-
-fn default_worktree_root_from_paths(
-    projects: Option<PathBuf>,
-    executor_home: Option<PathBuf>,
-    wecode_home: Option<PathBuf>,
-    home: PathBuf,
-) -> PathBuf {
-    if let Some(projects) = projects {
-        if let Some(parent) = projects.parent() {
-            return parent.join("worktrees");
-        }
-    }
-    if let Some(executor_home) = executor_home {
-        return executor_home.join("workspace").join("worktrees");
-    }
-    let base = wecode_home.unwrap_or_else(|| home.join(".wecode"));
-    base.join("wegent-executor")
-        .join("workspace")
-        .join("worktrees")
+    crate::workspace_paths::worktrees_root()
 }
 
 fn expand_home(value: &str) -> PathBuf {
@@ -2071,33 +2069,6 @@ mod tests {
     }
 
     #[test]
-    fn isolated_executor_home_owns_its_default_worktree_root() {
-        let root = default_worktree_root_from_paths(
-            None,
-            Some(PathBuf::from("/tmp/isolated-executor")),
-            Some(PathBuf::from("/tmp/shared-wecode")),
-            PathBuf::from("/tmp/home"),
-        );
-
-        assert_eq!(
-            root,
-            PathBuf::from("/tmp/isolated-executor/workspace/worktrees")
-        );
-    }
-
-    #[test]
-    fn explicit_projects_directory_has_highest_worktree_root_precedence() {
-        let root = default_worktree_root_from_paths(
-            Some(PathBuf::from("/tmp/verification/workspace/projects")),
-            Some(PathBuf::from("/tmp/isolated-executor")),
-            Some(PathBuf::from("/tmp/shared-wecode")),
-            PathBuf::from("/tmp/home"),
-        );
-
-        assert_eq!(root, PathBuf::from("/tmp/verification/workspace/worktrees"));
-    }
-
-    #[test]
     fn configured_root_must_be_absolute() {
         assert!(normalize_configured_root("relative/worktrees").is_err());
         assert!(normalize_configured_root("/").is_err());
@@ -2106,10 +2077,13 @@ mod tests {
 
     #[test]
     fn managed_path_requires_exact_worktree_depth() {
-        let roots = vec!["/tmp/wegent-worktrees".to_owned()];
-        assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id/repo"), &roots).is_ok());
-        assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id"), &roots).is_err());
-        assert!(ensure_managed_path(Path::new("/tmp/outside/id/repo"), &roots).is_err());
+        let root = std::env::temp_dir().join("wegent-worktrees");
+        let roots = vec![root.display().to_string()];
+        assert!(ensure_managed_path(&root.join("id/repo"), &roots).is_ok());
+        assert!(ensure_managed_path(&root.join("id"), &roots).is_err());
+        assert!(
+            ensure_managed_path(&std::env::temp_dir().join("outside/id/repo"), &roots).is_err()
+        );
     }
 
     #[test]
@@ -2139,7 +2113,8 @@ mod tests {
 
     #[test]
     fn managed_path_rejects_unexpanded_or_ambiguous_paths() {
-        let roots = vec!["/tmp/wegent-worktrees".to_owned()];
+        let root = std::env::temp_dir().join("wegent-worktrees");
+        let roots = vec![root.display().to_string()];
 
         for path in [
             "/tmp/wegent-worktrees/$TASK/repo",
@@ -2148,9 +2123,15 @@ mod tests {
             "/tmp/wegent-worktrees/../outside/repo",
             "relative/worktrees/task/repo",
         ] {
+            let path = if let Some(suffix) = path.strip_prefix("/tmp/wegent-worktrees/") {
+                root.join(suffix)
+            } else {
+                PathBuf::from(path)
+            };
             assert!(
-                ensure_managed_path(Path::new(path), &roots).is_err(),
-                "{path} must not be accepted as a deletion target"
+                ensure_managed_path(&path, &roots).is_err(),
+                "{} must not be accepted as a deletion target",
+                path.display()
             );
         }
         for path in [
@@ -2158,7 +2139,15 @@ mod tests {
             "/tmp/wegent-worktrees/100%done/repo",
         ] {
             assert!(
-                ensure_managed_path(Path::new(path), &roots).is_ok(),
+                ensure_managed_path(
+                    &root.join(
+                        Path::new(path)
+                            .strip_prefix("/tmp/wegent-worktrees")
+                            .unwrap()
+                    ),
+                    &roots
+                )
+                .is_ok(),
                 "{path} is a concrete deletion target"
             );
         }
@@ -2630,6 +2619,7 @@ mod tests {
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
+        run_git(&source, &["config", "core.autocrlf", "false"]);
         run_git(&source, &["config", "user.name", "Wegent Test"]);
         run_git(&source, &["config", "user.email", "test@wegent.local"]);
         fs::write(source.join("tracked.txt"), "base\n").unwrap();
@@ -2944,8 +2934,8 @@ mod tests {
     }
 
     fn run_git(path: &Path, args: &[&str]) {
-        let mut command = Command::new("git");
-        crate::process::hide_windows_console(&mut command);
+        let mut command = git_command();
+        configure_git_common_dir(&mut command, path);
         command
             .arg("-c")
             .arg("core.bare=false")
@@ -2964,9 +2954,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn worktree_metadata_can_exceed_the_windows_max_path_limit() {
+        let root = tempfile::tempdir().unwrap();
+        // Match the CI boundary: HEAD fits MAX_PATH but commondir does not.
+        let source = root
+            .path()
+            .join("r".repeat(226 - root.path().to_string_lossy().len() - 1));
+        initialize_repository(&source);
+        run_git(&source, &["config", "core.longpaths", "true"]);
+        let worktree = root.path().join("managed/workspace");
+        fs::create_dir_all(worktree.parent().unwrap()).unwrap();
+
+        // Production preflight canonicalizes paths, adding a verbatim prefix
+        // on Windows. Exercise that path through repository config discovery.
+        let repository = repository_info(&source).unwrap();
+        add_git_worktree(&repository.repo_root, &worktree, None).unwrap();
+
+        assert!(
+            source
+                .join(".git/worktrees/workspace/commondir")
+                .to_string_lossy()
+                .len()
+                > 260
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        git_output(&worktree, &["status", "--porcelain"], None).unwrap();
+        assert_eq!(
+            repository_info(&worktree).unwrap().git_common_dir,
+            repository.git_common_dir
+        );
+        remove_git_worktree(&worktree).unwrap();
+        assert!(!worktree.exists());
+
+        let reference = "refs/wegent/long-path-regression";
+        git_output(&source, &["update-ref", reference, "HEAD"], None).unwrap();
+        restore_git_worktree(&repository.git_common_dir, &worktree, reference).unwrap();
+        assert_eq!(
+            fs::read_to_string(worktree.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        delete_snapshot_ref(&repository.git_common_dir, reference).unwrap();
+        assert!(!git_ref_exists(&source, reference).unwrap());
+        remove_git_worktree(&worktree).unwrap();
+        assert!(!worktree.exists());
+    }
+
     fn initialize_repository(path: &Path) {
         fs::create_dir_all(path).unwrap();
         run_git(path, &["init"]);
+        run_git(path, &["config", "core.autocrlf", "false"]);
         run_git(path, &["config", "user.name", "Wegent Test"]);
         run_git(path, &["config", "user.email", "test@wegent.local"]);
         fs::write(path.join("tracked.txt"), "base\n").unwrap();

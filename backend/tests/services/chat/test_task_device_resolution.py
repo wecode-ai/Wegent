@@ -17,6 +17,7 @@ from app.services.chat.storage.task_manager import TaskCreationParams
 from app.services.chat.task_device_resolution import (
     ensure_task_device_id,
     resolve_chat_task_device_id,
+    resolve_task_device_id,
 )
 
 
@@ -408,6 +409,41 @@ def test_ensure_task_device_id_rejects_existing_code_task(test_user: User):
     task = _task(task_id=2501, user_id=test_user.id, task_type="code")
 
     assert ensure_task_device_id(task, device_id="stale-device") is False
+
+
+def test_resolve_task_device_id_reads_existing_task_target(
+    test_db: Session,
+    test_user: User,
+):
+    task = _task(task_id=2501, user_id=test_user.id, device_id="task-device")
+
+    assert (
+        resolve_task_device_id(test_db, user_id=test_user.id, task=task)
+        == "task-device"
+    )
+
+
+def test_resolve_task_device_id_ignores_code_task(
+    test_db: Session,
+    test_user: User,
+):
+    task = _task(
+        task_id=2501,
+        user_id=test_user.id,
+        device_id="polluted-device",
+        task_type="code",
+    )
+
+    assert resolve_task_device_id(test_db, user_id=test_user.id, task=task) is None
+
+
+def test_resolve_task_device_id_ignores_task_without_device(
+    test_db: Session,
+    test_user: User,
+):
+    task = _task(task_id=2501, user_id=test_user.id)
+
+    assert resolve_task_device_id(test_db, user_id=test_user.id, task=task) is None
     assert "device_id" not in task.json["spec"]
 
 

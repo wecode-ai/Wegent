@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 START_SH="$PROJECT_ROOT/start.sh"
+HYBRID_START_SH="$PROJECT_ROOT/backend-rs/scripts/start-hybrid-backend.sh"
 FIXTURE_ROOT="$(mktemp -d)"
 
 PID_DIR="$FIXTURE_ROOT/pids"
@@ -33,6 +34,10 @@ fail() {
     echo "FAIL: $*" >&2
     exit 1
 }
+
+if ! grep -Fq -- '--timeout-keep-alive 2400' "$HYBRID_START_SH"; then
+    fail "Python upstream keep-alive must outlive the longest hybrid E2E job"
+fi
 
 extract_function() {
     local function_name="$1"

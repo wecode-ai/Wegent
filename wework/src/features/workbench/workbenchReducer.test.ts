@@ -3,6 +3,57 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
+  test('moves a fresh composer source selection to the new primary after refresh', () => {
+    const project = {
+      id: 7,
+      key: 'owner',
+      name: 'Project',
+      source: 'remote_project',
+      ownerDeviceId: 'remote',
+      ownerProjectKey: 'owner',
+      roots: [{ kind: 'local', path: '/old' }],
+    }
+    const oldWorkspace = {
+      id: 11,
+      deviceId: 'remote',
+      workspacePath: '/old',
+      available: true,
+      tasks: [],
+    }
+    const state = {
+      ...initialWorkbenchState,
+      currentProject: { id: 7, name: 'Project', tasks: [] },
+      selectedDeviceWorkspaceId: 11,
+      runtimeWork: {
+        projects: [{ project, deviceWorkspaces: [oldWorkspace] }],
+        chats: [],
+        totalTasks: 0,
+      },
+    }
+    const next = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { ...project, roots: [{ kind: 'local', path: '/new' }] },
+            deviceWorkspaces: [{ ...oldWorkspace, id: 22, workspacePath: '/new' }],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+    expect(next.selectedDeviceWorkspaceId).toBe(22)
+    const existing = workbenchReducer(
+      {
+        ...state,
+        currentRuntimeTask: { taskId: 'existing', deviceId: 'remote', workspacePath: '/old' },
+      },
+      { type: 'runtime_work_refreshed', runtimeWork: next.runtimeWork! }
+    )
+    expect(existing.selectedDeviceWorkspaceId).toBe(11)
+    expect(existing.currentRuntimeTask?.workspacePath).toBe('/old')
+  })
   test('applies a local project mutation response before the next list refresh', () => {
     const state = {
       ...initialWorkbenchState,
@@ -14,6 +65,7 @@ describe('workbenchReducer', () => {
               key: 'local-project:demo',
               name: 'Demo',
               source: 'local_project',
+              ownerDeviceId: 'local-device',
               roots: [{ kind: 'local', path: '/old' }],
               aiSettings: {
                 instructions: 'Old instructions',
@@ -31,6 +83,7 @@ describe('workbenchReducer', () => {
 
     const next = workbenchReducer(state, {
       type: 'runtime_local_project_updated',
+      deviceId: 'local-device',
       projectKey: 'local-project:demo',
       name: 'Renamed demo',
       roots: ['/new'],
@@ -84,6 +137,40 @@ describe('workbenchReducer', () => {
 
     expect(state.currentProject?.id).toBe(7)
     expect(state.currentRuntimeTask).toBeNull()
+  })
+
+  test('selects the default workspace of the specified project when opening a fresh chat', () => {
+    const runtimeWork = {
+      projects: ['existing', 'created'].map((key, index) => ({
+        project: { key, stateDeviceId: 'device-1', name: key },
+        deviceWorkspaces: [
+          {
+            id: index + 10,
+            deviceId: 'device-1',
+            workspacePath: '/shared/root',
+            available: true,
+            tasks: [],
+          },
+        ],
+      })),
+      chats: [],
+      totalTasks: 0,
+    }
+    const project = {
+      id: runtimeProjectUiId(runtimeWork.projects[1].project),
+      name: 'created',
+      tasks: [],
+    }
+
+    const state = workbenchReducer(
+      { ...initialWorkbenchState, runtimeWork, standaloneChatKey: 4 },
+      { type: 'project_workspace_selected', project, startFreshChat: true }
+    )
+
+    expect(state.currentProject?.id).toBe(project.id)
+    expect(state.selectedDeviceWorkspaceId).toBe(11)
+    expect(state.pendingProjectWorkspaceProjectId).toBeNull()
+    expect(state.standaloneChatKey).toBe(5)
   })
 
   test('removes a deleted cloud project from the visible project state', () => {
@@ -692,6 +779,103 @@ describe('workbenchReducer', () => {
 
     expect(opened.currentProject).toBeNull()
     expect(opened.currentRuntimeTask?.taskId).toBe('runtime-1')
+  })
+
+  test('keeps resolved execution context when the route reopens the same task by identity', () => {
+    const opened = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          runtime: 'codex',
+          threadId: 'thread-1',
+          workspacePath: '/workspace/worktrees/runtime-1/repo',
+          workspaceKind: 'worktree',
+          worktreeId: 'runtime-1',
+          projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+        },
+      },
+      {
+        type: 'runtime_task_opened',
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+        },
+        project: null,
+      }
+    )
+
+    expect(opened.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+    })
+  })
+
+  test('keeps local Issue execution context when the route reopens the same task', () => {
+    const opened = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          runtime: 'codex',
+          workspacePath: '/workspace/worktrees/runtime-1/repo',
+          issueExecution: { projectId: 'project-1', issueId: 'issue-1' },
+        },
+      },
+      {
+        type: 'runtime_task_opened',
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+        },
+        project: null,
+      }
+    )
+
+    expect(opened.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      runtime: 'codex',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+      issueExecution: { projectId: 'project-1', issueId: 'issue-1' },
+    })
+  })
+
+  test('replaces an ordinary task address when the same task is opened explicitly', () => {
+    const opened = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          runtime: 'claude_code',
+          workspacePath: '/workspace/project',
+        },
+      },
+      {
+        type: 'runtime_task_opened',
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          workspacePath: '/workspace/project',
+        },
+        project: null,
+      }
+    )
+
+    expect(opened.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/project',
+    })
   })
 
   test('reconciles an accepted task address without depending on work-list projection', () => {

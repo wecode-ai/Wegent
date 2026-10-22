@@ -1,6 +1,8 @@
 import { join } from 'node:path'
 
 const INHERITED_RUNTIME_ENV_KEYS = [
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_SQLITE_HOME',
   'CODEX_BINARY_PATH',
   'DWS_BINARY_PATH',
   'ELECTRON_RUN_AS_NODE',
@@ -16,7 +18,11 @@ const INHERITED_RUNTIME_ENV_KEYS = [
   'WEGENT_APP_IPC_TOKEN',
   'WEGENT_TASK_ID',
   'WEGENT_TASK_WORKSPACE',
+  'WEGENT_WORKBENCH_HOME',
+  'WEGENT_CAPABILITIES_HOME',
+  'WEGENT_CLAUDE_HOME',
   'WEWORK_COMPONENT_RESOURCES_ROOT',
+  'WEWORK_DESKTOP_CONTROL_REGISTRY_DIR',
   'WEWORK_APP_HOT_RELOAD',
   'WEWORK_DEV_BRANCH',
   'WEWORK_DEV_DOCK_TITLE',
@@ -80,5 +86,8 @@ export function buildAiVerifyEnvironment(
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
     WEGENT_EXECUTOR_LOG_DIR: sessionDirectory,
     WEWORK_APP_CONFIG_DIR: join(sessionDirectory, 'app-config'),
+    // WEWORK_USER_DATA_DIR makes the desktop data migration skip this run, so the
+    // registry must stay in the session or it would leave a shared target without a journal.
+    WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: join(sessionDirectory, 'desktop-control'),
   }
 }

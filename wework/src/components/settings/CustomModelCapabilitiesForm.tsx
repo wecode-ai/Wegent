@@ -243,17 +243,21 @@ function StructuredListEditor({
 export function CustomModelCapabilitiesForm({
   entry,
   contextWindow,
+  maxOutputTokens,
   apiFormat,
   codexToolCompatibility,
   onContextWindowChange,
+  onMaxOutputTokensChange,
   onCodexToolCompatibilityChange,
   onChange,
 }: {
   entry: LocalModelCatalogEntry
   contextWindow: string
+  maxOutputTokens?: string
   apiFormat?: LocalModelApiFormat
   codexToolCompatibility?: LocalModelCodexToolCompatibility
   onContextWindowChange: (value: string) => void
+  onMaxOutputTokensChange?: (value: string) => void
   onCodexToolCompatibilityChange?: (value: LocalModelCodexToolCompatibility) => void
   onChange: (entry: LocalModelCatalogEntry) => void
 }) {
@@ -340,6 +344,23 @@ export function CustomModelCapabilitiesForm({
             className={FIELD_CLASS}
           />
         </Field>
+        {onMaxOutputTokensChange && (
+          <Field
+            label={t('workbench.local_model_max_output_tokens_label')}
+            hint={t('workbench.local_model_max_output_tokens_hint')}
+          >
+            <input
+              data-testid="local-model-max-output-tokens-input"
+              value={maxOutputTokens ?? ''}
+              onChange={event => onMaxOutputTokensChange(event.target.value)}
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              className={FIELD_CLASS}
+            />
+          </Field>
+        )}
         <Field label={t('workbench.local_model_description_label', '模型说明')}>
           <input
             data-testid="local-model-catalog-description-input"

@@ -20,8 +20,8 @@
 //! "message": "Document download is disabled"}}`.
 
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use brz_http_server::StatusCode;
+use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 
 /// The download purpose an attachment exit passes to the policy
@@ -33,7 +33,13 @@ pub(super) enum Purpose {
     Playback,
     Executor,
     Share,
+    Preview,
 }
+
+/// Extensions the source-file previewer renders inline
+/// (`PREVIEWABLE_SOURCE_EXTENSIONS`). A `preview` purpose is only exempt for
+/// these, so it cannot become a generic bypass of the download policy.
+const PREVIEWABLE_SOURCE_EXTENSIONS: [&str; 6] = ["pdf", "doc", "docx", "xls", "xlsx", "pptx"];
 
 /// `require_attachment_download_allowed`: `None` when the download may
 /// proceed, `Some(error)` when the knowledge base protects its originals.
@@ -43,6 +49,7 @@ pub(super) async fn require_attachment_download_allowed<M>(
     mysql: &M,
     attachment_id: i64,
     mime_type: &str,
+    file_extension: Option<&str>,
     purpose: Purpose,
 ) -> MysqlResult<Option<FastApiError>>
 where
@@ -57,6 +64,13 @@ where
     // `purpose == "playback" and normalized_mime_type.startswith(
     //  ("image/", "video/"))`: only playback exempts media originals.
     if purpose == Purpose::Playback && playback_exempt(mime_type) {
+        return Ok(None);
+    }
+    // `purpose == "preview"` and the previewable-extension exemption: the
+    // caller's extension wins, otherwise the document's own extension decides.
+    if purpose == Purpose::Preview
+        && preview_exempt(file_extension, document.file_extension.as_deref())
+    {
         return Ok(None);
     }
     let knowledge_base: Option<KnowledgeBaseRow> = mysql
@@ -115,12 +129,14 @@ const ACTIVE_KNOWLEDGE_BASE_QUERY: &str = "SELECT kinds.id AS kinds_id, \
      WHERE kinds.id = ? AND kinds.kind = 'KnowledgeBase' AND kinds.is_active IS true \
      LIMIT 1";
 
-/// The `knowledge_documents` policy probe (only the owning `kind_id` is
-/// read).
+/// The `knowledge_documents` policy probe: the owning `kind_id` and the
+/// document's own `file_extension` (the preview exemption's fallback).
 #[derive(Debug, FromMysqlRow)]
 struct DocumentRow {
     #[mysql(rename = "knowledge_documents_kind_id")]
     kind_id: i64,
+    #[mysql(rename = "knowledge_documents_file_extension")]
+    file_extension: Option<String>,
 }
 
 /// The active `KnowledgeBase` `Kind` row (only the CRD `json` is read).
@@ -162,6 +178,29 @@ fn original_download_allowed(kinds_json: &OpaqueJson) -> bool {
 fn playback_exempt(mime_type: &str) -> bool {
     let mime_type = mime_type.to_lowercase();
     mime_type.starts_with("image/") || mime_type.starts_with("video/")
+}
+
+/// The preview exemption: a `preview` purpose is allowed for the source-file
+/// extensions the previewer renders, even when the knowledge base forbids
+/// original-file downloads. The caller's extension wins over the document's.
+fn preview_exempt(file_extension: Option<&str>, document_extension: Option<&str>) -> bool {
+    let extension =
+        normalize_extension(file_extension).or_else(|| normalize_extension(document_extension));
+    extension.is_some_and(|extension| PREVIEWABLE_SOURCE_EXTENSIONS.contains(&extension.as_str()))
+}
+
+/// `_normalize_extension`: trim, drop every leading dot, and lowercase; an
+/// empty result is `None`.
+fn normalize_extension(file_extension: Option<&str>) -> Option<String> {
+    let normalized = file_extension?
+        .trim()
+        .trim_start_matches('.')
+        .to_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 /// `_require_attachment_download_allowed`'s 403 body for a
@@ -231,6 +270,35 @@ mod tests {
         assert!(playback_exempt("video/mp4"));
         assert!(!playback_exempt("application/pdf"));
         assert!(!playback_exempt(""));
+    }
+
+    #[test]
+    fn extension_normalization_matches_the_source() {
+        assert_eq!(normalize_extension(None), None);
+        assert_eq!(normalize_extension(Some("")), None);
+        assert_eq!(normalize_extension(Some("   ")), None);
+        assert_eq!(normalize_extension(Some(".")), None);
+        assert_eq!(normalize_extension(Some("PDF")), Some("pdf".to_string()));
+        assert_eq!(
+            normalize_extension(Some("..DocX")),
+            Some("docx".to_string())
+        );
+        assert_eq!(normalize_extension(Some(" .xls ")), Some("xls".to_string()));
+    }
+
+    #[test]
+    fn previews_are_exempt_only_for_previewable_extensions() {
+        assert!(preview_exempt(Some("pdf"), None));
+        assert!(preview_exempt(Some(".XLSX"), None));
+        assert!(preview_exempt(Some(" docx "), None));
+        assert!(preview_exempt(None, Some("pptx")));
+        // The caller's extension wins over the document's.
+        assert!(preview_exempt(Some("pdf"), Some("mp4")));
+        // A non-previewable caller extension does not fall back to the document.
+        assert!(!preview_exempt(Some("mp4"), Some("pdf")));
+        assert!(!preview_exempt(Some("png"), None));
+        assert!(!preview_exempt(Some(""), None));
+        assert!(!preview_exempt(None, None));
     }
 
     /// The recorded statement (case 4d6183d6, attachment 1300614) with the

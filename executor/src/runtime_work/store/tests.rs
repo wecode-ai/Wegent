@@ -16,6 +16,64 @@ fn atomic_write_replaces_existing_index() {
 }
 
 #[test]
+fn atomic_write_preserves_open_readers_and_publishes_each_index() {
+    use std::io::Read;
+
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let index_path = directory.path().join("index.json");
+    let mut previous_payload = b"index 0".to_vec();
+    atomic_write_file(&index_path, &previous_payload).expect("initial index should be written");
+
+    for sequence in 1..=64 {
+        let mut reader = fs::File::open(&index_path).expect("existing index should be opened");
+        let payload = format!("index {sequence}").into_bytes();
+
+        atomic_write_file(&index_path, &payload)
+            .expect("index replacement must succeed while the old index is being read");
+
+        let mut old_payload = Vec::new();
+        reader
+            .read_to_end(&mut old_payload)
+            .expect("open readers must retain the complete old index");
+        assert_eq!(old_payload, previous_payload);
+        assert_eq!(
+            fs::read(&index_path).expect("new index should be readable"),
+            payload
+        );
+        previous_payload = payload;
+    }
+    assert!(temporary_files(directory.path()).is_empty());
+}
+
+#[test]
+fn atomic_write_preserves_open_readers_beyond_windows_max_path() {
+    use std::io::Read;
+
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let mut parent = directory.path().to_path_buf();
+    for _ in 0..5 {
+        parent.push("long-index-directory-".repeat(3));
+    }
+    let index_path = parent.join("index.json");
+    assert!(index_path.as_os_str().len() > 260);
+    atomic_write_file(&index_path, b"old index").expect("long-path index should be created");
+    let mut reader = fs::File::open(&index_path).expect("old index should be opened");
+
+    atomic_write_file(&index_path, b"new index").expect("long-path index should be replaced");
+
+    let mut old_payload = Vec::new();
+    reader
+        .read_to_end(&mut old_payload)
+        .expect("old index should remain readable");
+    assert_eq!(old_payload, b"old index");
+    assert_eq!(
+        fs::read(&index_path).expect("new index should be readable"),
+        b"new index"
+    );
+    assert!(temporary_files(&parent).is_empty());
+}
+
+#[test]
 fn atomic_write_cleans_up_temp_file_after_replace_failure() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let index_path = directory.path().join("index.json");
@@ -98,6 +156,9 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         task.runtime_handle["queuePosition"] = Value::from(2);
         task.runtime_handle["lastError"] = Value::from("temporary error");
         task.runtime_handle["lastErrorCode"] = Value::from("temporary_error");
+        task.runtime_handle["collaborationMemberRuntimeProfiles"] = serde_json::json!([{
+            "runtimePayload": {"executionRequest": {"model_config": {"api_key": "memory-only"}}}
+        }]);
     });
     peer_store.update_task("owner-task", |task| {
         task.title = "Updated owner task".to_owned();
@@ -133,6 +194,11 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         owner_task.runtime_handle["lastErrorCode"],
         Value::from("temporary_error")
     );
+    assert_eq!(
+        owner_task.runtime_handle["collaborationMemberRuntimeProfiles"][0]["runtimePayload"]
+            ["executionRequest"]["model_config"]["api_key"],
+        "memory-only"
+    );
 
     let persisted: Value =
         serde_json::from_slice(&fs::read(&index_path).expect("shared index should be readable"))
@@ -141,6 +207,9 @@ fn shared_index_reload_preserves_process_local_execution_state() {
         .as_object()
         .expect("owner task should be persisted");
     assert!(!persisted_owner.contains_key("running"));
+    assert!(persisted_owner["runtime_handle"]
+        .get("collaborationMemberRuntimeProfiles")
+        .is_none());
     assert!(!persisted_owner.contains_key("status"));
     assert!(!persisted_owner.contains_key("thread_status"));
     assert!(!persisted_owner.contains_key("turn_status"));
@@ -231,6 +300,18 @@ fn terminal_turn_status_is_not_persisted() {
         "completedTranscriptThreadId": "thread-1",
         "transcriptSnapshotMessages": [{"id": "snapshot-message"}],
         "transcriptSnapshotThreadId": "thread-1",
+        "cloudCollaborationRound": {
+            "round_id": "round-1",
+            "assignments": [
+                {
+                    "assignment_id": "assignment-1",
+                    "assignee_type": "agent",
+                    "assignee_id": "agent-1",
+                    "task_title": "Collect evidence"
+                }
+            ],
+            "human_assignment_ids": ["ISSUE-HUMAN-1"]
+        },
         "modelSelection": {"modelName": "gpt-5.6-sol"},
         "wegentTeam": {
             "id": 7,
@@ -272,6 +353,10 @@ fn terminal_turn_status_is_not_persisted() {
         task["runtime_handle"]["modelSelection"]["modelName"],
         "gpt-5.6-sol"
     );
+    assert_eq!(
+        task["runtime_handle"]["cloudCollaborationRound"]["round_id"],
+        "round-1"
+    );
     assert_eq!(task["runtime_handle"]["wegentTeam"]["id"], 7);
     assert!(task["runtime_handle"]["wegentTeam"]
         .get("agent_config")
@@ -288,6 +373,10 @@ fn terminal_turn_status_is_not_persisted() {
     assert_eq!(restored.completed_at, None);
     assert!(restored.runtime_handle.get("queuePosition").is_none());
     assert!(restored.runtime_handle.get("lastError").is_none());
+    assert_eq!(
+        restored.runtime_handle["cloudCollaborationRound"]["human_assignment_ids"][0],
+        "ISSUE-HUMAN-1"
+    );
 }
 
 #[test]

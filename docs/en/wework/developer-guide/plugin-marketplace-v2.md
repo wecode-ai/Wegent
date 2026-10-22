@@ -131,6 +131,8 @@ Four boundaries must remain distinct:
 
 ## 4. Data ownership and identity
 
+Local materialization records for managed cloud plugins link the catalog and account installation through `cloudPluginId` and `cloudInstalledPluginId`. A local-only inventory refresh must preserve the cloud installation ID for update and settings requests; `name@marketplace` addresses the local runtime. Only personal originals (`origin=created` or `source.type=local`) use the personal publication merge path.
+
 | Data                                      | Location                                           | Source-of-truth meaning                          |
 | ----------------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
 | Plugin, Release, Publication Request      | MySQL                                              | Cloud catalog and publication state              |
@@ -158,6 +160,8 @@ The stable `plugins` key changes from globally unique `slug` to `(catalog_namesp
 The server derives `catalog_namespace`; clients cannot supply arbitrary values. Display slugs may match, so `personal/42:foo` and `enterprise:foo` may coexist. An enterprise Plugin references its personal source through `origin_plugin_id` and the publication revision, but does not inherit its ACL, ownership, or mutable state.
 
 The runtime marketplace mapping remains `personal -> wework-personal`, `workspace -> wegent`, and `public -> wework`. It applies only to managed installation records; display names and slugs must never merge identities across namespaces.
+
+Durable catalog and inventory caches share compact manifest serialization and must retain both `marketplaceId` and `marketplacePath`. After a cold start, local catalog plugins still use their local path for reads and installation; dropping that path must not turn them into remote catalog requests requiring ChatGPT authentication.
 
 ### 4.2 ER model
 

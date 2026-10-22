@@ -2,32 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GET /api/knowledge/documents` — list documents in a knowledge base
-//! (`app.api.endpoints.knowledge_open.list_documents_open` ->
+//! `GET /api/knowledge-bases/{knowledge_base_id}/documents`
+//! (`app.api.endpoints.knowledge.list_documents`, session auth, path-scoped
+//! knowledge-base id) and `GET /api/knowledge/documents`
+//! (`app.api.endpoints.knowledge_open.list_documents_open`, flexible
+//! auth-context, query-scoped knowledge-base id). Both delegate to
 //! `KnowledgeOrchestrator.list_documents` ->
-//! `KnowledgeService.list_documents_paginated`).
+//! `KnowledgeService.list_documents_paginated`, so they share one
+//! implementation here.
 //!
-//! Source pipeline (recorded case `api-knowledge-documents/abb90b7d`,
-//! request `?knowledge_base_id=210837`, service API key with
-//! `wegent-username: hongbin9`):
+//! Source pipeline (representative case `api-knowledge-bases-wildcard-documents`,
+//! request `/api/knowledge-bases/236829/documents?limit=500&offset=0`,
+//! unencrypted session JWT `sub=furui1`):
 //!
-//! 1. `security.get_auth_context` — API key by SHA-256 hash, `last_used_at`
-//!    UPDATE + COMMIT, the
-//!    ORM reload by primary key, then the public direct user reader;
+//! 1. `security.get_current_user` — `sub` claim, `users` row by `user_name`,
+//!    then the active-user check (the open endpoint instead runs
+//!    `security.get_auth_context`);
 //! 2. `KnowledgeService.get_knowledge_base` (twice: once in
 //!    `orchestrator.list_documents`, once inside
 //!    `list_documents_paginated`) — the KB `Kind` record, then the full ACL
 //!    chain of `resolve_knowledge_base_permission`;
 //! 3. the `wiki_pages` document query: `count(*)` subquery, the ordered
-//!    page query (`created_at DESC, id DESC`, `LIMIT 0, 50`), the
+//!    page query (`created_at DESC, id DESC`, `LIMIT 0, 500`), the
 //!    `selectin` external-source load, then the `created_by` batch user
 //!    lookup.
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use brz_http_server::{Binary, EphemeralBytesArena, HttpResponse, IntoHttpError, Response};
+use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response};
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
@@ -190,9 +194,55 @@ pub const DEFAULT_KNOWLEDGE_LIST_LIMIT: i64 = 50;
 /// `MAX_KNOWLEDGE_LIST_LIMIT` (`app.services.knowledge.orchestrator`).
 pub const MAX_KNOWLEDGE_LIST_LIMIT: i64 = 500;
 
-// The response (`KnowledgeDocumentListResponse`) and each item
-// (`KnowledgeDocumentResponse`) are built with `json!` in field order; the
-// pydantic models' serialization order is asserted by tests.
+/// `KnowledgeDocumentListResponse` (`app.schemas.knowledge`): the paginated
+/// listing envelope. The per-document items are the
+/// `KnowledgeDocumentResponse` values built by [`build_item`] in pydantic
+/// field order. The endpoint declares a `response_model`, so FastAPI renders
+/// this value through its default `JSONResponse`; returning the typed value
+/// (instead of a pre-serialized `Binary` body) announces `application/json`.
+#[derive(Debug, serde::Serialize)]
+struct KnowledgeDocumentListResponse {
+    total: i64,
+    returned_count: i64,
+    limit: i64,
+    offset: i64,
+    has_more: bool,
+    items: Vec<Value>,
+}
+
+/// GET /api/knowledge-bases/{knowledge_base_id}/documents: the
+/// knowledge-bases free function (`app.api.endpoints.knowledge.list_documents`),
+/// injecting the process-lifetime application state.
+#[allow(clippy::too_many_arguments)]
+#[brz_http_server::get("/api/knowledge-bases/:knowledge_base_id/documents")]
+async fn list_knowledge_base_documents_route(
+    #[inject(state)] state: &Arc<AppState>,
+    knowledge_base_id: &str,
+    folder_id: Option<String>,
+    include_subfolders: Option<String>,
+    keyword: Option<String>,
+    sort_by: Option<String>,
+    sort_order: Option<String>,
+    origin: Option<String>,
+    limit: Option<String>,
+    offset: Option<String>,
+    #[auth] user: crate::auth::SessionUser,
+) -> Result<KnowledgeDocumentListResponse, KnowledgeListError> {
+    // FastAPI validates the path parameter before the endpoint body runs.
+    let knowledge_base_id = parse_knowledge_base_id_path(knowledge_base_id)?;
+    let params = parse_params(
+        knowledge_base_id,
+        folder_id.as_deref(),
+        include_subfolders.as_deref(),
+        keyword,
+        sort_by,
+        sort_order,
+        origin,
+        limit.as_deref(),
+        offset.as_deref(),
+    )?;
+    Ok(list_documents(state, i64::from(user.id), &params).await?)
+}
 
 /// GET /api/knowledge/documents: the knowledge-documents list free function,
 /// injecting the process-lifetime application state.
@@ -209,23 +259,23 @@ async fn list_documents_route(
     limit: Option<String>,
     offset: Option<String>,
     #[auth] user: auth::KnowledgeUser,
-) -> Result<HttpResponse<Binary>, KnowledgeListError> {
-    list_documents_handler(
-        state,
-        knowledge_base_id.as_deref(),
+) -> Result<KnowledgeDocumentListResponse, KnowledgeListError> {
+    // FastAPI validates the query parameters before the endpoint body runs.
+    let params = parse_params(
+        parse_knowledge_base_id_query(knowledge_base_id.as_deref())?,
         folder_id.as_deref(),
         include_subfolders.as_deref(),
-        keyword.as_deref(),
-        sort_by.as_deref(),
-        sort_order.as_deref(),
+        keyword,
+        sort_by,
+        sort_order,
+        None,
         limit.as_deref(),
         offset.as_deref(),
-        &user,
-    )
-    .await
+    )?;
+    Ok(list_documents(state, user.id, &params).await?)
 }
 
-/// One of the endpoint's failure shapes: 422 validation or a mapped
+/// One of the endpoints' failure shapes: 422 validation or a mapped
 /// 404/403/400/401 value error.
 enum KnowledgeListError {
     Validation(FastApiError),
@@ -265,6 +315,31 @@ fn validation_error(loc: &str, error_type: &str, msg: &str, input: &str) -> Fast
     ]))
 }
 
+/// FastAPI-style 422 validation error body for the `knowledge_base_id` path
+/// parameter.
+fn path_validation_error(value: &str) -> FastApiError {
+    FastApiError::validation(json!([
+        {
+            "type": "int_parsing",
+            "loc": ["path", "knowledge_base_id"],
+            "msg": "Input should be a valid integer, unable to parse string as an integer",
+            "input": value,
+        }
+    ]))
+}
+
+/// Parse the optional `knowledge_base_id` query parameter (the open endpoint).
+fn parse_knowledge_base_id_query(value: Option<&str>) -> Result<i64, FastApiError> {
+    let value = value
+        .ok_or_else(|| validation_error("knowledge_base_id", "missing", "Field required", ""))?;
+    parse_int(value, "knowledge_base_id")
+}
+
+/// Parse the required `knowledge_base_id` path parameter.
+fn parse_knowledge_base_id_path(value: &str) -> Result<i64, FastApiError> {
+    value.parse().map_err(|_| path_validation_error(value))
+}
+
 /// Parse one optional integer query parameter.
 fn parse_int(value: &str, field: &str) -> Result<i64, FastApiError> {
     value.parse().map_err(|_| {
@@ -277,40 +352,32 @@ fn parse_int(value: &str, field: &str) -> Result<i64, FastApiError> {
     })
 }
 
-/// The validated query parameters of `list_documents_open`. The folder and
-/// keyword filters are validated like the source; the representative case
-/// exercises the unfiltered listing, and the folder/keyword SQL branches
-/// (`list_documents_paginated`) are not yet implemented for this scope.
+/// The validated query parameters shared by both listing endpoints.
 struct ListParams {
     knowledge_base_id: i64,
-    #[allow(dead_code)]
     folder_id: Option<i64>,
-    #[allow(dead_code)]
     include_subfolders: bool,
-    #[allow(dead_code)]
     keyword: Option<String>,
     sort_by: String,
     sort_order: String,
+    origin: Option<String>,
     limit: i64,
     offset: i64,
 }
 
-/// Validate the raw query strings like FastAPI's `Query(...)` constraints.
+/// Validate the non-path query strings like FastAPI's `Query(...)` constraints.
 #[allow(clippy::too_many_arguments)]
 fn parse_params(
-    knowledge_base_id: Option<&str>,
+    knowledge_base_id: i64,
     folder_id: Option<&str>,
     include_subfolders: Option<&str>,
     keyword: Option<String>,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    origin: Option<String>,
     limit: Option<&str>,
     offset: Option<&str>,
 ) -> Result<ListParams, FastApiError> {
-    let knowledge_base_id = knowledge_base_id
-        .ok_or_else(|| validation_error("knowledge_base_id", "missing", "Field required", ""))
-        .and_then(|value| parse_int(value, "knowledge_base_id"))?;
-
     let folder_id = match folder_id {
         None => None,
         Some(value) => {
@@ -374,6 +441,22 @@ fn parse_params(
         }
     };
 
+    // `ContentOrigin` enum (`app.models.knowledge`): `generated` or `user`;
+    // any other value fails validation with 422.
+    let origin = match origin.as_deref() {
+        None => None,
+        Some("generated") => Some("generated".to_string()),
+        Some("user") => Some("user".to_string()),
+        Some(other) => {
+            return Err(validation_error(
+                "origin",
+                "enum",
+                "Input should be 'generated' or 'user'",
+                other,
+            ));
+        }
+    };
+
     let limit = match limit {
         None => DEFAULT_KNOWLEDGE_LIST_LIMIT,
         Some(value) => {
@@ -412,40 +495,10 @@ fn parse_params(
         keyword,
         sort_by,
         sort_order,
+        origin,
         limit,
         offset,
     })
-}
-
-/// Handler body for `GET /api/knowledge/documents`.
-#[allow(clippy::too_many_arguments)]
-async fn list_documents_handler(
-    state: &Arc<AppState>,
-    knowledge_base_id: Option<&str>,
-    folder_id: Option<&str>,
-    include_subfolders: Option<&str>,
-    keyword: Option<&str>,
-    sort_by: Option<&str>,
-    sort_order: Option<&str>,
-    limit: Option<&str>,
-    offset: Option<&str>,
-    user: &auth::KnowledgeUser,
-) -> Result<HttpResponse<Binary>, KnowledgeListError> {
-    // FastAPI validates the query parameters before the endpoint body runs.
-    let params = parse_params(
-        knowledge_base_id,
-        folder_id,
-        include_subfolders,
-        keyword.map(str::to_string),
-        sort_by.map(str::to_string),
-        sort_order.map(str::to_string),
-        limit,
-        offset,
-    )?;
-
-    let response = list_documents(state, i64::from(user.id), &params).await?;
-
-    Ok(response)
 }
 
 /// `KnowledgeOrchestrator.list_documents`: access check, then the
@@ -454,7 +507,7 @@ async fn list_documents(
     state: &AppState,
     user_id: i64,
     params: &ListParams,
-) -> Result<brz_http_server::HttpResponse<brz_http_server::Binary>, ApiFailure> {
+) -> Result<KnowledgeDocumentListResponse, ApiFailure> {
     let mysql = &state.mysql;
     let redis = state.redis.as_ref();
 
@@ -500,8 +553,7 @@ async fn list_documents(
 
     let (documents, total) =
         list_documents_paginated(mysql, params.knowledge_base_id, &kb, params, offset, limit)
-            .await
-            .map_err(ApiFailure::internal)?;
+            .await?;
 
     // Batch query user names for the `created_by` field.
     let user_ids: Vec<i64> = {
@@ -524,17 +576,15 @@ async fn list_documents(
         })
         .collect::<Vec<_>>();
 
-    let response = json!({
-        "total": total,
-        "returned_count": items.len(),
-        "limit": limit,
-        "offset": offset,
-        "has_more": offset + i64::try_from(items.len()).unwrap_or(i64::MAX) < total,
-        "items": items,
-    });
-    Ok(brz_http_server::HttpResponse::new(
-        brz_http_server::Binary::new(serde_json::to_vec(&response).unwrap_or_default()),
-    ))
+    let returned_count = i64::try_from(items.len()).unwrap_or(i64::MAX);
+    Ok(KnowledgeDocumentListResponse {
+        total,
+        returned_count,
+        limit,
+        offset,
+        has_more: offset + returned_count < total,
+        items,
+    })
 }
 
 /// `KnowledgeService.get_knowledge_base`: the KB `Kind` record plus the
@@ -571,15 +621,13 @@ async fn list_documents_paginated<M>(
     params: &ListParams,
     offset: i64,
     limit: i64,
-) -> Result<(Vec<DocumentListRow>, i64), String>
+) -> Result<(Vec<DocumentListRow>, i64), ApiFailure>
 where
     M: Mysql,
 {
-    // `wiki_pages(query)` excludes code targets.
-    let scope = format!(
-        "knowledge_documents.kind_id = {knowledge_base_id} \
-         AND knowledge_documents.source_type != 'code'"
-    );
+    // `wiki_pages(query)` excludes code targets; the folder, keyword and
+    // origin filters mirror `list_documents_paginated`'s query builders.
+    let scope = document_scope(mysql, knowledge_base_id, params).await?;
 
     // `query.count()` renders the subquery count.
     #[derive(Debug, FromMysqlRow)]
@@ -595,7 +643,7 @@ where
             (),
         )
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ApiFailure::internal(error.to_string()))?;
     let total = count.map(|row| row.count_1).unwrap_or(0);
 
     // The ordered page query: `ORDER BY <sort>, id DESC LIMIT offset, limit`.
@@ -620,7 +668,7 @@ where
             (),
         )
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ApiFailure::internal(error.to_string()))?;
 
     // The `selectin` external-source load for the page's documents.
     let document_ids: Vec<i64> = documents
@@ -629,10 +677,184 @@ where
         .collect();
     external_sources_by_document_ids(mysql, &document_ids)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ApiFailure::internal(error.to_string()))?;
 
     let _ = kb;
     Ok((documents, total))
+}
+
+/// The `WHERE` clause shared by the count and page queries: the `wiki_pages`
+/// knowledge-base scope plus the optional folder, keyword and origin filters
+/// of `list_documents_paginated`.
+async fn document_scope<M>(
+    mysql: &M,
+    knowledge_base_id: i64,
+    params: &ListParams,
+) -> Result<String, ApiFailure>
+where
+    M: Mysql,
+{
+    let mut conditions = vec![
+        format!("knowledge_documents.kind_id = {knowledge_base_id}"),
+        "knowledge_documents.source_type != 'code'".to_string(),
+    ];
+
+    if let Some(folder_id) = params.folder_id {
+        // A named folder must exist in this knowledge base.
+        if folder_id > 0
+            && !folder_exists(mysql, knowledge_base_id, folder_id)
+                .await
+                .map_err(|error| ApiFailure::internal(error.to_string()))?
+        {
+            return Err(ApiFailure::from_value_error(
+                "Folder not found in this knowledge base",
+            ));
+        }
+        if params.include_subfolders {
+            let ids = folder_subtree_ids(mysql, knowledge_base_id, folder_id)
+                .await
+                .map_err(|error| ApiFailure::internal(error.to_string()))?;
+            conditions.push(format!(
+                "knowledge_documents.folder_id IN ({})",
+                join_ids(&ids)
+            ));
+        } else {
+            conditions.push(format!("knowledge_documents.folder_id = {folder_id}"));
+        }
+    }
+
+    if let Some(keyword) = params.keyword.as_deref() {
+        // `keyword.strip()`; an empty keyword drops the filter.
+        let keyword = keyword.trim();
+        if !keyword.is_empty() {
+            let pattern = format!("%{}%", escape_sql_like(keyword));
+            conditions.push(format!(
+                "knowledge_documents.name LIKE {} ESCAPE '\\\\'",
+                mysql_string_literal(&pattern)
+            ));
+        }
+    }
+
+    if let Some(origin) = params.origin.as_deref() {
+        conditions.push(format!(
+            "knowledge_documents.origin = {}",
+            mysql_string_literal(origin)
+        ));
+    }
+
+    Ok(conditions.join(" AND "))
+}
+
+/// `db.query(KnowledgeFolder).filter(id, kind_id).first()` — the named-folder
+/// existence check of the `folder_id > 0` branch.
+async fn folder_exists<M>(mysql: &M, knowledge_base_id: i64, folder_id: i64) -> MysqlResult<bool>
+where
+    M: Mysql,
+{
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        #[allow(dead_code)]
+        knowledge_folders_id: i64,
+    }
+    let row: Option<Row> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT knowledge_folders.id AS knowledge_folders_id \n\
+                 FROM knowledge_folders \n\
+                 WHERE knowledge_folders.id = {folder_id} \
+                 AND knowledge_folders.kind_id = {knowledge_base_id} \n LIMIT 1"
+            ),
+            (),
+        )
+        .await?;
+    Ok(row.is_some())
+}
+
+/// `db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id).filter(kind_id)`
+/// plus the source's stack walk: the folder-id set of `folder_id` and its
+/// descendants for `include_subfolders`.
+async fn folder_subtree_ids<M>(
+    mysql: &M,
+    knowledge_base_id: i64,
+    folder_id: i64,
+) -> MysqlResult<Vec<i64>>
+where
+    M: Mysql,
+{
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        knowledge_folders_id: i64,
+        knowledge_folders_parent_id: i64,
+    }
+    let rows: Vec<Row> = mysql
+        .fetch_all(
+            &format!(
+                "SELECT knowledge_folders.id AS knowledge_folders_id, \
+                 knowledge_folders.parent_id AS knowledge_folders_parent_id \n\
+                 FROM knowledge_folders \n\
+                 WHERE knowledge_folders.kind_id = {knowledge_base_id}"
+            ),
+            (),
+        )
+        .await?;
+
+    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+    for row in &rows {
+        children
+            .entry(row.knowledge_folders_parent_id)
+            .or_default()
+            .push(row.knowledge_folders_id);
+    }
+    let mut ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut stack = vec![folder_id];
+    while let Some(current) = stack.pop() {
+        if !ids.insert(current) {
+            continue;
+        }
+        if let Some(kids) = children.get(&current) {
+            stack.extend(kids);
+        }
+    }
+    let mut out: Vec<i64> = ids.into_iter().collect();
+    out.sort_unstable();
+    Ok(out)
+}
+
+/// `_escape_sql_like`: escape the LIKE metacharacters with a backslash so a
+/// user keyword matches literally (`escape="\\"`).
+fn escape_sql_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Render `value` as a MySQL single-quoted string literal (the source binds
+/// these patterns as parameters; inline COM_QUERY text is reproduced here).
+fn mysql_string_literal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for byte in value.bytes() {
+        match byte {
+            b'\'' => out.push_str("\\'"),
+            b'\\' => out.push_str("\\\\"),
+            b'\0' => out.push_str("\\0"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            0x1a => out.push_str("\\Z"),
+            other => out.push(char::from(other)),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Render an `IN (...)` id list the way SQLAlchemy renders a literal list.
+fn join_ids(ids: &[i64]) -> String {
+    ids.iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The `selectin` external-source load (`external_source` relationship).
@@ -643,11 +865,7 @@ where
     if document_ids.is_empty() {
         return Ok(());
     }
-    let ids = document_ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let ids = join_ids(document_ids);
     #[derive(Debug, FromMysqlRow)]
     struct Row {
         #[allow(dead_code)]
@@ -675,11 +893,7 @@ where
     if user_ids.is_empty() {
         return Ok(map);
     }
-    let ids = user_ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let ids = join_ids(user_ids);
     #[derive(Debug, FromMysqlRow)]
     struct Row {
         users_id: i64,
@@ -703,7 +917,7 @@ where
 /// `KnowledgeDocumentResponse` construction: `derive_processing_error`
 /// pops `processing_error` from `source_config`, `source_config` `None`
 /// becomes `{}`, and `splitter_config` is normalized.
-fn build_item(doc: DocumentListRow, created_by: Option<String>) -> impl serde::Serialize {
+fn build_item(doc: DocumentListRow, created_by: Option<String>) -> Value {
     // `derive_processing_error`: the payload only surfaces for a failed
     // document whose validated error generation matches the current one.
     let processing_error = doc
@@ -722,6 +936,15 @@ fn build_item(doc: DocumentListRow, created_by: Option<String>) -> impl serde::S
         .knowledge_documents_splitter_config
         .as_ref()
         .map(|config| normalize_splitter_config(&config.0));
+
+    // Both datetime columns are NOT NULL in the source schema; the
+    // Option only models the driver decode, and a missing value renders
+    // as the naive datetime epoch like pydantic's default.
+    let created_at = doc.knowledge_documents_created_at.unwrap_or_default();
+    let updated_at = doc
+        .knowledge_documents_updated_at
+        .map(|ts| serialize_updated_at(ts, created_at))
+        .unwrap_or_default();
 
     // `source_config` `None` becomes `{}` for backward compatibility; the
     // modeled keys are popped (processing_error) and the remainder echoes.
@@ -748,13 +971,25 @@ fn build_item(doc: DocumentListRow, created_by: Option<String>) -> impl serde::S
         "origin": doc.knowledge_documents_origin,
         "folder_id": doc.knowledge_documents_folder_id,
         "doc_ref": null,
-        "created_at": doc
-            .knowledge_documents_created_at
-            .map(|ts| ts.format("%Y-%m-%dT%H:%M:%S").to_string())
-            .unwrap_or_default(),
-        "updated_at": doc
-            .knowledge_documents_updated_at
-            .map(|ts| ts.format("%Y-%m-%dT%H:%M:%S").to_string())
-            .unwrap_or_default(),
+        "created_at": created_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
+        "updated_at": updated_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
     })
+}
+
+/// `KnowledgeDocumentResponse.serialize_updated_at`: repair a legacy naive
+/// UTC `updated_at` that precedes the naive local `created_at` by shifting
+/// it +8h, and keep the repaired value only when it then no longer precedes
+/// the creation time. Both timestamps are naive session-local values here,
+/// mirroring the pydantic serializer's `tzinfo is None` fast path.
+fn serialize_updated_at(
+    updated_at: chrono::NaiveDateTime,
+    created_at: chrono::NaiveDateTime,
+) -> chrono::NaiveDateTime {
+    if updated_at < created_at {
+        let corrected = updated_at + chrono::Duration::hours(8);
+        if corrected >= created_at {
+            return corrected;
+        }
+    }
+    updated_at
 }

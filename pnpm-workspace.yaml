@@ -14,40 +14,41 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 packageExtensions:
-  'tiptap-markdown@0.8.10':
+  "tiptap-markdown@0.8.10":
     dependencies:
-      '@tiptap/pm': ^2.27.2
+      "@tiptap/pm": ^2.27.2
 minimumReleaseAgeExclude:
-  - '@file-viewer/core@2.1.26'
-  - '@file-viewer/doc@2.1.26'
-  - '@file-viewer/docx@0.3.19'
-  - '@file-viewer/pptx@2.1.26'
-  - '@file-viewer/preset-lite@2.1.26'
-  - '@file-viewer/preset-office@2.1.26'
-  - '@file-viewer/react@2.1.26'
-  - '@file-viewer/renderer-image@2.1.26'
-  - '@file-viewer/renderer-media@2.1.26'
-  - '@file-viewer/renderer-ofd@2.1.26'
-  - '@file-viewer/renderer-pdf@2.1.26'
-  - '@file-viewer/renderer-presentation@2.1.26'
-  - '@file-viewer/renderer-spreadsheet@2.1.26'
-  - '@file-viewer/renderer-text@2.1.26'
-  - '@file-viewer/renderer-word@2.1.26'
-  - '@file-viewer/vite-plugin@2.1.26'
-  - '@file-viewer/eda-layout@2.1.26'
-  - '@file-viewer/eda-orcad@2.1.26'
-  - '@file-viewer/geometry-engine@2.1.26'
-  - '@file-viewer/preset-engineering@2.1.26'
-  - '@file-viewer/renderer-3d@2.1.26'
-  - '@file-viewer/renderer-archive@2.1.26'
-  - '@file-viewer/renderer-cad@2.1.26'
-  - '@file-viewer/renderer-data@2.1.26'
-  - '@file-viewer/renderer-drawing@2.1.26'
-  - '@file-viewer/renderer-eda@2.1.26'
-  - '@file-viewer/renderer-geo@2.1.26'
-  - '@file-viewer/renderer-mindmap@2.1.26'
-  - '@file-viewer/renderer-typst@2.1.26'
-  - '@deepseek-ai/dsh-client-ui-slots@0.1.0-rc.8'
-  - '@deepseek-ai/dsh-invariants@0.1.0-rc.8'
+  - "@file-viewer/core@2.1.26"
+  - "@file-viewer/doc@2.1.26"
+  - "@file-viewer/docx@0.3.19"
+  - "@file-viewer/pptx@2.1.26"
+  - "@file-viewer/preset-lite@2.1.26"
+  - "@file-viewer/preset-office@2.1.26"
+  - "@file-viewer/react@2.1.26"
+  - "@file-viewer/renderer-image@2.1.26"
+  - "@file-viewer/renderer-media@2.1.26"
+  - "@file-viewer/renderer-ofd@2.1.26"
+  - "@file-viewer/renderer-pdf@2.1.26"
+  - "@file-viewer/renderer-presentation@2.1.26"
+  - "@file-viewer/renderer-spreadsheet@2.1.26"
+  - "@file-viewer/renderer-text@2.1.26"
+  - "@file-viewer/renderer-word@2.1.26"
+  - "@file-viewer/vite-plugin@2.1.26"
+  - "@file-viewer/eda-layout@2.1.26"
+  - "@file-viewer/eda-orcad@2.1.26"
+  - "@file-viewer/geometry-engine@2.1.26"
+  - "@file-viewer/preset-engineering@2.1.26"
+  - "@file-viewer/renderer-3d@2.1.26"
+  - "@file-viewer/renderer-archive@2.1.26"
+  - "@file-viewer/renderer-cad@2.1.26"
+  - "@file-viewer/renderer-data@2.1.26"
+  - "@file-viewer/renderer-drawing@2.1.26"
+  - "@file-viewer/renderer-eda@2.1.26"
+  - "@file-viewer/renderer-geo@2.1.26"
+  - "@file-viewer/renderer-mindmap@2.1.26"
+  - "@file-viewer/renderer-typst@2.1.26"
+  - "@deepseek-ai/dsh-client-ui-slots@0.2.0-rc.2"
+  - "@deepseek-ai/dsh-invariants@0.2.0-rc.2"
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': patches/@file-viewer__renderer-drawing@2.1.26.patch
+  mermaid@11.15.0: patches/mermaid@11.15.0.patch

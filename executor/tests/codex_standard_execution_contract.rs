@@ -810,6 +810,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let guards = [
             ("WEGENT_EXECUTOR_HOME", "executor"),
+            ("WEGENT_WORKBENCH_HOME", "workbench"),
             ("WEGENT_CODEX_HOME", "codex"),
             ("WEGENT_WORKSPACE_ROOT", "workspaces"),
         ]
@@ -838,6 +839,13 @@ impl Fixture {
             ),
             subtask_id: subtask_id.to_owned(),
             user_name: Some("test-user".to_owned()),
+            backend_url: Some("https://backend.example".to_owned()),
+            team_namespace: Some("default".to_owned()),
+            extra: serde_json::from_value(json!({
+                "user_id": 7, "team_id": 12, "team_name": "Codex",
+                "team_owner": {"kind":"user", "id":7, "name":"test-user"}
+            }))
+            .unwrap(),
             prompt: json!("Inspect the execution path"),
             bot: json!([{"id": 17, "shell_type": "Codex"}]),
             model_config: json!({"model": "openai", "model_id": "test-model", "protocol": "openai-responses"}),

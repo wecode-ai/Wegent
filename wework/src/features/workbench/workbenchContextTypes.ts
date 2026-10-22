@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
@@ -96,6 +97,8 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   forceNewTask?: boolean
+  attachments?: Attachment[]
+  preserveAttachments?: boolean
   runtime?: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
@@ -111,6 +114,7 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  onRuntimeTaskOptimisticRemoved?: (address: RuntimeTaskAddress) => void
   prepareRuntimeTask?: (
     address: RuntimeTaskAddress
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
@@ -130,6 +134,7 @@ export interface CreateTemporaryRuntimeTaskOptions {
 }
 
 export interface CreateProjectRuntimeTaskOptions {
+  wegentTeamId?: number
   project?: ProjectWithTasks | null
   /** Select a project workspace without mutating the global workbench
    * selection, for embedded project-space composers. */
@@ -138,9 +143,6 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Override the globally selected project execution strategy. Pass null to
    * bind the task to the selected project's main workspace. */
   workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
-  /** Collaboration entry points choose worktrees automatically. If the
-   * executor rejects the worktree preflight, continue in the main workspace. */
-  automaticWorkspaceSelection?: boolean
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
@@ -180,6 +182,7 @@ export interface CreateProjectRuntimeTaskOptions {
 }
 
 export interface RuntimePaneActionOptions {
+  isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
   silentBusyRetry?: boolean
@@ -217,6 +220,7 @@ export interface WorkbenchContextValue {
     activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
+    onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
     input: string
     composerError?: string | null
     composerErrorByScope?: Readonly<Record<string, string>>
@@ -385,8 +389,8 @@ export interface WorkbenchContextValue {
     projectKey: string
     name: string
     roots: string[]
-    defaultProjectSpace: RuntimeProjectSpaceRef | null
-    aiSettings: RuntimeProjectAiSettings | null
+    defaultProjectSpace?: RuntimeProjectSpaceRef | null
+    aiSettings?: RuntimeProjectAiSettings | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -514,6 +518,7 @@ export interface WorkbenchProviderProps {
   lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  composerAppsSourceActive?: boolean
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean

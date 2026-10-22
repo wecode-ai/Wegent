@@ -20,7 +20,6 @@ const preferences: AppPreferences = vi.hoisted(() => ({
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 85,
   telemetryEnabled: true,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,

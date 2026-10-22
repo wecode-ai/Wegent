@@ -6,11 +6,12 @@
 //! projection, the team/bot dictionaries, and the subtask/context
 //! serialization.
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{JsonProjection, OpaqueJson, raw_json, raw_null};
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson, raw_json, raw_null};
 use serde::Deserialize;
 #[cfg(test)]
 use serde_json::Map;
-use serde_json::{Value, json, value::RawValue};
+use serde_json::{Value, json};
 
 use super::assembly::{
     extract_display_prompt, iso_timestamp, sanitize_client_payload, shell_type_of,
@@ -436,7 +437,7 @@ pub(crate) async fn build_team_response(
                 )
                 .await?;
             if let Some(shell_type) = shell.as_ref().and_then(shell_type_of) {
-                agent_type = serde_json::value::to_raw_value(&match shell_type {
+                agent_type = brz_json::to_raw_value(&match shell_type {
                     "Agno" => "agno".to_owned(),
                     "ClaudeCode" => "claude".to_owned(),
                     "Dify" => "dify".to_owned(),
@@ -455,7 +456,7 @@ fn team_response(
     team_crd: &crate::crd::CrdDocument,
     spec: &TeamViewSpec,
     bots: Vec<TeamBotResponse>,
-    agent_type: Box<RawValue>,
+    agent_type: RawJson,
 ) -> TeamResponse {
     let bind_modes = spec
         .bind_mode
@@ -545,6 +546,16 @@ fn normalize_context_passing(value: Option<&str>) -> &str {
     }
 }
 
+/// `is_public_model_allowed_for_user` over a stored public-model document: a
+/// model without whitelist-only mode stays selectable; an active
+/// `allowedUsers` list admits only the listed user names.
+fn public_model_admitted(model_json: &Value, user_name: Option<&str>) -> bool {
+    crate::teams::public_model_access::allowed_for_user_name(
+        &OpaqueJson::from_serializable(model_json),
+        user_name,
+    )
+}
+
 /// `_get_bot_summary`.
 pub(crate) async fn build_bot_summary(
     kinds: &KindStore<'_, brz_mysql::MysqlService, impl brz_redis::Redis>,
@@ -577,6 +588,21 @@ pub(crate) async fn build_bot_summary(
         let model = kinds
             .get_by_name_and_namespace(user_id, "Model", &namespace, &name)
             .await?;
+        // `is_public_model_allowed_for_user_id` (`_get_bot_summary`): a
+        // public model row (owner user 0) is gated through its
+        // `spec.allowedUsersEnabled` / `spec.allowedUsers` whitelist, which
+        // the source resolves by reading the user row directly (`db.query
+        // (User).filter(User.id == user_id)`, no `user:v2:data` read). A
+        // restricted model is treated as unselected.
+        let model = match model {
+            Some(model) if model.user_id == 0 => {
+                let user_name =
+                    crate::remote_workspace_tree::user_cache::user_name_by_id(kinds.mysql, user_id)
+                        .await?;
+                public_model_admitted(&model.json.0, user_name.as_deref()).then_some(model)
+            }
+            model => model,
+        };
         if let Some(model) = model {
             let model_spec = model.json.0.get("spec").cloned().unwrap_or(Value::Null);
             let is_custom_config = model_spec
@@ -703,7 +729,7 @@ struct ContextTypeData {
     parent_id: Option<OpaqueJson>,
 }
 
-fn context_field(field: &Option<OpaqueJson>, enabled: bool) -> Box<RawValue> {
+fn context_field(field: &Option<OpaqueJson>, enabled: bool) -> RawJson {
     if enabled {
         field.raw_or(())
     } else {

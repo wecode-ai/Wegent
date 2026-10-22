@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { selectE2EModel } from '../modules/shared.mjs'
+
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const MAIN_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]`
+const ACTIVE_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]`
 const SIDE_CHAT = `${ACTIVE_SURFACE} [data-testid="right-workspace-chat-panel"]`
 const SIDE_SCROLL = `${SIDE_CHAT} [data-testid="right-workspace-chat-scroll-area"]`
 const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
@@ -225,6 +228,44 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
     text: 'temporary-chat',
     timeoutMs,
   })
+  await verifyProjectMenuAttachment(control, timeoutMs)
+}
+
+async function assertProjectMenuAttached(control) {
+  const triggerSelector = `${ACTIVE_SURFACE} [data-testid="project-work-button"]`
+  const triggers = JSON.parse(await control.command('getElementMetrics', triggerSelector))
+  const menus = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="project-work-menu"]')
+  )
+  assert.equal(triggers.length, 1, 'The project menu must have one active trigger')
+  assert.equal(menus.length, 1, 'The project chooser must have one visible surface')
+  const gap = triggers[0].top - menus[0].bottom
+  assert.ok(
+    Math.abs(gap - 8) <= 1,
+    `The project chooser detached from the composer: ${JSON.stringify({ trigger: triggers[0], menu: menus[0], gap })}`
+  )
+  return menus[0].height
+}
+
+async function verifyProjectMenuAttachment(control, timeoutMs) {
+  const triggerSelector = `${ACTIVE_SURFACE} [data-testid="project-work-button"]`
+  await control.command('click', triggerSelector)
+  await control.command('waitFor', '[data-testid="project-work-menu"]', {
+    visible: true,
+    stableMs: 300,
+    timeoutMs,
+  })
+  const initialHeight = await assertProjectMenuAttached(control)
+  await control.command('fill', '[data-testid="project-search-input"]', {
+    value: '__WEWORK_E2E_NO_MATCHING_PROJECT__',
+  })
+  await control.command('waitFor', '[data-testid="project-search-empty"]', {
+    visible: true,
+    timeoutMs,
+  })
+  const filteredHeight = await assertProjectMenuAttached(control)
+  assert.ok(filteredHeight < initialHeight, 'Filtering projects did not shrink the chooser')
+  await control.command('click', triggerSelector)
 }
 
 async function waitForNewTaskRow(control, knownRows, timeoutMs) {
@@ -447,6 +488,7 @@ export function createDesktopScenario({
       const taskTimeoutMs = Math.max(uiTimeoutMs, 30_000)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', MAIN_COMPOSER, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(control, undefined, undefined, ACTIVE_SURFACE)
 
       const knownRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -469,8 +511,9 @@ export function createDesktopScenario({
       })
       await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
 
-      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-      await control.command('click', '[data-testid="right-workspace-chat-option"]')
+      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
+      await control.command('waitFor', ACTIVE_COMPOSER, { visible: true, timeoutMs: uiTimeoutMs })
+      await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length

@@ -46,7 +46,7 @@ const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const BROWSER_LABEL = 'workspace-browser'
 const OPEN_BROWSER_WHILE_CLOSED_KEY =
   process.platform === 'win32' ? 'Control+Shift+B' : 'Meta+Shift+B'
-const OPEN_BROWSER_WHILE_OPEN_KEY = process.platform === 'win32' ? 'Control+T' : 'Meta+T'
+const OPEN_BROWSER_WHILE_OPEN_KEY = process.platform === 'darwin' ? 'Meta+T' : 'Control+T'
 
 function fixtureHtml(title, text, popupUrl = null, autoPopup = false) {
   return [

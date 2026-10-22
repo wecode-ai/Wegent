@@ -4,13 +4,14 @@
 
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use axum::{http::HeaderMap, response::IntoResponse, routing::get, Router};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use tokio::net::TcpListener;
 use wegent_executor::services::updater::BinaryReplacer;
 
@@ -78,10 +79,12 @@ fn replace_binary_creates_backup_sets_executable_permissions_and_replaces_atomic
         fs::read(root.join("wegent-executor.backup")).unwrap(),
         b"old"
     );
+    #[cfg(unix)]
     assert_eq!(
         fs::metadata(&current).unwrap().permissions().mode() & 0o777,
         0o755
     );
+    assert!(!fs::metadata(&current).unwrap().permissions().readonly());
     assert!(!new_binary.exists());
 }
 

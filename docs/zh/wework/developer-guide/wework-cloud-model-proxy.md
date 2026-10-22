@@ -16,6 +16,14 @@ Wework 使用已配置的云端地址和登录 token 直接构造代理模型配
 - `POST /api/runtime-work/llm-responses-proxy/responses`：使用用户登录 token 鉴权的代理端点。
 - `/models/unified`：下发模型名称、类型、namespace 和资源 owner ID，供代理精确定位 Model CRD。
 
+### 云端模型预设的默认位置
+
+Model CRD 的 `spec.modelConfig.ui.defaultModel: true` 标记默认模型，
+`sliderModelsConfig.defaultPreset` 指定默认滑条预设。选择该预设时，Wework
+优先定位到拥有预设配置的模型，即使它位于 `presets[].models` 的第二项或更后面。
+未填写 `reasoningEffort` 的预设项表示只选择模型，同样可以作为默认位置；
+填写推理等级时，优先匹配该模型的默认推理等级。没有匹配项时才选择预设中的第一项。
+
 ### 请求流程
 
 1. Wework 从 `/models/unified` 获取不含 provider 凭证的模型元数据。
@@ -33,6 +41,45 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 - `https://api.anthropic.com` 和 Anthropic Messages 解析为 `/v1/messages`。
 - `https://proxy.example.com/v1` 和 Anthropic Messages 仍解析为 `/v1/messages`，不会生成 `/v1/v1/messages`。
 - 已包含 `/responses`、`/chat/completions` 或 `/v1/messages` 的地址不会重复追加端点。
+
+#### Responses 思考配置与请求模式
+
+Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingConfig`）作为 Wework 的默认思考设置。模型目录只下发受支持的 `effort` 和 `summary`，不会下发完整 env 或 provider 凭证。选择器采用配置的默认强度；用户显式调整的字段覆盖默认值，同时保留其他默认字段，例如调整 effort 后仍保留 `summary: "detailed"`。
+
+`modelConfig.codex_request_mode` 控制完整的 Codex Responses 请求策略：
+
+| 值              | 行为                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` 或未配置 | 保持现有按协议适配行为；Responses 的原生工具能力仍可用已有开关单独设置。                                                                                            |
+| `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
+| `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
+
+透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
+
+例如，Kimi Responses 可配置为：
+
+```json
+{
+  "modelConfig": {
+    "codex_request_mode": "standard",
+    "env": {
+      "model": "openai",
+      "model_id": "moonshot-kimi-k3",
+      "thinking_config": {
+        "reasoning": { "summary": "detailed" }
+      }
+    }
+  }
+}
+```
+
+完整兼容 Codex 请求的 Responses 服务可将该字段改为 `"passthrough"`。模式配置优先于 `native_tool_search`、`native_namespace_tools` 等单项工具设置；不合法的模式或非 Responses 透传配置会在执行前报错。
+
+模型目录遇到不合法的 `codex_request_mode` 时会忽略该字段，保留模型的其他有效信息，避免一个错误配置导致整个模型列表不可用。目录读取不会修改存储的 Model CRD；实际调用仍校验原始配置，本机和云端执行都会在请求发送至模型服务前返回 HTTP 400。
+
+透传响应保留上游正常数据块的原始字节。若发生读取错误或流在 Responses 终态之前结束，仅追加 `response.failed`；已有 `response.completed`、`response.failed` 或 `response.incomplete` 后不会重复追加。独立的 `[DONE]` 不能代替 Responses 终态。
+
+`standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
 
 #### Kimi K3 Chat Completions 兼容
 
@@ -55,6 +102,27 @@ executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型
 
 如果上游返回标准 `Retry-After` 响应头，proxy 会优先采用该等待时间，并将单次等待限制在 60 秒以内。非 429 响应不会触发这项策略；重试耗尽后，proxy 会把最后一次 429 状态和错误正文返回给 Codex。已经开始输出的流不会通过这项机制重放，避免重复生成或重复执行工具。
 
+### Codex 直连模型过载恢复
+
+使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
+`turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
+最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。
+
+恢复使用原生 `turn/start` 的空 `input`，继续已保存的会话历史，不重发原任务、
+附件、用户消息 ID 或已合并的 additional context。已经完成的工具结果仍留在
+历史中。等待期间任务保持运行并显示重连状态；用户取消会立即终止等待，恢复
+耗尽后才向用户返回最终失败。额度不足、认证错误、上下文超限、子智能体失败，
+以及 Codex 自己正在重试的错误不会触发这项恢复。
+
+executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历史时，仅清除这些
+轮次的终止错误状态，保留用户消息和工具输出，避免重新打开任务后出现已处理
+的失败提示。最终耗尽恢复的轮次及其他错误不受影响。
+
+诊断日志 `codex overloaded turn recovery` 记录 thread、重试序号、上限和等待
+毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
+executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
+
 ### Anthropic 空输出恢复
 
 部分 Anthropic Messages 兼容服务可能在 `message_delta` 中返回结束原因和大于零的 `output_tokens`，却没有发送任何文本、思考内容或工具调用。executor 的 Codex compat proxy 会把这种不完整响应转换为失败事件，而不是错误地发出成功完成事件。Codex 随后按流错误恢复机制重试当前模型请求，避免 Wework 在没有 assistant 回复时提前结束任务。
@@ -64,6 +132,8 @@ executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型
 ### Claude Code 工具结果完整性
 
 Claude Code 使用 Anthropic Messages 协议调用 Wework 模型路由。转换到 OpenAI Responses 或 Chat Completions 前，executor 会检查每个 assistant `tool_use` 是否在后续 user 消息中具有同 ID 的 `tool_result`。并行工具结果可以拆分到多个 user 消息并按完成顺序乱序到达；只要整个请求历史中存在匹配结果，代理就必须保留该结果且不得提前补充失败。只有工具进程在返回结果前异常结束、整个历史都缺少匹配结果时，代理才会补充一个明确的失败结果，使请求历史保持协议合法并允许模型继续处理失败；已有的正常工具结果不会被覆盖或重复。
+
+Claude Code 的本地与远端任务、智能体固定模型都使用同一执行器协议桥，支持上述三种云端上游协议。Backend 保留云端模型的真实协议和完整资源身份，不要求上游必须为 Anthropic Messages，也不直接将 Claude 的请求转发给不兼容的接口；协议转换由执行器模型路由完成。
 
 ### Namespace 工具兼容
 

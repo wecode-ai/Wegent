@@ -18,10 +18,10 @@ use crate::json_compat::OptionalOpaqueJsonExt;
 use std::collections::HashSet;
 
 use crate::crd::CrdDocument;
-use crate::json_compat::{JsonProjection, OpaqueJson, raw_null};
+use brz_json::RawJson;
+use brz_json::{JsonProjection, OpaqueJson, raw_null};
 #[cfg(test)]
 use serde_json::Value;
-use serde_json::value::RawValue;
 
 use super::super::auth::TeamsUser;
 use super::super::http_error::HttpError;
@@ -62,10 +62,10 @@ fn team_ids(field: Option<Vec<Option<i64>>>) -> Vec<i64> {
 struct QuickAccessTeam {
     id: i64,
     name: String,
-    display_name: Box<RawValue>,
+    display_name: RawJson,
     is_system: bool,
-    recommended_mode: Box<RawValue>,
-    agent_type: Box<RawValue>,
+    recommended_mode: RawJson,
+    agent_type: RawJson,
 }
 
 #[derive(serde::Serialize)]
@@ -97,7 +97,7 @@ fn quick_access_team(
             .spec
             .as_ref()
             .map(|spec| spec.recommended_mode.raw_or("both"))
-            .unwrap_or_else(|| serde_json::value::to_raw_value("both").unwrap()),
+            .unwrap_or_else(|| brz_json::to_raw_value("both").unwrap()),
         agent_type: team.agent_type.raw_or(()),
     }
 }
@@ -164,17 +164,21 @@ async fn quick_access_response(
         ));
     };
     for team_id in user_team_ids.iter().chain(system_team_ids.iter()) {
-        if !seen_team_ids.insert(*team_id) {
+        if seen_team_ids.contains(team_id) {
             continue;
         }
         // Favorites keep `is_system = team_id in system_team_ids`; the
-        // system pass always passes `true`, but any id already seen in the
-        // favorites pass is skipped above.
+        // system pass always passes `true`, which `contains` already yields
+        // for every system id.
         let is_system = system_team_id_set.contains(team_id);
         let team = repo::team_kind_by_id(&state.mysql, *team_id)
             .await
             .map_err(internal)?;
+        // Source `seen_team_ids.add` runs after a successful lookup, so only a
+        // resolved team is remembered and an unresolved favorite is retried in
+        // the system pass.
         if let Some(team) = team {
+            seen_team_ids.insert(*team_id);
             append_team(team, is_system);
         }
     }

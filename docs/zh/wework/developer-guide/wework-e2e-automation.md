@@ -143,27 +143,70 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件固定使用 17 个 GitHub Actions matrix job，Cloud 套件使用 15 个；每个 job
-串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
-GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
-跨 runner 的 32 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
-上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
-必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
+Core 和 Cloud 的分片定义以 `.github/scripts/classify-wework-desktop-e2e.sh` 为准。
+Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，实际并发还受
+分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
+Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。
+macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持串行。
+
+`split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
+避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
+松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
+各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分片按 CI 实测耗时平衡并设定
+上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
+必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
+长场景按独立行为拆成 checkpoint，而不是只调整分片：
+
+- `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
+- `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
+- `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
+- `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
+
+每个 checkpoint 都从隔离环境建立自己的前置数据。上述组名仍可用于 `--segment`，
+`--from-segment` 从该组第一个 checkpoint 开始；CI 则直接调度各独立 checkpoint。
+各分片复用同一份构建产物，减少重型流程在同一 runner 上的 CPU 争抢。
+24 插件长列表仍验证全部条目、滚动和末项选择；启停及两次重启后的持久化改由
+`plugin-toggle-persistence` 使用一个插件独立验证，避免重复同步整个长列表。
+Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]` JSON 记录，
+并保存到诊断产物中的 `runner-resources.jsonl`。Web 分片复用同一采样器，设置
+`RUNNER_PROCESS_DIAGNOSTICS=1` 后额外记录 PID、父 PID、状态、运行时长和进程名，
+不记录命令参数。`RUNNER_RESOURCE_LOG_PATH` 可指定日志路径；Web 日志保存在独立的
+`e2e-process-diagnostics-*` 产物中，便于定位测试结束后命令未退出的问题。
+记录包含 CPU 使用率、load average、
+内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；
+不可读取的内核指标会记录 `unavailable`。CPU 使用率是两次采样间的平均值，首次记录为 `null`。
+`[desktop-e2e-schedule]` 日志在 checkpoint 启停时记录活动列表和实际并发数，可用于确认
+测试是否真正重叠；不能只凭配置的并发上限推断并行效果。提高并发后需要对比同一分片的
+耗时和这些指标，确认没有把等待转成 CPU、内存或 I/O 争抢。
+抽屉动画逐帧检查从操作前持续采样，观察到位移且轨道动画结束后主动停止；采样上限沿用
+共享单步超时。这样命令传输和渲染延迟不会耗尽固定的 800ms 采样窗口；位移、连续性、
+中间帧和减弱动态效果的断言仍完整执行。
+包含 2200 个增量的
 Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
 通知场景使用定向的 30 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
 应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
 Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
 构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
-执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
+执行 Vite、Electron 和 Executor 构建。桌面分片依赖共享构建成功后才启动，并通过
+GitHub artifact action 直接下载产物；这避免大量 runner 在构建期间空占资源轮询，
+让 Lint、Tests 和 Platform E2E 能及时获得 runner，同时不增加 matrix job 数量或
+减少任何 checkpoint。Rust gateway 和 Executor 都以 debug
+profile 构建，避免为 E2E 产物执行无用的 release 优化；测试产物还会关闭 dev
+profile 的 debuginfo，因为诊断 artifact 不保留这些符号，生成后再剥离只会延长
+冷构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
-artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 32 个分片的
-上传和下载时间。桌面 E2E 和对应的 cache warmup 显式设置
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短所有桌面分片的
+上传和下载时间。`backend-rs/**` 或 `executor/**` 的源码变化会选择桌面 target
+cache warmup，防止主分支只在 lockfile 变化时刷新缓存。桌面 E2E 和对应的 cache warmup 显式设置
 `WEWORK_EXECUTOR_PROFILE=debug`，避免为测试 artifact 优化 Executor；正式打包
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
-macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
+macOS Inspector 路径同样使用 debug Executor profile，并关闭 dev profile 的
+debuginfo。只有真正执行内存 checkpoint（`ci:memory`、`ci:all` 或非 PR
+运行）时才构建 release Executor：优化后的代码生成会影响内存测量，但在仅运行
+Inspector 时不会增加覆盖。macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
 并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。其大段流式 Markdown 响应使用
 定向的 30 秒完成预算，普通内存测试交互仍保持共享的 10 秒超时。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
@@ -172,7 +215,11 @@ ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存
 无法帮助复现问题的 Chromium 临时缓存。PNG 等已压缩文件上传时禁用二次压缩，避免
 诊断归档延长流水线尾部。
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
-重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
+重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。
+macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。
+Windows 构建、分片和汇总检查共用同一个运行条件，预期任务被跳过时门禁失败。
+Issue MCP 附件场景在 Linux 和 Windows 均通过共享 `setup-minio-e2e` Action 构建并验证同一固定版本的真实 MinIO；仅 main 写入缓存，场景通过 `WEWORK_E2E_MINIO_BIN` 使用当前平台的可执行文件。
+macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
 必须同步登记对应 segment。新增 `DESKTOP_CHECKPOINTS` 检查点时，必须同时把它加入
 Core、Cloud 或正式发布 catalog，分配到对应 shard，为相关源码路径增加最小分类，
@@ -230,6 +277,10 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
 
+首次模型路由任务与真实 Harness CLI 启动使用工作台启动预算；流式滚动先等待模型请求，再使用原有 10 秒预算校验界面。切换项目后等待执行模式按钮可用；看板卡片移列后先滚动到结果再校验可见性。云端替身复用自适应视图选择 helper，兼容紧凑下拉框。失败工作台快照附带资源请求的连接、发送与响应时序，仅记录路径，不记录查询参数。
+
+进程浏览器的纯数字筛选精确匹配 PID，避免匹配其他进程的启动参数或 PID 子串；文字筛选仍搜索进程名和启动信息。应用菜单检查点保留按主进程 PID 排除无关 helper 的断言。
+
 主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
@@ -252,6 +303,86 @@ Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构
 缓存都会递归删除。runner 启动时也会清理之前异常中断留下的非活动结果目录，避免
 本地磁盘随运行次数持续增长。
 
+Linux CI 的插件开发分片通过 GDB 启动受 Electron 管理的 Executor，原生崩溃时
+将所有线程的栈写入 Executor 日志；启动前先验证 IPC 文件描述符能够传入被调试
+进程。独立 MCP 和 schema 查询保持原有 stdout 协议。栈诊断不打印参数或局部变量。
+桌面 E2E 的 Electron 日志同时保留脱敏后的 renderer 错误；Git worktree 和会话索引
+替换失败会记录 Git stderr 或原始系统错误码，便于区分页面超时与底层执行失败。
+Windows 插件安装诊断还会记录 pnpm 操作前后的应用资源目录状态、目录链接目标和
+文件数量；静态资源读取失败时会记录父目录链接状态，用于定位资源缺失发生的阶段。
+Windows 组件组合目录和托管插件副本都持有独立资源文件，避免 pnpm 清理目录链接时
+删除共享组件内容。布局指纹和副本版本标记会使旧目录重新构建；插件开发 E2E 验证
+隔离窗口启动后主应用资源保持完整，Windows 资源目录不再链接到共享组件。
+Windows worktree 命令通过现有 `.git` 和 `commondir` 解析结果显式传入
+`GIT_COMMON_DIR`，让 checkout 子进程在加载仓库配置前找到共享对象目录；传给 Git 的路径
+先移除 Windows verbatim 前缀，避免 Git 拼接 `/config` 后形成无效的扩展路径。
+工作树删除、恢复及快照引用清理在共享 Git 目录中使用短参数 `--git-dir .`，避免 Git
+在加载配置前拒绝过长的显式目录参数；工作树目标路径保持绝对路径。
+Windows 会话索引使用 `FileRenameInfoEx` 的 POSIX 替换语义发布新文件，保证旧读者仍能
+读取完整旧索引、新读者立即看到新索引。目标父目录先规范化，为直接 Win32 调用保留
+长路径前缀，包括首次创建索引。原生 CI 覆盖持有旧文件句柄时连续替换及长路径替换。
+
+插件缓存变更会重启 Codex app-server，因此同步必须同时等待 AI 任务和后台终端结束。
+回归测试验证后台进程仍运行时延后更新、收到原生退出通知后才发布新插件文件；
+桌面场景保留窗口重载后读取输出和停止进程的完整断言。
+Windows 测试使用跨 shell 的终端命令并确认独立输出行，设置控件先滚动到可见区域。
+Git fixture 明确关闭自动换行转换，队列和侧栏 fixture 明确选择测试模型，保持原有行为断言。
+桌面 fixture 显式绑定本次临时 Home 下的工作区根目录，并清除宿主继承的其他路径覆盖，
+避免读取旧测试或个人工作树。任务准备失败记录原始错误码和原因，避免只留下页面等待超时。
+CI 在环境准备阶段验证开发 Electron 二进制，避免场景内首次导入时才下载。
+
+远程协作场景在打开智能体表单前，通过真实 Backend 完成执行环境目录初始化，
+并验证目标远程设备已获授权。原生模型目录冷启动不占用表单的 10 秒 UI 步骤预算。
+桌面启动失败时，`scenario-state.json` 记录应用进程的启动、退出时间和退出码；
+Windows 同时保留 `electron.log`，用于定位 renderer 连接之前的原生启动失败。
+迁移 fixture 使用 `HOME` 指定隔离的工作台数据目录，保留操作系统的 `USERPROFILE`。
+控制器先回传当前动作结果，再轮询下一条命令，避免未完成的长轮询占用结果回传连接。
+系统代理场景和任务状态同步的初始模型请求等待使用模型阶段预算，普通 UI 步骤仍保持 10 秒。
+初始任务与后续消息复用 `sendPromptUntilScenarioRequest`，在发送前注册请求监听，
+并使用共享的 30 秒模型请求时限。
+后台引导等待真实工具输出及其后的模型请求时，同样使用模型请求预算；原生工具可能在
+10 秒后返回仍在执行的会话，不能把该工具阶段套用普通 UI 步骤时限。
+消息顺序场景先以模型请求预算等待当前轮的 SSE 响应发送完成，再以原来的 10 秒 UI 预算等待正文；响应序号必须对应当前轮。HTTP 诊断保留请求开始、结束和耗时，避免把 Codex 执行阶段的延迟误判为虚拟列表漏渲染。
+流恢复场景在首次发送前显式选择已注册的 fixture 模型；编辑器出现不代表模型目录已就绪。
+模型选择完成后，仍验证流式回复在 renderer 重载期间继续执行并恢复完整输出。
+应用重启后的续写先等待发送控件可用，再发送一次 Enter；输入文字稳定不能代表模型目录已恢复。
+模型请求监听与发送动作同时等待，任一失败都进入原有诊断与清理流程，避免未处理的 Promise
+拒绝直接退出 Node 并丢失失败快照。模型请求等待超时后停止内部轮询，避免残留定时器。
+普通发送控件等待仍使用 10 秒步骤时限。
+恢复原生模型目录默认值时，目录刷新会暂时卸载模型行。场景从稳定页面快照等待原模型行
+重新出现且不再显示自定义标记，然后继续验证原生数据和磁盘持久化结果。
+过载恢复场景的新会话取消阶段也单独选择 fixture 模型，不继承上一会话的模型状态。
+动作执行与结果回传分别记录：回传失败不能再次发送伪造的动作失败结果。
+E2E 的 Electron 日志保留 loopback 请求的网络错误码和路径，不记录请求头或查询参数。
+Windows 失败产物中的 `windows-network-diagnostics.json` 只记录 TCP 状态与进程的连接数量，
+用于定位 Winsock 资源不足，不包含连接地址。
+任务看板批量操作在每次输入前确认空会话已经激活，不能只等待编辑器节点存在。
+Goal 重启场景必须同时观察一个任务运行、另一个任务排队后，再释放占用单槽的模型响应。
+工作列表刷新保留已打开工作区的执行设备，防止较早的刷新结果覆盖新的云端工作区选择。
+诊断记录项目选择的 reducer 动作和 ID、输入草稿所属会话及父层确认版本，以及 Codex
+app-server 的启动进程 ID、初始化失败时的退出状态和 Windows 进程树终止失败状态。
+配置归一化和替换记录文件大小、模型及内置 OpenAI 地址字段是否存在；替换还记录调用位置，不记录配置正文。
+仅配置文件不存在时才初始化空配置；其他读取失败直接报错并保留原文件。回归使用无效 UTF-8 触发真实读取错误，验证启动被阻止且原始字节不变，避免归一化悄悄清除模型地址。
+`codex-invalid-launch-cwd` 在启动前、执行器重启前后及发送前记录隔离配置的摘要和 fixture 字段是否匹配，并读取原生配置层的来源及字段存在状态，以区分磁盘配置变化与运行时加载异常。
+Codex app-server 的重启和配置变更持有任务准入锁，等待旧进程退出后才允许新进程启动。
+失败产物 `codex-sqlite-diagnostics.json` 记录隔离 SQLite 文件大小、只读完整性检查结果
+和 SQLite 错误码，不读取会话表内容。Executor 兼容性查询失败仅记录耗时、退出码、信号和终止标记，
+不记录子进程输出、命令路径或环境变量。
+
+Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避免连接期间在异步线程中
+修改进程环境。启动场景验证 Executor 先就绪、Core DSH 后启动，并确认实际监听端口有效。
+阻断代理启动场景先验证工作台无需等待 Codex 网络，再释放代理并等待本地插件注册完成，
+最后清除代理配置，避免测试前置操作中断仍在进行的初始化。
+
+Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
+监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
+监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
+
+Linux 云端测试的后端、数据库等服务需要在启动前公布端口。共享分配器读取
+`/proc/sys/net/ipv4/ip_local_port_range`，在内核动态端口范围之外选择可绑定的
+非特权端口，并通过端口注册目录隔离并行 checkpoint，避免服务初始化期间被
+Core DSH 等使用端口 `0` 的进程抢占。
+
 GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
 任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的
 完整 Web/WASM 组件包上传为诊断证据；顶层清理和 Artifact 路径也都会排除测试 `.zip`
@@ -272,7 +403,21 @@ Runtime、Executor Home、工作区、测试归档或组件目录。
 
 云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。为缩短冷启动时间，Executor 构建与 Backend/Redis/数据库准备并行，远端 Executor 注册与 Electron 应用构建并行；应用启动前仍必须同时等待两组前置任务完成。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
+混合 Backend 启动脚本会把 Python Uvicorn 的上游 HTTP keep-alive 设为 2400 秒，
+长于混合 E2E workflow 最长的 35 分钟 job。`brz-http-gateway` 0.1.4 创建
+hyper-util 连接池时没有安装空闲连接计时器；如果 Uvicorn 先让空闲 socket 过期，
+gateway 可能复用已经被上游关闭的连接，并把请求错误地返回为 `502 fallback
+upstream unavailable`。让本地启动器的上游连接生命周期覆盖整个 job，可消除该
+测试运行中的陈旧 socket 窗口。该设置只约束本机 Rust → Python fallback 连接，
+不改变外部客户端到 gateway 的连接复用。
+
 云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
+
+`plugin-account-auth` 场景使用仅在 E2E 标记文件启用时生效的调度间隔，并在测试
+明确改变凭据状态后发送一次精确 retry signal；生产环境仍保持 15 秒自动同步周期和
+60 秒失败退避。DWS 手工撤销验证不再固定等待 32 秒，而是
+等待真实 Executor 写出两次已完成的 reconciliation 标记，并在期间持续断言授权没有
+被自动恢复；因此缩短的是空等时间，不是账号迁移、云端执行或撤销覆盖。
 
 GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright 缓存后加载预构建 Docker 镜像。该 job 必须先删除不使用的 hosted-runner SDK（.NET、Android、GHC 和 CodeQL）并记录磁盘用量，为镜像解压保留稳定空间；清理逻辑不得删除正在运行的 MySQL 或 Redis service 镜像。
 
@@ -454,6 +599,18 @@ const route = await app.route();
 
 ## CI 建议
 
+本地列表启动读取和手动刷新共享同一版本号。启动读取若已被后续刷新取代，必须在写入列表和发起云端同步之前一并退出，避免过期启动请求重新开启同步并覆盖已选择的本地项目。原任务发现 E2E 的执行模式和本地运行断言保持不变。
+
+云端 Issue 变化通知必须使正在读取的旧看板快照失效，并发起通知后的读取。使用共享控制器的 `loadProjectSnapshot(projectId, { invalidate: true })` 复用既有变更版本保护，避免连续取消指派、重新指派时，第二条通知复用第一条通知的旧请求。普通重复读取仍可合并。控制器的并发回归由 Frontend CI 执行，原人工 Issue E2E 保留 10 秒 UI 等待。
+
+平台 E2E 的 service 顺序必须先启动 etcd 和 MinIO，再启动 Milvus。GitHub runner 按配置顺序逐一拉取并启动容器；如果将 MinIO 放在 Milvus 后面，后续镜像拉取可能让 Milvus 在依赖 DNS 尚不存在时初始化并退出。健康检查在全部容器启动后才执行，不能修复这一启动顺序问题。
+
+桌面 E2E 的 `clickWhenEnabled` 会开启既有的 10 秒对话布局诊断窗口。阶段产物和失败产物保留 `conversation-diagnostics` JSON，记录虚拟列表范围、消息测量和滚动位置；诊断不包含消息正文，也不改变 UI 等待或业务断言。定位“消息状态已完成但正文未显示”时，应同时核对这些布局记录与 `workbench-debug.json`。
+
+打开项目设置时，直接等待并点击当前项目的编辑或重命名入口。侧栏根据项目的状态所属设备和来源选择菜单标识，不能根据菜单尚未渲染时的即时快照猜选入口。云端项目保存、重启和设置恢复断言保持不变。
+
+macOS 本地验证云端项目状态文件时，运行中的 ChatGPT 或 Codex 桌面应用会触发既有的状态写入保护。在 HOME 和 Codex Home 均位于独立测试结果目录的 runner 中，可用 `WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH=1` 验证状态实际落盘。
+
 CI 可以把 Wework E2E 作为独立 job：
 
 ```bash
@@ -495,7 +652,7 @@ pnpm --filter wework e2e:desktop:memory
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
 Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵；完整分类会在
-两个平台分别运行全部 17 个 Core 分片。Windows job 使用 `windows-latest` 构建
+两个平台分别运行分类器定义的全部 Core 分片。Windows job 使用 `windows-latest` 构建
 原生 `WeWork.exe`、`wegent-executor.exe` 和 `codex.exe` 后再执行 checkpoint，
 不能用跨平台构建产物或单个 Windows smoke test 替代。
 
@@ -509,3 +666,19 @@ Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通�
 Wework E2E。
 
 登录后流程应在测试前通过后端 API 创建测试用户和测试数据，再使用真实登录或真实 token 注入。不要在 Playwright 中 mock 后端 HTTP 响应。
+
+### 本地项目场景的就绪条件
+
+`createSingleRootLocalProject` 必须等待新项目成为 workbench 当前项目，不能只以创建弹窗消失或旧输入框仍可见作为就绪条件。云端上下文与运行历史场景还要通过 `selectE2EModel` 明确选择已注册的模型，再输入首条消息；其上下文阻塞、附件、历史恢复与任务移动断言保持完整。
+
+运行历史场景的 3 秒响应性门禁使用工作台快照，不将 `performanceSnapshot` 内强制 GC 的调试协议耗时算作 UI 阻塞；完整历史、分页、传输与内存断言仍保留。Windows 重启检查保持旧执行器必须退出的断言，并记录指定 PID 的进程名与启动时间，以及 `taskkill` 的退出码和输出，以区分未退出的执行器与复用的 PID；不采集进程命令行或环境变量。
+
+分块历史传输以压缩内容哈希命名不可变快照。并发请求通过不覆盖的原子发布复用同一文件，避免替换 Windows 正在读取的快照。回归验证已发布文件及其修改时间保持不变、活跃读者不受影响，以及四个并发请求均可完整还原原历史；原运行历史 E2E 不变。
+
+Windows 重启门禁按 PID、进程名和创建时间核对进程实例，而不是在新应用启动后仅按旧 PID 判断。PID 相同但创建时间不同属于新实例；原实例仍存活时必须失败，身份查询失败或缺失创建时间同样失败。保留原模型代理重建、会话恢复和续写断言，以及原 UI 超时。参见 [Windows 进程句柄与标识](https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers)。
+
+检查点任务沿用现有 30 秒模型请求预算，收到请求后才开始原有 10 秒 UI 完成断言；模型启动耗时不计入渲染预算。提交与请求观察共同等待，输入失败后观察器超时也不会成为未处理异常，原始错误仍进入正常诊断和清理。
+
+云端模型请求超时并取消后，通过真实模型选择器的打开动作显式刷新目录，再关闭菜单以便恢复阶段重新打开。本地模型设置变更事件只刷新本地目录，不能用重复派发该事件替代云端刷新。云端失败、恢复、模型来源与插件断言保持完整。
+
+空白对话提交完成时，复用当前任务身份检查，仅在创建的任务仍被选中时消费原草稿编号。用户返回新对话后输入的草稿不能被旧请求迟到的完成回调清空；创建被拒绝时仍恢复原草稿与附件。延迟创建与延迟刷新的回归测试覆盖这两个窗口，原 9 条任务批量完成与归档 E2E 保持不变。

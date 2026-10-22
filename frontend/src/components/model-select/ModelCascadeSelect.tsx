@@ -18,6 +18,8 @@ import {
   type GroupableModel,
 } from './model-grouping'
 import { ModelCapabilityIcons } from './ModelCapabilityIcons'
+import { ModelCapabilityDescription } from './ModelCapabilityDescription'
+import { ModelSelectionGuideLink } from './ModelSelectionGuideLink'
 
 export interface ModelCascadeLabels {
   ungrouped: string
@@ -49,7 +51,6 @@ interface ModelCascadeContentProps<T extends GroupableModel> {
   onSelectSpecialOption?: (key: string) => void
   getModelKey?: (model: T) => string
   renderModelBadges?: (model: T) => React.ReactNode
-  renderModelMeta?: (model: T) => React.ReactNode
   renderModelActions?: (model: T) => React.ReactNode
   footer?: React.ReactNode
   className?: string
@@ -115,9 +116,8 @@ export function ModelCascadeContent<T extends GroupableModel>({
   onSelectSpecialOption,
   getModelKey = defaultModelKey,
   renderModelBadges,
-  renderModelMeta,
   renderModelActions,
-  footer,
+  footer = <ModelSelectionGuideLink className="mx-auto my-2 px-3" />,
   className,
   variant = 'desktop',
 }: ModelCascadeContentProps<T>) {
@@ -251,7 +251,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {showPath && (
               <span className="block truncate text-xs text-text-muted">{groupPath}</span>
             )}
-            {renderModelMeta?.(model)}
+            <ModelCapabilityDescription capability={model.capability} />
           </span>
         </button>
         <span className="flex shrink-0 items-center gap-1.5 empty:hidden">
@@ -334,7 +334,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {showPath && (
               <span className="block truncate text-xs text-text-muted">{groupPath}</span>
             )}
-            {renderModelMeta?.(model)}
+            <ModelCapabilityDescription capability={model.capability} />
           </span>
           {isSelected && <Check className="h-4 w-4 shrink-0 text-primary" />}
         </button>
@@ -498,6 +498,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
           : 'max-h-[min(520px,var(--radix-popover-content-available-height))] w-[min(760px,calc(100vw-32px))]',
         className
       )}
+      // Keep wheel events inside the popover: when the cascade is opened from a
+      // modal Dialog, react-remove-scroll cancels wheel events at the document
+      // level for anything outside the dialog, which would block list scrolling.
+      onWheel={event => event.stopPropagation()}
     >
       <div className="border-b border-border p-3">
         <div className="relative">
@@ -616,7 +620,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
       )}
 
       {footer && (
-        <div data-testid="model-cascade-footer" className="shrink-0 border-t border-border">
+        <div
+          data-testid="model-cascade-footer"
+          className="flex shrink-0 flex-col border-t border-border empty:hidden"
+        >
           {footer}
         </div>
       )}
@@ -634,7 +641,6 @@ export function GroupedModelSelect<T extends GroupableModel>({
   onSelectSpecialOption,
   getModelKey = defaultModelKey,
   renderModelBadges,
-  renderModelMeta,
   renderModelActions,
   footer,
   placeholder,
@@ -704,7 +710,6 @@ export function GroupedModelSelect<T extends GroupableModel>({
           }
           getModelKey={getModelKey}
           renderModelBadges={renderModelBadges}
-          renderModelMeta={renderModelMeta}
           renderModelActions={renderModelActions}
           footer={footer}
           variant={variant}

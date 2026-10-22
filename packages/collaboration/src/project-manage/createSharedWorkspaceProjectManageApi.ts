@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationIssue,
   CollaborationMember,
   CollaborationProject,
   CollaborationUser,
-} from "../types";
-import type { ProjectManageApi } from "./types";
+} from '../types'
+import type { ProjectManageApi } from './types'
 
 export interface SharedProjectManageWorkspaceApi {
-  projects: Pick<SharedWorkspaceApi["projects"], "update">;
-  issues: Pick<SharedWorkspaceApi["issues"], "getBoardSnapshot" | "update">;
-  members: SharedWorkspaceApi["members"];
+  projects: Pick<SharedWorkspaceApi['projects'], 'get' | 'update'>
+  issues: Pick<SharedWorkspaceApi['issues'], 'getBoardSnapshot' | 'update'>
+  members: SharedWorkspaceApi['members']
 }
 
 export function createSharedWorkspaceProjectManageApi(
-  api: SharedProjectManageWorkspaceApi,
+  api: SharedProjectManageWorkspaceApi
 ): ProjectManageApi<
   CollaborationProject,
   CollaborationMember,
@@ -26,16 +26,17 @@ export function createSharedWorkspaceProjectManageApi(
   CollaborationUser
 > {
   return {
-    listMembers: (projectId) => api.members.list(projectId),
-    listItems: async (projectId) => {
-      const snapshot = await api.issues.getBoardSnapshot(projectId);
-      return { items: snapshot.items };
+    getProject: projectId => api.projects.get(projectId),
+    listMembers: projectId => api.members.list(projectId),
+    listItems: async projectId => {
+      const snapshot = await api.issues.getBoardSnapshot(projectId)
+      return { items: snapshot.items }
     },
-    searchUsers: async (query) => ({
+    searchUsers: async query => ({
       users: await api.members.searchUsers(query),
     }),
     addMember: (projectId, userId, role) =>
-      api.members.add(projectId, userId, role === "Owner" ? undefined : role),
+      api.members.add(projectId, userId, role === 'Owner' ? undefined : role),
     updateMember: (projectId, userId, values) =>
       api.members.update(projectId, userId, {
         role: values.role,
@@ -52,9 +53,12 @@ export function createSharedWorkspaceProjectManageApi(
         version: values.version,
         tags: values.tags,
         visibility: values.visibility,
+        publicAccess: values.public_access,
+        membershipMode: values.membership_mode,
+        defaultIssueSecurity: values.default_issue_security,
         providerConfig: values.provider_config,
         boardConfig: values.board_config,
         cardDisplay: values.card_display,
       }),
-  };
+  }
 }

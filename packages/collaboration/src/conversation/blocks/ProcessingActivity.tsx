@@ -126,7 +126,10 @@ export function ToolActivityGroup({
 }
 
 export function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
-  const label = getContextCompactionLabel(block);
+  const { t } = useConversationTranslation();
+  const label = t(
+    `workbench.context_compaction_${block.status === "error" ? "incomplete" : block.status === "done" ? "completed" : "running"}`,
+  );
   const isRunning = block.status !== "done" && block.status !== "error";
   const textClassName =
     block.status === "error" ? "text-red-500" : "text-text-muted";
@@ -157,12 +160,6 @@ export function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
       <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
     </div>
   );
-}
-
-function getContextCompactionLabel(block: ToolBlock): string {
-  if (block.status === "error") return "上下文压缩失败";
-  if (block.status === "done") return "上下文已自动压缩";
-  return "正在自动压缩上下文";
 }
 
 function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {

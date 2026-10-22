@@ -15,7 +15,7 @@ async function notarizeMacos(context) {
 
 async function notarizeApp(appPath, environment = process.env) {
   await requireDirectory(appPath)
-  if (await hasStapledTicket(appPath)) return
+  if (await hasStapledTicket(appPath, environment)) return
 
   const identity = resolveBuildIdentity(environment)
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wework-notarize-'))
@@ -27,15 +27,14 @@ async function notarizeApp(appPath, environment = process.env) {
     if (result.status !== 'Accepted') {
       throw new Error(`Apple notarization failed with status: ${result.status || 'unknown'}`)
     }
-    await run('xcrun', ['stapler', 'staple', appPath])
-    await run('xcrun', ['stapler', 'validate', appPath])
+    await runNotaryCommand(['stapler', 'staple', appPath], environment)
+    await runNotaryCommand(['stapler', 'validate', appPath], environment)
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })
   }
 }
 
 async function submitArchive(archivePath, environment) {
-  const attempts = retryAttempts(environment.WEWORK_NOTARY_UPLOAD_ATTEMPTS)
   const args = [
     'notarytool',
     'submit',
@@ -48,19 +47,24 @@ async function submitArchive(archivePath, environment) {
     '--output-format',
     'json',
   ]
+  return JSON.parse(await runNotaryCommand(args, environment))
+}
+
+async function runNotaryCommand(args, environment, execute = run, wait = delay) {
+  const attempts = retryAttempts(environment.WEWORK_NOTARY_UPLOAD_ATTEMPTS)
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return JSON.parse(await run('xcrun', args))
+      return await execute('xcrun', args)
     } catch (error) {
       if (!isTransientNotaryFailure(error) || attempt === attempts) throw error
       const delayMs = attempt * 5000
       console.warn(
-        `Apple notarization upload failed transiently; retrying attempt ${attempt + 1}/${attempts} in ${delayMs / 1000}s`
+        `Apple ${args[0]} ${args[1]} transport failed; retrying attempt ${attempt + 1}/${attempts} in ${delayMs / 1000}s`
       )
-      await delay(delayMs)
+      await wait(delayMs)
     }
   }
-  throw new Error('Apple notarization exhausted all upload attempts')
+  throw new Error('Apple notarization exhausted all transport attempts')
 }
 
 function authorizationArgs(environment) {
@@ -115,11 +119,12 @@ function isTransientNotaryFailure(error) {
   )
 }
 
-async function hasStapledTicket(appPath) {
+async function hasStapledTicket(appPath, environment, execute = runNotaryCommand) {
   try {
-    await run('xcrun', ['stapler', 'validate', appPath])
+    await execute(['stapler', 'validate', appPath], environment)
     return true
-  } catch {
+  } catch (error) {
+    if (isTransientNotaryFailure(error)) throw error
     return false
   }
 }
@@ -185,3 +190,5 @@ module.exports.isTransientNotaryFailure = isTransientNotaryFailure
 module.exports.notarizeApp = notarizeApp
 module.exports.retryAttempts = retryAttempts
 module.exports.s3AccelerationArgs = s3AccelerationArgs
+module.exports.runNotaryCommand = runNotaryCommand
+module.exports.hasStapledTicket = hasStapledTicket

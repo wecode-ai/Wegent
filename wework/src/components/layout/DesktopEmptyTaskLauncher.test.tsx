@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -7,6 +7,8 @@ import { installDshUiTestContributions, preloadDefaultDshUiTestModules } from '@
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 
+vi.mock('@/lib/platform', () => ({ getPlatform: () => 'mac' }))
+
 beforeEach(async () => {
   await preloadDefaultDshUiTestModules(['plugins/wework-ui-home-developer.js'])
 })
@@ -14,13 +16,16 @@ beforeEach(async () => {
 function LauncherHarness({
   projectName = 'Wegent',
   onOpenProjectSelector = vi.fn(),
+  searchActive = false,
 }: {
   projectName?: string | null
   onOpenProjectSelector?: (anchorElement: HTMLButtonElement) => void
+  searchActive?: boolean
 }) {
   const [draft, setDraft] = useState('已有草稿')
   return (
     <DesktopEmptyTaskLauncher
+      searchActive={searchActive}
       projectName={projectName}
       onOpenProjectSelector={onOpenProjectSelector}
       onSelectSuggestion={setDraft}
@@ -36,6 +41,27 @@ function LauncherHarness({
 }
 
 describe('DesktopEmptyTaskLauncher', () => {
+  test('opens find in an active empty conversation, reports no matches, and restores the draft focus', async () => {
+    const { rerender } = render(<LauncherHarness />)
+    const composer = screen.getByTestId('chat-message-input')
+    fireEvent.keyDown(composer, { key: 'f', metaKey: true })
+    expect(screen.queryByTestId('conversation-find-input')).not.toBeInTheDocument()
+
+    rerender(<LauncherHarness searchActive />)
+    fireEvent.keyDown(composer, { key: 'f', metaKey: true })
+    const input = screen.getByTestId('conversation-find-input')
+    await waitFor(() => expect(input).toHaveFocus())
+    fireEvent.change(input, { target: { value: '已有草稿' } })
+    await waitFor(() =>
+      expect(screen.getByTestId('conversation-find-count')).toHaveTextContent('0 个结果')
+    )
+    expect(screen.getByTestId('conversation-find-next-button')).toBeDisabled()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByTestId('conversation-find-input')).not.toBeInTheDocument()
+    expect(composer).toHaveFocus()
+    expect(composer).toHaveValue('已有草稿')
+  })
+
   test('focuses the composer when the new chat view opens', async () => {
     render(<LauncherHarness />)
 

@@ -16,20 +16,43 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    case,
+    cast,
     event,
     inspect,
     or_,
+    select,
 )
 from sqlalchemy.engine import Connection
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import column_property
 from sqlalchemy.sql import func
 
 from app.core.provider_credentials import mask_provider_config
 from app.db.base import Base
+from app.models.resource_member import ResourceMember
 from shared.models.db.types import big_integer_id_type
 
 
 def _numeric_id() -> str:
     return str(secrets.randbelow(9_000_000_000_000_000_000) + 1)
+
+
+def project_parent_relationships():
+    """Project containment remains in the relationship table used by v1."""
+    return (
+        select(
+            ResourceMember.resource_id.label("project_id"),
+            cast(func.min(ResourceMember.entity_id), Integer).label("workspace_id"),
+        )
+        .where(
+            ResourceMember.resource_type == "CloudProject",
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.status == "approved",
+        )
+        .group_by(ResourceMember.resource_id)
+        .having(func.count(func.distinct(ResourceMember.entity_id)) == 1)
+    )
 
 
 class LoopNode(Base):
@@ -84,6 +107,7 @@ class LoopNode(Base):
     source = Column(String(20), nullable=True)
     status = Column(String(32), nullable=True, index=True)
     priority = Column(String(20), nullable=True)
+    start_at = Column(DateTime, nullable=True)
     due_at = Column(DateTime, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     current_delivery_id = Column(String(64), nullable=True)
@@ -157,15 +181,41 @@ class LoopNode(Base):
 class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
-    @property
-    def visibility(self) -> str:
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return "private"
-        visibility = metadata.get("visibility")
-        if visibility in {"private", "public_restricted", "public"}:
-            return str(visibility)
-        return "private"
+    # Old and new backends use the same containment records. Ambiguous parents
+    # provide no authority; neither membership nor creation implies a parent.
+    workspace_id = column_property(
+        select(
+            case(
+                (
+                    func.count(func.distinct(ResourceMember.entity_id)) == 1,
+                    cast(func.min(ResourceMember.entity_id), Integer),
+                ),
+                else_=None,
+            )
+        )
+        .where(
+            ResourceMember.resource_type == "CloudProject",
+            ResourceMember.resource_id == cast(LoopNode.id, Integer),
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.status == "approved",
+        )
+        .correlate_except(ResourceMember)
+        .scalar_subquery()
+    )
+
+    @hybrid_property
+    def membership_mode(self) -> str:
+        return (self.metadata_json or {}).get("membership_mode", "inherit")
+
+    @membership_mode.setter
+    def membership_mode(self, value: str) -> None:
+        self.metadata_json = {**(self.metadata_json or {}), "membership_mode": value}
+
+    @membership_mode.expression
+    def membership_mode(cls):
+        return func.coalesce(
+            cls.metadata_json["membership_mode"].as_string(), "inherit"
+        )
 
     @property
     def tags(self) -> list[str]:
@@ -230,6 +280,25 @@ class ProjectChatAgent(LoopNode):
         super().__init__(**kwargs)
 
 
+@event.listens_for(LoopItem, "before_update")
+def _preserve_issue_runner_binding(
+    _mapper: object, connection: Connection, target: LoopItem
+) -> None:
+    """Protect server-owned affinity from concurrent content metadata rewrites."""
+    if not inspect(target).attrs.metadata_json.history.has_changes():
+        return
+    persisted = connection.execute(
+        select(LoopItem.metadata_json).where(LoopItem.id == target.id).with_for_update()
+    ).scalar_one()
+    protected = {
+        key: persisted[key]
+        for key in ("runner_binding", "runner_binding_conflict")
+        if key in (persisted or {})
+    }
+    if protected:
+        target.metadata_json = {**(target.metadata_json or {}), **protected}
+
+
 class RuntimeProfile(LoopNode):
     """A reusable, user-owned Wework execution configuration."""
 
@@ -264,13 +333,13 @@ class ProjectAutomationRun(LoopNode):
 
 
 class ProjectWorkflowRun(LoopNode):
-    """One durable AI planning attempt for an Issue."""
+    """Persisted legacy workflow run rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_run"}
 
 
 class ProjectWorkflowPlanItem(LoopNode):
-    """One proposed concrete child task in a workflow plan version."""
+    """Persisted legacy workflow plan rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
 
@@ -307,12 +376,43 @@ class LoopItemTaskBinding(LoopNode):
         return value if isinstance(value, dict) else None
 
     @property
+    def execution_context(self) -> dict[str, object] | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("execution_context")
+        return value if isinstance(value, dict) else None
+
+    @property
     def workflow_node_id(self) -> str | None:
         metadata = self.metadata_json
         if not isinstance(metadata, dict):
             return None
         value = metadata.get("workflow_node_id")
         return value if isinstance(value, str) and value else None
+
+    def _metadata_text(self, key: str) -> str | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get(key)
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def human_assignment_id(self) -> str | None:
+        return self._metadata_text("human_assignment_id")
+
+    @property
+    def dispatch_id(self) -> str | None:
+        return self._metadata_text("dispatch_id")
+
+    @property
+    def dispatch_round_id(self) -> str | None:
+        return self._metadata_text("dispatch_round_id")
+
+    @property
+    def assignment_id(self) -> str | None:
+        return self._metadata_text("assignment_id")
 
     @property
     def change_requests(self) -> list[dict[str, object]]:
@@ -388,6 +488,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "source": "",
     "status": "",
     "priority": "",
+    "start_at": _MYSQL_UNSET_DATETIME,
     "due_at": _MYSQL_UNSET_DATETIME,
     "current_delivery_id": "",
     "local_project_id": 0,

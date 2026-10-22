@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import hashlib
 import io
 import json
 import logging
@@ -18,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, with_task_telemetry
 from app.api.endpoints.adapter.attachments import _build_content_disposition
-from app.api.endpoints.adapter.task_runtime import router as task_runtime_router
 from app.core import security
 from app.core.config import settings
 from app.core.constants import (
@@ -27,10 +25,6 @@ from app.core.constants import (
 )
 from app.db.session import get_async_db
 from app.models.user import User
-from app.schemas.remote_workspace import (
-    RemoteWorkspaceStatusResponse,
-    RemoteWorkspaceTreeResponse,
-)
 from app.schemas.service import (
     ServiceDeleteRequest,
     ServiceResponse,
@@ -39,25 +33,21 @@ from app.schemas.service import (
 from app.schemas.shared_task import (
     JoinSharedTaskRequest,
     JoinSharedTaskResponse,
-    PublicSharedTaskResponse,
     TaskShareInfo,
     TaskShareResponse,
 )
 from app.schemas.task import (
     ArchivedTaskListResponse,
-    PipelineStageInfo,
     PromptDraftGenerateRequest,
     PromptDraftGenerateResponse,
     TaskArchiveBatchResponse,
     TaskArchiveResponse,
     TaskBulkDeleteRequest,
     TaskCreate,
-    TaskDetail,
     TaskInDB,
     TaskListResponse,
     TaskLiteGroupedListResponse,
     TaskLiteListResponse,
-    TaskSkillsResponse,
     TaskUpdate,
 )
 from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
@@ -71,7 +61,6 @@ from app.stores.tasks import task_store
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
-router.include_router(task_runtime_router)
 logger = logging.getLogger(__name__)
 
 ClientOriginQuery = Annotated[
@@ -228,39 +217,6 @@ def get_group_tasks_lite(
     return {"total": total, "items": items}
 
 
-@router.get("/lite/personal", response_model=TaskLiteListResponse)
-def get_personal_tasks_lite(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    types: str = Query(
-        "online,offline",
-        description="Comma-separated task types to include: online (chat), offline (code), flow",
-    ),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get current user's personal (non-group-chat) task list (paginated) for fast loading.
-    Returns only personal tasks sorted by created_at descending (newest first).
-
-    Types filter:
-    - online: chat tasks (task_type != 'code' and not flow)
-    - offline: code tasks (task_type == 'code')
-    - flow: flow-triggered tasks (labels.type == 'flow')
-    """
-    skip = (page - 1) * limit
-    type_list = [t.strip() for t in types.split(",") if t.strip()]
-    items, total = task_kinds_service.get_user_personal_tasks_lite(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        types=type_list,
-        client_origin=client_origin,
-    )
-    return {"total": total, "items": items}
-
-
 @router.get("/lite/personal/grouped", response_model=TaskLiteGroupedListResponse)
 @trace_sync("get_personal_task_groups_lite", "tasks.api")
 def get_personal_task_groups_lite(
@@ -377,22 +333,6 @@ def delete_all_personal_tasks(
     )
 
 
-@router.get("/{task_id}", response_model=TaskDetail)
-def get_task(
-    task_id: int = Depends(with_task_telemetry),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get specified task details with related entities"""
-    return task_kinds_service.get_task_detail(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        client_origin=client_origin,
-    )
-
-
 @router.post("/{task_id}/archive", response_model=TaskArchiveResponse)
 def archive_task(
     task_id: int = Depends(with_task_telemetry),
@@ -421,42 +361,6 @@ def unarchive_task(
     return {"message": "Chat unarchived successfully", "task_id": task_id}
 
 
-@router.get(
-    "/{task_id}/remote-workspace/status",
-    response_model=RemoteWorkspaceStatusResponse,
-)
-def get_remote_workspace_status(
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get remote workspace connection and availability status for a task."""
-    return remote_workspace_service.get_status(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-    )
-
-
-@router.get(
-    "/{task_id}/remote-workspace/tree",
-    response_model=RemoteWorkspaceTreeResponse,
-)
-def get_remote_workspace_tree(
-    path: str = Query("/workspace", description="Workspace path to list"),
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """List remote workspace tree under /workspace."""
-    return remote_workspace_service.list_tree(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        path=path,
-    )
-
-
 @router.get("/{task_id}/remote-workspace/file")
 def get_remote_workspace_file(
     path: str = Query(..., description="Workspace file path"),
@@ -474,30 +378,6 @@ def get_remote_workspace_file(
         user_id=current_user.id,
         path=path,
         disposition=disposition,
-    )
-
-
-@router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
-def get_task_skills(
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-    db: Session = Depends(get_db),
-):
-    """Get all skills associated with a task.
-
-    Follows the chain: task → team → bots → ghosts → skills
-
-    Supports multiple authentication methods:
-    - JWT Token (standard user authentication)
-    - API Key (for executor/service authentication)
-    - Task Token (for executor task-based authentication)
-
-    Returns:
-        TaskSkillsResponse with task_id, team_id, team_namespace,
-        skills list (deduplicated), and preload_skills list.
-    """
-    return task_kinds_service.get_task_skills(
-        db=db, task_id=task_id, user_id=current_user.id
     )
 
 
@@ -643,33 +523,6 @@ async def cancel_task(
     )
 
 
-@router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)
-def get_pipeline_stage_info(
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Get pipeline stage information for a task.
-
-    Returns current stage, total stages, and stage details for pipeline mode teams.
-    For non-pipeline teams, returns default values.
-
-    Args:
-        task_id: Task ID
-        current_user: Current authenticated user
-        db: Database session
-
-    Returns:
-        PipelineStageInfo with stage details
-    """
-    return task_kinds_service.get_pipeline_stage_info(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-    )
-
-
 @router.post("/{task_id}/share", response_model=TaskShareResponse)
 def share_task(
     task_id: int,
@@ -703,19 +556,6 @@ def get_task_share_info(
     This endpoint doesn't require authentication, so anyone with the link can view.
     """
     return shared_task_service.get_share_info(db=db, share_token=share_token)
-
-
-@router.get("/share/public", response_model=PublicSharedTaskResponse)
-def get_public_shared_task(
-    token: str = Query(..., description="Share token from URL"),
-    db: Session = Depends(get_db),
-):
-    """
-    Get public shared task data for read-only viewing.
-    This endpoint doesn't require authentication - anyone with the link can view.
-    Only returns public data (no sensitive information like team config, bot details, etc.)
-    """
-    return shared_task_service.get_public_shared_task(db=db, share_token=token)
 
 
 @router.post("/share/join", response_model=JoinSharedTaskResponse)

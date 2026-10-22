@@ -63,6 +63,7 @@ export interface Model {
   contextWindow?: number | null
   maxOutputTokens?: number | null
   costIndex?: string | null
+  capability?: string | null
   modelCapabilities?: ModelCapabilities | null
   config?: Record<string, unknown>
 }
@@ -153,6 +154,7 @@ export function unifiedToModel(unified: UnifiedModel): Model {
     contextWindow: unified.contextWindow,
     maxOutputTokens: unified.maxOutputTokens,
     costIndex: unified.costIndex,
+    capability: unified.capability,
     modelCapabilities: unified.modelCapabilities,
     config: unified.config,
   }

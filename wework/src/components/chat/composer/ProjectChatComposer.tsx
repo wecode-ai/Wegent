@@ -37,9 +37,10 @@ import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhras
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import { ProjectComposerBody } from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
+import { useComposerModelSelector } from './useComposerModelSelector'
 
 interface ProjectChatComposerProps {
-  presentation?: 'chat' | 'document'
+  presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -50,6 +51,7 @@ interface ProjectChatComposerProps {
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
+  allowEmptySubmit?: boolean
   disabledReason?: string
   placeholder: string
   inputTestId?: string
@@ -98,7 +100,7 @@ interface ProjectChatComposerProps {
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
-  projectWork: ProjectWorkControls
+  projectWork?: ProjectWorkControls
   projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
@@ -107,6 +109,7 @@ interface ProjectChatComposerProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   inputLeadingContext?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
@@ -133,6 +136,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       pluginPickerIconOnly = false,
       submitDisabled = false,
       requireText = false,
+      allowEmptySubmit = false,
       disabledReason,
       placeholder,
       inputTestId,
@@ -189,6 +193,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
+      alwaysShowComposerToolbar = false,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
@@ -204,6 +209,13 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
   ) {
     const { t } = useTranslation('common')
     const composerRef = useRef<ComposerTextareaHandle>(null)
+    const modelSelector = useComposerModelSelector(
+      modelSelectorOpenSignal,
+      onModelSelectorOpenChange
+    )
+    const [predictionStatusTarget, setPredictionStatusTarget] = useState<HTMLDivElement | null>(
+      null
+    )
 
     useImperativeHandle(
       ref,
@@ -222,8 +234,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     const getLiveValue = () => composerRef.current?.getValue() ?? value
     const [phraseError, setPhraseError] = useState<string | null>(null)
     const workspaceMenuProjects = useMemo(
-      () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
-      [projectWork.projects, projectWork.runtimeWork]
+      () =>
+        projectWork
+          ? mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork)
+          : [],
+      [projectWork]
     )
     const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
       if (!composerRef.current) return
@@ -262,6 +277,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           disabled={disabled}
           submitDisabled={submitDisabled}
           requireText={requireText}
+          allowEmptySubmit={allowEmptySubmit}
           isModelSelectionReady={isModelSelectionReady}
           placeholder={placeholder}
           inputTestId={inputTestId}
@@ -279,6 +295,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           planModeActive={planModeActive}
           goalDraftActive={goalDraftActive}
           collapseWhenIdle={collapseWhenIdle}
+          alwaysShowComposerToolbar={alwaysShowComposerToolbar}
           isStreaming={isStreaming}
           sendKey={sendKey}
           followUpBehavior={followUpBehavior}
@@ -287,7 +304,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           transferServices={desktopComposerTransferServices}
           workBar={
             projectWorkBar ??
-            (showProjectWorkBar && (
+            (showProjectWorkBar && projectWork && (
               <ProjectWorkBar
                 projects={projectWork.projects}
                 devices={projectWork.devices}
@@ -310,7 +327,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="min-h-10 rounded-t-[26px] bg-surface px-4"
+                className="min-h-10 rounded-t-[26px] bg-background px-4"
                 buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
               />
             ))
@@ -330,6 +347,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           renderEditor={editorProps => (
             <ComposerTextarea
               {...editorProps}
+              predictionStatusTarget={predictionStatusTarget}
+              onOpenModelSelector={
+                modelSelectorOverride === undefined ? modelSelector.requestOpen : undefined
+              }
+              modelSelectorOpen={modelSelector.open}
               onSubmit={(submittedValue, options) =>
                 editorProps.onSubmit(submittedValue ?? getLiveValue(), options)
               }
@@ -368,6 +390,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               canSend={toolbarProps.canSend}
               sendButtonTestId={submitButtonTestId}
               sendButtonLabel={submitLabel}
+              showSubmitButton={presentation !== 'configuration'}
+              showAttachmentActions={presentation !== 'configuration'}
               disabled={disabled}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
@@ -375,8 +399,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               selectedModel={selectedModel}
               activeModel={activeModel}
               selectedModelOptions={selectedModelOptions}
-              modelSelectorOpenSignal={modelSelectorOpenSignal}
-              onModelSelectorOpenChange={onModelSelectorOpenChange}
+              modelSelectorOpenSignal={modelSelector.openSignal}
+              onModelSelectorOpenChange={modelSelector.onOpenChange}
               isModelSelectionReady={isModelSelectionReady}
               onSelectModel={onSelectModel}
               onSelectModelAndOptions={onSelectModelAndOptions}
@@ -399,7 +423,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               onPause={onPause}
               showWorkspaceMenu={showWorkspaceMenu}
               projectWorkMenuContext={
-                showWorkspaceMenu
+                showWorkspaceMenu && projectWork
                   ? {
                       currentProjectId: projectWork.currentProjectId,
                       extensionContext: projectWork,
@@ -414,7 +438,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               onSubmit={toolbarProps.onSubmit}
               sendKey={sendKey}
               followUpBehavior={followUpBehavior}
-              leadingContext={toolbarLeadingContext}
+              leadingContext={
+                <>
+                  {toolbarLeadingContext}
+                  <div ref={setPredictionStatusTarget} className="empty:hidden" />
+                </>
+              }
               onListLocalApps={onListLocalApps}
               workspaceTarget={workspaceTarget}
             />

@@ -41,6 +41,11 @@ pub struct CurrentUser {
     pub id: i32,
     #[allow(dead_code)]
     pub user_name: String,
+    /// `AuthContext.api_key_name`: the authenticating `api_keys.name` for an
+    /// API-key request (`app/core/security.py:get_auth_context`), `None` for a
+    /// JWT/task-token request. `create_response` writes it into the Task CRD's
+    /// `metadata.labels.api_key_name`.
+    pub api_key_name: Option<String>,
 }
 
 pub struct ResponsesUser {
@@ -267,7 +272,6 @@ const API_KEY_COLUMNS: &str = "api_keys.id AS api_keys_id, \
 /// name for the same labeled projection.
 #[derive(Debug)]
 struct ApiKeyReloadRow {
-    #[allow(dead_code)]
     name: String,
     #[allow(dead_code)]
     key_type: String,
@@ -280,6 +284,31 @@ impl ApiKeyReloadRow {
             key_type: row.get_required("api_keys_key_type")?,
         })
     }
+}
+
+/// The `users` columns as `db.refresh(user)` renders them: SQLAlchemy's
+/// unlabeled full-entity projection read by primary key.
+const USER_RELOAD_COLUMNS: &str = "users.id, users.user_name, users.password_hash, users.email, \
+     users.git_info, users.is_active, users.`role`, users.auth_source, users.preferences, \
+     users.created_at, users.updated_at";
+
+/// `db.refresh(current_user)`: SQLAlchemy expires the ORM object on the write
+/// commit (`cancel_response`'s `db.commit()`), so the later
+/// `current_user.id` read inside `get_task_by_id` re-selects the authenticated
+/// user's row by primary key. The row itself is not consumed (only the id is
+/// read, and the target already holds it), so the call exists to keep the
+/// source's observable read.
+pub(crate) async fn reload_current_user(
+    mysql: &brz_mysql::MysqlService,
+    user_id: i32,
+) -> Result<(), brz_mysql::MysqlError> {
+    let _: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(
+            &format!("SELECT {USER_RELOAD_COLUMNS} \nFROM users \nWHERE users.id = ?"),
+            (user_id,),
+        )
+        .await?;
+    Ok(())
 }
 
 /// Task-token JWT claims (`app.services.auth.task_token.verify_task_token`).
@@ -483,12 +512,14 @@ pub async fn get_current_user_flexible(
                 return Ok(CurrentUser {
                     id: auth_id(&user),
                     user_name: user.user_name,
+                    api_key_name: None,
                 });
             }
             if let Some(user) = verify_task_token_user(config, user_reader, &token).await? {
                 return Ok(CurrentUser {
                     id: auth_id(&user),
                     user_name: user.user_name,
+                    api_key_name: None,
                 });
             }
         }
@@ -576,11 +607,15 @@ pub async fn get_current_user_flexible(
         )
         .await
         .map_err(AuthError::dependency)?;
-    let _reload = reload
+    let reload = reload
         .as_ref()
         .map(ApiKeyReloadRow::from_row)
         .transpose()
         .map_err(AuthError::dependency)?;
+
+    // `AuthContext.api_key_name` is `api_key_record.name`; `create_response`
+    // writes it into the Task CRD's `metadata.labels.api_key_name`.
+    let api_key_name = reload.map(|row| row.name);
 
     // Personal key: return the key owner directly.
     if record.key_type == KEY_TYPE_PERSONAL {
@@ -589,6 +624,7 @@ pub async fn get_current_user_flexible(
             Some(user) if user.is_active => Ok(CurrentUser {
                 id: auth_id(&user),
                 user_name: user.user_name,
+                api_key_name,
             }),
             _ => Err(AuthError::UserNotFoundOrInactive),
         };
@@ -616,6 +652,7 @@ pub async fn get_current_user_flexible(
             return Ok(CurrentUser {
                 id: auth_id(&user),
                 user_name: user.user_name,
+                api_key_name,
             });
         }
         // The source auto-creates the missing user and applies default
@@ -646,6 +683,7 @@ pub async fn get_current_user_flexible(
             Some(user) if user.is_active => Ok(CurrentUser {
                 id: auth_id(&user),
                 user_name: user.user_name,
+                api_key_name,
             }),
             _ => Err(AuthError::UserNotFoundOrInactive),
         };

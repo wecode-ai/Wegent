@@ -25,32 +25,40 @@ pub(crate) fn request_backend_url_or_default(request: &ExecutionRequest) -> Stri
 
 /// Point the cloud model gateway at the backend this device actually reaches.
 ///
-/// Backend-compiled model configs carry the backend's own public URL, which
-/// defaults to loopback and is unreachable from a remote device. The device's
-/// configured backend URL is proven reachable by its connected Socket.IO
-/// channel, so it replaces a loopback gateway origin.
-pub(crate) fn rewrite_loopback_model_gateway(request: &mut ExecutionRequest, backend_url: &str) {
+/// Backend-compiled cloud model configs may carry an internal or stale public
+/// URL. Always use the connected backend's gateway, including its port and path
+/// prefix, while preserving the model identity and execution user's token.
+/// Direct provider endpoints are not backend gateways and remain unchanged.
+pub(crate) fn bind_backend_model_gateway(request: &mut ExecutionRequest, backend_url: &str) {
     let backend_url = backend_url.trim();
-    if backend_url.is_empty() || crate::url_origin::host_is_loopback(backend_url) {
-        return;
-    }
-    let Some(origin) = crate::url_origin::url_origin(backend_url) else {
+    let Ok(backend) = reqwest::Url::parse(backend_url) else {
         return;
     };
+    if !matches!(backend.scheme(), "http" | "https") || backend.host_str().is_none() {
+        return;
+    }
     let Some(config) = request.model_config.as_object_mut() else {
         return;
     };
-    for key in ["base_url", "baseUrl"] {
+    const GATEWAY_PATH: &str = "/api/runtime-work/llm-responses-proxy";
+    for key in ["base_url", "baseUrl", "ANTHROPIC_BASE_URL"] {
         let Some(current) = config.get(key).and_then(serde_json::Value::as_str) else {
             continue;
         };
-        let current = current.trim();
-        if current.is_empty() || !crate::url_origin::host_is_loopback(current) {
+        let Ok(current) = reqwest::Url::parse(current.trim()) else {
+            continue;
+        };
+        if !current.path().trim_end_matches('/').ends_with(GATEWAY_PATH) {
             continue;
         }
-        if let Some(rewritten) = crate::url_origin::replace_url_origin(current, &origin) {
-            config.insert(key.to_owned(), serde_json::Value::String(rewritten));
-        }
+        let mut gateway = backend.clone();
+        gateway.set_path(&format!(
+            "{}{GATEWAY_PATH}",
+            backend.path().trim_end_matches('/')
+        ));
+        gateway.set_query(None);
+        gateway.set_fragment(None);
+        config.insert(key.to_owned(), serde_json::Value::String(gateway.into()));
     }
 }
 
@@ -213,7 +221,7 @@ mod tests {
         let mut request =
             request_with_gateway("http://localhost:8000/api/runtime-work/llm-responses-proxy");
 
-        rewrite_loopback_model_gateway(&mut request, "http://wegent.lan:8000");
+        bind_backend_model_gateway(&mut request, "http://wegent.lan:8000");
 
         assert_eq!(
             request.model_config["base_url"],
@@ -222,28 +230,71 @@ mod tests {
     }
 
     #[test]
-    fn reachable_model_gateway_is_never_rewritten() {
-        let mut request = request_with_gateway(
-            "https://backend.example.com/api/runtime-work/llm-responses-proxy",
-        );
+    fn model_gateway_uses_connected_backend_for_internal_public_and_loopback_urls() {
+        for old_backend in [
+            "http://10.218.200.124:8000",
+            "https://backend.example.com",
+            "http://localhost:8000",
+        ] {
+            let mut request = request_with_gateway(&format!(
+                "{old_backend}/api/runtime-work/llm-responses-proxy"
+            ));
+            request.model_config["model_id"] = serde_json::json!("deepseek-v4-flash(claude)");
+            request.model_config["api_key"] = serde_json::json!("execution-user-token");
+            request.model_config["default_headers"] =
+                serde_json::json!({"X-Wegent-Model-User-Id": "0"});
 
-        rewrite_loopback_model_gateway(&mut request, "http://wegent.lan:8000");
+            bind_backend_model_gateway(&mut request, "http://localhost:12110");
 
-        assert_eq!(
-            request.model_config["base_url"],
-            serde_json::json!("https://backend.example.com/api/runtime-work/llm-responses-proxy")
-        );
+            assert_eq!(
+                request.model_config["base_url"],
+                "http://localhost:12110/api/runtime-work/llm-responses-proxy"
+            );
+            assert_eq!(
+                request.model_config["model_id"],
+                "deepseek-v4-flash(claude)"
+            );
+            assert_eq!(request.model_config["api_key"], "execution-user-token");
+            assert_eq!(
+                request.model_config["default_headers"]["X-Wegent-Model-User-Id"],
+                "0"
+            );
+        }
     }
 
     #[test]
-    fn loopback_gateway_stays_when_the_device_backend_is_loopback() {
-        let mut request = request_with_gateway("http://localhost:8000/api/work");
+    fn direct_provider_endpoints_are_not_backend_gateways() {
+        for url in [
+            "http://localhost:8000/v1",
+            "https://api.deepseek.com/anthropic",
+            "http://localhost:8000/api/work",
+        ] {
+            let mut request = request_with_gateway(url);
+            bind_backend_model_gateway(&mut request, "http://localhost:12110");
+            assert_eq!(request.model_config["base_url"], url);
+        }
+    }
 
-        rewrite_loopback_model_gateway(&mut request, "http://localhost:8000");
+    #[test]
+    fn claude_gateway_preserves_connected_backend_path_prefix_and_is_idempotent() {
+        let mut request = ExecutionRequest {
+            model_config: serde_json::json!({
+                "ANTHROPIC_BASE_URL": "http://10.218.200.124:8000/api/runtime-work/llm-responses-proxy",
+                "ANTHROPIC_AUTH_TOKEN": "execution-user-token",
+            }),
+            ..ExecutionRequest::default()
+        };
+        for _ in 0..2 {
+            bind_backend_model_gateway(&mut request, "https://backend.example.com/wegent/");
+        }
 
         assert_eq!(
-            request.model_config["base_url"],
-            serde_json::json!("http://localhost:8000/api/work")
+            request.model_config["ANTHROPIC_BASE_URL"],
+            "https://backend.example.com/wegent/api/runtime-work/llm-responses-proxy"
+        );
+        assert_eq!(
+            request.model_config["ANTHROPIC_AUTH_TOKEN"],
+            "execution-user-token"
         );
     }
 }

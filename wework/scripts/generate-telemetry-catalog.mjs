@@ -20,11 +20,13 @@ const SAFE_PROPERTY_NAMES = new Set([
   'plugin_id',
   'source',
   'scope',
+  'startup_id',
   'surface',
   'enabled',
 ])
 const SAFE_STRING_PROPERTY_PATTERNS = {
   plugin_id: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
+  startup_id: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
 }
 
 export function routeEventName(domain, feature) {

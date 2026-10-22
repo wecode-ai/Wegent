@@ -29,6 +29,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { Tag } from '@/components/ui/tag'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
+import { ModelSelectionGuideLink } from '@/components/model-select/ModelSelectionGuideLink'
 import {
   ModelCascadeContent,
   type ModelCascadeLabels,
@@ -472,13 +473,6 @@ export default function ModelSelector({
                   )}
                 </>
               )}
-              renderModelMeta={model =>
-                model.modelId ? (
-                  <span className="block truncate text-xs text-text-muted" title={model.modelId}>
-                    {model.modelId}
-                  </span>
-                ) : null
-              }
               renderModelActions={model => {
                 if (isMobile || modelCategoryType !== 'llm') return null
 
@@ -496,7 +490,7 @@ export default function ModelSelector({
               footer={
                 <div
                   data-testid="model-selector-footer"
-                  className="flex items-center justify-between gap-2 px-3 py-2.5"
+                  className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"
                 >
                   <button
                     type="button"
@@ -509,6 +503,7 @@ export default function ModelSelector({
                       {t('common:models.manage', 'Model settings')}
                     </span>
                   </button>
+                  <ModelSelectionGuideLink className="mx-auto" />
                   {modelSelection.hasAdvancedModels && (
                     <label
                       htmlFor="show-advanced-models-dropdown"

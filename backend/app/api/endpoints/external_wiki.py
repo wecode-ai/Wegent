@@ -30,7 +30,6 @@ from app.schemas.external_wiki import (
     WikiBoundDocument,
     WikiBranchesResponse,
     WikiBranchSummary,
-    WikiConnectionsResponse,
     WikiConnectionSummary,
     WikiConnectionTestRequest,
     WikiConnectionTestResponse,
@@ -220,21 +219,6 @@ def _connection_references(
     ]
 
 
-@router.get("/wiki/connections", response_model=WikiConnectionsResponse)
-async def list_wiki_connections(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    options = _available_connectors()
-    return WikiConnectionsResponse(
-        connections=[
-            _connection_summary(item)
-            for item in WikiConnectionService.list_connections(db, current_user)
-        ],
-        available_connectors=options,
-    )
-
-
 @router.post("/wiki/connections", response_model=WikiConnectionSummary)
 async def create_named_wiki_connection(
     body: WikiNamedConnectionUpdateRequest,
@@ -352,8 +336,7 @@ async def delete_wiki_connection(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"该连接仍被以下知识库引用：{reference_summary}。"
-                "请先删除相关 Wiki 文档"
+                f"该连接仍被以下知识库引用：{reference_summary}。请先删除相关 Wiki 文档"
             ),
         )
 

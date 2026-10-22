@@ -1,15 +1,23 @@
 import { describe, expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import {
+  getLocalRuntimeSourceIdentity,
+  qualifyLocalRuntimeSource,
+} from './local-runtime-sidebar-identity'
+import {
+  createWorkbenchDeviceResolver,
   getExecutorOfflineDeviceId,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceIds,
   getWorkbenchDeviceNamesById,
   getRuntimeWorkDeviceNamesById,
   findWorkbenchDevice,
+  findNativeLocalWorkbenchDevice,
+  mergeDeviceLists,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
   resolveLocalWorkbenchDeviceId,
+  resolveWorkbenchDeviceId,
 } from './workbench-device'
 
 function createDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -27,6 +35,109 @@ function createDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 }
 
 describe('workbench-device', () => {
+  test('uses native IPC provenance for the exact local address while keeping remote resolution strict', () => {
+    const identity = {
+      deviceId: 'current-ipc',
+      runtimeInstanceId: 'current-runtime',
+      provenance: 'local-ipc' as const,
+    }
+    const local = qualifyLocalRuntimeSource(
+      createDevice({
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+      }),
+      identity
+    )
+    const remote = createDevice({
+      id: 2,
+      device_id: 'historical-remote',
+      socket_device_id: identity.deviceId,
+      runtime_instance_id: 'historical-runtime',
+      device_type: 'remote',
+      status: 'offline',
+    })
+    const merged = mergeDeviceLists([local], [remote])
+
+    expect(findNativeLocalWorkbenchDevice(merged, identity.deviceId)).toMatchObject({
+      device_type: 'local',
+      runtime_instance_id: identity.runtimeInstanceId,
+    })
+    expect(findWorkbenchDevice(merged, identity.deviceId)).toBeNull()
+    expect(() => createWorkbenchDeviceResolver(merged).resolve(identity.deviceId)).toThrow(
+      'ambiguous-executor-identity:current-ipc'
+    )
+    expect(findWorkbenchDevice(merged, remote.device_id)?.runtime_instance_id).toBe(
+      remote.runtime_instance_id
+    )
+    expect(getLocalRuntimeSourceIdentity(merged[1])).toBeUndefined()
+  })
+
+  test('denies ambiguous display resolution without trusting JSON or a stale native identity', () => {
+    const identity = {
+      deviceId: 'current-ipc',
+      runtimeInstanceId: 'current-runtime',
+      provenance: 'local-ipc' as const,
+    }
+    const local = qualifyLocalRuntimeSource(
+      createDevice({
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+      }),
+      identity
+    )
+    const remote = createDevice({
+      id: 2,
+      device_id: 'remote',
+      app_device_id: identity.deviceId,
+      runtime_instance_id: 'other-runtime',
+      device_type: 'remote',
+    })
+    for (const untrustedLocal of [
+      JSON.parse(JSON.stringify(local)) as DeviceInfo,
+      { ...local, runtime_instance_id: 'replacement-runtime' },
+    ]) {
+      expect(findNativeLocalWorkbenchDevice([untrustedLocal, remote], identity.deviceId)).toBeNull()
+      expect(findWorkbenchDevice([untrustedLocal, remote], identity.deviceId)).toBeNull()
+      expect(() =>
+        createWorkbenchDeviceResolver([untrustedLocal, remote]).resolve(identity.deviceId)
+      ).toThrow('ambiguous-executor-identity:current-ipc')
+    }
+    const replacement = qualifyLocalRuntimeSource(
+      { ...local, runtime_instance_id: 'replacement-runtime' },
+      { ...identity, runtimeInstanceId: 'replacement-runtime' }
+    )
+    expect(findNativeLocalWorkbenchDevice([remote, replacement], identity.deviceId)).toBe(
+      replacement
+    )
+  })
+
+  test('does not use trusted local provenance to resolve an ambiguous remote alias', () => {
+    const identity = {
+      deviceId: 'current-ipc',
+      runtimeInstanceId: 'current-runtime',
+      provenance: 'local-ipc' as const,
+    }
+    const local = qualifyLocalRuntimeSource(
+      createDevice({
+        device_id: identity.deviceId,
+        socket_device_id: 'shared-remote-route',
+        runtime_instance_id: identity.runtimeInstanceId,
+      }),
+      identity
+    )
+    const remote = createDevice({
+      id: 2,
+      device_id: 'remote',
+      socket_device_id: 'shared-remote-route',
+      runtime_instance_id: 'other-runtime',
+      device_type: 'remote',
+    })
+    expect(findWorkbenchDevice([local, remote], 'shared-remote-route')).toBeNull()
+    expect(() =>
+      createWorkbenchDeviceResolver([local, remote]).resolve('shared-remote-route')
+    ).toThrow('ambiguous-executor-identity:shared-remote-route')
+  })
+
   test('treats a missing configured device as unavailable', () => {
     const devices: DeviceInfo[] = []
     const device = findWorkbenchDevice(devices, 'missing-device')
@@ -110,6 +221,8 @@ describe('workbench-device', () => {
 
     expect(findWorkbenchDevice(devices, 'socket-device')?.device_id).toBe('logical-device')
     expect(findWorkbenchDevice(devices, 'runtime-device')?.device_id).toBe('logical-device')
+    expect(resolveWorkbenchDeviceId(devices, 'runtime-device')).toBe('logical-device')
+    expect(resolveWorkbenchDeviceId(devices, 'unknown-device')).toBe('unknown-device')
     expect(getWorkbenchDeviceIds(device)).toEqual([
       'logical-device',
       'app-device',

@@ -4,6 +4,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import {
   isRuntimeGoalContinuationTurn,
   projectRuntimeGoalContinuing,
+  projectRuntimeGoalContinuationActive,
   shouldReconcileActiveRuntimeGoalTranscript,
   updateRuntimeGoalContinuation,
 } from './runtime-goal'
@@ -85,6 +86,48 @@ describe('runtime goal continuation', () => {
     ).toBe(true)
   })
 
+  test.each([
+    { content: 'Checking CI results' },
+    {
+      blocks: [
+        { id: 'tool-1', type: 'tool', status: 'running', toolName: 'exec_command', toolInput: {} },
+      ],
+    },
+  ] as Partial<WorkbenchMessage>[])(
+    'stops showing startup after continuation output while keeping history reconciliation active',
+    output => {
+      const assistant = { ...continuedAssistantMessage, ...output }
+      const input = {
+        goal: activeGoal,
+        continuation: started,
+        taskRunning: true,
+        messages: [initialUserMessage, assistant],
+        activeAssistantMessage: assistant,
+      }
+      expect(projectRuntimeGoalContinuing(input)).toBe(false)
+      expect(projectRuntimeGoalContinuationActive(input)).toBe(true)
+      expect(
+        shouldReconcileActiveRuntimeGoalTranscript({
+          goalContinuing: projectRuntimeGoalContinuationActive(input),
+          messages: input.messages,
+          activeAssistantMessage: assistant,
+        })
+      ).toBe(true)
+    }
+  )
+
+  test('does not show startup for a stopped task with a stale lifecycle event', () => {
+    expect(
+      projectRuntimeGoalContinuing({
+        goal: activeGoal,
+        continuation: started,
+        taskRunning: false,
+        messages: [initialUserMessage],
+        activeAssistantMessage: continuedAssistantMessage,
+      })
+    ).toBe(false)
+  })
+
   test('does not project the initial Goal turn as continuation', () => {
     const initialAssistantMessage: WorkbenchMessage = {
       ...continuedAssistantMessage,
@@ -106,7 +149,21 @@ describe('runtime goal continuation', () => {
     ).toBe(false)
   })
 
-  test('requests transcript reconciliation until the previous Goal result is visible', () => {
+  test('does not equate unidentified assistants from different turns', () => {
+    const assistant = { ...continuedAssistantMessage, turnId: undefined, subtaskId: undefined }
+    expect(
+      shouldReconcileActiveRuntimeGoalTranscript({
+        goalContinuing: true,
+        messages: [
+          { ...assistant, id: 'previous-assistant', status: 'done', content: 'Previous result' },
+          assistant,
+        ],
+        activeAssistantMessage: assistant,
+      })
+    ).toBe(true)
+  })
+
+  test('keeps reconciliation active while earlier Goal results are visible', () => {
     expect(
       shouldReconcileActiveRuntimeGoalTranscript({
         goalContinuing: true,
@@ -128,6 +185,22 @@ describe('runtime goal continuation', () => {
             turnId: 'turn-1',
             subtaskId: 'turn-1',
             createdAt: '2026-08-25T00:00:01.000Z',
+          },
+          continuedAssistantMessage,
+        ],
+        activeAssistantMessage: continuedAssistantMessage,
+      })
+    ).toBe(true)
+    expect(
+      shouldReconcileActiveRuntimeGoalTranscript({
+        goalContinuing: true,
+        messages: [
+          initialUserMessage,
+          {
+            ...continuedAssistantMessage,
+            id: 'settled-current-turn',
+            status: 'done',
+            content: 'Current result',
           },
           continuedAssistantMessage,
         ],

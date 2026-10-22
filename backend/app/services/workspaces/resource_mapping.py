@@ -11,6 +11,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.services.device.runtime_route import runtime_device_route_id
+from app.services.team_access_policy import can_edit_team
 from app.services.workspaces.storage import workspace_from_kind
 
 
@@ -34,7 +35,7 @@ def agent_values(
         "id": team.id,
         "workspace_id": grant.entity_id,
         "team_id": team.id,
-        "name": team.name,
+        "name": agent_display_name(team),
         "namespace": team.namespace,
         "owner_type": owner_type,
         "owner_id": owner_id,
@@ -43,6 +44,7 @@ def agent_values(
         "execution_environment_ids": environment_ids,
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
+        "can_edit": can_edit_team(db, team, execution_user_id),
         "created_at": grant.created_at,
         "updated_at": grant.updated_at,
     }
@@ -55,6 +57,7 @@ def execution_environment_values(
     *,
     connection_status: str,
     workspace_id: str | None = None,
+    can_use: bool = True,
 ) -> dict[str, object]:
     spec = _kind_spec(device)
     device_type = str(spec.get("deviceType") or "local")
@@ -67,8 +70,11 @@ def execution_environment_values(
         "workspace_id": workspace_id or grant.entity_id,
         "device_id": device.id,
         "device_key": runtime_device_route_id(device),
+        "app_device_id": spec.get("appDeviceId"),
         "name": str(spec.get("displayName") or device.name),
-        "kind": execution_environment_kind(device_type),
+        "kind": execution_environment_kind(
+            str(spec.get("deploymentLocation") or device_type)
+        ),
         "device_type": device_type,
         "runtime_instance_id": (
             str(spec["runtimeInstanceId"])
@@ -85,7 +91,9 @@ def execution_environment_values(
         "owner_type": owner_type,
         "owner_id": owner_id,
         "owner_name": owner_name,
-        "status": connection_status,
+        "status": connection_status if can_use else "error",
+        "can_use": can_use,
+        "unavailable_reason": None if can_use else "resource_authorization_revoked",
         "owner_user_id": owner_user_id,
         "added_by_user_id": grant.invited_by_user_id,
         "created_at": grant.created_at,
@@ -106,8 +114,11 @@ def personal_environment_values(
         "id": str(device.id),
         "device_id": device.id,
         "device_key": runtime_device_route_id(device),
+        "app_device_id": spec.get("appDeviceId"),
         "name": str(spec.get("displayName") or device.name),
-        "kind": execution_environment_kind(device_type),
+        "kind": execution_environment_kind(
+            str(spec.get("deploymentLocation") or device_type)
+        ),
         "coding_tools": coding_tools(spec),
         "owner_type": "user",
         "owner_id": str(owner.id),
@@ -134,14 +145,18 @@ def owner_values(
     grant: ResourceMember,
     resource: Kind,
 ) -> tuple[str, str, str, int | None]:
-    if grant.role == BaseRole.Owner.value:
-        workspace_kind = db.get(Kind, int(grant.entity_id))
+    workspace_owner = _kind_spec(resource).get("workspaceOwnerId")
+    if workspace_owner or (
+        resource.kind != "Device" and grant.role == BaseRole.Owner.value
+    ):
+        workspace_id = str(workspace_owner or grant.entity_id)
+        workspace_kind = db.get(Kind, int(workspace_id))
         workspace = (
             workspace_from_kind(workspace_kind) if workspace_kind is not None else None
         )
         return (
             "workspace",
-            str(grant.entity_id),
+            workspace_id,
             workspace.name if workspace is not None else "",
             None,
         )
@@ -151,6 +166,18 @@ def owner_values(
         str(resource.user_id),
         owner.user_name if owner is not None else "",
         int(resource.user_id),
+    )
+
+
+def agent_display_name(team: Kind) -> str:
+    """Use the user-facing Team name throughout collaboration catalogs."""
+    payload = team.json if isinstance(team.json, dict) else {}
+    metadata = payload.get("metadata")
+    display_name = metadata.get("displayName") if isinstance(metadata, dict) else None
+    return (
+        display_name
+        if isinstance(display_name, str) and display_name.strip()
+        else team.name
     )
 
 

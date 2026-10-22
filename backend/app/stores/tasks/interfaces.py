@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 
+RecentTeamMode = Literal["chat", "code", "knowledge", "task", "video", "image"]
+
 
 @dataclass(frozen=True)
 class WorkspaceRefLookup:
@@ -45,6 +47,18 @@ class RecentTaskTeamRef:
 
     task_type: Any
     team_ref: Any
+
+
+@dataclass(frozen=True)
+class ProjectTaskSummary:
+    """Task list fields with only the required JSON leaves."""
+
+    id: int
+    name: str
+    project_id: int
+    created_at: datetime
+    updated_at: datetime
+    json: dict[str, Any]
 
 
 class TaskIdAllocationError(RuntimeError):
@@ -309,6 +323,7 @@ class TaskStore(Protocol):
         *,
         user_id: int,
         limit: int,
+        mode: RecentTeamMode | None = None,
     ) -> list[RecentTaskTeamRef]: ...
 
     def list_recent_owner_only_used_tasks(
@@ -391,7 +406,14 @@ class TaskStore(Protocol):
     ) -> tuple[list[int], int]: ...
 
     def list_owned_task_ids(
-        self, db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int,
+        limit: int,
+        extra_limit: int,
+        title: Optional[str] = None,
     ) -> tuple[list[int], int]: ...
 
     def list_personal_task_ids(
@@ -432,6 +454,7 @@ class TaskStore(Protocol):
         project_id: int,
         owner_user_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        title: Optional[str] = None,
     ) -> int: ...
 
     def list_active_project_tasks(
@@ -441,7 +464,20 @@ class TaskStore(Protocol):
         project_id: int,
         owner_user_id: Optional[int] = None,
         client_origin: Optional[str] = None,
-    ) -> list[TaskResource]: ...
+        skip: int = 0,
+        limit: Optional[int] = None,
+        before: Optional[tuple[datetime, int]] = None,
+        title: Optional[str] = None,
+        sort_by: Literal["updated_at", "created_at"] = "updated_at",
+    ) -> list[ProjectTaskSummary]: ...
+
+    def count_active_tasks_by_project(
+        self,
+        db: Session,
+        *,
+        project_owners: dict[int, int],
+        client_origin: Optional[str] = None,
+    ) -> dict[int, int]: ...
 
     def get_active_project_task(
         self,

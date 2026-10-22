@@ -20,6 +20,7 @@ from app.services.project_event_polling import (
 from app.services.project_event_polling_service import (
     project_event_polling_service,
 )
+from tests.utils.collaboration import authorize_project
 
 
 def _project(test_db, test_user) -> CloudProject:
@@ -30,6 +31,7 @@ def _project(test_db, test_user) -> CloudProject:
         created_by_user_id=test_user.id,
         storage_prefix="projects/polling",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.flush()
     return project

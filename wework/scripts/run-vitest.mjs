@@ -26,6 +26,15 @@ const vitestArgs = requestedArgs.filter(
     !nodeTestFiles.includes(normalizeArgumentPath(argument)) &&
     !requestedElectronTests.includes(argument)
 )
+const scriptTestTargets = vitestArgs.filter(argument =>
+  normalizeArgumentPath(argument).startsWith('scripts/')
+)
+const rendererTestTargets = vitestArgs.filter(argument => {
+  const path = normalizeArgumentPath(argument)
+  return path.startsWith('src/') || path.startsWith('dsh/') || /\.test\.tsx?$/.test(path)
+})
+const scriptVitestArgs = vitestArgs.filter(argument => !rendererTestTargets.includes(argument))
+const rendererVitestArgs = vitestArgs.filter(argument => !scriptTestTargets.includes(argument))
 
 if (requestedArgs.length === 0) {
   for (const path of integrationTestFiles) run(process.execPath, [path])
@@ -33,8 +42,28 @@ if (requestedArgs.length === 0) {
   for (const path of requestedIntegrationTests) run(process.execPath, [path])
 }
 
-if (requestedArgs.length === 0 || vitestArgs.length > 0) {
-  run('vitest', ['run', ...nodeTestFiles.flatMap(path => ['--exclude', path]), ...vitestArgs])
+if (
+  requestedArgs.length === 0 ||
+  rendererTestTargets.length > 0 ||
+  (scriptTestTargets.length === 0 && vitestArgs.length > 0)
+) {
+  run('vitest', [
+    'run',
+    '--exclude',
+    'scripts/**',
+    ...nodeTestFiles.flatMap(path => ['--exclude', path]),
+    ...rendererVitestArgs,
+  ])
+}
+
+if (requestedArgs.length === 0 || scriptTestTargets.length > 0) {
+  run('vitest', [
+    'run',
+    '--config',
+    'vitest.scripts.config.ts',
+    ...nodeTestFiles.flatMap(path => ['--exclude', path]),
+    ...scriptVitestArgs,
+  ])
 }
 
 if (requestedArgs.length === 0) {
@@ -58,7 +87,7 @@ function discoverNodeTestFiles() {
   return ['dsh', 'scripts']
     .flatMap(directory => listTestFiles(join(root, directory)))
     .filter(path => readFileSync(path, 'utf8').includes("from 'node:test'"))
-    .map(path => relative(root, path))
+    .map(path => normalizeArgumentPath(path))
     .sort()
 }
 
@@ -71,7 +100,7 @@ function listTestFiles(directory) {
 }
 
 function normalizeArgumentPath(argument) {
-  return relative(root, resolve(root, argument))
+  return relative(root, resolve(root, argument)).replaceAll('\\', '/')
 }
 
 function resolveWindowsScript(command) {

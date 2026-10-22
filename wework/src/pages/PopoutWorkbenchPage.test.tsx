@@ -1,11 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { PopoutWorkbenchPage } from './PopoutWorkbenchPage'
 
 const dismissPopoutWindowMock = vi.hoisted(() => vi.fn())
-const setPopoutWindowExpandedMock = vi.hoisted(() => vi.fn())
-const setPopoutWindowOverlayActiveMock = vi.hoisted(() => vi.fn())
+const setPopoutWindowModeMock = vi.hoisted(() => vi.fn())
 const openPopoutTaskInMainMock = vi.hoisted(() => vi.fn())
 const selectProjectMock = vi.hoisted(() => vi.fn())
 const selectStandaloneDeviceMock = vi.hoisted(() => vi.fn())
@@ -56,8 +55,7 @@ vi.mock('@/features/workbench/workbenchRuntimeHelpers', () => ({
 vi.mock('@/desktop/popoutWindow', () => ({
   dismissPopoutWindow: dismissPopoutWindowMock,
   openPopoutTaskInMain: openPopoutTaskInMainMock,
-  setPopoutWindowExpanded: setPopoutWindowExpandedMock,
-  setPopoutWindowOverlayActive: setPopoutWindowOverlayActiveMock,
+  setPopoutWindowMode: setPopoutWindowModeMock,
 }))
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -69,8 +67,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 describe('PopoutWorkbenchPage', () => {
   beforeEach(() => {
     dismissPopoutWindowMock.mockReset()
-    setPopoutWindowExpandedMock.mockReset()
-    setPopoutWindowOverlayActiveMock.mockReset()
+    setPopoutWindowModeMock.mockReset()
     openPopoutTaskInMainMock.mockReset()
     selectProjectMock.mockReset()
     selectStandaloneDeviceMock.mockReset()
@@ -91,8 +88,7 @@ describe('PopoutWorkbenchPage', () => {
     workbenchMock.state.projects = []
     workbenchMock.state.isBootstrapping = false
     localStorage.clear()
-    setPopoutWindowExpandedMock.mockResolvedValue(undefined)
-    setPopoutWindowOverlayActiveMock.mockResolvedValue(undefined)
+    setPopoutWindowModeMock.mockResolvedValue(undefined)
     openPopoutTaskInMainMock.mockResolvedValue(undefined)
     dismissPopoutWindowMock.mockResolvedValue(undefined)
   })
@@ -100,15 +96,18 @@ describe('PopoutWorkbenchPage', () => {
   test('starts collapsed and defaults to the local projectless device', async () => {
     render(<PopoutWorkbenchPage />)
 
-    expect(screen.getByTestId('popout-workbench-page')).toHaveClass('popout-window-collapsed')
-    expect(screen.getByTestId('popout-workbench-page')).toHaveClass('popout-window-compact-context')
+    expect(screen.getByTestId('popout-workbench-page')).toHaveClass('popout-window-compact')
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute(
+      'data-popout-mode',
+      'composer'
+    )
     expect(screen.queryByTestId('popout-window-header')).not.toBeInTheDocument()
-    await waitFor(() => expect(setPopoutWindowExpandedMock).toHaveBeenCalledWith(false))
+    await waitFor(() => expect(setPopoutWindowModeMock).toHaveBeenCalledWith('composer'))
     await waitFor(() => expect(selectStandaloneDeviceMock).toHaveBeenCalledWith('local-device'))
     await waitFor(() => expect(localStorage.getItem('wework.popout.lastProjectId.v1')).toBe('none'))
     expect(desktopWorkbenchMainPropsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        showComposerProjectMenuAction: true,
+        presentation: 'popout',
       })
     )
   })
@@ -158,8 +157,8 @@ describe('PopoutWorkbenchPage', () => {
 
     render(<PopoutWorkbenchPage />)
 
-    expect(screen.getByTestId('popout-workbench-page')).toHaveClass('popout-window-compact-context')
-    await waitFor(() => expect(setPopoutWindowExpandedMock).toHaveBeenCalledWith(false))
+    expect(screen.getByTestId('popout-workbench-page')).toHaveClass('popout-window-compact')
+    await waitFor(() => expect(setPopoutWindowModeMock).toHaveBeenCalledWith('composer'))
     await waitFor(() => expect(selectStandaloneDeviceMock).toHaveBeenCalledWith('local-device'))
   })
 
@@ -172,7 +171,23 @@ describe('PopoutWorkbenchPage', () => {
     render(<PopoutWorkbenchPage />)
 
     expect(await screen.findByText('Popout task')).toBeInTheDocument()
-    await waitFor(() => expect(setPopoutWindowExpandedMock).toHaveBeenCalledWith(true))
+    await waitFor(() => expect(setPopoutWindowModeMock).toHaveBeenCalledWith('conversation'))
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute(
+      'data-popout-mode',
+      'conversation'
+    )
+    expect(screen.getByTestId('popout-window-close-button')).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(screen.getByTestId('popout-window-new-chat-button').parentElement).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(screen.getByTestId('popout-window-new-chat-button')).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(screen.getByTestId('popout-window-open-in-main-button')).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
     await userEvent.click(screen.getByTestId('popout-window-new-chat-button'))
     expect(startNewChatMock).toHaveBeenCalledOnce()
 
@@ -186,14 +201,6 @@ describe('PopoutWorkbenchPage', () => {
     expect(dismissPopoutWindowMock).toHaveBeenCalledOnce()
   })
 
-  test('closes the native Popout Window with Escape', () => {
-    render(<PopoutWorkbenchPage />)
-
-    fireEvent.keyDown(document, { key: 'Escape' })
-
-    expect(dismissPopoutWindowMock).toHaveBeenCalledOnce()
-  })
-
   test('marks the visible header as the Electron titlebar drag region', () => {
     workbenchMock.state.currentRuntimeTask = {
       deviceId: 'local-device',
@@ -201,10 +208,12 @@ describe('PopoutWorkbenchPage', () => {
     }
     render(<PopoutWorkbenchPage />)
 
-    expect(screen.getByTestId('popout-window-header')).toHaveClass('electron-titlebar-drag-region')
-    expect(screen.getByTestId('popout-workbench-page')).not.toHaveClass(
+    expect(screen.getByTestId('popout-window-header')).not.toHaveClass(
       'electron-titlebar-drag-region'
     )
+    expect(
+      screen.getByTestId('popout-window-header').querySelectorAll('.electron-titlebar-drag-region')
+    ).toHaveLength(1)
   })
 
   test('temporarily enables mouse events across the native canvas while a menu is open', async () => {
@@ -213,9 +222,14 @@ describe('PopoutWorkbenchPage', () => {
     menu.dataset.testid = 'quick-phrase-menu'
 
     document.body.append(menu)
-    await waitFor(() => expect(setPopoutWindowOverlayActiveMock).toHaveBeenCalledWith(true))
+    await waitFor(() => expect(setPopoutWindowModeMock).toHaveBeenCalledWith('menu'))
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute('data-popout-mode', 'menu')
 
     menu.remove()
-    await waitFor(() => expect(setPopoutWindowOverlayActiveMock).toHaveBeenCalledWith(false))
+    await waitFor(() => expect(setPopoutWindowModeMock).toHaveBeenLastCalledWith('composer'))
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute(
+      'data-popout-mode',
+      'composer'
+    )
   })
 })

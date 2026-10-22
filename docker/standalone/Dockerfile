@@ -35,6 +35,7 @@ RUN corepack enable \
 # Copy source code
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
+COPY shared/assets/codex-models ./shared/assets/codex-models
 COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
@@ -78,7 +79,9 @@ COPY shared/assets ./shared/assets
 COPY wework ./wework
 
 ARG WEWORK_APP_BASE_PATH="/wework"
+ARG WEWORK_SOURCE_SHA
 ENV VITE_APP_BASE_PATH=${WEWORK_APP_BASE_PATH}
+ENV WEWORK_SOURCE_SHA=${WEWORK_SOURCE_SHA}
 ENV HUSKY=0
 
 WORKDIR /app/wework
@@ -94,7 +97,9 @@ WORKDIR /app
 # Verify Node.js is available (already installed in base image)
 RUN node --version && npm --version
 
-# Install system packages for document generation and Redis
+# Install system packages for document generation and embedded services.
+# AlmaLinux MySQL requests CAP_SYS_NICE as an effective file capability.
+# Default Docker containers exclude it, so execve rejects mysqld with EPERM.
 RUN dnf install -y \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
@@ -107,12 +112,15 @@ RUN dnf install -y \
     # Public reverse proxy for the bundled frontend applications
     nginx \
     # Development environment and runtime diagnostics
-    procps-ng iproute lsof less tree unzip ripgrep \
+    procps-ng iproute lsof less tree unzip ripgrep libcap \
     # Redis server for standalone mode (embedded)
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
-    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.142.5 \
+    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && { ! getcap /usr/libexec/mysqld | grep -q . || setcap -r /usr/libexec/mysqld; } \
+    && test -z "$(getcap /usr/libexec/mysqld)" \
+    && /usr/sbin/mysqld --version \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 
@@ -184,7 +192,13 @@ COPY --from=executor-builder /app/backend-rs/config /app/backend-rs/config
 RUN uv pip install --system --no-cache /app/shared
 
 # Install knowledge_engine (depends on shared via ../shared -> /app/shared)
-RUN cd /app/knowledge_engine && uv pip install --system --no-cache -r pyproject.toml
+RUN uv pip install --system --no-cache "/app/knowledge_engine[retrieval]"
+
+# Install the required HTTP retrieval service using its own dependency manifest.
+COPY knowledge_runtime /app/knowledge_runtime
+RUN cd /app/knowledge_runtime && \
+    sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
+    uv pip install --system --no-cache -r pyproject.toml
 
 # Install chat_shell (depends on shared via ../shared -> /app/shared)
 RUN cd /app/chat_shell && uv pip install --system --no-cache -r pyproject.toml
@@ -234,7 +248,7 @@ ENV INIT_DATA_DIR=/app/init_data
 ENV BUILTIN_PLUGINS_DIR=/app/init_data/plugins
 ENV CHAT_SHELL_MODE=package
 ENV CODEX_HOME=/app/data/codex
-ENV PYTHONPATH=/app:/app/backend:/app/chat_shell
+ENV PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/knowledge_runtime
 ENV NODE_PATH=/usr/lib/node_modules
 ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 
@@ -267,6 +281,7 @@ VOLUME ["/app/data", "/workspace"]
 # Health check - verify main services are running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health \
+      && curl -f http://127.0.0.1:8200/internal/rag/health \
       && curl -f http://localhost:3000 \
       && curl -f http://localhost:3000/wework/ \
       || exit 1

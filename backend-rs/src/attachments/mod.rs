@@ -29,23 +29,37 @@
 //!    (`mysql` binary_data or the MinIO/S3 object store), decrypt when
 //!    `is_encrypted`, and stream with
 //!    `Content-Disposition`/`Content-Length`/`X-Accel-Buffering: no` headers.
+//!    `Content-Type` is rendered through `content_type.rs`, which applies the
+//!    Starlette `Response.init_headers` charset rule.
 //!
 //! The download-token, share-token, and anonymous-browser-redirect methods
-//! share steps 2-8; the recorded case uses the JWT method.
+//! share steps 2-8. The JWT method is the recorded path; the download-token
+//! credential lives in `download_token.rs`, and the share-token method
+//! (`share_token.rs`) authenticates a public shared-task viewer through the
+//! `SHARE_TOKEN_AES_*` AES token before the same context/policy/storage
+//! pipeline.
 //!
 //! `GET /api/attachments/download/shared` (`public_download_attachment`)
 //! is the public share-link variant: a signed token in the `token` query
 //! parameter replaces user authentication and ownership checks entirely.
 
 pub mod auth;
+pub(crate) mod content_type;
 pub mod context_store;
+pub(crate) mod crypto;
+mod delete;
 pub mod detail;
 pub mod detail_response;
 pub mod download_policy;
+pub mod download_token;
 pub mod executor_download;
+pub mod external_media;
 pub mod handler;
 pub mod minio_client;
+pub mod playback;
 pub mod public_link;
 pub mod s3_signing;
+pub mod share_token;
 pub mod shared_download;
 pub mod storage;
+pub mod upload;

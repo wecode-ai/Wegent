@@ -10,6 +10,9 @@ export interface ProjectAgentConfigurationRecord {
   name: string;
   displayName: string;
   deletable: boolean;
+  canEdit: boolean;
+  canUse: boolean;
+  unavailableReason: string | null;
   definitionSource: "project" | "shared_agent";
   executorType: "codex" | "claude_code" | null;
   status: "active" | "archived";
@@ -54,6 +57,12 @@ export function normalizeProjectAgent(
     name,
     displayName,
     deletable: row.deletable !== false,
+    canEdit: value(row, "canEdit", "can_edit") === true,
+    canUse: value(row, "canUse", "can_use") !== false,
+    unavailableReason:
+      value(row, "unavailableReason", "unavailable_reason") == null
+        ? null
+        : String(value(row, "unavailableReason", "unavailable_reason")),
     definitionSource: rawTeamId == null ? "project" : "shared_agent",
     executorType:
       runtime === "wegent"
@@ -99,6 +108,7 @@ export function createSharedAgentBindingInput(
     name: team.name,
     runtime: "wegent",
     wegentTeamId: team.team_id,
+    shareWithWorkspace: true,
   };
 }
 

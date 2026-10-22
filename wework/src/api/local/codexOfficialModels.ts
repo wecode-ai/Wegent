@@ -11,7 +11,7 @@ export async function requestLocalCodexOfficialModels(
   request: LocalExecutorRequest = requestLocalExecutor
 ): Promise<CodexOfficialModelList> {
   const response = await request<unknown>('runtime.codex.models.list', {
-    includeHidden: true,
+    includeHidden: false,
   })
   return normalizeCodexOfficialModelList(response)
 }

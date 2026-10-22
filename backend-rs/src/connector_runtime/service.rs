@@ -7,26 +7,57 @@
 //! Ports `ConnectorRuntimeService.list_tools` and the pieces of
 //! `_connected_apps`, `_upstream_tools`, `_tool_from_upstream`, `_server_config`
 //! and `_risk_hints` it exercises.
+use brz_mysql::Mysql;
+
 use crate::apps_installed::db::UserRow;
 use crate::apps_installed::mcp::{self, UpstreamTool};
 use crate::apps_installed::service::{self as apps, ConnectorApp};
+use crate::http_compat::FastApiError;
 
 use super::models::{ConnectorTool, RiskHints, ToolAnnotations, default_input_schema};
 
 /// `list_tools`: every tool of the caller's connected visible apps.
-pub(crate) async fn list_tools(catalog: &[ConnectorApp], user: &UserRow) -> Vec<ConnectorTool> {
+///
+/// The connection lookup of `_connected_apps` runs outside the per-app
+/// `except HTTPException` branch, so a database failure is a 500 rather than a
+/// skipped connector.
+pub(crate) async fn list_tools<M>(
+    mysql: &M,
+    catalog: &[ConnectorApp],
+    user: &UserRow,
+) -> Result<Vec<ConnectorTool>, FastApiError>
+where
+    M: Mysql,
+{
     let mut tools = Vec::new();
-    for app in apps::list_visible_apps(catalog, user) {
-        if !apps::app_connected(app) {
-            continue;
+    let connected = match apps::connected_apps(mysql, catalog, user).await {
+        Ok(connected) => connected,
+        Err(error) => {
+            tracing::error!(%error, "connector authorization lookup failed");
+            return Err(FastApiError::internal());
         }
+    };
+    for app in connected {
         if app.transport == "http" {
             // `_http_tools` projects the app's inline `httpTools` definitions
             // through `ConnectorHttpToolDefinition`; the recorded catalog
             // defines an empty list, so this transport contributes no tools.
             continue;
         }
-        let upstream = match upstream_tools(app, user).await {
+        // `_upstream_tools` wraps `_server_config` and session failures into a
+        // 502 `HTTPException`, which `list_tools` skips.
+        let headers = match apps::session_headers(mysql, app, user).await {
+            Ok(headers) => headers,
+            Err(error) => {
+                tracing::warn!(
+                    connector = %app.slug,
+                    %error,
+                    "skipping unavailable connector during tool discovery"
+                );
+                continue;
+            }
+        };
+        let upstream = match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
             Ok(upstream) => upstream,
             // `except HTTPException`: an app whose discovery failed is
             // skipped with a warning, not reported to the caller.
@@ -47,28 +78,7 @@ pub(crate) async fn list_tools(catalog: &[ConnectorApp], user: &UserRow) -> Vec<
             tools.push(tool_from_upstream(app, &tool));
         }
     }
-    tools
-}
-
-/// `_upstream_tools`: one MCP session per app, listing every tool page.
-async fn upstream_tools(
-    app: &ConnectorApp,
-    user: &UserRow,
-) -> Result<Vec<UpstreamTool>, mcp::McpError> {
-    mcp::list_tools_with_headers(&app.mcp_url, &session_headers(user)).await
-}
-
-/// `_server_config` session headers for an authenticated caller.
-///
-/// The source starts from `_decrypt_json(app.provider_headers_encrypted)` and
-/// then always adds the user context headers. The recorded catalog stores no
-/// provider headers, so only the user context headers are produced here;
-/// apps that carry encrypted provider headers are not yet supported.
-fn session_headers(user: &UserRow) -> Vec<(&'static str, String)> {
-    vec![
-        ("x-wegent-username", user.users_user_name.clone()),
-        ("x-wegent-user-id", user.users_id.to_string()),
-    ]
+    Ok(tools)
 }
 
 /// `_tool_from_upstream`: project one upstream tool into a `ConnectorTool`.
@@ -116,7 +126,7 @@ fn tool_from_upstream(app: &ConnectorApp, tool: &UpstreamTool) -> ConnectorTool 
 mod tests {
     use super::*;
     use crate::apps_installed::db::KindRow;
-    use crate::json_compat::OpaqueJson;
+    use brz_json::OpaqueJson;
     use serde_json::Value;
 
     /// Recorded deployment MCP endpoint, assembled to avoid a bare
@@ -147,22 +157,6 @@ mod tests {
             kinds_is_active: true,
             kinds_created_at: chrono::NaiveDateTime::default(),
             kinds_updated_at: chrono::NaiveDateTime::default(),
-        }
-    }
-
-    fn user(name: &str, id: i64) -> UserRow {
-        UserRow {
-            users_id: id,
-            users_user_name: name.to_string(),
-            users_password_hash: "password".to_string(),
-            users_email: None,
-            users_git_info: brz_mysql::Json(Value::Null.into()),
-            users_is_active: true,
-            users_role: "user".to_string(),
-            users_auth_source: "dingtalk".to_string(),
-            users_preferences: String::new(),
-            users_created_at: chrono::NaiveDateTime::default(),
-            users_updated_at: chrono::NaiveDateTime::default(),
         }
     }
 
@@ -263,17 +257,5 @@ mod tests {
         let allowlist = &app.tool_allowlist;
         assert!(allowlist.contains(&"list_sites".to_string()));
         assert!(!allowlist.contains(&"create_site".to_string()));
-    }
-
-    #[test]
-    fn session_headers_carry_the_user_context() {
-        let headers = session_headers(&user("junshu", 83));
-        assert_eq!(
-            headers,
-            vec![
-                ("x-wegent-username", "junshu".to_string()),
-                ("x-wegent-user-id", "83".to_string()),
-            ]
-        );
     }
 }

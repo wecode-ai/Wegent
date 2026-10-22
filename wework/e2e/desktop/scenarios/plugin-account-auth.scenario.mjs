@@ -1,16 +1,31 @@
+import { createAccountAuthFixture } from '../modules/plugin-account-auth-fixture.mjs'
+import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import {
+  createConversationAuthModelFixture,
+  verifyConversationQrAuthorization,
+} from '../modules/plugin-conversation-auth.mjs'
+import {
+  createGithubManageConnectionFixture,
+  verifyGithubManageConnectionConsent,
+} from '../modules/github-manage-connection.mjs'
 
-import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, processIsAlive } from '../modules/shared.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
+  processIsAlive,
+} from '../modules/shared.mjs'
 import {
   assistantMessage,
   functionCall,
+  latestModelInputText,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -18,7 +33,6 @@ import {
   selectTool,
 } from '../modules/response-protocol.mjs'
 
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const run = promisify(execFile)
 const slug = 'desktop-account-auth'
 const secret = 'synthetic-desktop-account-password'
@@ -26,6 +40,11 @@ const oauthSecret = 'synthetic-desktop-oauth-refresh'
 const transferSecret = 'synthetic-desktop-transfer-refresh'
 const callId = 'plugin-account-auth-business'
 const prompt = 'Verify the cloud plugin account authentication business command'
+const qrPrompt = 'Verify the managed plugin conversation QR login'
+const ordinaryPrompt = 'Verify ordinary chat while plugin login is pending'
+const ghResumePrompt = 'Verify GitHub CLI Markdown authorization guidance'
+const TRANSIENT_API_RETRY_ATTEMPTS = 50
+const TRANSIENT_API_RETRY_DELAY_MS = 100
 
 async function waitForValue(read, accept, timeoutMs, message) {
   const deadline = Date.now() + timeoutMs
@@ -38,7 +57,7 @@ async function waitForValue(read, accept, timeoutMs, message) {
 }
 
 async function managedRoot(home, installedId) {
-  const manifestPath = join(home, 'capabilities/manifest.json')
+  const manifestPath = join(home, 'capabilities/manifest-v2.json')
   const manifest = await readFile(manifestPath, 'utf8')
     .then(JSON.parse)
     .catch(error => {
@@ -57,6 +76,7 @@ async function managedRoot(home, installedId) {
 }
 
 export async function createDesktopScenario({
+  checkpoint,
   captureScreenshot,
   executorHome,
   homePath,
@@ -64,6 +84,14 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
+  const ghConfigDir = join(resultDir, 'gh-config')
+  await mkdir(ghConfigDir, { recursive: true })
+  await run('gh', ['--version'])
+  const githubConfig = await createGithubManageConnectionFixture(resultDir)
+  const reconcileMarker = join(resultDir, 'plugin-account-reconcile.log')
+  const retrySignal = join(resultDir, 'plugin-account-retry.signal')
+  let retrySignalGeneration = 0
+  const signalAutomaticRetry = () => writeFile(retrySignal, String((retrySignalGeneration += 1)))
   for (const name of ['config', 'keychain']) {
     await mkdir(join(dwsSourceRoot, name), { recursive: true })
   }
@@ -72,268 +100,32 @@ export async function createDesktopScenario({
   let command
   let businessWorkspace
   let toolResult = null
+  const authModel = createConversationAuthModelFixture({ slug, qrPrompt, ghResumePrompt })
+  let ordinaryRequests = 0
+  const qrApproval = join(homePath, 'conversation-qr-approved')
   const fixtureRoot = join(resultDir, slug)
-  await mkdir(join(fixtureRoot, '.codex-plugin'), { recursive: true })
-  await mkdir(join(fixtureRoot, 'scripts'), { recursive: true })
-  await writeFile(
-    join(fixtureRoot, 'scripts/legacy-auth.py'),
-    `import json, os, sys
-from pathlib import Path
-source = Path.home() / "account-auth-synthetic.json"
-assert os.environ.get("WEGENT_PLUGIN_AUTH_BROKER"), "Local auth did not receive the broker"
-if sys.argv[1:] == ["login"]:
-    source.write_text(json.dumps({"username":"alice@example.test","password":"${secret}-updated"}))
-elif sys.argv[1:] == ["logout"]:
-    source.unlink(missing_ok=True)
-else:
-    assert sys.argv[1:] == ["health"]
-print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() else "need_login"}))
-`
-  )
-  await writeFile(
-    join(fixtureRoot, '.codex-plugin/plugin.json'),
-    JSON.stringify({
-      name: slug,
-      version: '1.0.0',
-      description: 'Synthetic account reuse regression',
-      interface: {
-        displayName: 'Account authentication E2E',
-        shortDescription: 'Synthetic provider',
-      },
-      connectors: [
-        {
-          slug: 'mail',
-          displayName: 'git.one.example',
-          authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
-          authPolicy: 'on_install',
-          localAuth: {
-            kind: 'browser_oauth',
-            health: [
-              process.platform === 'win32' ? 'python' : 'python3',
-              'scripts/legacy-auth.py',
-              'health',
-            ],
-            start: [
-              process.platform === 'win32' ? 'python' : 'python3',
-              'scripts/legacy-auth.py',
-              'login',
-            ],
-            logout: [
-              process.platform === 'win32' ? 'python' : 'python3',
-              'scripts/legacy-auth.py',
-              'logout',
-            ],
-          },
-          accountAuth: {
-            protocolVersion: 1,
-            credentialType: 'password',
-            adapter: 'scripts/account-auth.py',
-          },
-        },
-        {
-          slug: 'oauth',
-          displayName: 'git.two.example',
-          authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
-          authPolicy: 'optional',
-          accountAuth: {
-            protocolVersion: 1,
-            credentialType: 'oauth2',
-            adapter: 'scripts/oauth-auth.py',
-            oauth2: ['authorize', 'refresh', 'revoke'],
-          },
-        },
-        {
-          slug: 'transfer',
-          displayName: 'git.three.example',
-          authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
-          authPolicy: 'optional',
-          accountAuth: {
-            protocolVersion: 1,
-            credentialType: 'oauth2',
-            adapter: 'scripts/transfer-auth.py',
-            oauth2: ['revoke'],
-            exportMode: 'exclusive',
-          },
-        },
-      ],
+  const { sourceAuth, oauthSource, transferSource, transferReceipt, transferFence } =
+    await createAccountAuthFixture({
+      resultDir,
+      homePath,
+      fixtureRoot,
+      slug,
+      secret,
+      oauthSecret,
+      transferSecret,
     })
-  )
-  await writeFile(
-    join(fixtureRoot, 'scripts/provider.py'),
-    `
-import json
-from pathlib import Path
-def export():
-    (Path.home() / "account-auth-export-attempted").write_text("attempted")
-    return json.loads((Path.home() / "account-auth-synthetic.json").read_text())
-def execute(credential, arguments):
-    assert credential["password"] in ("${secret}", "${secret}-updated")
-    print(json.dumps({"account": credential["username"], "result": "cloud-account-updated" if credential["password"].endswith("-updated") else "cloud-account-read"}))
-    return 0
-`
-  )
-  await writeFile(
-    join(fixtureRoot, 'scripts/account-auth.py'),
-    `
-import sys
-import provider
-from wegent_plugin_auth import AccountAuthAdapter
-adapter = AccountAuthAdapter(connector_slug="mail", credential_type="password",
-    export=provider.export, account_id=lambda value:value["username"],
-    execute=provider.execute, allowed_commands=("read",))
-raise SystemExit(adapter.main(sys.argv[1:]))
-`
-  )
-  await writeFile(
-    join(fixtureRoot, 'scripts/oauth-auth.py'),
-    `
-import json, os, sys, time
-from pathlib import Path
-from wegent_plugin_auth import AccountAuthAdapter
-def authorize():
-    Path(${JSON.stringify(join(resultDir, 'oauth-source-executor.pid'))}).write_text(str(os.getppid()))
-    return {"account":"oauth@example.test", "access_token":"synthetic-expired-access",
-        "refresh_token":"${oauthSecret}", "expires_at":time.time()-1}
-def refresh(credential):
-    assert credential["refresh_token"] == "${oauthSecret}"
-    Path(${JSON.stringify(join(resultDir, 'oauth-provider-refreshed.marker'))}).write_text(str(os.getppid()))
-    return {"access_token":"synthetic-refreshed-access", "refresh_token":"${oauthSecret}-rotated", "expires_at":time.time()+3600}
-def revoke(credential):
-    assert credential["refresh_token"] == "${oauthSecret}-rotated"
-    Path(${JSON.stringify(join(resultDir, 'oauth-provider-revoked.marker'))}).write_text("revoked")
-def execute(credential, arguments):
-    assert "refresh_token" not in credential
-    assert credential["access_token"] == "synthetic-refreshed-access"
-    print(json.dumps({"account":credential["account"], "result":"oauth-cloud-read"}))
-    return 0
-def export_local():
-    value = json.loads((Path.home() / "account-oauth-synthetic.json").read_text())
-    Path(${JSON.stringify(join(resultDir, 'oauth-source-executor.pid'))}).write_text(str(os.getppid()))
-    return value
-adapter = AccountAuthAdapter(connector_slug="oauth", credential_type="oauth2", export=export_local,
-    account_id=lambda value:value["account"], execute=execute, allowed_commands=("read",),
-    authorize=authorize, refresh=refresh, revoke=revoke)
-raise SystemExit(adapter.main(sys.argv[1:]))
-`
-  )
-  await writeFile(
-    join(fixtureRoot, 'scripts/oauth-cli.py'),
-    `
-import sys
-from pathlib import Path
-from wegent_plugin_auth import delegate_cloud_command
-result = delegate_cloud_command(Path(__file__).resolve().parents[1], "oauth", sys.argv[1:])
-assert result is not None
-raise SystemExit(result)
-`
-  )
-  const transferSource = join(homePath, 'account-transfer-synthetic.json')
-  const transferReceipt = join(resultDir, 'transfer-detached.marker')
-  const transferFence = join(resultDir, 'transfer-aborted.marker')
-  await writeFile(
-    join(fixtureRoot, 'scripts/transfer-auth.py'),
-    `
-import json, sys
-from pathlib import Path
-from wegent_plugin_auth import AccountAuthAdapter, SourceChanged
-source = Path(${JSON.stringify(transferSource)})
-receipt = Path(${JSON.stringify(transferReceipt)})
-fence = Path(${JSON.stringify(transferFence)})
-def export():
-    credential = json.loads(source.read_text())
-    if credential["refresh_token"] == "${transferSecret}":
-        rotated = {**credential, "refresh_token":"${transferSecret}-rotated"}
-        source.write_text(json.dumps(rotated))
-    return credential
-def detach(migration_id, credential):
-    if fence.exists() and fence.read_text() == migration_id:
-        raise SourceChanged()
-    if source.exists() and json.loads(source.read_text()) != credential:
-        fence.write_text(migration_id)
-        raise SourceChanged()
-    assert credential["refresh_token"] == "${transferSecret}-rotated"
-    if receipt.exists():
-        assert receipt.read_text() == migration_id
-        assert not source.exists()
-        return
-    assert json.loads(source.read_text()) == credential
-    source.unlink()
-    receipt.write_text(migration_id)
-    raise RuntimeError("synthetic interruption after durable detach")
-def execute(credential, arguments):
-    assert "refresh_token" not in credential and "provider_private" not in credential
-    assert credential["access_token"] == "synthetic-transfer-access"
-    print(json.dumps({"account":credential["account"],"result":"transfer-cloud-read"}))
-    return 0
-adapter = AccountAuthAdapter(connector_slug="transfer", credential_type="oauth2", export=export,
-    account_id=lambda value:value["account"], execute=execute, allowed_commands=("read",),
-    detach=detach, revoke=lambda credential:None)
-raise SystemExit(adapter.main(sys.argv[1:]))
-`
-  )
-  await writeFile(
-    join(fixtureRoot, 'scripts/transfer-cli.py'),
-    `
-import sys
-from pathlib import Path
-from wegent_plugin_auth import delegate_cloud_command
-result = delegate_cloud_command(Path(__file__).resolve().parents[1], "transfer", sys.argv[1:])
-assert result is not None
-raise SystemExit(result)
-`
-  )
-  await writeFile(
-    join(fixtureRoot, 'scripts/cli.py'),
-    `
-import sys
-from pathlib import Path
-from wegent_plugin_auth import delegate_cloud_command
-import provider
-delegated = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", sys.argv[1:])
-raise SystemExit(delegated if delegated is not None else provider.execute(provider.export(), sys.argv[1:]))
-`
-  )
-  await run(
-    'uv',
-    ['run', '--no-project', 'python', 'sdk/plugin-auth/tool.py', 'vendor', fixtureRoot],
-    { cwd: repository }
-  )
-  await mkdir(homePath, { recursive: true })
-  await writeFile(
-    transferSource,
-    JSON.stringify({
-      account: 'transfer@example.test',
-      access_token: 'synthetic-transfer-access',
-      refresh_token: transferSecret,
-      provider_private: { persistent_code: transferSecret },
-      expires_at: Math.floor(Date.now() / 1000) + 3600,
-    }),
-    { mode: 0o600 }
-  )
-  const oauthSource = join(homePath, 'account-oauth-synthetic.json')
-  await writeFile(
-    oauthSource,
-    JSON.stringify({
-      account: 'oauth@example.test',
-      access_token: 'synthetic-expired-access',
-      refresh_token: oauthSecret,
-      expires_at: 1,
-    }),
-    { mode: 0o600 }
-  )
-  const sourceAuth = join(homePath, 'account-auth-synthetic.json')
-  await writeFile(
-    sourceAuth,
-    JSON.stringify({ username: 'alice@example.test', password: secret }),
-    { mode: 0o600 }
-  )
 
   async function api(path, method = 'GET', body) {
-    const response = await fetch(`${cloud.backendUrl}/api${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
+    let response
+    for (let attempt = 1; attempt <= TRANSIENT_API_RETRY_ATTEMPTS; attempt += 1) {
+      response = await fetch(`${cloud.backendUrl}/api${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+      if (response.ok || ![502, 503, 504].includes(response.status)) break
+      await new Promise(resolve => setTimeout(resolve, TRANSIENT_API_RETRY_DELAY_MS))
+    }
     assert.ok(response.ok, `Account fixture API failed: ${method} ${path}, HTTP ${response.status}`)
     return response.json()
   }
@@ -351,6 +143,18 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       workbenchReadyTimeoutMs,
       'Cloud task did not execute the public plugin command'
     )
+    const redactedOutput = [
+      secret,
+      oauthSecret,
+      transferSecret,
+      'synthetic-desktop-dws-access',
+      'synthetic-desktop-dws-refresh',
+      'synthetic-refreshed-access',
+    ].reduce((output, credential) => output.replaceAll(credential, '[redacted]'), toolResult)
+    await writeFile(
+      join(resultDir, `plugin-account-command-${encodeURIComponent(expected)}.json`),
+      JSON.stringify({ expected, output: redactedOutput }, null, 2)
+    )
     assert.ok(
       toolResult.includes(expected),
       `Cloud plugin output did not contain expected result ${expected}`
@@ -366,10 +170,17 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
 
   return {
     requiresCloudEnvironment: true,
+    codexConfigToml: githubConfig,
     appEnvironment: {
+      GH_CONFIG_DIR: ghConfigDir,
+      GH_TOKEN: '',
+      GITHUB_TOKEN: '',
       DWS_CONFIG_DIR: join(dwsSourceRoot, 'config'),
       DWS_KEYCHAIN_DIR: join(dwsSourceRoot, 'keychain'),
       DWS_DISABLE_KEYCHAIN: '1',
+      WEWORK_E2E_PLUGIN_ACCOUNT_RECONCILE_INTERVAL_MS: '1000',
+      WEWORK_E2E_PLUGIN_ACCOUNT_RECONCILE_MARKER: reconcileMarker,
+      WEWORK_E2E_PLUGIN_ACCOUNT_RETRY_SIGNAL: retrySignal,
     },
     setCloudEnvironment(environment) {
       cloud = environment
@@ -383,7 +194,14 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       const body = await readRequestBody(request)
       const id = `account-auth-${Date.now()}`
       let events
-      if (JSON.stringify(body).includes(prompt) && command) {
+      const requestText = JSON.stringify(body)
+      const authEvents = await authModel.respond(body)
+      if (authEvents) {
+        events = authEvents
+      } else if (latestModelInputText(body).includes(ordinaryPrompt)) {
+        ordinaryRequests += 1
+        events = [assistantMessage(`${ordinaryPrompt} completed`)]
+      } else if (requestText.includes(prompt) && command) {
         const result = accountCommandResult(body.input, callId)
         if (result?.sessionId) {
           const tool = selectTool(body, 'write_stdin', {
@@ -478,191 +296,418 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         !page.testIds.includes('local-connector-auth-dialog'),
         'Install required a second authorization'
       )
-      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
-      await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
-      await control.command('waitFor', '[data-testid="plugin-connector-source-dialog"]', {
-        text: 'git.three.example',
-      })
-      await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
-        value: 'oauth',
-      })
-      await control.command('click', '[data-testid="plugin-connector-source-continue"]')
-      // An account export declaration is not a cloud OAuth app registration.
-      await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
-        text: '此连接尚未提供页面登录入口',
-      })
-      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
-      await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
-      await control.command('click', '[data-testid="plugin-connector-source-cancel"]')
-      await captureScreenshot(control, 'plugin-auth-transparent-detail.png', 'body')
+      const checks = new Map([
+        [
+          'plugin-account-auth-coordination',
+          () =>
+            verifyPluginAuthCoordination({
+              cloud,
+              control,
+              slug,
+              homePath,
+              installedId,
+              connectionFor,
+              signalAutomaticRetry,
+              reconcileMarker,
+              resultDir,
+              timeoutMs: workbenchReadyTimeoutMs,
+            }),
+        ],
+        [
+          'plugin-account-auth-password',
+          async () => {
+            await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
+            await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
+            await control.command('waitFor', '[data-testid="plugin-connector-source-dialog"]', {
+              text: 'git.three.example',
+            })
+            await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+              value: 'oauth',
+            })
+            await control.command('click', '[data-testid="plugin-connector-source-continue"]')
+            // An account export declaration is not a cloud OAuth app registration.
+            await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
+              text: '此连接尚未提供页面登录入口',
+            })
+            await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
+            await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
+            await control.command('click', '[data-testid="plugin-connector-source-cancel"]')
+            await captureScreenshot(control, 'plugin-auth-transparent-detail.png', 'body')
 
-      await waitForValue(
-        () => marker(join(homePath, 'account-auth-export-attempted')),
-        Boolean,
-        workbenchReadyTimeoutMs,
-        'Missing local authentication was not probed'
-      )
-      assert.equal(await connectionFor('mail'), undefined)
-      await waitForValue(
-        () => marker(transferFence),
-        Boolean,
-        workbenchReadyTimeoutMs,
-        'Source-change handoff was not safely aborted'
-      )
-      assert.equal(await connectionFor('transfer'), undefined)
-      const abortedId = await marker(transferFence)
-      await writeFile(
-        sourceAuth,
-        JSON.stringify({ username: 'alice@example.test', password: secret }),
-        { mode: 0o600 }
-      )
-      await waitForValue(
-        () => marker(transferReceipt),
-        Boolean,
-        workbenchReadyTimeoutMs,
-        'Automatic handoff did not reach durable detach'
-      )
-      assert.equal(
-        await connectionFor('transfer'),
-        undefined,
-        'Interrupted handoff activated prematurely'
-      )
-      assert.notEqual(await marker(transferReceipt), abortedId)
-      await assert.rejects(readFile(transferSource), { code: 'ENOENT' })
-      // Device grants also advance the revision; settle both grants before
-      // using a revision change as proof that the source credential changed.
-      const mail = await waitForValue(
-        () => connectionFor('mail'),
-        item =>
-          [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].every(id => item?.device_ids.includes(id)),
-        workbenchReadyTimeoutMs,
-        'Local login did not automatically reach cloud'
-      )
-      command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
-      await rm(sourceAuth)
-      await invokeCloud('cloud-account-read')
-      await writeFile(
-        sourceAuth,
-        JSON.stringify({ username: 'alice@example.test', password: secret + '-updated' }),
-        { mode: 0o600 }
-      )
-      await waitForValue(
-        () => connectionFor('mail'),
-        item => item.revision > mail.revision,
-        workbenchReadyTimeoutMs,
-        'Local credential update did not propagate'
-      )
-      await rm(sourceAuth)
-      await invokeCloud('cloud-account-updated')
-      await waitForValue(
-        () => connectionFor('transfer'),
-        item => item?.device_ids.includes(CLOUD_DEVICE_ID),
-        workbenchReadyTimeoutMs,
-        'Interrupted handoff did not resume automatically'
-      )
-      command = `python3 ${quote(join(cloudRoot, 'scripts/transfer-cli.py'))} read`
-      await invokeCloud('transfer-cloud-read')
+            await waitForValue(
+              () => marker(join(homePath, 'account-auth-export-attempted')),
+              Boolean,
+              workbenchReadyTimeoutMs,
+              'Missing local authentication was not probed'
+            )
+            assert.equal(await connectionFor('mail'), undefined)
+            await writeFile(
+              sourceAuth,
+              JSON.stringify({ username: 'alice@example.test', password: secret }),
+              { mode: 0o600 }
+            )
+            await signalAutomaticRetry()
+            // Device grants also advance the revision; settle both grants before
+            // using a revision change as proof that the source credential changed.
+            const mail = await waitForValue(
+              () => connectionFor('mail'),
+              item =>
+                [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].every(id =>
+                  item?.device_ids.includes(id)
+                ),
+              workbenchReadyTimeoutMs,
+              'Local login did not automatically reach cloud'
+            )
+            command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
+            await rm(sourceAuth)
+            await invokeCloud('cloud-account-read')
+            await writeFile(
+              sourceAuth,
+              JSON.stringify({ username: 'alice@example.test', password: secret + '-updated' }),
+              { mode: 0o600 }
+            )
+            await signalAutomaticRetry()
+            await waitForValue(
+              () => connectionFor('mail'),
+              item => item.revision > mail.revision,
+              workbenchReadyTimeoutMs,
+              'Local credential update did not propagate'
+            )
+            await rm(sourceAuth)
+            await invokeCloud('cloud-account-updated')
+            const localAuth = async (action, sessionId) =>
+              JSON.parse(
+                await control.command('localConnectorAuth', 'body', {
+                  value: JSON.stringify({
+                    pluginKey: slug,
+                    connectorSlug: 'mail',
+                    action,
+                    sessionId,
+                  }),
+                })
+              )
+            // The legacy source is gone. The original entry must show the managed account.
+            assert.equal((await localAuth('health')).status, 'ok')
+            // A real packaged CLI failure must not undo the account revocation or
+            // report that the retained local credentials have already been cleared.
+            await writeFile(
+              sourceAuth,
+              JSON.stringify({ username: 'alice@example.test', password: secret + '-updated' }),
+              { mode: 0o600 }
+            )
+            const failLogout = join(homePath, 'account-auth-fail-logout')
+            await writeFile(failLogout, 'fail')
+            try {
+              await assert.rejects(
+                () => localAuth('logout'),
+                /local_auth_logout_failed/,
+                'Failed local cleanup was reported as a successful logout'
+              )
+              assert.equal((await connectionFor('mail')).status, 'disconnected')
+              assert.ok(await readFile(sourceAuth), 'Failed cleanup removed the local credential')
+            } finally {
+              await rm(failLogout)
+            }
+            assert.equal((await localAuth('logout')).status, 'ok')
+            assert.equal(
+              (await localAuth('logout')).status,
+              'ok',
+              'Repeated logout is not idempotent'
+            )
+            assert.equal((await connectionFor('mail')).status, 'disconnected')
+            command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
+            await invokeCloud('plugin_auth_device_not_granted')
+            assert.equal((await localAuth('health')).status, 'need_login')
+            // Reopen the detail after the direct API logout to refresh its displayed auth state.
+            await control.command('click', '[data-testid="plugin-detail-back-button"]')
+            await control.command(
+              'clickWhenEnabled',
+              `[data-testid="plugins-installed-strip-item-${installedId}"]`
+            )
+            await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
+            await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
+            await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+              value: 'mail',
+            })
+            await waitForValue(
+              () => control.command('getText', '[data-testid="plugin-connector-source-continue"]'),
+              text => text.trim() === '登录',
+              10000,
+              'Connector detail did not refresh the logged-out account'
+            )
+            await control.command('click', '[data-testid="plugin-connector-source-continue"]')
+            await control.command('waitFor', '[data-testid="plugin-connector-section"]', {
+              text: '已连接 · git.one.example',
+            })
+            await waitForValue(
+              () => connectionFor('mail'),
+              item => item?.status === 'connected' && item.device_ids.includes(CLOUD_DEVICE_ID),
+              workbenchReadyTimeoutMs,
+              'Fresh login did not resume cloud authentication'
+            )
+            await rm(sourceAuth)
+            assert.equal((await localAuth('health')).status, 'ok')
+            await invokeCloud('cloud-account-updated')
+          },
+        ],
+        [
+          'plugin-account-auth-transfer',
+          async () => {
+            await waitForValue(
+              () => marker(transferFence),
+              Boolean,
+              workbenchReadyTimeoutMs,
+              'Source-change handoff was not safely aborted'
+            )
+            assert.equal(await connectionFor('transfer'), undefined)
+            const abortedId = await marker(transferFence)
+            await signalAutomaticRetry()
+            await waitForValue(
+              () => marker(transferReceipt),
+              Boolean,
+              workbenchReadyTimeoutMs,
+              'Automatic handoff did not reach durable detach'
+            )
+            assert.equal(
+              await connectionFor('transfer'),
+              undefined,
+              'Interrupted handoff activated prematurely'
+            )
+            assert.notEqual(await marker(transferReceipt), abortedId)
+            await assert.rejects(readFile(transferSource), { code: 'ENOENT' })
+            await signalAutomaticRetry()
+            await waitForValue(
+              () => connectionFor('transfer'),
+              item => item?.device_ids.includes(CLOUD_DEVICE_ID),
+              workbenchReadyTimeoutMs,
+              'Interrupted handoff did not resume automatically'
+            )
+            command = `python3 ${quote(join(cloudRoot, 'scripts/transfer-cli.py'))} read`
+            await invokeCloud('transfer-cloud-read')
+          },
+        ],
+        [
+          'plugin-account-auth-oauth',
+          async () => {
+            await waitForValue(
+              () => connectionFor('oauth'),
+              item => item?.device_ids.includes(CLOUD_DEVICE_ID),
+              workbenchReadyTimeoutMs,
+              'OAuth source did not automatically connect'
+            )
+            await rm(oauthSource)
+            const sourcePids = [
+              Number(await readFile(join(resultDir, 'oauth-source-executor.pid'), 'utf8')),
+            ]
+            assert.ok(
+              sourcePids.every(pid => Number.isSafeInteger(pid) && pid > 0 && processIsAlive(pid))
+            )
+            command = `python3 ${quote(join(cloudRoot, 'scripts/oauth-cli.py'))} read`
+            await restartDesktopApp({
+              afterStop: async () => {
+                await waitForValue(
+                  () => sourcePids.every(pid => !processIsAlive(pid)),
+                  Boolean,
+                  workbenchReadyTimeoutMs,
+                  'Source survived shutdown'
+                )
+                await cloud.waitForDeviceStatus(
+                  local.device_id,
+                  'offline',
+                  join(resultDir, 'executor.log')
+                )
+                await invokeCloud('oauth-cloud-read')
+                assert.equal(
+                  Number(
+                    await readFile(join(resultDir, 'oauth-provider-refreshed.marker'), 'utf8')
+                  ),
+                  cloud.remoteExecutor.pid
+                )
+              },
+            })
+            await cloud.waitForConnectedAppDevice()
+            const oauth = await connectionFor('oauth')
+            await api(`/plugin-connections/${oauth.id}`, 'DELETE', {
+              expected_revision: oauth.revision,
+            })
+            await invokeCloud('plugin_auth_device_not_granted')
+            await waitForValue(
+              () => connectionFor('oauth'),
+              item => item.provider_revocation === 'revoked',
+              workbenchReadyTimeoutMs,
+              'OAuth provider revocation did not finish'
+            )
+            assert.equal(
+              await readFile(join(resultDir, 'oauth-provider-revoked.marker'), 'utf8'),
+              'revoked'
+            )
+          },
+        ],
+        [
+          'plugin-account-auth-dws',
+          async () => {
+            await verifyDwsCloudAccount({
+              cloud,
+              resultDir,
+              executorHome,
+              api,
+              waitForValue,
+              managedRoot,
+              reconcileMarker,
+              timeoutMs: workbenchReadyTimeoutMs,
+              invoke: async (nextCommand, expected) => {
+                command = nextCommand
+                await invokeCloud(expected)
+              },
+            })
+          },
+        ],
+        [
+          'plugin-account-auth-conversation',
+          async () => {
+            await control.command('localConnectorAuth', 'body', {
+              value: JSON.stringify({
+                pluginKey: slug,
+                connectorSlug: 'conversation-qr',
+                action: 'logout',
+              }),
+            })
+            await control.command(
+              'click',
+              '[data-testid="plugin-connection-manage-connector:conversation-qr"]'
+            )
+            await control.command('waitFor', '[data-testid="local-connector-auth-qr"]')
+            const qrDetail = JSON.parse(await control.command('snapshot', 'body'))
+            assert.ok(
+              !qrDetail.testIds.includes('plugin-github-cli-auth-dialog'),
+              'Non-GitHub connector opened GitHub login'
+            )
+            assert.ok(
+              !qrDetail.text.includes('此插件通过对话授权 GitHub'),
+              'Non-GitHub connector used GitHub authorization copy'
+            )
+            await captureScreenshot(control, 'plugin-auth-detail-native-qr.png', 'body')
+            await control.command('click', '[data-testid="local-connector-auth-cancel"]')
+            await control.command(
+              'waitFor',
+              '[data-testid="plugin-connection-manage-connector:conversation-qr"]:not([disabled])'
+            )
 
-      await waitForValue(
-        () => connectionFor('oauth'),
-        item => item?.device_ids.includes(CLOUD_DEVICE_ID),
-        workbenchReadyTimeoutMs,
-        'OAuth source did not automatically connect'
-      )
-      await rm(oauthSource)
-      const sourcePids = [
-        Number(await readFile(join(resultDir, 'oauth-source-executor.pid'), 'utf8')),
-      ]
-      assert.ok(
-        sourcePids.every(pid => Number.isSafeInteger(pid) && pid > 0 && processIsAlive(pid))
-      )
-      command = `python3 ${quote(join(cloudRoot, 'scripts/oauth-cli.py'))} read`
-      await restartDesktopApp({
-        afterStop: async () => {
-          await waitForValue(
-            () => sourcePids.every(pid => !processIsAlive(pid)),
-            Boolean,
-            workbenchReadyTimeoutMs,
-            'Source survived shutdown'
-          )
-          await cloud.waitForDeviceStatus(
-            local.device_id,
-            'offline',
-            join(resultDir, 'executor.log')
-          )
-          await invokeCloud('oauth-cloud-read')
-          assert.equal(
-            Number(await readFile(join(resultDir, 'oauth-provider-refreshed.marker'), 'utf8')),
-            cloud.remoteExecutor.pid
-          )
-        },
-      })
-      await cloud.waitForConnectedAppDevice()
-      const oauth = await connectionFor('oauth')
-      await api(`/plugin-connections/${oauth.id}`, 'DELETE', { expected_revision: oauth.revision })
-      await invokeCloud('plugin_auth_device_not_granted')
-      await waitForValue(
-        () => connectionFor('oauth'),
-        item => item.provider_revocation === 'revoked',
-        workbenchReadyTimeoutMs,
-        'OAuth provider revocation did not finish'
-      )
-      assert.equal(
-        await readFile(join(resultDir, 'oauth-provider-revoked.marker'), 'utf8'),
-        'revoked'
-      )
-      const localAuth = async (action, sessionId) =>
-        JSON.parse(
-          await control.command('localConnectorAuth', 'body', {
-            value: JSON.stringify({ pluginKey: slug, connectorSlug: 'mail', action, sessionId }),
-          })
-        )
-      // The legacy source is gone. The original entry must show the managed account.
-      assert.equal((await localAuth('health')).status, 'ok')
-      assert.equal((await localAuth('logout')).status, 'ok')
-      assert.equal((await connectionFor('mail')).status, 'disconnected')
-      command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
-      await invokeCloud('plugin_auth_device_not_granted')
-      assert.equal((await localAuth('health')).status, 'need_login')
+            await verifyConversationQrAuthorization({
+              control,
+              slug,
+              ordinaryPrompt,
+              authModel,
+              getOrdinaryRequests: () => ordinaryRequests,
+              qrApproval,
+              captureScreenshot,
+              homePath,
+              waitForValue,
+              pluginRoots: await (async () => {
+                const manifest = JSON.parse(
+                  await readFile(join(executorHome, 'capabilities/manifest-v2.json'), 'utf8')
+                )
+                const item = Object.values(manifest.plugins).find(
+                  item => item.installed_plugin_id === installedId
+                )
+                assert.ok(item, 'Local installed plugin is missing')
+                return [
+                  await managedRoot(executorHome, installedId),
+                  resolve(executorHome, 'capabilities', item.store_path),
+                ]
+              })(),
+            })
+          },
+        ],
+        [
+          'plugin-account-auth-github',
+          async () => {
+            // Real gh with an empty configuration establishes the unauthenticated
+            // path without replacing a provider or minting CI account credentials.
+            const ghHealth = JSON.parse(
+              await control.command('localConnectorAuth', 'body', {
+                value: JSON.stringify({
+                  pluginKey: 'github',
+                  connectorSlug: 'wework-github-cli',
+                  action: 'health',
+                }),
+              })
+            )
+            assert.equal(
+              ghHealth.status,
+              'need_login',
+              `Isolated gh health must require login: ${JSON.stringify(ghHealth)}`
+            )
+            await control.command('click', '[data-testid="plugin-detail-back-button"]')
+            await control.command('waitFor', '[data-testid="plugins-search-input"]')
+            await verifyGithubManageConnectionConsent(control, slug, release.pluginId)
+            for (const action of ['cancel', 'ordinary', 'resume']) {
+              await control.command('click', '[data-testid="new-chat-button"]')
+              await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+              const reference =
+                action === 'resume'
+                  ? ''
+                  : action === 'cancel'
+                    ? '[$GitHub](plugin://github@openai-curated-remote) '
+                    : '[$GitHub](app://connector_account_specific_id) '
+              const ghDraft = `${reference}${ghResumePrompt} ${action}`
+              const previousRequests = authModel.getGithubRequests()
+              await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ghDraft })
+              await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+              await control.command('waitFor', '[data-testid="github-cli-login"]')
+              assert.equal(
+                authModel.getGithubRequests(),
+                previousRequests + 1,
+                'GitHub authorization blocked sending instead of responding to the runtime error'
+              )
+              assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
+              const pendingGh = JSON.parse(await control.command('snapshot', 'body'))
+              assert.ok(
+                !pendingGh.testIds.includes('github-cli-device-code'),
+                'gh login started before consent'
+              )
+              if (action === 'cancel') {
+                await control.command('click', '[data-testid="connector-auth-cancel"]')
+                assert.equal(
+                  await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+                  '',
+                  'Cancelling GitHub authorization restored an already sent message'
+                )
+                const cancelledGh = JSON.parse(await control.command('snapshot', 'body'))
+                assert.ok(
+                  !cancelledGh.testIds.includes('github-cli-auth'),
+                  'gh authorization card remained open after cancellation'
+                )
+              }
+              await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
+              await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+              await control.command('waitFor', 'body', { text: `${ordinaryPrompt} completed` })
+              const recovered = JSON.parse(await control.command('snapshot', 'body'))
+              assert.ok(
+                !recovered.testIds.includes('github-cli-auth'),
+                'Runtime GitHub authorization blocked ordinary chat'
+              )
+            }
+            await captureScreenshot(control, 'github-cli-ordinary-chat-recovered.png', 'body')
+          },
+        ],
+      ])
+      const check = checks.get(checkpoint)
+      assert.ok(check, `Unknown account authentication checkpoint: ${checkpoint}`)
+      console.log(`[desktop-e2e-account] start ${checkpoint}`)
+      await check()
+      console.log(`[desktop-e2e-account] end ${checkpoint}`)
+      // Return to the visible plugin detail after a long background-only workflow.
       await control.command('click', '[data-testid="plugins-button"]')
+      const pluginPage = JSON.parse(await control.command('snapshot', 'body'))
+      if (pluginPage.testIds.includes('plugin-detail-back-button')) {
+        await control.command('click', '[data-testid="plugin-detail-back-button"]')
+      }
       await control.command(
         'waitFor',
         `[data-testid="plugins-installed-strip-item-${installedId}"]`
       )
       await control.command('click', `[data-testid="plugins-installed-strip-item-${installedId}"]`)
-      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
-      await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
-      await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
-        value: 'mail',
-      })
-      await control.command('click', '[data-testid="plugin-connector-source-continue"]')
-      await control.command('waitFor', '[data-testid="plugin-connector-section"]', {
-        text: '已连接 · git.one.example',
-      })
-      await waitForValue(
-        () => connectionFor('mail'),
-        item => item?.status === 'connected' && item.device_ids.includes(CLOUD_DEVICE_ID),
-        workbenchReadyTimeoutMs,
-        'Fresh login did not resume cloud authentication'
-      )
-      await rm(sourceAuth)
-      assert.equal((await localAuth('health')).status, 'ok')
-      await invokeCloud('cloud-account-updated')
-      await verifyDwsCloudAccount({
-        cloud,
-        resultDir,
-        executorHome,
-        api,
-        waitForValue,
-        managedRoot,
-        timeoutMs: workbenchReadyTimeoutMs,
-        invoke: async (nextCommand, expected) => {
-          command = nextCommand
-          await invokeCloud(expected)
-        },
-      })
-      // Return to the visible plugin detail after a long background-only workflow.
-      await control.command('click', '[data-testid="plugins-button"]')
       await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
       const finalPage = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(!finalPage.testIds.some(id => id.startsWith('plugin-account-')))
@@ -684,33 +729,8 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         }
       }
       await writeFile(
-        join(resultDir, 'plugin-account-auth-verification.json'),
-        JSON.stringify(
-          {
-            noAuthorizationControls: true,
-            installedWithoutSecondLogin: true,
-            automaticLoginAfterInstall: true,
-            automaticCredentialUpdate: true,
-            automaticCloudGrant: true,
-            cloudBusinessWithoutSource: true,
-            cloudBusinessFromRuntimeCopy: true,
-            exclusiveSourceChangeFenced: true,
-            interruptedDetachRecoveredAutomatically: true,
-            exclusiveTransferCloudExecution: true,
-            sourceOfflineOAuthRefresh: true,
-            oauthProviderRevocation: true,
-            legacyManagedHealth: true,
-            localLogoutDisconnectsCloud: true,
-            originalLoginReconnectsCloud: true,
-            dwsOfficialSourceStoreAutomaticMigration: true,
-            dwsUnrelatedAccountPreserved: true,
-            dwsCloudExecution: true,
-            deviceRevocationSurvivesAutomaticReconciliation: true,
-            noCredentialLogs: true,
-          },
-          null,
-          2
-        )
+        join(resultDir, `${checkpoint}-verification.json`),
+        JSON.stringify({ checkpoint, completed: true, noCredentialLogs: true }, null, 2)
       )
     },
   }

@@ -77,20 +77,44 @@ fn verify_token(config: &AuthConfig, token: &str) -> Result<String, AuthError> {
     }
 }
 
-/// Database user row (`users` table) for authentication and search.
+/// Database user row (`users` table) for authentication.
 ///
-/// `user_name` and `email` are part of the source row shape; they are
-/// selected so the auth query matches the source column projection but are
-/// only consumed by the search endpoint's separate query.
+/// The projection mirrors the source SQLAlchemy `db.query(User)` column list
+/// exactly (all twelve mapped columns, aliased `users_<column>`), so the
+/// prepared statement matches the recorded exchange for replay. Only `id`,
+/// `user_name`, and `is_active` are consumed here.
 #[derive(Debug, brz_mysql::FromMysqlRow)]
 pub struct UserRow {
+    #[mysql(rename = "users_id")]
     pub id: i32,
-    #[allow(dead_code)]
+    #[mysql(rename = "users_user_name")]
     pub user_name: String,
     #[allow(dead_code)]
+    #[mysql(rename = "users_password_hash")]
+    pub users_password_hash: String,
+    #[allow(dead_code)]
+    #[mysql(rename = "users_email")]
     pub email: Option<String>,
     #[allow(dead_code)]
+    #[mysql(rename = "users_git_info")]
+    pub git_info: brz_mysql::Json<brz_json::OpaqueJson>,
+    #[mysql(rename = "users_is_active")]
     pub is_active: i8,
+    #[allow(dead_code)]
+    #[mysql(rename = "users_role")]
+    pub role: String,
+    #[allow(dead_code)]
+    #[mysql(rename = "users_auth_source")]
+    pub auth_source: String,
+    #[allow(dead_code)]
+    #[mysql(rename = "users_preferences")]
+    pub preferences: String,
+    #[allow(dead_code)]
+    #[mysql(rename = "users_created_at")]
+    pub created_at: chrono::NaiveDateTime,
+    #[allow(dead_code)]
+    #[mysql(rename = "users_updated_at")]
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 /// `get_current_user`: verify the bearer token and load the active user.
@@ -108,10 +132,7 @@ where
     }
     let username = verify_token(config, &token)?;
     let user: Option<UserRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_name, email, is_active FROM users WHERE user_name = ? LIMIT 1",
-            (username,),
-        )
+        .fetch_optional(crate::auth::USER_BY_NAME_QUERY, (username,))
         .await
         .map_err(AuthError::dependency)?;
     match user {

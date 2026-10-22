@@ -49,6 +49,14 @@ describe('E2E embedding HTTP boundary', () => {
     expect(result.data[0].embedding).toHaveLength(32)
     expect(result.data[0].embedding.every(Number.isFinite)).toBe(true)
     expect(result.data[0].embedding).not.toEqual(result.data[1].embedding)
+    // Retrieval assertions compare an indexed chunk against a different query
+    // text, so every pair of vectors must score above a zero threshold.
+    const similarity = result.data[0].embedding.reduce(
+      (total: number, value: number, index: number) =>
+        total + value * result.data[1].embedding[index],
+      0
+    )
+    expect(similarity).toBeGreaterThan(0)
     const second = await fetch(url, { method: 'POST', body: JSON.stringify(payload) })
     expect((await second.json()).data).toEqual(result.data)
   })

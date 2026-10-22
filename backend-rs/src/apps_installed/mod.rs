@@ -15,6 +15,7 @@
 //! app with a `connected` user view is projected into a
 //! `ConnectorInstalledApp`.
 
+pub(crate) mod connection;
 pub mod db;
 mod handler;
 pub mod mcp;

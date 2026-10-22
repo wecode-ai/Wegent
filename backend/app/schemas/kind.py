@@ -23,6 +23,8 @@ from pydantic import (
 from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
+from shared.utils.decision_model import validate_decision_model_spec
+from shared.utils.model_category import resolve_model_category
 
 
 # API Format Enum for OpenAI-compatible models
@@ -59,25 +61,7 @@ class ModelCategoryType(str, Enum):
     RERANK = "rerank"
     VIDEO = "video"
     IMAGE = "image"
-
-
-def resolve_model_category(spec: Optional[Mapping[str, Any]]) -> str:
-    """Return the normalized category of a Model spec.
-
-    The CRD keeps the category at ``spec.modelType``; older payloads nest it in
-    ``spec.modelConfig.modelType``. Enum members are unwrapped and unknown
-    categories are returned lower-cased so callers can still report them.
-    """
-    model_type: Any = None
-    if isinstance(spec, Mapping):
-        model_type = spec.get("modelType")
-        if model_type is None:
-            model_config = spec.get("modelConfig") or {}
-            if isinstance(model_config, Mapping):
-                model_type = model_config.get("modelType")
-
-    model_type = getattr(model_type, "value", model_type)
-    return str(model_type or ModelCategoryType.LLM.value).strip().lower()
+    DECISION = "decision"
 
 
 # Type-specific configurations
@@ -93,6 +77,9 @@ class TTSConfig(BaseModel):
         1.0, ge=0.25, le=4.0, description="Speech speed (0.25-4.0)"
     )
     output_format: Optional[str] = Field("mp3", description="Output format (mp3, wav)")
+
+
+from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
 
 
 class STTConfig(BaseModel):
@@ -295,6 +282,11 @@ class ModelSpec(BaseModel):
 
     model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
 
+    @model_validator(mode="after")
+    def _validate_decision_model(self) -> "ModelSpec":
+        validate_decision_model_spec(self.model_dump(mode="json"))
+        return self
+
     @model_validator(mode="before")
     @classmethod
     def _reject_unsafe_keys(cls, value: Any) -> Any:
@@ -326,6 +318,11 @@ class ModelSpec(BaseModel):
         None,
         coerce_numbers_to_str=True,
         description="Relative model usage cost. A value of 1 represents the baseline cost.",
+    )
+    capability: Optional[str | Dict[str, Any]] = Field(
+        None,
+        description="Human-readable model summary, or publication metadata with "
+        "the summary in its description field.",
     )
 
     # Legacy top-level token limits. New configurations should use the
@@ -573,6 +570,9 @@ class BotSpec(BaseModel):
     modelRef: Optional[ModelRef] = None
     # Legacy Bots without this field keep their configured Ghost capabilities.
     capability_mode: str = "manual"
+    routing_configuration_required: bool = False
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from knowledge_engine.retrieval.query_planning import build_search_hint_plan
+from shared.knowledge_module.query_planning import build_search_hint_plan
 
 
 def test_build_search_hint_plan_uses_normalized_fallback() -> None:

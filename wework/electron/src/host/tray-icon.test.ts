@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { NativeImage } from 'electron'
-import { convertToTemplateBitmap, createTrayIcon, type NativeImageFactory } from './tray-icon.js'
+import {
+  convertToTemplateBitmap,
+  createTrayIcon,
+  trayIconFilename,
+  type NativeImageFactory,
+} from './tray-icon.js'
 
 function image(overrides: Partial<NativeImage> = {}): NativeImage {
   return {
@@ -128,20 +133,44 @@ describe('tray icon', () => {
     expect(alphaAt(42, 3)).toBe(235)
   })
 
-  test('keeps the application icon unchanged outside macOS', () => {
-    const source = image()
+  test.each(['win32', 'linux'] as const)(
+    'keeps the rounded colored icon unchanged on %s',
+    platform => {
+      const source = image()
+      const images: NativeImageFactory = {
+        createFromPath: vi.fn(() => source),
+        createFromBitmap: vi.fn(),
+      }
+
+      expect(
+        createTrayIcon(images, '/icons/tray-rounded.png', null, platform, {
+          runningCount: 0,
+          showRunningStatus: false,
+        })
+      ).toBe(source)
+      expect(source.resize).not.toHaveBeenCalled()
+      expect(images.createFromBitmap).not.toHaveBeenCalled()
+      expect(source.setTemplateImage).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each(['win32', 'linux'] as const)('selects the rounded tray resource on %s', platform => {
+    expect(trayIconFilename(platform)).toBe('tray-rounded.png')
+  })
+
+  test('keeps the original macOS template source', () => {
+    expect(trayIconFilename('darwin')).toBe('128x128.png')
+  })
+
+  test.each(['win32', 'linux'] as const)('rejects a missing rounded resource on %s', platform => {
     const images: NativeImageFactory = {
-      createFromPath: vi.fn(() => source),
+      createFromPath: vi.fn(() => image({ isEmpty: vi.fn(() => true) })),
       createFromBitmap: vi.fn(),
     }
 
-    expect(
-      createTrayIcon(images, '/icons/128x128.png', null, 'win32', {
-        runningCount: 0,
-        showRunningStatus: false,
-      })
-    ).toBe(source)
-    expect(source.resize).not.toHaveBeenCalled()
+    expect(() => createTrayIcon(images, '/icons/tray-rounded.png', null, platform)).toThrow(
+      'Tray icon could not be loaded: /icons/tray-rounded.png'
+    )
     expect(images.createFromBitmap).not.toHaveBeenCalled()
   })
 })

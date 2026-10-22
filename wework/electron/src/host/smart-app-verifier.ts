@@ -43,6 +43,9 @@ import type {
   SmartAppVerificationStageResult,
 } from './smart-app-verification-types.js'
 
+import { SmartAppVerificationError } from './smart-app-verification-types.js'
+export { SmartAppVerificationError } from './smart-app-verification-types.js'
+
 const REPORT_PATH = join('test-results', 'smart-app', 'verification.json')
 const PIPELINE_STAGES = ['manifest', 'scripts', 'artifacts', 'runtime'] as const
 
@@ -99,13 +102,6 @@ const DEFAULT_PACKAGE_DEPENDENCIES: SmartAppVerifierPackageDependencies = {
   extractArchive: extractSmartAppArchive,
   findManifestRoot: findSmartAppManifestRoot,
   validateArchivePackage: validateSmartAppPackageDirectory,
-}
-
-export class SmartAppVerificationError extends Error {
-  constructor(readonly report: SmartAppVerificationReport) {
-    super(report.issues[0]?.code ?? 'Smart App verification failed')
-    this.name = 'SmartAppVerificationError'
-  }
 }
 
 export class SmartAppVerifier {
@@ -314,6 +310,11 @@ export class SmartAppVerifier {
         stageResult('package', startedAt, finishedAt, issues),
       ],
       issues: [...source.issues, ...issues],
+    }
+    if (report.status === 'failed') {
+      console.warn('[smart-app-verification] failed', {
+        issues: issues.map(({ code, stage, message }) => ({ code, stage, message })),
+      })
     }
     await persistReport(root, report)
     return report

@@ -831,6 +831,84 @@ describe('CloudConnectionProvider', () => {
     )
   })
 
+  it.each(['legacy_access_token', 'desktop_refresh'] as const)(
+    'keeps loopback for a local Backend with %s credentials when it advertises its same-port LAN socket',
+    async credentialMode => {
+      saveStoredCloudConnection({
+        backendUrl: 'http://127.0.0.1:8000',
+        apiBaseUrl: 'http://127.0.0.1:8000/api',
+        socketBaseUrl: 'http://127.0.0.1:8000',
+        socketPath: '/socket.io',
+        credentialMode,
+        token: credentialMode === 'legacy_access_token' ? tokenWithExp() : undefined,
+        user: { id: 2, user_name: 'local', email: 'local@example.com' },
+        connectedAt: '2026-09-30T00:00:00.000Z',
+      })
+      httpMocks.get.mockImplementation((endpoint: string) => {
+        if (endpoint === '/auth/wework/config') {
+          return Promise.resolve({
+            web_url: 'http://127.0.0.1:3000',
+            socket_url: 'http://192.168.31.132:8000',
+          })
+        }
+        return Promise.resolve({ id: 2, user_name: 'local', email: 'local@example.com' })
+      })
+
+      render(
+        <CloudConnectionProvider>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+        expect(screen.getByTestId('cloud-web-url')).toHaveTextContent('http://127.0.0.1:3000')
+        expect(
+          JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl
+        ).toBe('http://127.0.0.1:8000')
+      })
+      if (credentialMode === 'desktop_refresh') {
+        expect(credentialMocks.refreshAccessToken).toHaveBeenCalledWith('http://127.0.0.1:8000/api')
+      } else {
+        expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it('preserves an explicit Socket override for a local Backend', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'http://127.0.0.1:8000',
+      apiBaseUrl: 'http://127.0.0.1:8000/api',
+      socketBaseUrl: 'ws://192.168.31.132:8000',
+      socketBaseUrlOverride: 'ws://192.168.31.132:8000',
+      socketPath: '/socket.io',
+      user: { id: 2, user_name: 'local', email: 'local@example.com' },
+      connectedAt: '2026-09-30T00:00:00.000Z',
+    })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'http://127.0.0.1:3000',
+          socket_url: 'http://192.168.31.132:8000',
+        })
+      }
+      return Promise.resolve({ id: 2, user_name: 'local', email: 'local@example.com' })
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-web-url')).toHaveTextContent('http://127.0.0.1:3000')
+      expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(
+        'ws://192.168.31.132:8000'
+      )
+    })
+  })
+
   it('keeps the user Socket URL ahead of the Backend declaration', async () => {
     saveStoredCloudConnection({
       backendUrl: 'https://api.example.com',

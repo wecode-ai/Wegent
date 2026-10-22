@@ -25,6 +25,7 @@ export interface RuntimeTaskLifecycleState {
   turnPhase: RuntimeTaskTurnPhase
   turnOutcome: RuntimeTaskTurnOutcome
   activeTurnId: string | null
+  latestTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
   interactionStatus: RuntimeTaskInteractionStatus | null
   hasAuthoritativeGoalStatus: boolean
@@ -61,6 +62,7 @@ export interface RuntimeTaskLifecycleSnapshot {
     phase: RuntimeTaskTurnPhase
     active: boolean
     id: string | null
+    latestId: string | null
     outcome: RuntimeTaskTurnOutcome
   }
   goalStatus: RuntimeGoalStatus | null
@@ -92,7 +94,7 @@ export type RuntimeTaskLifecycleEvent =
       outcome?: Exclude<RuntimeTaskTurnOutcome, null>
     }
   | { type: 'turn_recovered'; streaming: boolean; turnId?: string | null }
-  | { type: 'user_input_requested' }
+  | { type: 'user_input_requested'; delivery?: 'async' }
   | { type: 'user_input_responded' }
   | { type: 'goal_status_received'; goalStatus: RuntimeGoalStatus | null }
   | { type: 'marked_read' }

@@ -1,3 +1,4 @@
+import { getProviderModelConfigs, markProviderModelCatalogReady } from './providerModelState'
 import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
@@ -6,12 +7,14 @@ import { codexCatalogModelIdForUpstream } from './codexCatalog'
 
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
 export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
+export const DEEPSEEK_FLASH_MODEL_ID = 'deepseek-flash'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
 export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
   id: string
+  providerConnectionId?: string
   providerProfileId?: string
   displayName: string
   group?: string
@@ -24,6 +27,7 @@ export interface LocalModelConfig {
   apiKey?: string
   apiKeyConfigured?: boolean
   contextWindow?: number
+  maxOutputTokens?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
   visionModelConfigId?: string
@@ -59,6 +63,7 @@ export interface SaveLocalModelConfigInput {
   requestPath?: string | null
   apiKey?: string | null
   contextWindow?: number | string | null
+  maxOutputTokens?: number | string | null
   webSearchMode?: LocalModelWebSearchMode | null
   imageGenerationEnabled?: boolean | null
   visionModelConfigId?: string | null
@@ -175,6 +180,10 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       (typeof record.contextWindow === 'number' &&
         Number.isInteger(record.contextWindow) &&
         record.contextWindow > 0)) &&
+    (record.maxOutputTokens === undefined ||
+      (typeof record.maxOutputTokens === 'number' &&
+        Number.isSafeInteger(record.maxOutputTokens) &&
+        record.maxOutputTokens > 0)) &&
     (record.webSearchMode === undefined ||
       record.webSearchMode === 'disabled' ||
       record.webSearchMode === 'cached' ||
@@ -268,6 +277,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       : legacyConfig.contextWindow
         ? { contextWindow: legacyConfig.contextWindow }
         : {}),
+    ...(legacyConfig.maxOutputTokens ? { maxOutputTokens: legacyConfig.maxOutputTokens } : {}),
     webSearchMode: migrateDeepSeekResponses
       ? 'live'
       : normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
@@ -369,6 +379,17 @@ export function buildLocalModelRequestUrl(
   )}`
 }
 
+/** Provider files store a base prefix, never an inferred complete request URL. */
+export function localModelConfigRequestUrl(config: LocalModelConfig): string {
+  if (config.providerConnectionId) {
+    return `${normalizeLocalModelBaseUrl(config.baseUrl)}${normalizeLocalModelRequestPath(
+      config.requestPath,
+      config.apiFormat
+    )}`
+  }
+  return buildLocalModelRequestUrl(config.baseUrl, config.requestPath, config.apiFormat)
+}
+
 export function splitLocalModelRequestUrl(
   value: string,
   preferredPath?: string | null,
@@ -420,10 +441,17 @@ export function normalizeLocalModelId(value: string): string {
 export function normalizeLocalModelContextWindow(
   value?: number | string | null
 ): number | undefined {
+  return normalizeLocalModelTokenLimit(value, 'Context window')
+}
+
+function normalizeLocalModelTokenLimit(
+  value: number | string | null | undefined,
+  label: string
+): number | undefined {
   if (value === undefined || value === null || value === '') return undefined
   const parsed = typeof value === 'number' ? value : Number(value)
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error('Context window must be a positive integer')
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`)
   }
   return parsed
 }
@@ -456,11 +484,28 @@ function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
   return new Date(timestamp).toISOString()
 }
 
-export function listLocalModelConfigs(): LocalModelConfig[] {
+/** Read standalone local models that have not been moved into provider configuration. */
+export function listLegacyLocalModelConfigs(): LocalModelConfig[] {
   return readStoredConfigs()
 }
 
+/** Combine legacy models with the provider projection, preferring provider-owned identities. */
+export function listLocalModelConfigs(): LocalModelConfig[] {
+  const owned = getProviderModelConfigs()
+  const ids = new Set(owned.map(model => model.id))
+  return [...readStoredConfigs().filter(model => !ids.has(model.id)), ...owned]
+}
+
+/** Remove only legacy records whose IDs were successfully persisted as provider models. */
+export function removeMigratedLocalModelConfigs(ids: ReadonlySet<string>): void {
+  writeStoredConfigs(readStoredConfigs().filter(model => !ids.has(model.id)))
+}
+
+/** Validate and save a standalone model while preventing edits to provider-owned records. */
 export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalModelConfig {
+  if (input.id && getProviderModelConfigs().some(model => model.id === input.id)) {
+    throw new Error('Edit this model in Provider settings or its YAML file')
+  }
   const modelId = normalizeLocalModelId(input.modelId)
   const apiFormat = normalizeLocalModelApiFormat(input.apiFormat)
   const splitUrl = splitLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat)
@@ -470,6 +515,10 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
   const contextWindow = normalizeLocalModelContextWindow(input.contextWindow)
+  const maxOutputTokens = normalizeLocalModelTokenLimit(input.maxOutputTokens, 'Max output tokens')
+  if (contextWindow && maxOutputTokens && maxOutputTokens >= contextWindow) {
+    throw new Error('Max output tokens must be less than context window')
+  }
   const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
@@ -550,6 +599,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     apiKey,
     apiKeyConfigured: Boolean(apiKey),
     ...(contextWindow ? { contextWindow } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
     webSearchMode,
     imageGenerationEnabled,
     ...(visionModelConfigId ? { visionModelConfigId } : {}),
@@ -571,7 +621,9 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   return next
 }
 
+/** Acknowledge matching catalog versions across provider and standalone model sources. */
 export function markLocalModelCatalogReady(snapshot: readonly LocalModelCatalogSnapshot[]): void {
+  markProviderModelCatalogReady(snapshot)
   const writtenVersions = new Map(snapshot.map(model => [model.id, model.updatedAt]))
   const configs = readStoredConfigs().map(config => {
     if (writtenVersions.get(config.id) !== config.updatedAt) return config
@@ -639,7 +691,7 @@ export function findLocalModelConfigByModelName(
   modelName?: string | null
 ): LocalModelConfig | null {
   const id = localModelIdFromModelName(modelName)
-  const configs = readStoredConfigs()
+  const configs = listLocalModelConfigs()
   if (id) return configs.find(config => config.id === id) ?? null
   if (!modelName) return null
   return (

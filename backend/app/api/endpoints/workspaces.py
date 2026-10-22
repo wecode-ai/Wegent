@@ -14,6 +14,7 @@ from app.schemas.cloud_project import (
     CloudProjectListResponse,
     CloudProjectResponse,
 )
+from app.schemas.runner_routing import WorkspaceRunnerCreate
 from app.schemas.workspace import (
     CollaborationGroupCreate,
     CollaborationGroupListResponse,
@@ -34,6 +35,7 @@ from app.schemas.workspace import (
     WorkspaceMemberResponse,
     WorkspaceMemberUpdate,
     WorkspaceNavigationContextResponse,
+    WorkspaceOwnershipTransfer,
     WorkspaceResponse,
     WorkspaceUpdate,
 )
@@ -47,6 +49,19 @@ from app.services.workspaces.responses import list_workspace_responses
 
 router = APIRouter()
 resources_router = APIRouter()
+
+
+@router.post("/{workspace_id}/transfer-ownership", response_model=WorkspaceResponse)
+def transfer_workspace_ownership(
+    workspace_id: int,
+    values: WorkspaceOwnershipTransfer,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+):
+    workspace = workspace_service.transfer_ownership(
+        db, workspace_id, current_user.id, values
+    )
+    return _response(db, workspace, current_user)
 
 
 def _response(
@@ -431,3 +446,43 @@ def create_workspace_project(
         values.model_copy(update={"workspace_id": str(workspace_id)}),
     )
     return _project_response(db, project, current_user)
+
+
+@resources_router.get("/execution-environments")
+async def list_runner_catalog(
+    project_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+):
+    from app.services.runner_catalog import environment_catalog
+
+    return await environment_catalog(db, current_user.id, project_id)
+
+
+@router.post("/{workspace_id}/runners", status_code=201)
+def create_workspace_runner(
+    workspace_id: int,
+    values: WorkspaceRunnerCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+):
+    from app.services.workspaces.runner_registration import register_runner
+
+    return register_runner(db, workspace_id, current_user.id, values.name)
+
+
+@router.delete("/{workspace_id}/runners/{environment_id}", status_code=204)
+async def revoke_workspace_runner(
+    workspace_id: int,
+    environment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+):
+    from app.core.socketio import get_sio
+    from app.services.device_service import device_service
+    from app.services.workspaces.runner_registration import revoke_runner
+
+    device = revoke_runner(db, workspace_id, current_user.id, environment_id)
+    online = await device_service.get_device_online_info(device.user_id, device.name)
+    if online and online.get("socket_id"):
+        await get_sio().disconnect(online["socket_id"], namespace="/local-executor")

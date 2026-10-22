@@ -73,6 +73,18 @@ impl AssistantTurnAccumulation {
             || !self.memory_citations.is_empty()
     }
 
+    pub(super) fn has_only_context_compaction_output(&self) -> bool {
+        !self.blocks.is_empty()
+            && self.assistant_parts.is_empty()
+            && self.memory_citations.is_empty()
+            && self.file_changes.is_none()
+            && self.blocks.iter().all(|block| {
+                string_field(block, "tool_name")
+                    .or_else(|| string_field(block, "toolName"))
+                    .is_some_and(|name| name == "context_compaction")
+            })
+    }
+
     pub(super) fn assistant_part_count(&self) -> usize {
         self.assistant_parts.len()
     }
@@ -676,7 +688,12 @@ fn assistant_message_phase(
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        None if has_later_process => AssistantMessagePhase::Process,
+        None if has_later_process
+            || string_field(item, "status")
+                .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
+        {
+            AssistantMessagePhase::Process
+        }
         _ => AssistantMessagePhase::Final,
     }
 }

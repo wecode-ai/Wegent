@@ -1,12 +1,13 @@
-import { beginOperation, type OperationKey } from './operationBus'
+import { beginOperation, type OperationKey, type OperationResultDetail } from './operationBus'
 
 /** Observe the confirmed result, preserving the original return value or error. */
 export async function observeOperation<T>(
   key: OperationKey,
   execute: () => Promise<T>,
-  succeeded: (result: T) => boolean = () => true
+  succeeded: (result: T) => boolean = () => true,
+  detail: OperationResultDetail = {}
 ): Promise<T> {
-  const attempt = beginOperation(key)
+  const attempt = beginOperation(key, detail)
   let result: T
   try {
     result = await execute()

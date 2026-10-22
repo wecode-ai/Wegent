@@ -24,7 +24,10 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis, AdminPublicModel, AdminPublicModelCreate } from '@/apis/admin'
 import { ModelCRD, ModelCategoryType, ModelSpecConfig } from '@/apis/models'
-import { getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
+import {
+  getModelCapabilitiesFromSpec,
+  getModelCapabilityDescription,
+} from '@/lib/model-capabilities'
 import ModelEditDialog, {
   ModelFormData,
   ModelInitialData,
@@ -69,6 +72,7 @@ export function convertAdminModelToInitialData(model: AdminPublicModel): ModelIn
     contextWindow: modelConfig?.context_window as number | undefined,
     maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
     costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
+    capability: getModelCapabilityDescription(spec?.capability),
     modelCapabilities: getModelCapabilitiesFromSpec({
       modelCapabilities: spec?.modelCapabilities,
       modelConfig,

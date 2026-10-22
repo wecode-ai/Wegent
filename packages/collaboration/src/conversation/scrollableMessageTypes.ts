@@ -13,6 +13,7 @@ import type {
 } from '@wegent/chat-core/runtime-conversation'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { type MessageListProps } from './MessageList'
+import type { ConversationSearchTarget } from './useConversationSearchTarget'
 
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
@@ -34,6 +35,7 @@ export interface RuntimeTranscriptRange {
 
 export interface UserViewportAnchor {
   messageId: string
+  element: HTMLElement
   anchorIndex: number
   offsetFromScrollerTop: number
   textOffset: number | null
@@ -57,8 +59,10 @@ export interface ScrollableMessageAreaProps extends Pick<
   | 'renderVisualization'
 > {
   messages: WorkbenchMessage[]
+  renderGapAfterMessage?: MessageListProps['renderGapAfterMessage']
   turns?: RuntimeConversationTurn[]
   loading?: boolean
+  historyError?: ReactNode
   isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
   loadingMoreBefore?: boolean
@@ -114,6 +118,8 @@ export interface ScrollableMessageAreaProps extends Pick<
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   autoScrollSuspended?: boolean
+  searchTarget?: ConversationSearchTarget | null
+  searchNavigationPaused?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
@@ -132,8 +138,10 @@ export function areScrollableMessageAreaPropsEqual(
     previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
     previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
     previous.messages !== next.messages ? 'messages' : null,
+    previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
     previous.turns !== next.turns ? 'turns' : null,
     previous.loading !== next.loading ? 'loading' : null,
+    previous.historyError !== next.historyError ? 'historyError' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
     previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,
     previous.loadingMoreBefore !== next.loadingMoreBefore ? 'loadingMoreBefore' : null,
@@ -203,6 +211,10 @@ export function areScrollableMessageAreaPropsEqual(
       ? 'onAskSelectionInSidebar'
       : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
+    previous.searchTarget !== next.searchTarget ? 'searchTarget' : null,
+    previous.searchNavigationPaused !== next.searchNavigationPaused
+      ? 'searchNavigationPaused'
+      : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'

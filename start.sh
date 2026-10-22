@@ -1316,6 +1316,8 @@ Options:
 
 Service Selection:
   Passing service names without --stop/--restart starts only those services.
+  Explicit service selections apply to start, stop, and restart independently.
+  Include kr when Knowledge Runtime is needed and is not already available.
   Example: $0 backend frontend
 
 Configuration File:
@@ -2480,6 +2482,9 @@ start_services() {
     if [ "$start_chat_shell" = true ]; then
         check_python_env "chat_shell" "Chat Shell"
     fi
+    if [ "$start_knowledge_runtime" = true ]; then
+        check_python_env "knowledge_runtime" "Knowledge Runtime"
+    fi
     echo ""
 
     # Patch backend connection URLs to use configured MYSQL_PORT / REDIS_PORT.
@@ -2572,12 +2577,13 @@ start_services() {
     # 4. Start Knowledge Runtime
     if [ "$start_knowledge_runtime" = true ]; then
         # INTERNAL_SERVICE_TOKEN: Token for internal service authentication
+        # Set both aliases so the template's empty prefixed token cannot override it.
         # BACKEND_INTERNAL_URL: URL for knowledge_runtime to call backend
         # KNOWLEDGE_RUNTIME_URL: URL for backend to call knowledge_runtime
         # --reload-dir: Watch shared and knowledge_engine modules for changes (editable dependencies)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "knowledge_runtime" "knowledge_runtime" \
-            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export KNOWLEDGE_RUNTIME_INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --env-file .env --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug" \
             "$KNOWLEDGE_RUNTIME_PORT"
     fi
 

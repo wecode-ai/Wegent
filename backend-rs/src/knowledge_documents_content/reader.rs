@@ -10,10 +10,9 @@
 //! `DocumentReadService.read_documents` (full SQLAlchemy-labeled
 //! projections; scalar filters inlined as literals matching the recorded
 //! COM_QUERY text).
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
-#[cfg(test)]
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -23,12 +22,13 @@ struct SourceConfig {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 struct ContextMetadata {
+    original_filename: Option<String>,
     file_extension: Option<String>,
 }
 
 /// `knowledge_documents` columns as rendered by
 /// `db.query(KnowledgeDocument)`.
-const DOCUMENT_COLUMNS: &str = "knowledge_documents.id AS knowledge_documents_id, \
+pub(crate) const DOCUMENT_COLUMNS: &str = "knowledge_documents.id AS knowledge_documents_id, \
      knowledge_documents.kind_id AS knowledge_documents_kind_id, \
      knowledge_documents.attachment_id AS knowledge_documents_attachment_id, \
      knowledge_documents.name AS knowledge_documents_name, \
@@ -50,7 +50,7 @@ const DOCUMENT_COLUMNS: &str = "knowledge_documents.id AS knowledge_documents_id
      knowledge_documents.updated_at AS knowledge_documents_updated_at";
 
 /// `knowledge_document_external_sources` columns.
-const EXTERNAL_SOURCE_COLUMNS: &str = "knowledge_document_external_sources.document_id \
+pub(crate) const EXTERNAL_SOURCE_COLUMNS: &str = "knowledge_document_external_sources.document_id \
      AS knowledge_document_external_sources_document_id, \
      knowledge_document_external_sources.kind_id \
      AS knowledge_document_external_sources_kind_id, \
@@ -97,17 +97,17 @@ pub struct DocumentRow {
     #[allow(dead_code)]
     pub knowledge_documents_index_generation: i64,
     #[allow(dead_code)]
-    pub knowledge_documents_splitter_config: Option<Json<crate::json_compat::OpaqueJson>>,
+    pub knowledge_documents_splitter_config: Option<Json<brz_json::OpaqueJson>>,
     pub knowledge_documents_source_type: String,
-    knowledge_documents_source_config: Option<Json<JsonProjection<SourceConfig>>>,
+    knowledge_documents_source_config: Option<Json<brz_json::OpaqueJson>>,
     #[allow(dead_code)]
     pub knowledge_documents_origin: String,
     #[allow(dead_code)]
     pub knowledge_documents_folder_id: i64,
     #[allow(dead_code)]
-    pub knowledge_documents_summary: Option<Json<crate::json_compat::OpaqueJson>>,
+    pub knowledge_documents_summary: Option<Json<brz_json::OpaqueJson>>,
     #[allow(dead_code)]
-    pub knowledge_documents_chunks: Option<Json<crate::json_compat::OpaqueJson>>,
+    pub knowledge_documents_chunks: Option<Json<brz_json::OpaqueJson>>,
     #[allow(dead_code)]
     pub knowledge_documents_created_at: Option<chrono::NaiveDateTime>,
     #[allow(dead_code)]
@@ -118,10 +118,27 @@ impl DocumentRow {
     /// `KnowledgeDocument.converted_attachment_id`: the integer stored under
     /// `source_config.converted_attachment_id`, when present.
     pub fn converted_attachment_id(&self) -> Option<i64> {
+        self.source_config()
+            .and_then(|config| config.converted_attachment_id)
+    }
+
+    /// `source_config` as an ordered map, for callers that rewrite the
+    /// document's configuration (the content update's converted-attachment
+    /// reference).
+    pub(crate) fn source_config_map(&self) -> Option<Map<String, Value>> {
+        let raw = self.knowledge_documents_source_config.as_ref()?;
+        let text = raw.0.as_raw().get();
+        if text == "null" {
+            return None;
+        }
+        serde_json::from_str(text).ok()
+    }
+
+    /// The typed `source_config` projection.
+    fn source_config(&self) -> Option<SourceConfig> {
         self.knowledge_documents_source_config
             .as_ref()
-            .and_then(|json| json.0.value.as_ref())
-            .and_then(|config| config.converted_attachment_id)
+            .and_then(|json| json.0.decode().ok())
     }
 }
 
@@ -164,10 +181,22 @@ impl SubtaskContextRow {
             .unwrap_or("")
     }
 
-    fn file_extension(&self) -> &str {
+    /// `SubtaskContext.original_filename`:
+    /// `type_data.get("original_filename", name)`.
+    pub fn original_filename(&self) -> String {
+        self.context_metadata()
+            .and_then(|data| data.original_filename.clone())
+            .unwrap_or_else(|| self.subtask_contexts_name.clone())
+    }
+
+    fn context_metadata(&self) -> Option<&ContextMetadata> {
         self.subtask_contexts_type_data
             .as_ref()
             .and_then(|json| json.0.value.as_ref())
+    }
+
+    fn file_extension(&self) -> &str {
+        self.context_metadata()
             .and_then(|data| data.file_extension.as_deref())
             .unwrap_or("")
     }
@@ -213,6 +242,31 @@ where
     Ok(document)
 }
 
+/// The KB-scoped document load of the knowledge-bases detail endpoint
+/// (`db.query(KnowledgeDocument).filter(id == doc_id, kind_id == kb_id).first()`),
+/// followed by the same `selectin` external-source load.
+pub async fn document_by_id_and_kind<M>(
+    mysql: &M,
+    document_id: i64,
+    kind_id: i64,
+) -> MysqlResult<Option<DocumentRow>>
+where
+    M: Mysql,
+{
+    let row: Option<DocumentRow> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT {DOCUMENT_COLUMNS} \nFROM knowledge_documents \n\
+                 WHERE knowledge_documents.id = {document_id} \
+                 AND knowledge_documents.kind_id = {kind_id} \n LIMIT 1"
+            ),
+            (),
+        )
+        .await?;
+    external_sources_by_document_ids(mysql, &[document_id]).await?;
+    Ok(row)
+}
+
 /// `DocumentReadService._load_documents`
 /// (`id.in_(document_ids)` bulk load). `ids` keeps the caller's order.
 pub async fn documents_by_ids<M>(mysql: &M, document_ids: &[i64]) -> MysqlResult<Vec<DocumentRow>>
@@ -242,12 +296,25 @@ where
 }
 
 /// The `selectin` external-source load (`external_source` relationship).
-async fn external_sources_by_document_ids<M>(mysql: &M, document_ids: &[i64]) -> MysqlResult<()>
+pub(crate) async fn external_sources_by_document_ids<M>(
+    mysql: &M,
+    document_ids: &[i64],
+) -> MysqlResult<()>
+where
+    M: Mysql,
+{
+    external_source_rows(mysql, document_ids).await.map(|_| ())
+}
+
+/// The same `selectin` load, returning the number of identity rows. The
+/// conversion failure transition needs `document.has_external_identity`
+/// without issuing the load twice.
+pub(crate) async fn external_source_rows<M>(mysql: &M, document_ids: &[i64]) -> MysqlResult<usize>
 where
     M: Mysql,
 {
     if document_ids.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let ids = document_ids
         .iter()
@@ -259,7 +326,7 @@ where
         #[allow(dead_code)]
         knowledge_document_external_sources_document_id: i64,
     }
-    let _rows: Vec<Row> = mysql
+    let rows: Vec<Row> = mysql
         .fetch_all(
             &format!(
                 "SELECT {EXTERNAL_SOURCE_COLUMNS} \n\
@@ -269,7 +336,85 @@ where
             (),
         )
         .await?;
+    Ok(rows.len())
+}
+
+/// The `selectin` external-source load for a **single** parent row, as
+/// `db.refresh(document)` renders it (`= ?`, not the bulk `IN (...)` the
+/// query-issued load uses).
+pub(crate) async fn external_sources_by_document<M>(mysql: &M, document_id: i64) -> MysqlResult<()>
+where
+    M: Mysql,
+{
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        #[allow(dead_code)]
+        knowledge_document_external_sources_document_id: i64,
+    }
+    let _rows: Vec<Row> = mysql
+        .fetch_all(
+            &format!(
+                "SELECT {EXTERNAL_SOURCE_COLUMNS} \n\
+                 FROM knowledge_document_external_sources \n\
+                 WHERE knowledge_document_external_sources.document_id = {document_id}"
+            ),
+            (),
+        )
+        .await?;
     Ok(())
+}
+
+/// `db.refresh(document)`: SQLAlchemy re-selects the row by primary key with
+/// unaliased columns and then loads its `selectin` relationships.
+pub(crate) async fn refresh_document<M>(mysql: &M, document_id: i64) -> MysqlResult<()>
+where
+    M: Mysql,
+{
+    const DOCUMENT_REFRESH_COLUMNS: &str = "knowledge_documents.id, knowledge_documents.kind_id, \
+         knowledge_documents.attachment_id, knowledge_documents.name, \
+         knowledge_documents.file_extension, knowledge_documents.file_size, \
+         knowledge_documents.status, knowledge_documents.user_id, knowledge_documents.is_active, \
+         knowledge_documents.index_status, knowledge_documents.index_generation, \
+         knowledge_documents.splitter_config, knowledge_documents.source_type, \
+         knowledge_documents.source_config, knowledge_documents.origin, \
+         knowledge_documents.folder_id, knowledge_documents.summary, knowledge_documents.chunks, \
+         knowledge_documents.created_at, knowledge_documents.updated_at";
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        #[allow(dead_code)]
+        id: i64,
+    }
+    let _row: Option<Row> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT {DOCUMENT_REFRESH_COLUMNS} \nFROM knowledge_documents \n\
+                 WHERE knowledge_documents.id = {document_id}"
+            ),
+            (),
+        )
+        .await?;
+    external_sources_by_document(mysql, document_id).await
+}
+
+/// `db.query(SubtaskContext).filter(SubtaskContext.id == context_id).first()`
+/// — the aliased projection both `KnowledgeService.update_document_content`
+/// and `context_service.get_context` issue for the target attachment.
+pub(crate) async fn context_by_id<M>(
+    mysql: &M,
+    context_id: i64,
+) -> MysqlResult<Option<SubtaskContextRow>>
+where
+    M: Mysql,
+{
+    mysql
+        .fetch_optional(
+            &format!(
+                "SELECT {SUBTASK_CONTEXT_COLUMNS} \nFROM subtask_contexts \n\
+                 WHERE subtask_contexts.id = {context_id} \n LIMIT 1"
+            ),
+            (),
+        )
+        .await
 }
 
 /// `_load_attachment_contexts`: bulk `subtask_contexts` load restricted to

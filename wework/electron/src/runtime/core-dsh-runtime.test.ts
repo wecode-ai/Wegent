@@ -1,25 +1,20 @@
-import {
-  chmod,
-  lstat,
-  mkdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   CORE_DSH_VERSION,
-  copyManagedPlugin,
   createCoreDshLaunch,
   prepareCoreDshRuntime,
+  resetCoreDshRuntime,
   selectBundledDshRuntimeMatching,
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, chmod: vi.fn(actual.chmod) }
+})
 
 async function prepareCoreDshLaunch(
   options: Parameters<typeof prepareCoreDshRuntime>[0] & { port: number }
@@ -29,37 +24,36 @@ async function prepareCoreDshLaunch(
 }
 
 describe('core DSH runtime', () => {
-  test('preserves linked plugin directories as Windows junctions', async () => {
-    const root = await temporaryDirectory('core-dsh-windows-links-')
+  test('selects the same materialized runtime for both declared roles', async () => {
+    const root = await temporaryDirectory('shared-dsh-selection-')
     try {
-      const source = join(root.path, 'source')
-      const assets = join(root.path, 'assets')
-      const destination = join(root.path, 'destination')
-      await mkdir(join(source, 'web'), { recursive: true })
-      await mkdir(assets)
-      await writeFile(join(assets, 'index.js'), 'window.wework = true\n')
-      await symlink(
-        assets,
-        join(source, 'web', 'assets'),
-        process.platform === 'win32' ? 'junction' : 'dir'
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      await writeFile(
+        join(runtime.root, 'runtime.json'),
+        JSON.stringify({
+          dshVersion: CORE_DSH_VERSION,
+          roles: ['core', 'workbench'],
+          sourceFingerprint: runtime.fingerprint,
+        })
       )
-      const directoryLinkTypes: Array<string | null | undefined> = []
-
-      await copyManagedPlugin(source, destination, {
-        platform: 'win32',
-        linkDirectory: async (target, path, type) => {
-          directoryLinkTypes.push(type)
-          await symlink(target, path, type)
-        },
-      })
-
-      const copiedAssets = join(destination, 'web', 'assets')
-      expect(directoryLinkTypes).toEqual(['junction'])
-      expect((await lstat(copiedAssets)).isSymbolicLink()).toBe(true)
-      expect(await realpath(copiedAssets)).toBe(await realpath(assets))
-      await expect(readFile(join(copiedAssets, 'index.js'), 'utf8')).resolves.toBe(
-        'window.wework = true\n'
+      await writeFile(
+        join(root.path, 'runtimes.json'),
+        JSON.stringify({
+          runtimes: ['core', 'workbench'].map(role => ({
+            role,
+            sourceFingerprint: runtime.fingerprint,
+          })),
+        })
       )
+
+      for (const role of ['core', 'workbench']) {
+        await expect(
+          selectBundledDshRuntimeMatching(root.path, role, CORE_DSH_VERSION)
+        ).resolves.toMatchObject({ root: runtime.root, role, version: CORE_DSH_VERSION })
+      }
+      await expect(
+        selectBundledDshRuntimeMatching(root.path, 'other', CORE_DSH_VERSION)
+      ).rejects.toThrow('Bundled other DSH runtime')
     } finally {
       await root.remove()
     }
@@ -208,6 +202,7 @@ describe('core DSH runtime', () => {
       dsh: {
         profile: {
           bundles: [
+            '@wework/dsh-browser-auth',
             '@deepseek-ai/dsh-base',
             '@wegent/dsh-electron-host',
             '@wegent/dsh-browser-runtime',
@@ -242,6 +237,7 @@ describe('core DSH runtime', () => {
         )
       )
     ).toEqual({
+      managedPluginCopyVersion: 1,
       dshVersion: CORE_DSH_VERSION,
       managedUiPlugins: true,
       role: 'core',
@@ -367,6 +363,9 @@ describe('core DSH runtime', () => {
     })
 
     const profileRoot = join(second.dshHome, 'profiles', 'wework-core')
+    expect(await readFile(join(profileRoot, 'cordis.patch.yml'), 'utf8')).toBe(
+      '- id: client-hmr\n  disabled: true\n'
+    )
     const manifest = JSON.parse(await readFile(join(profileRoot, 'package.json'), 'utf8'))
     expect(manifest.dependencies['@wegent/dsh-app-wework']).toBe(
       `file:${secondRuntime.pluginRoots['@wegent/dsh-app-wework']}`
@@ -405,6 +404,11 @@ describe('core DSH runtime', () => {
       'dsh-app-wework'
     )
     await writeFile(join(pluginCopyRoot, 'local-helper.js'), 'local')
+    const patchPath = join(launch.dshHome, 'profiles', 'wework-core', 'cordis.patch.yml')
+    await writeFile(
+      patchPath,
+      '- id: client-hmr\n  disabled: false\n- id: hmr\n  disabled: false\n'
+    )
 
     await prepareCoreDshLaunch({
       runtimeRoot: runtime.root,
@@ -414,6 +418,7 @@ describe('core DSH runtime', () => {
     })
 
     await expect(readFile(join(pluginCopyRoot, 'local-helper.js'), 'utf8')).resolves.toBe('local')
+    await expect(readFile(patchPath, 'utf8')).resolves.toBe('- id: client-hmr\n  disabled: true\n')
     await root.remove()
   })
 
@@ -470,43 +475,47 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test('upgrades a legacy stamp without the plugin fingerprint', async () => {
-    const root = await temporaryDirectory('core-dsh-legacy-stamp-')
-    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
-    const dataDirectory = join(root.path, 'data')
-    const environment = {
-      PATH: '/usr/bin',
-      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
-      WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
-      WEWORK_NODE_PATH: '/managed/node',
+  test.each(['corePluginsFingerprint', 'managedPluginCopyVersion'])(
+    'upgrades a legacy stamp without %s',
+    async field => {
+      const root = await temporaryDirectory('core-dsh-legacy-stamp-')
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      const dataDirectory = join(root.path, 'data')
+      const environment = {
+        PATH: '/usr/bin',
+        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        WEWORK_NODE_PATH: '/managed/node',
+      }
+      const launch = await prepareCoreDshLaunch({
+        runtimeRoot: runtime.root,
+        dataDirectory,
+        environment,
+        port: 3080,
+      })
+      const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
+      const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
+      delete legacy[field]
+      await writeFile(stampPath, JSON.stringify(legacy))
+
+      await prepareCoreDshLaunch({
+        runtimeRoot: runtime.root,
+        dataDirectory,
+        environment,
+        port: 3081,
+      })
+
+      expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
+        managedPluginCopyVersion: 1,
+        dshVersion: CORE_DSH_VERSION,
+        managedUiPlugins: true,
+        role: 'core',
+        sourceFingerprint: 'a'.repeat(64),
+        corePluginsFingerprint: 'f'.repeat(64),
+      })
+      await root.remove()
     }
-    const launch = await prepareCoreDshLaunch({
-      runtimeRoot: runtime.root,
-      dataDirectory,
-      environment,
-      port: 3080,
-    })
-    const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
-    const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
-    delete legacy.corePluginsFingerprint
-    await writeFile(stampPath, JSON.stringify(legacy))
-
-    await prepareCoreDshLaunch({
-      runtimeRoot: runtime.root,
-      dataDirectory,
-      environment,
-      port: 3081,
-    })
-
-    expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
-      dshVersion: CORE_DSH_VERSION,
-      managedUiPlugins: true,
-      role: 'core',
-      sourceFingerprint: 'a'.repeat(64),
-      corePluginsFingerprint: 'f'.repeat(64),
-    })
-    await root.remove()
-  })
+  )
 
   test('removes stale managed files when refreshing the profile', async () => {
     const root = await temporaryDirectory('core-dsh-stale-managed-file-')
@@ -622,8 +631,10 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wework/dsh-browser-auth',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
+      '@wework/dsh-browser-auth',
       '@deepseek-ai/dsh-base',
       '@wegent/dsh-electron-host',
       '@wegent/dsh-browser-runtime',
@@ -703,7 +714,7 @@ describe('core DSH runtime', () => {
         '',
       ].join('\n')
     )
-    await rm(join(profileRoot, '.wework-runtime.json'))
+    await resetCoreDshRuntime(dataDirectory)
 
     const nextRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'b')
     await prepareCoreDshLaunch({
@@ -762,7 +773,9 @@ describe('core DSH runtime', () => {
       port: 3081,
     })
 
-    expect((await stat(helperPath)).mode & 0o777).toBe(0o755)
+    expect(chmod).toHaveBeenCalledWith(helperPath, 0o755)
+    if (process.platform !== 'win32') expect((await stat(helperPath)).mode & 0o777).toBe(0o755)
+    expect(await readFile(helperPath, 'utf8')).toBe('helper')
     await root.remove()
   })
 
@@ -894,6 +907,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
+  pluginRoots['@wework/dsh-browser-auth'] = join(runtime, 'plugins', 'wework-browser-auth')
   await mkdir(join(packageRoot, 'lib'), { recursive: true })
   await Promise.all(Object.values(pluginRoots).map(root => mkdir(root, { recursive: true })))
   await writeFile(

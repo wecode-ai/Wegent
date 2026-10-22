@@ -205,3 +205,62 @@ def test_group_developer_can_read_and_update_bot(
 
     assert result["id"] == bot.id
     assert updated["id"] == bot.id
+
+
+def test_routing_patch_preserves_bot_identity_without_shell_or_name_update(
+    test_db,
+    test_user,
+):
+    bot = _create_bot(test_db, user_id=test_user.id)
+
+    bot_kinds_service.update_with_user(
+        test_db,
+        bot_id=bot.id,
+        obj_in=BotUpdate(
+            agent_config={"bind_model": ""},
+            execution_policy={"mode": "project_pool"},
+            model_policy={"mode": "user_select"},
+        ),
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(bot)
+    assert bot.name == "secured-bot"
+    assert bot.json["spec"]["shellRef"]["name"] == "ClaudeCode"
+    assert bot.json["spec"]["execution_policy"]["mode"] == "project_pool"
+    assert bot.json["spec"]["model_policy"]["mode"] == "user_select"
+
+
+def test_group_update_loads_components_in_resource_owner_scope(
+    test_db,
+    test_user,
+    test_admin_user,
+):
+    namespace = Namespace(
+        name="shared-bot-components",
+        display_name="Shared Bot Components",
+        owner_user_id=test_admin_user.id,
+        visibility="private",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    test_db.commit()
+    _add_group_member(
+        test_db, namespace=namespace, user_id=test_user.id, role=BaseRole.Developer
+    )
+    bot = _create_bot(test_db, user_id=test_admin_user.id, namespace=namespace.name)
+
+    with (
+        patch.object(
+            bot_kinds_service, "_get_bot_components", return_value=(None, None, None)
+        ) as components,
+        patch.object(bot_kinds_service, "_convert_to_bot_dict", return_value={}),
+    ):
+        bot_kinds_service.update_with_user(
+            test_db, bot_id=bot.id, obj_in=BotUpdate(), user_id=test_user.id
+        )
+
+    components.assert_called_once_with(
+        test_db, bot, test_admin_user.id, viewer_id=test_user.id
+    )

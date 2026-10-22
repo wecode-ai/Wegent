@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -12,131 +12,22 @@ logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.config import settings
-from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.shared_team import (
     JoinSharedTeamRequest,
     JoinSharedTeamResponse,
-    TeamShareRequest,
     TeamShareResponse,
 )
 from app.schemas.team import (
     TeamCreate,
     TeamDetail,
     TeamInDB,
-    TeamListResponse,
-    TeamSkillsResponse,
     TeamUpdate,
 )
 from app.services.adapters.team_kinds import team_kinds_service
-from app.services.default_team import resolve_default_team
 from app.services.shared_team import shared_team_service
-from app.services.team_list_filters import (
-    TeamModeFilter,
-    TeamSourceFilter,
-    build_team_list_filters,
-    validate_team_list_groups,
-)
-from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
-
-
-def _get_default_teams_config() -> Dict[str, Dict[str, str]]:
-    """
-    Parse default teams configuration from environment variables.
-    Returns a dict mapping mode -> {name, namespace}.
-    """
-    config = {}
-    mode_settings = {
-        "wework": settings.DEFAULT_TEAM_WEWORK,
-        "chat": settings.DEFAULT_TEAM_CHAT,
-        "code": settings.DEFAULT_TEAM_CODE,
-        "knowledge": settings.DEFAULT_TEAM_KNOWLEDGE,
-        "task": settings.DEFAULT_TEAM_TASK,
-    }
-
-    for mode, value in mode_settings.items():
-        if value and value.strip():
-            parts = value.strip().split("#", 1)
-            name = parts[0].strip()
-            namespace = parts[1].strip() if len(parts) > 1 else "default"
-            if name:
-                config[mode] = {"name": name, "namespace": namespace}
-
-    return config
-
-
-def _add_default_for_modes(
-    items: List[Dict[str, Any]], default_config: Dict[str, Dict[str, str]]
-) -> List[Dict[str, Any]]:
-    """
-    Add default_for_modes field to each team item based on default teams config.
-    """
-    for item in items:
-        default_modes = []
-        team_name = item.get("name")
-        team_namespace = item.get("namespace") or "default"
-
-        for mode, config in default_config.items():
-            if config["name"] == team_name and config["namespace"] == team_namespace:
-                default_modes.append(mode)
-
-        item["default_for_modes"] = default_modes
-
-    return items
-
-
-@router.get("")
-@trace_sync(span_name="teams.list", tracer_name="backend.teams")
-def list_teams(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    scope: str = Query(
-        "all",
-        description="Query scope: 'personal', 'group', or 'all' (default)",
-    ),
-    group_name: Optional[str] = Query(
-        None, description="Group name (required when scope='group')"
-    ),
-    group_names: list[str] | None = Query(default=None, max_length=100),
-    source_filter: TeamSourceFilter | None = Query(default=None),
-    mode: TeamModeFilter | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get current user's Team list (paginated) with scope support.
-
-    Scope behavior:
-    - scope='personal': personal teams + shared teams
-    - scope='group': group teams (requires group_name)
-    - scope='all' (default): personal + shared + all user's groups
-
-    Each team item includes a `default_for_modes` field (list of mode names)
-    indicating which modes this team is the default for (based on env config).
-    """
-
-    validate_team_list_groups(db, current_user.id, group_name, group_names)
-    filters = build_team_list_filters(db, current_user.id, source_filter, mode)
-    items, total = team_kinds_service.get_user_teams_page(
-        db=db,
-        user_id=current_user.id,
-        scope=scope,
-        group_name=group_name,
-        group_names=group_names,
-        filters=filters,
-        shared_only=source_filter == "group",
-        skip=(page - 1) * limit,
-        limit=limit,
-    )
-
-    # Add default_for_modes field to each team based on env config
-    default_config = _get_default_teams_config()
-    items = _add_default_for_modes(items, default_config)
-
-    return {"total": total, "items": items}
 
 
 @router.post("", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)
@@ -156,22 +47,6 @@ def create_team(
     return team_kinds_service.create_with_user(
         db=db, obj_in=team_create, user_id=current_user.id, group_name=group_name
     )
-
-
-@router.get("/default")
-@trace_sync(span_name="teams.default", tracer_name="backend.teams")
-def get_default_team(
-    mode: Literal["chat", "code", "knowledge", "task"] = Query("chat"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Return the configured accessible default, or null when unavailable."""
-    defaults = _get_default_teams_config()
-    config = defaults.get(mode)
-    if config is None:
-        return None
-    team = resolve_default_team(db, user_id=current_user.id, mode=mode, **config)
-    return _add_default_for_modes([team], defaults)[0] if team else None
 
 
 @router.get("/{team_id}", response_model=TeamDetail)
@@ -316,25 +191,6 @@ def get_team_input_parameters(
 ):
     """Get input parameters required by the team's external API bots"""
     return team_kinds_service.get_team_input_parameters(
-        db=db, team_id=team_id, user_id=current_user.id
-    )
-
-
-@router.get("/{team_id}/skills", response_model=TeamSkillsResponse)
-def get_team_skills(
-    team_id: int,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get all skills associated with a team.
-
-    Follows the chain: team → bots → ghosts → skills
-
-    Returns:
-        TeamSkillsResponse with team_id, team_namespace,
-        skills list (deduplicated), and preload_skills list.
-    """
-    return team_kinds_service.get_team_skills(
         db=db, team_id=team_id, user_id=current_user.id
     )
 

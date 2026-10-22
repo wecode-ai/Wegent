@@ -47,24 +47,21 @@ fn sha256_is_lowercase_hex() {
 }
 
 #[test]
-fn by_name_query_renders_the_recorded_literal() {
-    // Regression: the escaped literal already carries its quotes; the
-    // format string must not add a second pair (the attempt-2 replay
-    // rejected the doubled quotes with 1105).
-    let sql = format!(
-        "SELECT users.id AS users_id \nFROM users \n\
-         WHERE users.user_name = {} \n LIMIT 1",
-        escape_literal("hongbin9")
-    );
-    assert!(sql.contains("= 'hongbin9'"), "{sql}");
-    assert!(!sql.contains("''hongbin9''"), "{sql}");
-}
-
-#[test]
-fn literal_quoting_escapes_mysql_specials() {
-    assert_eq!(escape_literal("plain"), "'plain'");
-    assert_eq!(escape_literal("it's"), "'it\\'s'");
-    assert_eq!(escape_literal("a\\b"), "'a\\\\b'");
+fn direct_lookups_reuse_the_shared_user_statements() {
+    // The JWT and task-token fallbacks query `users` directly, like the
+    // source's `db.query(User)`; they reuse the shared labeled projections
+    // instead of hand-rolling a statement per call.
+    assert!(USER_BY_ID_QUERY.contains("WHERE users.id = ? LIMIT 1"));
+    assert!(USER_BY_NAME_QUERY.contains("WHERE users.user_name = ? LIMIT 1"));
+    for label in [
+        "users_id",
+        "users_user_name",
+        "users_is_active",
+        "users_role",
+        "users_auth_source",
+    ] {
+        assert!(USER_BY_ID_QUERY.contains(label), "missing {label}");
+    }
 }
 
 #[test]

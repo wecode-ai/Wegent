@@ -1,11 +1,15 @@
+export interface WeworkUpdateFailure {
+  message: string
+  code?: string
+}
+
 export interface WeworkUpdateDownloadProgress {
   downloadedBytes: number
   totalBytes: number | null
-  phase?: 'preparing' | 'components' | 'host' | 'verifying' | 'ready'
+  phase?: 'preparing' | 'components' | 'host' | 'ready' | 'failed'
   completedComponents?: number
   totalComponents?: number
-  mode?: 'differential' | 'full'
-  reason?: string
+  failure?: WeworkUpdateFailure
 }
 
 export interface ComponentDownloadProgress {
@@ -14,11 +18,4 @@ export interface ComponentDownloadProgress {
   totalBytes: number
   completedComponents: number
   totalComponents: number
-}
-
-export interface HostDownloadPhase {
-  phase?: 'verifying'
-  mode: 'differential' | 'full'
-  reason?: string
-  totalBytes?: number
 }

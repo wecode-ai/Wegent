@@ -139,7 +139,7 @@ struct UserRow {
     email: Option<String>,
     #[allow(dead_code)]
     #[mysql(rename = "users_git_info")]
-    git_info: brz_mysql::Json<crate::json_compat::OpaqueJson>,
+    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
     #[mysql(rename = "users_is_active")]
     is_active: i8,
     #[allow(dead_code)]

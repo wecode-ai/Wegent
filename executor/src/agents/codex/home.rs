@@ -47,13 +47,14 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
     use toml_edit::{value, DocumentMut};
 
     let config_path = codex_home.join("config.toml");
-    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let content = crate::local::codex_home::read_optional_config(&config_path)?;
     let mut document = content.parse::<DocumentMut>().map_err(|error| {
         format!(
             "failed to parse Codex config {}: {error}",
             config_path.display()
         )
     })?;
+    log_config_state("codex config normalization read", &config_path, &content);
     let legacy_instructions = document
         .get("instructions")
         .and_then(|item| item.as_str())
@@ -131,7 +132,17 @@ pub(crate) fn select_wework_codex_user_instructions(
     strip_wework_browser_instructions(developer_instructions).to_owned()
 }
 
+#[track_caller]
 pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), String> {
+    let caller = std::panic::Location::caller();
+    crate::logging::log_executor_event(
+        "codex config replacement requested",
+        &[
+            ("caller", format!("{}:{}", caller.file(), caller.line())),
+            ("config_path", config_path.display().to_string()),
+        ],
+    );
+    log_config_state("codex config replacement content", config_path, &content);
     let parent = config_path
         .parent()
         .ok_or_else(|| format!("Codex config has no parent: {}", config_path.display()))?;
@@ -176,6 +187,31 @@ pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), 
     sync_parent_directory(parent)
         .map_err(|error| format!("failed to sync Codex config directory: {error}"))?;
     Ok(())
+}
+
+fn log_config_state(event: &str, path: &Path, content: &str) {
+    let document = content.parse::<toml_edit::DocumentMut>().ok();
+    crate::logging::log_executor_event(
+        event,
+        &[
+            ("config_path", path.display().to_string()),
+            ("bytes", content.len().to_string()),
+            (
+                "model_present",
+                document
+                    .as_ref()
+                    .is_some_and(|doc| doc.contains_key("model"))
+                    .to_string(),
+            ),
+            (
+                "openai_base_url_present",
+                document
+                    .as_ref()
+                    .is_some_and(|doc| doc.contains_key("openai_base_url"))
+                    .to_string(),
+            ),
+        ],
+    );
 }
 
 #[cfg(unix)]
@@ -312,9 +348,5 @@ fn remove_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
+    crate::config::paths::executor_home()
 }

@@ -553,6 +553,40 @@ def test_turn_file_changes_revert_applies_plain_workspace_add_sequence(tmp_path)
     assert not (workspace / "note.txt").exists()
 
 
+@pytest.mark.parametrize("platform", ["Linux", "Darwin", "MINGW64_NT", "MSYS_NT"])
+def test_home_directory_command_returns_native_device_path(tmp_path, platform):
+    from app.services.device.command_registry import DEFAULT_LOCAL_DEVICE_COMMANDS
+
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    uname = tools / "uname"
+    uname.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_PLATFORM"\n')
+    uname.chmod(0o755)
+    cygpath = tools / "cygpath"
+    cygpath.write_text(
+        '#!/bin/sh\n[ "$1" = "-w" ] && [ "$2" = "$HOME" ] || exit 1\n'
+        'printf "%s\\n" "D:\\agent home"\n'
+    )
+    cygpath.chmod(0o755)
+    home = "/d/agent home" if platform.startswith(("MINGW", "MSYS")) else "/agent home"
+
+    result = subprocess.run(
+        shlex.split(DEFAULT_LOCAL_DEVICE_COMMANDS["home_dir"].command),
+        env={
+            **os.environ,
+            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+            "HOME": home,
+            "TEST_PLATFORM": platform,
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    expected = "D:\\agent home" if platform.startswith(("MINGW", "MSYS")) else home
+    assert result.stdout.strip() == expected
+
+
 def test_local_device_command_registry_default_includes_diagnostic_commands():
     """Default command registry should include basic diagnostic commands."""
     from app.core.config import Settings
@@ -650,9 +684,6 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_push_definition = resolve_local_device_command(
         "git_push", settings.LOCAL_DEVICE_COMMANDS
     )
-    git_generate_commit_message_definition = resolve_local_device_command(
-        "git_generate_commit_message", settings.LOCAL_DEVICE_COMMANDS
-    )
     ls_skills_definition = resolve_local_device_command(
         "ls_skills", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -679,7 +710,8 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ls_definition.command == "ls -a"
     assert ls_definition.post_processor == "file_list"
     assert home_dir_definition is not None
-    assert home_dir_definition.command == "printenv HOME"
+    assert 'cygpath -w "$HOME"' in home_dir_definition.command
+    assert 'printf "%s\\n" "$HOME"' in home_dir_definition.command
     assert home_dir_definition.post_processor is None
     assert project_workspace_root_definition is not None
     assert "WEGENT_EXECUTOR_PROJECTS_DIR" in project_workspace_root_definition.command
@@ -768,11 +800,11 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "per_page=100" in git_github_pull_requests_batch_definition.command
     assert "--jq" in git_github_pull_requests_batch_definition.command
     assert git_github_pull_request_merge_queue_batch_definition is not None
-    assert "$HOME/.wecode/git-auth/env.sh" in (
+    assert "credential_paths()" in (
         git_github_pull_request_merge_queue_batch_definition.command
     )
     assert git_github_pull_request_merge_queue_batch_definition.command.endswith(
-        "-- gh api graphql"
+        "gh api graphql"
     )
     assert git_gitlab_merge_requests_definition is not None
     assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
@@ -789,13 +821,6 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "@{u}" not in git_push_definition.command
     assert 'exec git push -u origin "$branch"' in git_push_definition.command
     assert git_push_definition.post_processor is None
-    assert git_generate_commit_message_definition is not None
-    assert "Generate a Git commit subject line" in (
-        git_generate_commit_message_definition.command
-    )
-    assert "--ask-for-approval" not in git_generate_commit_message_definition.command
-    assert "codex" in git_generate_commit_message_definition.command
-    assert git_generate_commit_message_definition.post_processor == "json"
     assert ls_skills_definition is not None
     assert "python3 -c" in ls_skills_definition.command
     assert ".claude" in ls_skills_definition.command
@@ -1184,7 +1209,6 @@ def test_workspace_tree_script_lists_files_and_directories(
 
     (tmp_path / "backend").mkdir()
     (tmp_path / "README.md").write_text("hello", encoding="utf-8")
-    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
@@ -1198,29 +1222,6 @@ def test_workspace_tree_script_lists_files_and_directories(
     assert output["entries"][1]["size"] == 5
 
 
-def test_workspace_tree_script_allows_configured_executor_projects_dir(
-    tmp_path, monkeypatch, capsys
-):
-    """workspace_tree should allow the same custom projects root as project_workspace_root."""
-    import json
-
-    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
-
-    projects_root = tmp_path / "custom-projects"
-    project_dir = projects_root / "Wegent"
-    project_dir.mkdir(parents=True)
-    (project_dir / "README.md").write_text("hello", encoding="utf-8")
-    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
-    monkeypatch.setenv("WEGENT_EXECUTOR_PROJECTS_DIR", str(projects_root))
-    monkeypatch.chdir(project_dir)
-
-    exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
-    output = json.loads(capsys.readouterr().out)
-
-    assert output["path"] == str(project_dir.resolve())
-    assert [entry["name"] for entry in output["entries"]] == ["README.md"]
-
-
 def test_workspace_tree_script_does_not_classify_symlinked_directory_as_directory(
     tmp_path, monkeypatch, capsys
 ):
@@ -1232,7 +1233,6 @@ def test_workspace_tree_script_does_not_classify_symlinked_directory_as_director
     external_dir = tmp_path.parent / "external"
     external_dir.mkdir()
     (tmp_path / "linked-dir").symlink_to(external_dir, target_is_directory=True)
-    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
@@ -1242,60 +1242,6 @@ def test_workspace_tree_script_does_not_classify_symlinked_directory_as_director
         entry for entry in output["entries"] if entry["name"] == "linked-dir"
     )
     assert linked_entry["is_directory"] is False
-
-
-def test_workspace_tree_script_rejects_non_workspace_cwd(tmp_path, monkeypatch, capsys):
-    """workspace_tree should reject arbitrary directories outside workspace roots."""
-    import json
-
-    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
-
-    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
-    monkeypatch.chdir(tmp_path)
-
-    try:
-        exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
-    except SystemExit as exc:
-        assert exc.code == 64
-    else:
-        raise AssertionError("workspace_tree should reject non-workspace cwd")
-
-    output = json.loads(capsys.readouterr().out)
-    assert output == {
-        "success": False,
-        "error": "workspace path is outside allowed workspace roots",
-    }
-
-
-def test_workspace_tree_script_rejects_external_git_repository(
-    tmp_path, monkeypatch, capsys
-):
-    """workspace_tree should not treat arbitrary Git repositories as workspaces."""
-    import json
-
-    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
-
-    repository_dir = tmp_path / "external-repo"
-    repository_dir.mkdir()
-    (repository_dir / ".git").mkdir()
-    (repository_dir / "README.md").write_text("hello", encoding="utf-8")
-    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
-    monkeypatch.delenv("WEGENT_EXECUTOR_PROJECTS_DIR", raising=False)
-    monkeypatch.setenv("WECODE_HOME", str(tmp_path / "wecode-home"))
-    monkeypatch.chdir(repository_dir)
-
-    try:
-        exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
-    except SystemExit as exc:
-        assert exc.code == 64
-    else:
-        raise AssertionError("workspace_tree should reject external git repositories")
-
-    output = json.loads(capsys.readouterr().out)
-    assert output == {
-        "success": False,
-        "error": "workspace path is outside allowed workspace roots",
-    }
 
 
 def test_workspace_tree_script_keeps_lstat_operations_guarded(
@@ -1310,7 +1256,6 @@ def test_workspace_tree_script_keeps_lstat_operations_guarded(
     (tmp_path / "backend").mkdir()
     (tmp_path / "README.md").write_text("hello", encoding="utf-8")
     (tmp_path / "blocked.txt").write_text("skip", encoding="utf-8")
-    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     workspace_root = tmp_path.resolve()
@@ -1361,7 +1306,6 @@ def test_workspace_read_text_file_script_reads_text_and_reports_truncation(
 
     content = "a" * (262144 + 8)
     (tmp_path / "large.py").write_text(content, encoding="utf-8")
-    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "large.py"])
 
@@ -1387,7 +1331,6 @@ def test_workspace_read_text_file_script_reads_at_most_limit_plus_one(
     file_path = tmp_path / "large.py"
     file_path.write_text("a" * (262144 + 8), encoding="utf-8")
     resolved_file_path = file_path.resolve()
-    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "large.py"])
 
@@ -1430,34 +1373,6 @@ def test_workspace_read_text_file_script_reads_at_most_limit_plus_one(
     assert read_sizes == [262145]
     assert output["content"] == "a" * 262144
     assert output["truncated"] is True
-
-
-def test_workspace_read_text_file_script_rejects_non_workspace_cwd(
-    tmp_path, monkeypatch, capsys
-):
-    """workspace_read_text_file should reject arbitrary directories."""
-    import json
-    import sys
-
-    from app.services.device.command_registry import WORKSPACE_READ_TEXT_FILE_SCRIPT
-
-    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
-    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "README.md"])
-
-    try:
-        exec(WORKSPACE_READ_TEXT_FILE_SCRIPT, {"__name__": "__main__"})
-    except SystemExit as exc:
-        assert exc.code == 64
-    else:
-        raise AssertionError("workspace_read_text_file should reject non-workspace cwd")
-
-    output = json.loads(capsys.readouterr().out)
-    assert output == {
-        "success": False,
-        "error": "workspace path is outside allowed workspace roots",
-    }
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
@@ -1709,7 +1624,7 @@ def test_json_post_processor_promotes_failed_json_error():
     result = {
         "success": False,
         "exit_code": 64,
-        "stdout": '{"success": false, "error": "workspace path is outside allowed workspace roots"}',
+        "stdout": '{"success": false, "error": "file does not exist"}',
         "stderr": "",
         "duration": 0.01,
     }
@@ -1719,9 +1634,9 @@ def test_json_post_processor_promotes_failed_json_error():
     assert processed["success"] is False
     assert processed["stdout"] == {
         "success": False,
-        "error": "workspace path is outside allowed workspace roots",
+        "error": "file does not exist",
     }
-    assert processed["error"] == "workspace path is outside allowed workspace roots"
+    assert processed["error"] == "file does not exist"
 
 
 def test_json_post_processor_reports_truncated_output():
@@ -2564,6 +2479,7 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
     """Remote devices should use their submitted device ID for dispatch."""
     from app.schemas.device import DeviceType
     from app.services.device import command_service
+    from app.services.device.command_registry import DEFAULT_LOCAL_DEVICE_COMMANDS
 
     execute_mock = AsyncMock(
         return_value={
@@ -2609,7 +2525,10 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
         DeviceType.REMOTE,
     )
     assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
-    assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
+    assert (
+        execute_mock.await_args.kwargs["command"]
+        == DEFAULT_LOCAL_DEVICE_COMMANDS["home_dir"].command
+    )
 
 
 @pytest.mark.asyncio
@@ -3128,356 +3047,6 @@ async def test_device_runtime_settings_get_maps_offline_to_service_unavailable(
         )
 
     assert exc_info.value.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_execute_device_command_endpoint_allows_wework_local_project_workspace(
-    monkeypatch,
-    test_db,
-):
-    """Workspace file commands should allow active Wework local-path project roots."""
-    from app.api.endpoints import devices
-    from app.core.constants import CLIENT_ORIGIN_WEWORK
-    from app.models.project import Project
-    from app.schemas.device import DeviceCommandRequest
-
-    test_db.add(
-        Project(
-            user_id=7,
-            name="Repo",
-            client_origin=CLIENT_ORIGIN_WEWORK,
-            is_active=True,
-            config={
-                "mode": "workspace",
-                "execution": {
-                    "targetType": "local",
-                    "deviceId": "device-abc",
-                },
-                "workspace": {
-                    "source": "local_path",
-                    "localPath": "/Users/test/projects/repo",
-                },
-            },
-        )
-    )
-    test_db.commit()
-    service_mock = AsyncMock(
-        return_value={
-            "success": True,
-            "exit_code": 0,
-            "stdout": {"path": "/Users/test/projects/repo/src", "entries": []},
-            "stderr": "",
-            "duration": 0.02,
-            "timed_out": False,
-        }
-    )
-    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-    response = await devices.execute_device_command(
-        device_id="device-abc",
-        request=DeviceCommandRequest(
-            command_key="workspace_tree",
-            path="/Users/test/projects/repo/src",
-            env={"EXISTING": "1"},
-        ),
-        db=test_db,
-        current_user=SimpleNamespace(id=7),
-    )
-
-    assert response.success is True
-    service_mock.assert_awaited_once()
-    _, kwargs = service_mock.await_args
-    assert kwargs["env"]["EXISTING"] == "1"
-    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == "/Users/test/projects/repo"
-
-
-@pytest.mark.asyncio
-async def test_execute_device_command_endpoint_does_not_trust_client_workspace_roots(
-    monkeypatch,
-    test_db,
-):
-    """Workspace file commands should not accept client-provided workspace roots."""
-    from app.api.endpoints import devices
-    from app.schemas.device import DeviceCommandRequest
-
-    service_mock = AsyncMock(
-        return_value={
-            "success": False,
-            "exit_code": 64,
-            "stdout": {
-                "success": False,
-                "error": "workspace path is outside allowed workspace roots",
-            },
-            "stderr": "",
-            "error": "workspace path is outside allowed workspace roots",
-            "duration": 0.02,
-            "timed_out": False,
-        }
-    )
-    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-    runtime_rpc_mock = AsyncMock(
-        side_effect=devices.RuntimeRpcError("Device is unavailable")
-    )
-    monkeypatch.setattr(devices.runtime_rpc_service, "call", runtime_rpc_mock)
-
-    response = await devices.execute_device_command(
-        device_id="device-abc",
-        request=DeviceCommandRequest(
-            command_key="workspace_tree",
-            path="/etc",
-            env={"WEGENT_WORKSPACE_ROOTS": "/", "EXISTING": "1"},
-        ),
-        db=test_db,
-        current_user=SimpleNamespace(id=7),
-    )
-
-    assert response.success is False
-    service_mock.assert_awaited_once()
-    _, kwargs = service_mock.await_args
-    assert kwargs["env"] == {"EXISTING": "1"}
-    runtime_rpc_mock.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_execute_device_command_endpoint_allows_explicit_root_project_workspace(
-    monkeypatch,
-    test_db,
-):
-    """Workspace file commands should allow root when the project explicitly uses it."""
-    from app.api.endpoints import devices
-    from app.core.constants import CLIENT_ORIGIN_WEWORK
-    from app.models.project import Project
-    from app.schemas.device import DeviceCommandRequest
-
-    test_db.add(
-        Project(
-            user_id=7,
-            name="Root",
-            client_origin=CLIENT_ORIGIN_WEWORK,
-            is_active=True,
-            config={
-                "mode": "workspace",
-                "execution": {
-                    "targetType": "local",
-                    "deviceId": "device-abc",
-                },
-                "workspace": {
-                    "source": "local_path",
-                    "localPath": "/",
-                },
-            },
-        )
-    )
-    test_db.commit()
-    service_mock = AsyncMock(
-        return_value={
-            "success": True,
-            "exit_code": 0,
-            "stdout": {"path": "/etc", "entries": []},
-            "stderr": "",
-            "duration": 0.02,
-            "timed_out": False,
-        }
-    )
-    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-
-    response = await devices.execute_device_command(
-        device_id="device-abc",
-        request=DeviceCommandRequest(
-            command_key="workspace_tree",
-            path="/etc",
-            env={"EXISTING": "1"},
-        ),
-        db=test_db,
-        current_user=SimpleNamespace(id=7),
-    )
-
-    assert response.success is True
-    service_mock.assert_awaited_once()
-    _, kwargs = service_mock.await_args
-    assert kwargs["env"] == {"EXISTING": "1", "WEGENT_WORKSPACE_ROOTS": "/"}
-
-
-@pytest.mark.asyncio
-async def test_execute_device_command_endpoint_allows_absolute_git_checkout_workspace(
-    monkeypatch,
-    test_db,
-):
-    """Workspace file commands should allow absolute Wework git checkout paths."""
-    from app.api.endpoints import devices
-    from app.core.constants import CLIENT_ORIGIN_WEWORK
-    from app.models.project import Project
-    from app.schemas.device import DeviceCommandRequest
-
-    checkout_path = "/Volumes/OuterHD/OuterIdeaProjects/weibo_wegent/github_wegent"
-    test_db.add(
-        Project(
-            user_id=7,
-            name="Wegent",
-            client_origin=CLIENT_ORIGIN_WEWORK,
-            is_active=True,
-            config={
-                "mode": "workspace",
-                "execution": {
-                    "targetType": "local",
-                    "deviceId": "device-abc",
-                },
-                "workspace": {
-                    "source": "git",
-                    "checkoutPath": checkout_path,
-                },
-                "git": {
-                    "url": "https://example.com/weibo/wegent.git",
-                    "branch": "main",
-                },
-            },
-        )
-    )
-    test_db.commit()
-    service_mock = AsyncMock(
-        return_value={
-            "success": True,
-            "exit_code": 0,
-            "stdout": {"path": f"{checkout_path}/wework", "entries": []},
-            "stderr": "",
-            "duration": 0.02,
-            "timed_out": False,
-        }
-    )
-    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-
-    response = await devices.execute_device_command(
-        device_id="device-abc",
-        request=DeviceCommandRequest(
-            command_key="workspace_tree",
-            path=f"{checkout_path}/wework",
-            env={"EXISTING": "1"},
-        ),
-        db=test_db,
-        current_user=SimpleNamespace(id=7),
-    )
-
-    assert response.success is True
-    service_mock.assert_awaited_once()
-    _, kwargs = service_mock.await_args
-    assert kwargs["env"]["EXISTING"] == "1"
-    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == checkout_path
-
-
-@pytest.mark.asyncio
-async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
-    monkeypatch,
-    test_db,
-):
-    """Workspace file commands should allow paths under runtime device workspaces."""
-    from app.api.endpoints import devices
-    from app.schemas.device import DeviceCommandRequest
-    from app.schemas.runtime_work import DeviceWorkspaceUpsert
-    from app.services.runtime_work_kind_store import upsert_device_workspace_kind
-
-    workspace_path = "/Users/test/runtime/repo"
-    upsert_device_workspace_kind(
-        db=test_db,
-        user_id=7,
-        project_id=11,
-        payload=DeviceWorkspaceUpsert(
-            projectId=11,
-            deviceId="device-abc",
-            workspacePath=workspace_path,
-        ),
-        workspace_path=workspace_path,
-        workspace_path_hash="hash-runtime-repo",
-    )
-    service_mock = AsyncMock(
-        return_value={
-            "success": True,
-            "exit_code": 0,
-            "stdout": {"path": f"{workspace_path}/src", "entries": []},
-            "stderr": "",
-            "duration": 0.02,
-            "timed_out": False,
-        }
-    )
-    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-
-    response = await devices.execute_device_command(
-        device_id="device-abc",
-        request=DeviceCommandRequest(
-            command_key="workspace_tree",
-            path=f"{workspace_path}/src",
-            env={"EXISTING": "1"},
-        ),
-        db=test_db,
-        current_user=SimpleNamespace(id=7),
-    )
-
-    assert response.success is True
-    service_mock.assert_awaited_once()
-    _, kwargs = service_mock.await_args
-    assert kwargs["env"]["EXISTING"] == "1"
-    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == workspace_path
-
-
-@pytest.mark.asyncio
-async def test_execute_device_command_endpoint_allows_runtime_rpc_workspace(
-    monkeypatch,
-    test_db,
-):
-    """Workspace file commands should allow active runtime workspaces reported by the device."""
-    from app.api.endpoints import devices
-    from app.schemas.device import DeviceCommandRequest
-
-    workspace_path = "/Volumes/OuterHD/OuterIdeaProjects/weibo_wegent/github_wegent"
-    service_mock = AsyncMock(
-        return_value={
-            "success": True,
-            "exit_code": 0,
-            "stdout": {"path": workspace_path, "entries": []},
-            "stderr": "",
-            "duration": 0.02,
-            "timed_out": False,
-        }
-    )
-    runtime_rpc_mock = AsyncMock(
-        return_value={
-            "workspaces": [
-                {
-                    "workspacePath": workspace_path,
-                    "tasks": [
-                        {
-                            "taskId": "019ef869-1dae-7b32-bb68-6407a8d43159",
-                            "workspacePath": workspace_path,
-                        }
-                    ],
-                }
-            ]
-        }
-    )
-    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-    monkeypatch.setattr(devices.runtime_rpc_service, "call", runtime_rpc_mock)
-
-    response = await devices.execute_device_command(
-        device_id="device-abc",
-        request=DeviceCommandRequest(
-            command_key="workspace_tree",
-            path=workspace_path,
-            env={"EXISTING": "1"},
-        ),
-        db=test_db,
-        current_user=SimpleNamespace(id=7),
-    )
-
-    assert response.success is True
-    runtime_rpc_mock.assert_awaited_once_with(
-        user_id=7,
-        device_id="device-abc",
-        method="runtime.tasks.list",
-        payload={},
-        timeout_seconds=5,
-    )
-    service_mock.assert_awaited_once()
-    _, kwargs = service_mock.await_args
-    assert kwargs["env"]["EXISTING"] == "1"
-    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == workspace_path
 
 
 @pytest.mark.asyncio

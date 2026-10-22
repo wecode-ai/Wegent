@@ -1,13 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { issueDraftFromText } from '@wegent/collaboration'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import { IssueComposer } from './IssueComposer'
-import { issueDraftFromText } from './issueComposerDraft'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -336,6 +336,7 @@ describe('IssueComposer', () => {
         runtime: 'codex',
         message: '处理云端项目',
         deviceId: 'cloud-executor',
+        execution: { workspace: { source: 'git_worktree' } },
         runtimeProjectKey: 'remote:docs',
         runtimeProjectName: '文档',
         runtimeWorkspaceRoots: [],

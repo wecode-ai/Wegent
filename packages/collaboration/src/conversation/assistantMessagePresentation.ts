@@ -1,6 +1,7 @@
 import {
   nestWorkbenchProcessingBlocks,
   projectWorkbenchSubagentActivity,
+  settleWorkbenchProcessingBlock,
 } from "@wegent/chat-core";
 import type {
   WorkbenchMessage,
@@ -8,6 +9,7 @@ import type {
   RuntimeAssistantDisplayItem,
   RuntimeConversationTurn,
 } from "@wegent/chat-core/runtime-conversation";
+import { stripPluginWorkspaceResultMarkers } from "@wegent/chat-core/plugin-workspace-result";
 import {
   isContextCompactionToolName,
   isGuidanceToolName,
@@ -149,10 +151,8 @@ export function getDisplayProcessingBlocks(
     projectWorkbenchSubagentActivity(
       blocks
         .map((block) =>
-          settleForCancelledTurn &&
-          block.status !== "done" &&
-          block.status !== "error"
-            ? { ...block, status: "done" as const }
+          settleForCancelledTurn
+            ? settleWorkbenchProcessingBlock(block)
             : block,
         )
         .filter((block) => {
@@ -171,6 +171,37 @@ export function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
     (block): block is Extract<ProcessingBlock, { type: "tool" }> =>
       block.type === "tool" && isWebSearchToolName(block.toolName),
   );
+}
+
+/** Returns only message prose in the same order as the rendered assistant timeline. */
+export function getAssistantSearchTextSources(
+  message: WorkbenchMessage,
+): string[] {
+  const cancelled = isCancelledAssistantMessage(message);
+  const hidden =
+    shouldHideFailedAssistantContent(message) ||
+    (cancelled && isCancelledPlaceholderContent(message.content));
+  const content = hidden
+    ? ""
+    : stripPluginWorkspaceResultMarkers(message.content);
+  const blocks = getDisplayProcessingBlocks(message.blocks, cancelled, content);
+  const segments = getOrderedRuntimeDisplaySegments(
+    message.runtimeDisplayItems,
+    blocks,
+  );
+  const orderedContent = segments
+    .flatMap((segment) => (segment.kind === "content" ? [segment.content] : []))
+    .join("\n\n");
+  const narrativeText = (items: ProcessingBlock[]) =>
+    items.flatMap((block) => (block.type === "text" ? [block.content] : []));
+  if (segments.length && orderedContent === content) {
+    return segments.flatMap((segment) =>
+      segment.kind === "content"
+        ? [segment.content]
+        : narrativeText(segment.blocks),
+    );
+  }
+  return [...narrativeText(blocks), content];
 }
 
 export function getMessageDisplayStateKey(

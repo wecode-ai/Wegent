@@ -1398,6 +1398,13 @@
       "follow_up_status_key": "发送状态字段（可选，模板需绑定）",
       "mapping_help": "输出中和完成状态均需绑定正文字段。图片可选；如需图片追问，发送按钮须回传上传图片组件的本地变量。"
     },
+    "notification_card": {
+      "title": "通知卡片（可选）",
+      "enabled": "任务通知以卡片发送",
+      "template_id": "通知卡片模板 ID（可选）",
+      "template_placeholder": "填写已验证的钉钉卡片模板 ID",
+      "help": "留空使用钉钉内置的 markdown 卡片（正文 + 按钮），不需要自建卡片；填写后按你的模板字段渲染。卡片发送失败会自动回退为文本通知。"
+    },
     "title": "IM 渠道管理",
     "description": "管理 IM 平台集成（钉钉、微博、Telegram、Discord）",
     "create_description": "创建新的 IM 渠道集成。配置平台凭据和默认智能体。",

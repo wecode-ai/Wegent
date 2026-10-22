@@ -1,5 +1,4 @@
-import { createServer } from 'node:net'
-import { resolve } from 'node:path'
+import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -66,13 +65,11 @@ export interface ManagedExecutorHandle {
 
 interface PreparedCoreDshLaunch {
   plugins: CoreDshPluginManager | null
-  port: number | null
   runtimeOptions: DshRuntimeOptions
 }
 
 interface PreparedCoreDsh {
   plugins: CoreDshPluginManager | null
-  port: number | null
   runtime: CoreDshHandle
 }
 
@@ -95,7 +92,6 @@ export class DesktopRuntime {
   private coreDsh: CoreDshHandle | null = null
   private desktopDeviceId: Promise<string> | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
-  private coreDshPort: number | null = null
   private developmentPlugin: CoreDshDevelopmentPlugin | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
@@ -260,6 +256,9 @@ export class DesktopRuntime {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
+    // Device identity and managed auth preparation may write Homes. Gate both first.
+    await assertExecutorWorkbenchCompatibility(this.options.environment)
+    if (this.lifecycleGeneration !== generation) return null
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({
@@ -312,7 +311,7 @@ export class DesktopRuntime {
   }
 
   private async prepareCoreDshLaunch(
-    portPrerequisite: Promise<unknown>
+    executorPrerequisite: Promise<unknown>
   ): Promise<PreparedCoreDshLaunch | null> {
     this.startupStep('core-dsh-prepare', 'started')
     const generation = this.lifecycleGeneration
@@ -353,31 +352,20 @@ export class DesktopRuntime {
         if (this.lifecycleGeneration !== generation) return null
       }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
-      if (developmentRoot && this.developmentPlugin?.sourceRoot !== resolve(developmentRoot)) {
+      if (developmentRoot) {
         const developmentPlugin = await plugins.ensureDevelopmentPlugin(developmentRoot)
         if (this.lifecycleGeneration !== generation) return null
         this.developmentPlugin = developmentPlugin
       }
     }
-    let port: number | null = null
-    if (!externalDshUrl) {
-      await portPrerequisite
-      if (this.lifecycleGeneration !== generation) return null
-      this.startupStep('core-dsh-port-allocation', 'started')
-      try {
-        port = await freePort(this.coreDshPort)
-        if (this.lifecycleGeneration !== generation) return null
-        this.startupStep('core-dsh-port-allocation', 'completed')
-      } catch (error) {
-        this.startupStep('core-dsh-port-allocation', 'failed')
-        throw error
-      }
-    }
-    const dshUrl = externalDshUrl || `http://127.0.0.1:${port as number}`
+    // External DSH also resolves device identity, so it must wait for the Home compatibility gate.
+    await executorPrerequisite
+    if (this.lifecycleGeneration !== generation) return null
+    const dshUrl = externalDshUrl || 'http://127.0.0.1:0'
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     if (managedRuntime) {
-      const launch = createCoreDshLaunch(managedRuntime, port as number)
+      const launch = createCoreDshLaunch(managedRuntime, 0)
       command = launch.command
       args = launch.args
     }
@@ -406,7 +394,7 @@ export class DesktopRuntime {
     }
     if (this.lifecycleGeneration !== generation) return null
     this.startupStep('core-dsh-prepare', 'completed')
-    return { plugins, port, runtimeOptions }
+    return { plugins, runtimeOptions }
   }
 
   private resolveDesktopDeviceId(): Promise<string> {
@@ -424,7 +412,6 @@ export class DesktopRuntime {
   ): PreparedCoreDsh {
     return {
       plugins: launch.plugins,
-      port: launch.port,
       runtime: this.createCoreDsh({
         ...launch.runtimeOptions,
         env: {
@@ -436,7 +423,7 @@ export class DesktopRuntime {
   }
 
   private async startPreparedCoreDsh(prepared: PreparedCoreDsh, generation: number): Promise<void> {
-    const { plugins, port, runtime } = prepared
+    const { plugins, runtime } = prepared
     this.coreDsh = runtime
     if (plugins) this.coreDshPlugins = plugins
     this.startupStep('core-dsh-process-start', 'started')
@@ -448,7 +435,6 @@ export class DesktopRuntime {
         if (this.coreDshPlugins === plugins) this.coreDshPlugins = null
         return
       }
-      this.coreDshPort = port
       this.startupStep('core-dsh-process-start', 'completed')
     } catch (error) {
       if (this.coreDsh === runtime) this.coreDsh = null
@@ -479,30 +465,6 @@ export class DesktopRuntime {
     }
     return this.coreDshPlugins
   }
-}
-
-function freePort(excludedPort: number | null = null): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to allocate a DSH port'))
-        return
-      }
-      server.close(error => {
-        if (error) {
-          reject(error)
-        } else if (address.port === excludedPort) {
-          void freePort(excludedPort).then(resolve, reject)
-        } else {
-          resolve(address.port)
-        }
-      })
-    })
-  })
 }
 
 function jsonArrayEnvironment(environment: NodeJS.ProcessEnv, name: string): string[] {

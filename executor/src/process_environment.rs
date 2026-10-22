@@ -64,9 +64,17 @@ pub struct ShellEnvironmentLoad {
 }
 
 pub fn process_env(extra_env: &[(String, String)]) -> HashMap<String, String> {
-    let mut values = env::vars().collect::<HashMap<_, _>>();
-    values.extend(extra_env.iter().cloned());
-    values.extend(crate::plugin_account_auth::broker::environment());
+    let mut values = HashMap::new();
+    for (key, value) in env::vars()
+        .chain(crate::services::git_credentials::environment())
+        .chain(extra_env.iter().cloned())
+        .chain(crate::plugin_account_auth::broker::environment())
+    {
+        // Windows environment names are case-insensitive, including Path/PATH.
+        #[cfg(windows)]
+        let key = key.to_ascii_uppercase();
+        values.insert(key, value);
+    }
     let current_path = values.get("PATH").map(String::as_str).unwrap_or_default();
     let runtime_bin = values.get("WEWORK_RUNTIME_BIN").map(String::as_str);
     let extra_paths = values.get("WEGENT_EXTRA_PATHS").map(String::as_str);
@@ -134,11 +142,9 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
 fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> {
     let system_root = env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_owned());
     let powershell = format!("{system_root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    let script = format!(
-        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; \
+    let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; \
         [string]::Join('===', @([Environment]::GetEnvironmentVariable('Path','Machine'),\
-        [Environment]::GetEnvironmentVariable('Path','User')))"
-    );
+        [Environment]::GetEnvironmentVariable('Path','User')))";
     let mut child = WindowsCommand::new(&powershell)
         .args([
             "-NoLogo",
@@ -561,6 +567,23 @@ fn ignored_process_env_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn process_environment_merges_windows_path_case_insensitively() {
+        let fixture_path = r"C:\Tools with spaces;C:\Windows\System32";
+        let values = process_env(&[("Path".to_owned(), fixture_path.to_owned())]);
+        let paths = env::split_paths(values.get("PATH").unwrap()).collect::<Vec<_>>();
+        assert_eq!(paths[0], PathBuf::from(r"C:\Tools with spaces"));
+        assert_eq!(paths[1], PathBuf::from(r"C:\Windows\System32"));
+        assert_eq!(
+            values
+                .keys()
+                .filter(|key| key.eq_ignore_ascii_case("PATH"))
+                .count(),
+            1
+        );
+    }
 
     #[cfg(windows)]
     #[test]

@@ -7,14 +7,14 @@
 //! (`_convert_to_team_dict_with_cache` + `default_for_modes`).
 use crate::crd::{CrdDocument, ResourceReference as TeamReference, reference_parts};
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{OpaqueJson, raw_null};
+use brz_json::{OpaqueJson, raw_null};
 use std::collections::{BTreeMap, HashMap};
 
+use brz_json::RawJson;
 use chrono::NaiveDateTime;
-use serde_json::value::RawValue;
-#[cfg(test)]
-use serde_json::{Value, json};
 
+use super::public_model_access;
+use super::team_access_policy::filtered_agent_config;
 use super::teams_repository as repo;
 use super::teams_repository::{KindRow, TeamRow};
 
@@ -37,6 +37,17 @@ pub(crate) struct Preloaded {
     users: HashMap<i64, String>,
 }
 
+/// Source `TeamDisplayConfig` (pydantic) declares only `show_final_answer_only`
+/// and keeps pydantic's default `extra="ignore"`. The persisted CRD may carry
+/// other keys (for example `hide_tool_details`); they are dropped here, and
+/// `exclude_none` drops a null value, matching `dump_team_display_config`.
+#[derive(Default, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+struct TeamDisplayConfigInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    show_final_answer_only: Option<OpaqueJson>,
+}
+
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
 struct TeamSpecInput {
@@ -45,7 +56,7 @@ struct TeamSpecInput {
     #[serde(rename = "modeSpec")]
     mode_spec: Option<BTreeMap<String, Option<OpaqueJson>>>,
     #[serde(rename = "displayConfig")]
-    display_config: Option<BTreeMap<String, Option<OpaqueJson>>>,
+    display_config: Option<TeamDisplayConfigInput>,
     #[serde(rename = "inputPlaceholder")]
     input_placeholder: Option<BTreeMap<String, Option<OpaqueJson>>>,
     bind_mode: Option<OpaqueJson>,
@@ -154,9 +165,11 @@ fn kind_spec(json: &OpaqueJson) -> Option<KindSpecInput> {
 }
 
 /// Batch preload related users, bots, shells, and models
-/// (`get_user_teams` preload stage).
+/// (`get_user_teams` preload stage). `user_id` is the request user, which the
+/// public-model visibility check reads.
 pub(crate) async fn preload_related<M>(
     mysql: &M,
+    user_id: i64,
     teams: &[TeamRow],
 ) -> Result<Preloaded, brz_mysql::MysqlError>
 where
@@ -352,7 +365,11 @@ where
     let public_models: HashMap<String, KindRow> = if public_model_names.is_empty() {
         HashMap::new()
     } else {
-        repo::public_kinds_by_names(mysql, "Model", &public_model_names)
+        // The source filters the prefetched public models through
+        // `is_public_model_allowed_for_user_id`, which loads the request user
+        // once per row before applying the `allowedUsers` whitelist.
+        let rows = repo::public_kinds_by_names(mysql, "Model", &public_model_names).await?;
+        public_model_access::allowed_public_models(mysql, user_id, rows)
             .await?
             .into_iter()
             .map(|kind| (kind.kinds_name.clone(), kind))
@@ -383,26 +400,26 @@ pub(crate) struct TeamItem {
     user_id: i64,
     name: String,
     #[serde(rename = "displayName")]
-    display_name: Box<RawValue>,
+    display_name: RawJson,
     namespace: String,
-    description: Box<RawValue>,
+    description: RawJson,
     bots: Vec<TeamBot>,
     workflow: TeamWorkflow,
-    bind_mode: Box<RawValue>,
-    mode_spec: Box<RawValue>,
+    bind_mode: RawJson,
+    mode_spec: RawJson,
     recommended_mode: &'static str,
     is_mix_team: bool,
     is_active: bool,
     created_at: String,
     updated_at: String,
     agent_type: Option<String>,
-    icon: Box<RawValue>,
-    display_config: Box<RawValue>,
+    icon: RawJson,
+    display_config: RawJson,
     quick_phrases: Vec<String>,
     #[serde(rename = "inputPlaceholder")]
-    input_placeholder: Box<RawValue>,
-    requires_workspace: Box<RawValue>,
-    publication_status: Box<RawValue>,
+    input_placeholder: RawJson,
+    requires_workspace: RawJson,
+    publication_status: RawJson,
     access_source: String,
     default_for_modes: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,7 +450,7 @@ struct TeamBot {
 #[derive(serde::Serialize)]
 struct BotSummary {
     name: String,
-    agent_config: Box<RawValue>,
+    agent_config: RawJson,
     shell_type: String,
 }
 
@@ -442,6 +459,7 @@ pub(crate) fn team_item(
     team: &TeamRow,
     preloaded: &Preloaded,
     default_config: &[(&'static str, String, String)],
+    user_id: i64,
 ) -> TeamItem {
     let crd: TeamCrd = (&team.team_json.0).into();
     let is_group_resource = !team.team_namespace.is_empty() && team.team_namespace != "default";
@@ -530,7 +548,9 @@ pub(crate) fn team_item(
 
     let mode_fields = compact_fields(&crd.input.mode_spec);
     let mode_spec = (!mode_fields.is_empty()).then_some(mode_fields);
-    let display_config = compact_fields(&crd.input.display_config);
+    // `dump_team_display_config` runs on the typed `TeamDisplayConfig` model, so
+    // the response only ever carries the declared `show_final_answer_only` key.
+    let display_config = crd.input.display_config.clone().unwrap_or_default();
     let placeholder_fields = compact_fields(&crd.input.input_placeholder);
     let input_placeholder = (!placeholder_fields.is_empty()).then_some(placeholder_fields);
     let quick_phrases = crd
@@ -573,8 +593,7 @@ pub(crate) fn team_item(
             mode: crd.input.collaboration_model.clone(),
         },
         bind_mode: crd.input.bind_mode.raw_or(()),
-        mode_spec: serde_json::value::to_raw_value(&mode_spec)
-            .expect("team configuration serializes"),
+        mode_spec: brz_json::to_raw_value(&mode_spec).expect("team configuration serializes"),
         recommended_mode,
         is_mix_team: shell_types.len() > 1,
         is_active: true,
@@ -582,10 +601,10 @@ pub(crate) fn team_item(
         updated_at: datetime_value(team.team_updated_at),
         agent_type,
         icon: crd.input.icon.raw_or(()),
-        display_config: serde_json::value::to_raw_value(&display_config)
+        display_config: brz_json::to_raw_value(&display_config)
             .expect("team configuration serializes"),
         quick_phrases,
-        input_placeholder: serde_json::value::to_raw_value(&input_placeholder)
+        input_placeholder: brz_json::to_raw_value(&input_placeholder)
             .expect("team configuration serializes"),
         requires_workspace: crd.input.requires_workspace.raw_or(()),
         publication_status: crd
@@ -621,6 +640,13 @@ pub(crate) fn team_item(
             id: team.team_user_id,
             user_name: user_name.clone(),
         });
+    }
+
+    if team.restricted_guest_access != 0 && team.team_user_id != user_id {
+        for member in &mut item.bots {
+            member.bot_prompt.clear();
+            member.bot.agent_config = filtered_agent_config(&member.bot.agent_config);
+        }
     }
 
     item
@@ -718,7 +744,7 @@ fn json_value(
 ) -> BotSummary {
     BotSummary {
         name: bot.kinds_name.clone(),
-        agent_config: serde_json::value::to_raw_value(&agent_config)
+        agent_config: brz_json::to_raw_value(&agent_config)
             .expect("agent configuration serializes"),
         shell_type,
     }
@@ -776,293 +802,7 @@ fn datetime_value(value: NaiveDateTime) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
+mod tests;
 
-    use super::*;
-
-    fn stored_json(value: Value) -> brz_mysql::Json<OpaqueJson> {
-        brz_mysql::Json(value.into())
-    }
-
-    fn team_item(
-        team: &TeamRow,
-        preloaded: &Preloaded,
-        config: &[(&'static str, String, String)],
-    ) -> Value {
-        crate::json_contract_tests::serialized(super::team_item(team, preloaded, config)).unwrap()
-    }
-    fn bot_summary(bot: &KindRow, user_id: i64, preloaded: &Preloaded) -> Value {
-        crate::json_contract_tests::serialized(super::bot_summary(bot, user_id, preloaded)).unwrap()
-    }
-
-    #[test]
-    fn recommended_mode_matches_source_rules() {
-        let mode = |value: Value| {
-            let modes = serde_json::from_value::<Vec<Option<String>>>(value).unwrap_or_default();
-            recommended_mode(&modes)
-        };
-        assert_eq!(mode(json!(["chat", "code"])), "both");
-        assert_eq!(mode(json!(["code"])), "code");
-        assert_eq!(mode(json!(["chat"])), "chat");
-        assert_eq!(mode(json!(["task"])), "chat");
-        assert_eq!(mode(json!([])), "chat");
-        assert_eq!(mode(Value::Null), "chat");
-        assert_eq!(mode(json!(["chat", "task", "code"])), "both");
-    }
-    #[test]
-    fn agent_type_mapping() {
-        assert_eq!(agent_type_from_shell("ClaudeCode"), "claude");
-        assert_eq!(agent_type_from_shell("Agno"), "agno");
-        assert_eq!(agent_type_from_shell("Dify"), "dify");
-        assert_eq!(agent_type_from_shell("Chat"), "chat");
-        assert_eq!(agent_type_from_shell("Custom"), "custom");
-    }
-    #[test]
-    fn context_passing_normalizes_unknown_values() {
-        assert_eq!(normalize_context_passing(None), "none");
-        assert_eq!(normalize_context_passing(Some("")), "none");
-        assert_eq!(normalize_context_passing(Some("bogus")), "none");
-        assert_eq!(
-            normalize_context_passing(Some("previous_bot")),
-            "previous_bot"
-        );
-    }
-    #[test]
-    fn datetime_serializes_like_pydantic() {
-        let value =
-            NaiveDateTime::parse_from_str("2026-01-19 21:00:58", "%Y-%m-%d %H:%M:%S").unwrap();
-        assert_eq!(datetime_value(value), "2026-01-19T21:00:58");
-    }
-    #[test]
-    fn default_for_modes_matches_identity() {
-        let default_config = vec![("wework", "wegent-wework".to_string(), "default".to_string())];
-        let mut team = TeamRow {
-            team_id: 1,
-            team_user_id: 0,
-            team_name: "wegent-wework".to_string(),
-            team_namespace: "default".to_string(),
-            team_json: stored_json(serde_json::json!({
-                "metadata": { "name": "wegent-wework", "displayName": "W" },
-                "spec": {
-                    "members": [],
-                    "collaborationModel": "solo",
-                    "bind_mode": ["task"],
-                    "displayConfig": {},
-                }
-            })),
-            team_created_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
-            team_updated_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
-            share_status: 0,
-            context_user_id: 0,
-            access_source: "native".to_string(),
-        };
-        let preloaded = Preloaded {
-            bots: HashMap::new(),
-            group_bots: HashMap::new(),
-            shells: HashMap::new(),
-            public_shells: HashMap::new(),
-            models: HashMap::new(),
-            public_models: HashMap::new(),
-            users: HashMap::new(),
-        };
-        let item = team_item(&team, &preloaded, &default_config);
-        crate::json_contract_tests::assert_fixture(
-            &format!("team_list_{}", team.share_status),
-            &item,
-        );
-        assert_eq!(item["default_for_modes"], json!(["wework"]));
-        assert_eq!(item["recommended_mode"], "chat");
-        assert!(item.get("share_status").is_none());
-        assert!(item.get("user").is_none());
-
-        // Shared team reports share_status 2.
-        team.share_status = 2;
-        let item = team_item(&team, &preloaded, &default_config);
-        crate::json_contract_tests::assert_fixture(
-            &format!("team_list_{}", team.share_status),
-            &item,
-        );
-        assert_eq!(item["share_status"], json!(2));
-    }
-    #[test]
-    fn own_team_share_status_from_labels() {
-        let team = TeamRow {
-            team_id: 1,
-            team_user_id: 5,
-            team_name: "t".to_string(),
-            team_namespace: "default".to_string(),
-            team_json: stored_json(serde_json::json!({
-                "metadata": {
-                    "name": "t",
-                    "labels": { "share_status": "1" },
-                },
-                "spec": { "members": [], "collaborationModel": "solo" },
-            })),
-            team_created_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
-            team_updated_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
-            share_status: 0,
-            context_user_id: 5,
-            access_source: "native".to_string(),
-        };
-        let preloaded = Preloaded {
-            bots: HashMap::new(),
-            group_bots: HashMap::new(),
-            shells: HashMap::new(),
-            public_shells: HashMap::new(),
-            models: HashMap::new(),
-            public_models: HashMap::new(),
-            users: HashMap::new(),
-        };
-        let item = team_item(&team, &preloaded, &[]);
-        crate::json_contract_tests::assert_fixture("team_list_own", &item);
-        assert_eq!(item["share_status"], json!(1));
-    }
-    #[test]
-    fn bot_summary_uses_public_model_fallback() {
-        let bot = KindRow {
-            kinds_id: 2,
-            kinds_user_id: 0,
-            kinds_name: "bot".to_string(),
-            kinds_namespace: "default".to_string(),
-            kinds_json: stored_json(serde_json::json!({
-                "spec": {
-                    "shellRef": { "name": "Chat", "namespace": "default" },
-                    "modelRef": { "name": "m1", "namespace": "default" },
-                }
-            })),
-        };
-        let mut public_models = HashMap::new();
-        public_models.insert(
-            "m1".to_string(),
-            KindRow {
-                kinds_id: 3,
-                kinds_user_id: 0,
-                kinds_name: "m1".to_string(),
-                kinds_namespace: "default".to_string(),
-                kinds_json: stored_json(serde_json::json!({
-                    "spec": { "isCustomConfig": false }
-                })),
-            },
-        );
-        let mut public_shells = HashMap::new();
-        public_shells.insert(
-            "Chat".to_string(),
-            KindRow {
-                kinds_id: 4,
-                kinds_user_id: 0,
-                kinds_name: "Chat".to_string(),
-                kinds_namespace: "default".to_string(),
-                kinds_json: stored_json(serde_json::json!({
-                    "spec": { "shellType": "Chat" }
-                })),
-            },
-        );
-        let preloaded = Preloaded {
-            bots: HashMap::new(),
-            group_bots: HashMap::new(),
-            shells: HashMap::new(),
-            public_shells,
-            models: HashMap::new(),
-            public_models,
-            users: HashMap::new(),
-        };
-        let summary = bot_summary(&bot, 229, &preloaded);
-        assert_eq!(summary["shell_type"], "Chat");
-        assert_eq!(summary["agent_config"]["bind_model"], "m1");
-        assert_eq!(summary["agent_config"]["bind_model_type"], "public");
-    }
-
-    #[test]
-    fn bot_summary_preserves_custom_model_config() {
-        let bot = KindRow {
-            kinds_id: 2,
-            kinds_user_id: 229,
-            kinds_name: "bot".to_string(),
-            kinds_namespace: "default".to_string(),
-            kinds_json: stored_json(serde_json::json!({
-                "spec": { "modelRef": { "name": "m1", "namespace": "default" } }
-            })),
-        };
-        let mut models = HashMap::new();
-        models.insert(
-            (229, "m1".to_string(), "default".to_string()),
-            KindRow {
-                kinds_id: 3,
-                kinds_user_id: 229,
-                kinds_name: "m1".to_string(),
-                kinds_namespace: "default".to_string(),
-                kinds_json: stored_json(serde_json::json!({
-                    "spec": {
-                        "isCustomConfig": true,
-                        "modelConfig": {
-                            "base_url": "https://models.example.invalid",
-                            "retries": 2,
-                            "headers": { "x-client": "wegent" }
-                        },
-                        "protocol": "openai"
-                    }
-                })),
-            },
-        );
-        let preloaded = Preloaded {
-            bots: HashMap::new(),
-            group_bots: HashMap::new(),
-            shells: HashMap::new(),
-            public_shells: HashMap::new(),
-            models,
-            public_models: HashMap::new(),
-            users: HashMap::new(),
-        };
-
-        let summary = bot_summary(&bot, 229, &preloaded);
-        assert_eq!(
-            summary["agent_config"],
-            json!({
-                "base_url": "https://models.example.invalid",
-                "retries": 2,
-                "headers": { "x-client": "wegent" },
-                "protocol": "openai"
-            })
-        );
-    }
-
-    #[test]
-    fn preload_public_shell_names_cover_cache_misses() {
-        // Ensures the shell fallback ordering: user shells first, then
-        // public shells by name for anything missing.
-        let mut shells = HashMap::new();
-        shells.insert(
-            (229, "ClaudeCode".to_string(), "default".to_string()),
-            KindRow {
-                kinds_id: 10,
-                kinds_user_id: 229,
-                kinds_name: "ClaudeCode".to_string(),
-                kinds_namespace: "default".to_string(),
-                kinds_json: stored_json(
-                    serde_json::json!({ "spec": { "shellType": "ClaudeCode" } }),
-                ),
-            },
-        );
-        let shell_refs = [
-            (229, "ClaudeCode".to_string(), "default".to_string()),
-            (0, "Chat".to_string(), "default".to_string()),
-        ];
-        let names: Vec<String> = shell_refs
-            .iter()
-            .filter(|(uid, name, ns)| !shells.contains_key(&(*uid, name.clone(), ns.clone())))
-            .map(|(_, name, _)| name.clone())
-            .collect();
-        assert_eq!(names, vec!["Chat".to_string()]);
-    }
-    #[test]
-    fn distinct_shell_types_drive_mix_flag() {
-        let types: HashSet<String> = ["Chat", "ClaudeCode"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(types.len() > 1);
-        let single: HashSet<String> = ["Chat"].iter().map(|s| s.to_string()).collect();
-        assert!(single.len() == 1);
-    }
-}
+#[cfg(test)]
+mod access_policy_tests;

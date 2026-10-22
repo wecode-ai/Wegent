@@ -226,6 +226,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id,
             runtime: "claude_code".to_owned(),
             request,
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -237,6 +238,25 @@ impl RuntimeWorkRpcHandler {
         } else {
             self.spawn_turn(turn).await
         }
+    }
+
+    pub(super) async fn queue_claude_turn(
+        &self,
+        local_task_id: String,
+        request: ExecutionRequest,
+    ) -> Result<(), AppIpcError> {
+        self.queue_turn(SpawnTurnRequest {
+            local_task_id,
+            runtime: "claude_code".to_owned(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        })
+        .await
     }
 
     pub(super) fn start_claude_turn(
@@ -276,6 +296,16 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (request, model_proxy_token) = match prepare_claude_model_proxy(request) {
+            Ok(prepared) => prepared,
+            Err(message) => {
+                self.fail_local_task_execution_start(
+                    &local_task_id,
+                    &AppIpcError::new("invalid_model_configuration", message),
+                );
+                return;
+            }
+        };
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
@@ -291,7 +321,6 @@ impl RuntimeWorkRpcHandler {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
-            let (request, model_proxy_token) = prepare_claude_model_proxy(request);
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
@@ -342,6 +371,7 @@ impl RuntimeWorkRpcHandler {
             }
             match &outcome {
                 ExecutionOutcome::Completed { content } => {
+                    let result_content = content.clone();
                     let blocks = transcript
                         .lock()
                         .map(|transcript| transcript.blocks())
@@ -370,8 +400,20 @@ impl RuntimeWorkRpcHandler {
                     }
                     let _ = sink.send(builder.response_completed(content)).await;
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
+                    handler.finish_automation_run(
+                        &local_task_id,
+                        AutomationRunStatus::Succeeded,
+                        None,
+                    );
+                    handler.finish_queue_run(
+                        &local_task_id,
+                        AutomationRunStatus::Succeeded,
+                        None,
+                        Some(result_content),
+                    );
                 }
                 ExecutionOutcome::WaitingForUserInput { stop_reason } => {
+                    let stop_reason = stop_reason.clone();
                     let blocks = transcript
                         .lock()
                         .map(|transcript| transcript.blocks())
@@ -385,32 +427,68 @@ impl RuntimeWorkRpcHandler {
                         None,
                     );
                     let _ = sink
-                        .send(builder.response_waiting_for_user_input(stop_reason))
+                        .send(builder.response_waiting_for_user_input(&stop_reason))
                         .await;
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
+                    handler.finish_automation_run(
+                        &local_task_id,
+                        AutomationRunStatus::NeedsAttention,
+                        Some(stop_reason.clone()),
+                    );
+                    handler.finish_queue_run(
+                        &local_task_id,
+                        AutomationRunStatus::NeedsAttention,
+                        Some(stop_reason),
+                        Some(String::new()),
+                    );
                 }
                 ExecutionOutcome::Failed { message } => {
+                    let message = message.clone();
                     handler.persist_claude_assistant_message(
                         &local_task_id,
                         &request,
                         "",
                         transcript.lock().expect("Claude transcript lock").blocks(),
                         "failed",
-                        Some(message),
+                        Some(&message),
                     );
-                    let _ = sink.send(builder.error(message, "runtime_error")).await;
+                    let _ = sink.send(builder.error(&message, "runtime_error")).await;
                     handler.finish_local_task(&local_task_id, execution_id, None, "failed");
+                    handler.finish_automation_run(
+                        &local_task_id,
+                        AutomationRunStatus::Failed,
+                        Some(message.clone()),
+                    );
+                    handler.finish_queue_run(
+                        &local_task_id,
+                        AutomationRunStatus::Failed,
+                        Some(message),
+                        None,
+                    );
                 }
                 ExecutionOutcome::Cancelled { message } => {
+                    let message = message.clone();
                     handler.persist_claude_assistant_message(
                         &local_task_id,
                         &request,
                         "",
                         transcript.lock().expect("Claude transcript lock").blocks(),
                         "cancelled",
-                        Some(message),
+                        Some(&message),
                     );
-                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
+                    if handler.settle_cancelled_local_task_execution(&local_task_id, execution_id) {
+                        handler.finish_automation_run(
+                            &local_task_id,
+                            AutomationRunStatus::Cancelled,
+                            Some(message.clone()),
+                        );
+                        handler.finish_queue_run(
+                            &local_task_id,
+                            AutomationRunStatus::Cancelled,
+                            Some(message.clone()),
+                            None,
+                        );
+                    }
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,
@@ -589,13 +667,15 @@ fn is_claude_goal_invocation(request: &ExecutionRequest) -> bool {
         .unwrap_or(false)
 }
 
-fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionRequest, Option<String>) {
-    let Some(upstream) = local_model_proxy::upstream_from_model_config(&request.model_config)
+fn prepare_claude_model_proxy(
+    mut request: ExecutionRequest,
+) -> Result<(ExecutionRequest, Option<String>), String> {
+    let Some(upstream) = local_model_proxy::upstream_from_model_config(&request.model_config)?
     else {
-        return (request, None);
+        return Ok((request, None));
     };
     let Some(loopback) = executor_loopback_base_url() else {
-        return (request, None);
+        return Ok((request, None));
     };
     let token = local_model_proxy::register_harness(
         &format!("claude-runtime:{}:{}", request.task_id, request.subtask_id),
@@ -603,7 +683,7 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
     );
     let Some(model_config) = request.model_config.as_object_mut() else {
         local_model_proxy::unregister_harness(&token);
-        return (request, None);
+        return Ok((request, None));
     };
     model_config.insert(
         "base_url".to_owned(),
@@ -617,7 +697,7 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
         model_config,
         &format!("{loopback}/v1/harness-router/{token}"),
     );
-    (request, Some(token))
+    Ok((request, Some(token)))
 }
 
 fn apply_claude_proxy_environment(model_config: &mut serde_json::Map<String, Value>, url: &str) {
@@ -750,6 +830,14 @@ fn prepare_claude_cloud_model_route(
         ),
     ] {
         default_headers.insert(key.to_owned(), Value::String(value));
+    }
+    // Forward the session (task) id through the gateway to the upstream provider.
+    let task_id = request.task_id.trim();
+    if !task_id.is_empty() {
+        default_headers.insert(
+            "X-Wegent-Upstream-Header-wecode-session-id".to_owned(),
+            Value::String(task_id.to_owned()),
+        );
     }
     Ok(())
 }

@@ -98,9 +98,10 @@ if [ -n "$PYTHON_FILES" ]; then
   )
   SHARED_FILES=$(printf '%s\n' "$PYTHON_FILES" | grep '^shared/' || true)
   CHAT_SHELL_FILES=$(printf '%s\n' "$PYTHON_FILES" | grep '^chat_shell/' || true)
+  KNOWLEDGE_ENGINE_FILES=$(printf '%s\n' "$PYTHON_FILES" | grep '^knowledge_engine/' || true)
   OTHER_FILES=$(
     printf '%s\n' "$PYTHON_FILES" |
-      grep -Ev '^(backend|executor|executor_manager|shared|chat_shell)/' || true
+      grep -Ev '^(backend|executor|executor_manager|shared|chat_shell|knowledge_engine)/' || true
   )
 
   # Format files in each module with its own pyproject.toml context.
@@ -126,6 +127,10 @@ if [ -n "$PYTHON_FILES" ]; then
 
   if [ -n "$CHAT_SHELL_FILES" ] && [ -f "$PROJECT_ROOT/chat_shell/pyproject.toml" ]; then
     format_python_module "$PROJECT_ROOT/chat_shell" "$CHAT_SHELL_FILES" "chat_shell" || exit 1
+  fi
+
+  if [ -n "$KNOWLEDGE_ENGINE_FILES" ] && [ -f "$PROJECT_ROOT/knowledge_engine/pyproject.toml" ]; then
+    format_python_module "$PROJECT_ROOT/knowledge_engine" "$KNOWLEDGE_ENGINE_FILES" "knowledge_engine" || exit 1
   fi
 
   # For other files, use backend as the repository-level formatter context.

@@ -43,6 +43,23 @@ export interface AnalyticsEventMap extends SmartAppGeneratedEventMap, PluginGene
   app_started: {
     surface: 'main' | 'popout' | 'workspace'
   }
+  app_startup_attempted: {
+    startup_id: string
+  }
+  app_startup_succeeded: {
+    duration_ms: number
+    startup_id: string
+  }
+  app_startup_failed: {
+    duration_ms: number
+    failure_stage:
+      | 'core_plugin'
+      | 'desktop_runtime'
+      | 'renderer_initialize'
+      | 'renderer_load'
+      | 'unknown'
+    startup_id: string
+  }
   project_opened: {
     source: 'local' | 'cloud' | 'unknown'
   }
@@ -286,6 +303,9 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
     'result',
   ],
   app_started: ['surface'],
+  app_startup_attempted: ['startup_id'],
+  app_startup_succeeded: ['duration_ms', 'startup_id'],
+  app_startup_failed: ['duration_ms', 'failure_stage', 'startup_id'],
   project_opened: ['source'],
   conversation_created: ['execution_target'],
   task_started: ['execution_target'],
@@ -358,6 +378,22 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     result: ['success', 'failure', 'cancelled'],
   },
   app_started: { surface: ['main', 'popout', 'workspace'] },
+  app_startup_attempted: {
+    startup_id: { maxLength: 36, pattern: TELEMETRY_GENERATION_ID_PATTERN },
+  },
+  app_startup_succeeded: {
+    startup_id: { maxLength: 36, pattern: TELEMETRY_GENERATION_ID_PATTERN },
+  },
+  app_startup_failed: {
+    failure_stage: [
+      'core_plugin',
+      'desktop_runtime',
+      'renderer_initialize',
+      'renderer_load',
+      'unknown',
+    ],
+    startup_id: { maxLength: 36, pattern: TELEMETRY_GENERATION_ID_PATTERN },
+  },
   project_opened: { source: ['local', 'cloud', 'unknown'] },
   conversation_created: { execution_target: EXECUTION_TARGETS },
   task_started: { execution_target: EXECUTION_TARGETS },

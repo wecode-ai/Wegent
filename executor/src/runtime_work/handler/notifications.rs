@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::command_items::{merge_codex_command_item, merge_codex_turn_items};
 use super::*;
-
 impl RuntimeWorkRpcHandler {
     pub(super) fn begin_active_codex_transcript(
         &self,
@@ -36,11 +36,10 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         status: &str,
     ) {
-        let active = self
-            .active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|mut items| items.remove(local_task_id));
+        let mut active_items = self.active_codex_transcript_items.lock().ok();
+        let active = active_items
+            .as_mut()
+            .and_then(|items| items.remove(local_task_id));
         let Some(active) = active.filter(|active| !active.items.is_empty()) else {
             return;
         };
@@ -77,6 +76,7 @@ impl RuntimeWorkRpcHandler {
             );
             link.updated_at = link.updated_at.max(completed_at);
         });
+        drop(active_items);
     }
 
     pub(super) fn persist_completed_codex_turn_from_notification(
@@ -88,7 +88,7 @@ impl RuntimeWorkRpcHandler {
         if notification.method != "turn/completed" {
             return;
         }
-        let Some(turn) = notification
+        let Some(mut turn) = notification
             .params
             .get("turn")
             .filter(|turn| turn.is_object())
@@ -99,6 +99,23 @@ impl RuntimeWorkRpcHandler {
         let Some(turn_id) = string_field(&turn, "id") else {
             return;
         };
+        // Completion notifications can omit items already delivered through the stream.
+        let mut active_items = self.active_codex_transcript_items.lock().ok();
+        let active = active_items.as_ref().and_then(|items| {
+            items
+                .get(local_task_id)
+                .filter(|active| active.turn_id == turn_id)
+                .cloned()
+        });
+        if let Some(active) = active.filter(|active| !active.items.is_empty()) {
+            let completed_items = turn
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            turn["items"] = Value::Array(active.items);
+            merge_codex_turn_items(&mut turn, completed_items);
+        }
         let thread_id = string_field(notification.params, "threadId")
             .or_else(|| {
                 self.local_task_link(local_task_id)
@@ -129,13 +146,14 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = link.updated_at.max(completed_at);
             });
         }
-        if let Ok(mut active_items) = self.active_codex_transcript_items.lock() {
+        if let Some(active_items) = active_items.as_mut() {
             if let Some(active) = active_items.get_mut(local_task_id) {
                 if active.turn_id == turn_id {
                     active.items.clear();
                 }
             }
         }
+        drop(active_items);
     }
 
     pub(super) fn record_active_codex_transcript_item(
@@ -145,8 +163,18 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) {
         let notification = codex_notification(message);
-        if notification.method == "item/plan/delta" {
-            self.record_active_codex_plan_delta(local_task_id, turn_id, notification.params);
+        let text_item_type = match notification.method.as_str() {
+            "item/plan/delta" => Some("plan"),
+            "item/agentMessage/delta" => Some("agentMessage"),
+            _ => None,
+        };
+        if let Some(text_item_type) = text_item_type {
+            self.record_active_codex_text_delta(
+                local_task_id,
+                turn_id,
+                notification.params,
+                text_item_type,
+            );
             return;
         }
         if !matches!(
@@ -155,9 +183,16 @@ impl RuntimeWorkRpcHandler {
         ) {
             return;
         }
-        let item = notification_item(notification.params);
+        let mut item = notification_item(notification.params);
         if !item.is_object() {
             return;
+        }
+        if is_codex_context_compaction_item_type(&item_type(&item)) {
+            item["status"] = json!(if notification.method == "item/completed" {
+                "done"
+            } else {
+                "pending"
+            });
         }
         let Some(item_id) = string_field(&item, "id") else {
             return;
@@ -181,7 +216,7 @@ impl RuntimeWorkRpcHandler {
                 .get("createdAt")
                 .or_else(|| existing.get("created_at"))
                 .cloned();
-            *existing = item;
+            *existing = merge_codex_command_item(existing, item);
             if existing.get("createdAt").is_none() && existing.get("created_at").is_none() {
                 if let (Some(object), Some(created_at)) = (existing.as_object_mut(), created_at) {
                     object.insert("createdAt".to_owned(), created_at);
@@ -208,51 +243,6 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    fn record_active_codex_plan_delta(&self, local_task_id: &str, turn_id: &str, params: &Value) {
-        let Some(item_id) = string_field(params, "itemId")
-            .or_else(|| string_field(params, "item_id"))
-            .filter(|item_id| !item_id.is_empty())
-        else {
-            return;
-        };
-        let Some(delta) = raw_string_field(params, "delta").filter(|delta| !delta.is_empty())
-        else {
-            return;
-        };
-        let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
-            return;
-        };
-        let Some(transcript) = active_items.get_mut(local_task_id) else {
-            return;
-        };
-        if transcript.turn_id != turn_id {
-            transcript.turn_id = turn_id.to_owned();
-            transcript.items.clear();
-        }
-        if let Some(existing) = transcript
-            .items
-            .iter_mut()
-            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
-        {
-            if string_field(existing, "type").as_deref() != Some("plan") {
-                return;
-            }
-            let text = raw_string_field(existing, "text").unwrap_or_default();
-            if let Some(object) = existing.as_object_mut() {
-                object.insert("text".to_owned(), Value::String(format!("{text}{delta}")));
-                object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
-            }
-            return;
-        }
-        transcript.items.push(json!({
-            "id": item_id,
-            "type": "plan",
-            "text": delta,
-            "status": "inProgress",
-            "createdAt": now_ms(),
-        }));
-    }
-
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
         let active = self
             .active_codex_transcript_items
@@ -269,6 +259,7 @@ impl RuntimeWorkRpcHandler {
             .iter_mut()
             .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
         {
+            turn["status"] = json!("inProgress");
             merge_codex_turn_items(turn, active.items);
             return;
         }
@@ -470,43 +461,79 @@ impl RuntimeWorkRpcHandler {
         }
         let pending_replays =
             begin_pending_codex_notification_replays(&mut routing, &child_thread_ids);
-        let skip_active_notification = if self.is_active_local_task(&local_task_id) {
-            let Some(active_turn) = self.active_codex_turn(&local_task_id) else {
-                drop(routing);
-                self.replay_codex_notifications(pending_replays);
-                return;
-            };
-            let Some(notification_turn_id) = notification_turn_id.as_deref() else {
-                drop(routing);
-                self.replay_codex_notifications(pending_replays);
-                return;
-            };
-            if notification_turn_id == active_turn.turn_id {
-                true
-            } else {
-                if codex_stream_debug_enabled() {
-                    log_executor_event(
-                        "runtime work routes non-active turn notification",
-                        &[
-                            ("thread_id", thread_id.clone()),
-                            ("active_turn_id", active_turn.turn_id),
-                            ("notification_turn_id", notification_turn_id.to_owned()),
-                        ],
-                    );
+        let notification = codex_notification(&message);
+        let command_notification = notification.method.starts_with("item/commandExecution/")
+            || item_type(&notification_item(notification.params)) == "commandexecution";
+        let active_turn = self.active_codex_turn(&local_task_id);
+        // The turn callback finishes before its execution task settles. Completed
+        // commands belong to the global router during that handoff window.
+        let completed_command_turn = active_turn.is_none()
+            && command_notification
+            && notification_turn_id.as_deref().is_some_and(|turn_id| {
+                let streamed =
+                    self.active_codex_transcript_items
+                        .lock()
+                        .ok()
+                        .is_some_and(|items| {
+                            items.get(&local_task_id).is_some_and(|active| {
+                                active.turn_id == turn_id
+                                    && active
+                                        .items
+                                        .iter()
+                                        .any(|item| item_type(item) == "commandexecution")
+                            })
+                        });
+                streamed
+                    || self.local_task_link(&local_task_id).is_some_and(|link| {
+                        completed_transcript_messages(&link).iter().any(|message| {
+                            string_field(message, "subtaskId").as_deref() == Some(turn_id)
+                        })
+                    })
+            });
+        let skip_active_notification =
+            if self.is_active_local_task(&local_task_id) && !completed_command_turn {
+                let Some(active_turn) = active_turn else {
+                    drop(routing);
+                    self.replay_codex_notifications(pending_replays);
+                    return;
+                };
+                let Some(notification_turn_id) = notification_turn_id.as_deref() else {
+                    drop(routing);
+                    self.replay_codex_notifications(pending_replays);
+                    return;
+                };
+                if notification_turn_id == active_turn.turn_id {
+                    true
+                } else {
+                    if codex_stream_debug_enabled() {
+                        log_executor_event(
+                            "runtime work routes non-active turn notification",
+                            &[
+                                ("thread_id", thread_id.clone()),
+                                ("active_turn_id", active_turn.turn_id),
+                                ("notification_turn_id", notification_turn_id.to_owned()),
+                            ],
+                        );
+                    }
+                    false
                 }
+            } else {
                 false
-            }
-        } else {
-            false
-        };
+            };
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route_request, false);
         }
         drop(routing);
 
         if !skip_active_notification {
+            if !route_nested {
+                self.record_background_terminal_notification(&local_task_id, &message);
+            }
             let mut event_request = route_request;
-            if !route_nested && !is_context_compaction_request(&event_request) {
+            // A background command keeps its native turn even after a compaction route replaces it.
+            if !route_nested
+                && (!is_context_compaction_request(&event_request) || command_notification)
+            {
                 if let Some(turn_id) = notification_turn_id {
                     if event_request.subtask_id != turn_id {
                         event_request.subtask_id = turn_id;
@@ -901,6 +928,13 @@ fn take_pending_codex_notifications(
 fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {
     let params = message.get("params").unwrap_or(message);
     let item = params.get("item").unwrap_or(params);
+    if item_type(item) == "subagentactivity" {
+        return string_field(item, "agentThreadId")
+            .or_else(|| string_field(item, "agent_thread_id"))
+            .filter(|thread_id| !thread_id.trim().is_empty())
+            .into_iter()
+            .collect();
+    }
     if item_type(item) != "collabagenttoolcall"
         || string_field(item, "tool").as_deref() != Some("spawnAgent")
     {
@@ -923,34 +957,4 @@ fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {
         }
     }
     thread_ids
-}
-
-fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
-    let Some(turn_object) = turn.as_object_mut() else {
-        return;
-    };
-    let items = turn_object
-        .entry("items".to_owned())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if !items.is_array() {
-        *items = Value::Array(Vec::new());
-    }
-    let items = items
-        .as_array_mut()
-        .expect("turn items were normalized to an array");
-    for active_item in active_items {
-        let Some(item_id) = string_field(&active_item, "id") else {
-            continue;
-        };
-        if let Some(existing) = items
-            .iter_mut()
-            .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
-        {
-            *existing = active_item;
-        } else {
-            items.push(active_item);
-        }
-    }
-    turn_object.insert("itemsView".to_owned(), Value::String("full".to_owned()));
-    turn_object.insert("status".to_owned(), Value::String("inProgress".to_owned()));
 }

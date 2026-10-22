@@ -22,6 +22,11 @@ export interface DeviceCommandApi {
   executeCommand(deviceId: string, data: DeviceCommandRequest): Promise<DeviceCommandResponse>
 }
 
+export type CommitMessageGenerator = (context: {
+  deviceId: string
+  stagedDiff: string
+}) => Promise<string>
+
 type EnvironmentWorkspaceTarget = Pick<WorkspaceTarget, 'deviceId' | 'path'> &
   Partial<Pick<WorkspaceTarget, 'source'>>
 
@@ -60,7 +65,6 @@ const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
   staged: 'git_diff_staged',
   commit: 'git_diff_last_commit',
 }
-const GENERATED_COMMIT_MESSAGE_COMMAND = 'git_generate_commit_message'
 const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 
 type EnvironmentInfoCacheEntry = {
@@ -371,7 +375,7 @@ export function parseChangeRequest(
   }
 }
 
-function classifyChangeRequestCommandError(
+export function classifyChangeRequestCommandError(
   response: DeviceCommandResponse
 ): ChangeRequestLookupState {
   const message = [response.error, response.stderr].filter(Boolean).join('\n').toLowerCase()
@@ -719,42 +723,6 @@ async function probeGitRepository(
   })
 
   return response.success && outputAsString(response.stdout).trim() === 'true'
-}
-
-async function generateCommitMessage(
-  api: DeviceCommandApi,
-  deviceId: string,
-  path: string
-): Promise<string> {
-  const response = await api.executeCommand(deviceId, {
-    command_key: GENERATED_COMMIT_MESSAGE_COMMAND,
-    path,
-    timeout_seconds: 120,
-    max_output_bytes: 8192,
-  })
-
-  if (!response.success) {
-    throw new Error(response.error || response.stderr || 'Failed to generate commit message')
-  }
-
-  const payload = outputAsRecord(response.stdout)
-  if (!payload) {
-    throw new Error('Failed to generate commit message')
-  }
-  if (payload.success === false) {
-    const error = typeof payload.error === 'string' ? payload.error.trim() : ''
-    throw new Error(error || 'Failed to generate commit message')
-  }
-
-  const message = typeof payload.message === 'string' ? payload.message.trim() : ''
-  const firstLine = message
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .find(Boolean)
-  if (!firstLine) {
-    throw new Error('Failed to generate commit message')
-  }
-  return firstLine
 }
 
 async function loadBranchDiffShortStat(
@@ -1143,7 +1111,8 @@ export async function commitProjectChanges(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
   message: string,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  generateMessage?: CommitMessageGenerator
 ): Promise<void> {
   let commitMessage = message.trim()
 
@@ -1157,12 +1126,16 @@ export async function commitProjectChanges(
   if (!commitMessage) {
     const stagedDiff = await runGitCommand(api, deviceId, 'git_diff_staged', path, {
       timeoutSeconds: 30,
-      maxOutputBytes: 4096,
+      maxOutputBytes: 200_000,
     })
     if (!stagedDiff.trim()) {
       throw new Error(NO_CHANGES_TO_COMMIT_MESSAGE)
     }
-    commitMessage = await generateCommitMessage(api, deviceId, path)
+    if (!generateMessage) throw new Error('Commit message generation is unavailable')
+    commitMessage = (await generateMessage({ deviceId, stagedDiff })).trim()
+    if (!commitMessage || /[\r\n]/.test(commitMessage)) {
+      throw new Error('Failed to generate commit message')
+    }
   }
 
   await runGitCommand(api, deviceId, 'git_commit', path, {
@@ -1188,9 +1161,10 @@ export async function commitAndPushProjectChanges(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
   message: string,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  generateMessage?: CommitMessageGenerator
 ): Promise<void> {
-  await commitProjectChanges(api, project, message, target)
+  await commitProjectChanges(api, project, message, target, generateMessage)
   await pushProjectChanges(api, project, target)
 }
 

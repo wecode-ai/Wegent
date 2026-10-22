@@ -8,9 +8,12 @@ import { act, render, waitFor } from '@testing-library/react'
 import { taskApis } from '@/apis/tasks'
 import { TaskSessionProvider, useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task, TaskDetail } from '@/types/api'
-import type { TaskStatusPayload } from '@/types/socket'
+import type { TaskCreatedPayload, TaskStatusPayload } from '@/types/socket'
 
-let mockTaskHandlers: { onTaskStatus?: (payload: TaskStatusPayload) => void } | null = null
+let mockTaskHandlers: {
+  onTaskCreated?: (payload: TaskCreatedPayload) => void
+  onTaskStatus?: (payload: TaskStatusPayload) => void
+} | null = null
 let mockVisibleHandler: ((wasHiddenFor: number) => void) | null = null
 let mockReconnectHandler: (() => void) | null = null
 let mockIsConnected = true
@@ -170,6 +173,36 @@ describe('TaskSessionContext runtime state machine sync', () => {
       active_stream: null,
     })
   })
+
+  it.each([0, 17])(
+    'keeps websocket task project %i out of unrelated personal history',
+    async projectId => {
+      mockedTaskApis.getPersonalTasksLite.mockResolvedValue({ total: 0, items: [] })
+      render(
+        <TaskSessionProvider>
+          <ContextProbe />
+        </TaskSessionProvider>
+      )
+      await waitFor(() => expect(mockTaskHandlers?.onTaskCreated).toBeDefined())
+      await waitFor(() => expect(contextProbe.current?.taskLoading).toBe(false))
+
+      act(() => {
+        mockTaskHandlers?.onTaskCreated?.({
+          task_id: 99,
+          title: 'API task',
+          team_id: 3,
+          team_name: 'Test agent',
+          created_at: '2026-01-01T00:00:00Z',
+          project_id: projectId,
+        })
+      })
+
+      const expectedTask = expect.objectContaining({ id: 99, project_id: projectId })
+      expect(contextProbe.current?.tasks).toEqual([expectedTask])
+      expect(contextProbe.current?.personalTasks).toEqual(projectId ? [] : [expectedTask])
+      expect(mockedTaskApis.getTaskDetail).not.toHaveBeenCalled()
+    }
+  )
 
   it('updates selected task runtime from task status websocket events', async () => {
     render(

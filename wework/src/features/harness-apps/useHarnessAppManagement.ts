@@ -10,10 +10,34 @@ import {
   openHarnessAppTab,
   registerHarnessAppTab,
   takeHarnessAppContextToken,
+  takeHarnessAppDecisionToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from './harnessAppTabs'
 import { beginHarnessAppLaunch, clearHarnessAppLaunch } from './harnessAppLaunchState'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+
+/**
+ * Releases every route registration an installation owns. The three routes are
+ * independent, so one failing unregister must not strand the others.
+ */
+export async function releaseHarnessAppRoutes(
+  installationId: string,
+  localHarnessModelApi: WorkbenchServices['localHarnessModelApi'],
+  localDecisionRouterApi: WorkbenchServices['localDecisionRouterApi']
+): Promise<void> {
+  await Promise.allSettled([
+    takeHarnessAppProxyToken(installationId).then(token =>
+      token ? localHarnessModelApi?.unregisterProxy(token) : undefined
+    ),
+    takeHarnessAppContextToken(installationId).then(token =>
+      token ? localHarnessModelApi?.unregisterContext(token) : undefined
+    ),
+    takeHarnessAppDecisionToken(installationId).then(token =>
+      token ? localDecisionRouterApi?.unregister(token) : undefined
+    ),
+  ])
+}
 
 interface HarnessAppManagementOptions {
   installations: HarnessAppInstallation[]
@@ -115,12 +139,11 @@ export function useHarnessAppManagement({
         unregisterHarnessAppTab(installation.id)
         clearHarnessAppLaunch(installation.id)
         closeAppTabs(installation.id)
-        const token = await takeHarnessAppProxyToken(installation.id)
-        if (token) await services.localHarnessModelApi?.unregisterProxy(token)
-        const contextToken = await takeHarnessAppContextToken(installation.id)
-        if (contextToken) {
-          await services.localHarnessModelApi?.unregisterContext(contextToken)
-        }
+        await releaseHarnessAppRoutes(
+          installation.id,
+          services.localHarnessModelApi,
+          services.localDecisionRouterApi
+        )
         if (refresh) await onRefresh()
         return true
       } catch (error) {
@@ -136,7 +159,15 @@ export function useHarnessAppManagement({
         onBusyChange(null)
       }
     },
-    [closeAppTabs, onBusyChange, onError, onRefresh, services.localHarnessModelApi, t]
+    [
+      closeAppTabs,
+      onBusyChange,
+      onError,
+      onRefresh,
+      services.localHarnessModelApi,
+      services.localDecisionRouterApi,
+      t,
+    ]
   )
 
   const changeModel = useCallback(

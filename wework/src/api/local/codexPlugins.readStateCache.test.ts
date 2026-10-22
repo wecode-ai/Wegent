@@ -1,5 +1,7 @@
 import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
+// Exported by the bundled runtime: codex app-server generate-json-schema --experimental.
+import pluginListSchema from './fixtures/codex-0.156.1-PluginListParams.json'
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import {
   clearLocalCodexPluginsReadStateCache,
@@ -14,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(() => null),
+  pauseBundledUpdates: vi.fn(),
+  resumeBundledUpdates: vi.fn(),
   knownDeviceId: 'local-device' as string | null,
   runtime: {
     desktop: true,
@@ -29,6 +33,17 @@ vi.mock('@/lib/runtime-environment', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   ensureBundledPluginMarketplaceRegistered: () => mocks.ensureBundledPluginMarketplaceRegistered(),
+  initializeBundledPluginMarketplace: async () => ({
+    id: 'wework-personal',
+    path: '/tmp/wework-personal',
+    defaultPluginNames: [],
+  }),
+  ensureBundledPluginInstalled: vi.fn().mockResolvedValue(undefined),
+  withBundledPluginUpdatesPaused: (name: string, mutation: () => Promise<unknown>) => {
+    mocks.pauseBundledUpdates(name)
+    return mutation()
+  },
+  resumeBundledPluginUpdates: (name: string) => mocks.resumeBundledUpdates(name),
   getInitializedBundledPluginMarketplace: () => mocks.getInitializedBundledPluginMarketplace(),
   getKnownLocalExecutorDeviceId: () => mocks.knownDeviceId,
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
@@ -85,12 +100,23 @@ const createdPlugin: InstalledPlugin = {
 }
 
 describe('local codex plugin readState cache', () => {
+  test('uninstalls an orphaned personal plugin without reading its missing marketplace', async () => {
+    mocks.requestLocalExecutor.mockResolvedValue({ localCommitted: true })
+    await createLocalCodexPluginApi().uninstallInstalledPlugin('orphan@wework-personal')
+    expect(mocks.pauseBundledUpdates).toHaveBeenCalledWith('orphan')
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledExactlyOnceWith(
+      'runtime.codex.plugin.uninstall_local',
+      { pluginName: 'orphan' }
+    )
+  })
   beforeEach(() => {
     clearLocalCodexPluginsReadStateCache()
     mocks.runtime.desktop = true
     mocks.runtime.electron = true
     mocks.knownDeviceId = 'local-device'
     mocks.requestLocalExecutor.mockReset()
+    mocks.pauseBundledUpdates.mockReset()
+    mocks.resumeBundledUpdates.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
     mocks.ensureBundledPluginMarketplaceRegistered.mockReset()
     mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
@@ -135,6 +161,148 @@ describe('local codex plugin readState cache', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('installs a cold-cached local official plugin without remote catalog authentication', async () => {
+    const marketplacePath = '/tmp/github-marketplace/.agents/plugins/marketplace.json'
+    let installed = false
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.links.list') return []
+      if (method === 'executor.plugins.manifest.read') return {}
+      if (method === 'executor.plugins.store.list') return { storePath: '/tmp/store', plugins: [] }
+      if (method !== 'codex.app_server_request') throw new Error(`Unexpected method ${method}`)
+      if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+        return {
+          marketplaces: [
+            {
+              name: 'openai-official',
+              path: marketplacePath,
+              plugins: [
+                {
+                  id: 'github@openai-official',
+                  name: 'github',
+                  installed,
+                  enabled: installed,
+                  source: { source: 'local', path: './plugins/github' },
+                },
+              ],
+            },
+          ],
+        }
+      }
+      if (params.method === 'plugin/install') {
+        expect(params.params).toEqual({
+          marketplacePath,
+          remoteMarketplaceName: null,
+          pluginName: 'github',
+        })
+        installed = true
+        return {}
+      }
+      if (params.method === 'plugin/read') {
+        expect(params.params.marketplacePath).toBe(marketplacePath)
+        return {
+          plugin: { summary: { name: 'github', version: '1.0.0', description: 'GitHub CLI' } },
+        }
+      }
+      throw new Error(`Unexpected app-server method ${params.method}`)
+    })
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const durable = window.localStorage.getItem('wework.plugins.codexCatalog.v1')!
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem('wework.plugins.codexCatalog.v1', durable)
+
+    const cached = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })!
+    expect(cached.marketplaceItems[0].manifest.marketplacePath).toBe(marketplacePath)
+    const result = await api.installAvailablePlugin(cached.marketplaceItems[0])
+    expect(result.metadata.name).toBe('github')
+  })
+
+  test('reads remote discovery without membership, disk reconciliation or bundled registration', async () => {
+    mocks.requestLocalExecutor.mockResolvedValue({
+      marketplaces: [personalMarketplace, { name: 'openai-curated-remote', plugins: [] }],
+    })
+    expect(await createLocalCodexPluginApi().readRemoteCatalog()).toEqual({
+      items: [],
+      deviceId: 'local-device',
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
+      method: 'plugin/list',
+      params: { cwds: null, forceRefetch: false },
+    })
+    expect(mocks.ensureBundledPluginMarketplaceRegistered).not.toHaveBeenCalled()
+  })
+
+  test.each([false, true])(
+    'emits protocol-supported catalog parameters (forceRefetch=%s)',
+    async forceRefetch => {
+      await createLocalCodexPluginApi().readRemoteCatalog({ forceRefetch })
+      const request = mocks.requestLocalExecutor.mock.calls.find(
+        ([, args]) => args?.method === 'plugin/list'
+      )![1]
+      const params = request.params as Record<string, unknown>
+      expect(params).toEqual({ cwds: null, forceRefetch })
+      const properties = pluginListSchema.properties as Record<string, { type: string | string[] }>
+      for (const [key, value] of Object.entries(params)) {
+        expect(properties).toHaveProperty(key)
+        const types = [properties[key].type].flat()
+        expect(types).toContain(
+          value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+        )
+      }
+      for (const kind of (params.marketplaceKinds ?? []) as string[]) {
+        expect(pluginListSchema.definitions.PluginListMarketplaceKind.enum).toContain(kind)
+      }
+      expect(pluginListSchema.definitions.PluginListMarketplaceKind.enum).not.toContain('remote')
+    }
+  )
+
+  test('filters local entries out of the default catalog without reading installation inventory', async () => {
+    const plugin = {
+      id: 'github@openai-curated-remote',
+      name: 'github',
+      installed: true,
+      enabled: true,
+    }
+    mocks.requestLocalExecutor.mockResolvedValue({
+      marketplaces: [
+        { ...personalMarketplace, plugins: [{ ...plugin, id: 'local-tool', name: 'local-tool' }] },
+        { name: 'openai-curated-remote', plugins: [plugin] },
+      ],
+    })
+    const result = await createLocalCodexPluginApi().readRemoteCatalog({ forceRefetch: true })
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]).toMatchObject({
+      name: 'github',
+      manifest: { marketplaceId: 'openai-curated-remote' },
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
+  })
+
+  test('rejects a malformed remote catalog instead of recording a successful empty result', async () => {
+    mocks.requestLocalExecutor.mockResolvedValue({})
+    await expect(createLocalCodexPluginApi().readRemoteCatalog()).rejects.toThrow(
+      'Invalid remote plugin catalog'
+    )
+  })
+
+  test('records remote failure timing and status without logging challenge HTML', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.requestLocalExecutor.mockRejectedValue(
+      new Error('403 Forbidden <html>challenge-secret</html>')
+    )
+    await expect(createLocalCodexPluginApi().readRemoteCatalog()).rejects.toThrow('403')
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] codex.app_server_request failed',
+      expect.objectContaining({
+        method: 'plugin/list',
+        httpStatus: '403',
+        elapsedMs: expect.any(Number),
+      })
+    )
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('challenge-secret')
   })
 
   test('strict membership reads reject store failures instead of returning an incomplete list', async () => {
@@ -418,6 +586,7 @@ describe('local codex plugin readState cache', () => {
     expect(operationResults).toEqual([
       { failureStage: 'request', key: 'plugin.zip_import', outcome: 'failed' },
     ])
+    expect(mocks.resumeBundledUpdates).not.toHaveBeenCalled()
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'executor.plugins.import_package.rollback',
       {
@@ -554,6 +723,7 @@ describe('local codex plugin readState cache', () => {
         rollbackId: 'rollback-verify',
       }
     )
+    expect(mocks.resumeBundledUpdates).toHaveBeenCalledWith('example-plugin')
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.install_local_first',
       {
@@ -1133,8 +1303,8 @@ describe('local codex plugin readState cache', () => {
     const legacy = {
       version: 1,
       entries: {
-        '|all': {
-          paramsKey: '|all',
+        '|all|all-kinds': {
+          paramsKey: '|all|all-kinds',
           cachedAt: Date.now(),
           state: {
             marketplaceItems: [
@@ -1438,8 +1608,8 @@ describe('local codex plugin readState cache', () => {
       JSON.stringify({
         version: 2,
         entries: {
-          '|all': {
-            paramsKey: '|all',
+          '|all|all-kinds': {
+            paramsKey: '|all|all-kinds',
             cachedAt: Date.now(),
             state: {
               marketplaceItems: [],
@@ -1514,7 +1684,10 @@ describe('local codex plugin readState cache', () => {
     )
 
     const api = createLocalCodexPluginApi()
-    const detailed = await api.readMarketplacePluginDetail('openai-curated-remote', 'github')
+    const detailed = await api.readMarketplacePluginDetail(
+      { id: 'openai-curated-remote', name: 'OpenAI', path: 'openai-curated-remote' },
+      'github'
+    )
     expect(pluginListCalls).toBe(0)
     expect(detailed.spec.components.skills.map(skill => skill.name)).toEqual(['Review Follow-up'])
     expect(detailed.spec.components.apps?.map(app => app.name)).toEqual(['GitHub'])
@@ -1622,7 +1795,7 @@ describe('local codex plugin readState cache', () => {
         }
       >
     }
-    const item = heavy.entries['|all']?.state.marketplaceItems[0]
+    const item = heavy.entries['|all|all-kinds']?.state.marketplaceItems[0]
     expect(item).toBeTruthy()
     item!.interface = {
       displayName: 'Heavy plugin',
@@ -1666,8 +1839,8 @@ describe('local codex plugin readState cache', () => {
     const persisted = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as {
       entries?: Record<string, unknown>
     }
-    expect(persisted.entries?.['|all']).toBeTruthy()
-    expect(persisted.entries?.['|selected']).toBeUndefined()
+    expect(persisted.entries?.['|all|all-kinds']).toBeTruthy()
+    expect(persisted.entries?.['|selected|all-kinds']).toBeUndefined()
   })
 
   test('migrates a legacy sessionStorage snapshot into localStorage', async () => {
@@ -1840,9 +2013,14 @@ describe('local codex plugin readState cache', () => {
     expect(order).toEqual(['installed-start', 'installed-end', 'list-start'])
   })
 
-  test('listInstalledPlugins can supersede an in-flight membership read', async () => {
+  test('complete membership reads supersede an in-flight membership read', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true, refresh: true })
+
     let installedRequestCount = 0
     let resolveFirstInstalled: ((value: unknown) => void) | null = null
+    let storeRequestCount = 0
+    let resolveFirstStore: ((value: unknown) => void) | null = null
     mocks.requestLocalExecutor.mockImplementation(
       async (
         method: string,
@@ -1850,6 +2028,15 @@ describe('local codex plugin readState cache', () => {
           method?: string
         }
       ) => {
+        if (method === 'executor.plugins.store.list') {
+          storeRequestCount += 1
+          if (storeRequestCount === 1) {
+            return await new Promise(resolve => {
+              resolveFirstStore = resolve
+            })
+          }
+          return { storePath: '/tmp/store/plugins', plugins: [] }
+        }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -1881,11 +2068,10 @@ describe('local codex plugin readState cache', () => {
       }
     )
 
-    const api = createLocalCodexPluginApi()
     const superseded = api.listInstalledPlugins({ refresh: true })
     await vi.waitFor(() => expect(installedRequestCount).toBe(1))
 
-    const current = api.listInstalledPlugins({ refresh: true, shareInflight: false })
+    const current = api.listInstalledPlugins({ requireComplete: true })
     await expect(current).resolves.toEqual(
       expect.objectContaining({
         items: [
@@ -1896,9 +2082,20 @@ describe('local codex plugin readState cache', () => {
       })
     )
     expect(installedRequestCount).toBe(2)
+    expect(storeRequestCount).toBe(2)
 
     resolveFirstInstalled?.({ marketplaces: [personalMarketplace] })
+    resolveFirstStore?.({ storePath: '/tmp/store/plugins', plugins: [] })
     await superseded
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toEqual(
+      expect.objectContaining({
+        installedPlugins: [
+          expect.objectContaining({
+            metadata: expect.objectContaining({ name: 'current-plugin' }),
+          }),
+        ],
+      })
+    )
   })
 
   test('listInstalledPlugins uses plugin/installed and never waits on plugin/list', async () => {
@@ -2650,10 +2847,13 @@ describe('local codex plugin readState cache', () => {
           params?: Record<string, unknown>
         }
       ) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
         if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          if (params.method === 'plugin/list' && installCalls.length > 0)
+            throw new Error('An accepted install must not wait on the marketplace catalog')
           const installed = installCalls.length > 0
           const plugin = {
             id: 'gmail@openai-curated-remote',
@@ -2681,7 +2881,7 @@ describe('local codex plugin readState cache', () => {
           if (pluginName !== remotePluginId) {
             throw new Error(`unexpected plugin id ${pluginName}`)
           }
-          return {}
+          return { authPolicy: 'ON_USE', appsNeedingAuth: [] }
         }
         if (params.method === 'plugin/read') {
           return {
@@ -2715,7 +2915,8 @@ describe('local codex plugin readState cache', () => {
     const state = await api.readState({ mergeAllMarketplaces: true })
     const gmail = state.marketplaceItems.find(item => item.name === 'gmail')
     expect(gmail?.remotePluginId).toBe('')
-    await api.installAvailablePlugin(String(gmail?.id), 'openai-curated-remote')
+    expect(gmail).toBeDefined()
+    await api.installAvailablePlugin(gmail!)
 
     expect(installCalls).toEqual([
       {
@@ -2737,6 +2938,7 @@ describe('local codex plugin readState cache', () => {
           params?: Record<string, unknown>
         }
       ) => {
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method !== 'codex.app_server_request') {
           throw new Error(`Unexpected executor method ${method}`)
         }
@@ -2765,7 +2967,7 @@ describe('local codex plugin readState cache', () => {
         }
         if (params.method === 'plugin/install') {
           installCalls.push(String(params.params?.pluginName ?? ''))
-          return {}
+          return { authPolicy: 'ON_USE', appsNeedingAuth: [] }
         }
         if (params.method === 'plugin/read') {
           return {
@@ -2799,7 +3001,8 @@ describe('local codex plugin readState cache', () => {
     const state = await api.readState({ mergeAllMarketplaces: true })
     const github = state.marketplaceItems.find(item => item.name === 'github')
     expect(github?.remotePluginId).toBe(remotePluginId)
-    await api.installAvailablePlugin(String(github?.id), 'openai-curated-remote')
+    expect(github).toBeDefined()
+    await api.installAvailablePlugin(github!)
     expect(installCalls).toEqual([remotePluginId])
   })
 
@@ -2896,7 +3099,6 @@ describe('local codex plugin readState cache', () => {
         }
         if (method === 'runtime.codex.plugin.uninstall_local') {
           expect(params).toEqual({
-            marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
             pluginName: 'dev-tools',
           })
           installed = false
@@ -2941,7 +3143,6 @@ describe('local codex plugin readState cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.uninstall_local',
       {
-        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
         pluginName: 'dev-tools',
       }
     )

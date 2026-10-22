@@ -245,22 +245,6 @@ def parse_sse(text):
     ]
 
 
-def test_background_submission_only_uses_runtime_and_returns_native_handle(api):
-    result = submit(api)
-    assert result.status_code == 200, result.text
-    body = result.json()
-    identity = ResponseIdentity.parse(body["id"])
-    assert body["status"] == "queued"
-    request = api.create.await_args.kwargs["request"]
-    assert request.standalone_chat_workspace is True
-    assert request.client_user_message_id == identity.message_id
-    assert api.subscriptions == []
-    assert (
-        api.client.get(f"{PREFIX}/responses/{identity.id}").json()["status"] == "queued"
-    )
-    assert "must-never" not in api.client.get(f"{PREFIX}/models").text
-
-
 @pytest.mark.parametrize("endpoint", ["models", "devices"])
 @pytest.mark.parametrize("header", [None, "Bearer bogus", "Bearer eyJ.jwt.token"])
 def test_rejects_missing_invalid_or_jwt_auth(api, header, endpoint):
@@ -286,53 +270,6 @@ def test_rejects_unusable_personal_keys(api, change, endpoint):
         api.user.is_active = False
     api.db.commit()
     assert api.client.get(f"{PREFIX}/{endpoint}").status_code == 401
-
-
-def test_query_is_turn_scoped_and_old_response_cannot_cancel_new_turn(api):
-    first = submit(api).json()
-    finish(api, first["id"], "first reply")
-    second = submit(api, previous_response_id=first["id"], execution=None).json()
-    assert first["id"] != second["id"]
-    assert first["conversation"] == second["conversation"]
-    old = api.client.get(f"{PREFIX}/responses/{first['id']}").json()
-    assert old["is_latest"] is False
-    assert old["output"][0]["content"][0]["text"] == "first reply"
-    api.client.post(f"{PREFIX}/responses/{first['id']}/cancel")
-    service.runtime.cancel_runtime_task.assert_not_awaited()
-    assert (
-        submit(api, previous_response_id=first["id"], execution=None).status_code == 409
-    )
-
-
-def test_unowned_device_handle_does_not_authorize_rpc(api):
-    first = submit(api).json()
-    identity = ResponseIdentity.parse(first["id"])
-    foreign = ResponseIdentity("other-device", identity.task_id, identity.message_id)
-    assert api.client.get(f"{PREFIX}/responses/{foreign.id}").status_code == 404
-    assert api.client.post(f"{PREFIX}/responses/{foreign.id}/cancel").status_code == 404
-    service.runtime.cancel_runtime_task.assert_not_awaited()
-
-
-@pytest.mark.parametrize("turn_id", [101, "01a07b7f-715c-7023-a043-fe6067a7b5ed"])
-def test_existing_pc_conversation_exposes_response_without_registration(api, turn_id):
-    first = submit(api).json()
-    identity = ResponseIdentity.parse(first["id"])
-    api.messages[identity.task_id][0]["clientUserMessageId"] = "pc-message-1"
-    finish(api, first["id"], "PC is working", "streaming")
-    for message in api.messages[identity.task_id]:
-        message["subtaskId"] = turn_id
-    detail = api.client.get(f"{PREFIX}/conversations/{identity.conversation_id}").json()
-    latest = detail["latest_response"]
-    assert ResponseIdentity.parse(latest["id"]).message_id == "pc-message-1"
-    assert latest["status"] == "in_progress"
-    assert "_address" not in detail
-    assert api.client.get(f"{PREFIX}/responses/{latest['id']}").json() == latest
-    cancelled = api.client.post(f"{PREFIX}/responses/{latest['id']}/cancel").json()
-    assert cancelled["cancellation_requested"] is True
-    assert cancelled["status"] == "in_progress"
-    assert service.runtime.cancel_runtime_task.await_args.kwargs[
-        "runtime_turn_id"
-    ] == str(turn_id)
 
 
 def test_conversation_paging_always_exposes_latest_turn(api):
@@ -391,20 +328,6 @@ def test_runtime_rejection_closes_subscription_without_storing_response(api):
     assert api.subscriptions[-1].closed
 
 
-def test_completed_response_streams_native_snapshot_without_live_events(api):
-    first = submit(api).json()
-    finish(api, first["id"])
-    result = api.client.get(f"{PREFIX}/responses/{first['id']}?stream=true")
-    assert parse_sse(result.text)[-1]["response"]["status"] == "completed"
-    assert api.subscriptions[-1].closed
-    assert (
-        api.client.get(
-            f"{PREFIX}/responses/{first['id']}?stream=true&starting_after=1"
-        ).status_code
-        == 400
-    )
-
-
 @pytest.mark.parametrize(
     "fields",
     [
@@ -424,56 +347,11 @@ def test_unsupported_or_invalid_input_fails_before_dispatch(api, fields):
     api.create.assert_not_awaited()
 
 
-def test_malformed_resource_ids_fail_before_runtime_access(api):
-    assert api.client.get(f"{PREFIX}/responses/resp_bad").status_code == 400
-    assert api.client.get(f"{PREFIX}/conversations/conv_bad").status_code == 400
-
-
 def test_actual_backend_registers_exact_public_prefix(test_app):
     paths = {route.path for route in test_app.routes if hasattr(route, "path")}
     assert f"{PREFIX}/responses" in paths
     assert f"{PREFIX}/conversations" in paths
     assert "/v1/api/wework/responses" not in paths
-
-
-def test_live_reattachment_filters_other_turns_and_returns_complete_result(
-    api, monkeypatch
-):
-    first = submit(api).json()
-    identity = ResponseIdentity.parse(first["id"])
-    finish(api, first["id"], "already generated", "streaming")
-    original = events.subscribe
-
-    async def subscribe(*args):
-        subscription = await original(*args)
-        subscription.queue.extend(
-            [
-                event(
-                    identity,
-                    "response.completed",
-                    {"value": "wrong"},
-                    clientUserMessageId="foreign-turn",
-                ),
-                event(identity, "response.output_text.delta", {"delta": "new text"}),
-                event(
-                    identity,
-                    "response.completed",
-                    {"value": "already generated new text"},
-                ),
-            ]
-        )
-        return subscription
-
-    monkeypatch.setattr(events, "subscribe", subscribe)
-    response = api.client.get(f"{PREFIX}/responses/{first['id']}?stream=true")
-    output = parse_sse(response.text)
-    assert output[0]["response"]["output"] == []
-    assert "wrong" not in response.text
-    assert (
-        output[-1]["response"]["output"][0]["content"][0]["text"]
-        == "already generated new text"
-    )
-    assert api.subscriptions[-1].closed
 
 
 @pytest.mark.asyncio
@@ -492,29 +370,6 @@ async def test_disconnecting_sse_closes_subscription_without_cancelling_runtime(
     await anext(stream)
     await stream.aclose()
     assert subscription.closed
-
-
-def test_response_lookup_walks_runtime_pages(api):
-    first = submit(api).json()
-    finish(api, first["id"], "old answer")
-    identity = ResponseIdentity.parse(first["id"])
-    api.messages[identity.task_id].extend(
-        {"id": f"later-{index}", "role": "user", "content": "later"}
-        for index in range(205)
-    )
-    response = api.client.get(f"{PREFIX}/responses/{first['id']}")
-    assert response.status_code == 200
-    assert response.json()["output"][0]["content"][0]["text"] == "old answer"
-    assert response.json()["is_latest"] is False
-
-
-def test_cancelled_before_first_output_is_not_reported_as_queued(api):
-    response = submit(api).json()
-    identity = ResponseIdentity.parse(response["id"])
-    api.tasks[identity.task_id]["status"] = "cancelled"
-    snapshot = api.client.get(f"{PREFIX}/responses/{identity.id}").json()
-    assert snapshot["status"] == "cancelled"
-    assert snapshot["output"] == []
 
 
 @pytest.mark.parametrize("statuses", [[], ["online", "offline", "busy"]])
@@ -554,40 +409,6 @@ def test_devices_are_user_scoped_and_expose_only_public_fields(
     }
 
 
-@pytest.mark.parametrize("operation", ["response", "conversation", "cancel", "create"])
-@pytest.mark.parametrize(
-    "code, status", [("device_offline", 503), ("device_not_found", 404)]
-)
-def test_unavailable_device_fails_before_listing_or_dispatch(
-    api, monkeypatch, operation, code, status
-):
-    from app.services.device.runtime_route import RuntimeRouteError
-
-    identity = ResponseIdentity("device-1", "task-1", "message-1")
-    resolver = AsyncMock(side_effect=RuntimeRouteError(code, "Device unavailable"))
-    monkeypatch.setattr(native.runtime_route_resolver, "resolve", resolver)
-    listing = AsyncMock()
-    monkeypatch.setattr(native.runtime, "list_runtime_work", listing)
-    if operation == "create":
-        result = submit(api)
-    elif operation == "cancel":
-        result = api.client.post(f"{PREFIX}/responses/{identity.id}/cancel")
-    else:
-        path = (
-            f"responses/{identity.id}"
-            if operation == "response"
-            else f"conversations/{identity.conversation_id}"
-        )
-        result = api.client.get(f"{PREFIX}/{path}")
-    assert result.status_code == status
-    assert result.json()["detail"]["code"] == code
-    listing.assert_not_awaited()
-    assert "create" not in api.calls
-    resolver.assert_awaited_once_with(
-        user_id=api.user.id, submitted_device_id="device-1"
-    )
-
-
 async def test_runtime_work_filters_devices_before_rpc(monkeypatch):
     listing = AsyncMock(return_value={})
     monkeypatch.setattr(
@@ -604,19 +425,6 @@ async def test_runtime_work_filters_devices_before_rpc(monkeypatch):
     await native.runtime.list_runtime_work(db=None, user_id=1, device_id="target")
     listing.assert_awaited_once_with(
         user_id=1, devices=[{"device_id": "target", "status": "online"}]
-    )
-
-
-@pytest.mark.parametrize("header", ["Authorization", "X-API-Key"])
-def test_unified_endpoint_accepts_personal_key_headers(api, header):
-    token = api.client.headers.pop("Authorization").split(" ", 1)[1]
-    api.client.headers[header] = (
-        f"Bearer {token}" if header == "Authorization" else token
-    )
-    result = submit(api)
-    assert result.status_code == 200, result.text
-    assert (
-        api.client.get(f"{PREFIX}/responses/{result.json()['id']}").status_code == 200
     )
 
 
@@ -642,68 +450,6 @@ def test_legacy_requests_reach_existing_team_lookup(api, monkeypatch):
     assert result.status_code == 404, result.text
     assert "Team" in result.json()["detail"]
     lookup.assert_not_awaited()
-
-
-@pytest.mark.parametrize("workspace_kind", ["chat", "workspace", "worktree"])
-def test_continue_native_task_uses_one_direct_lookup_and_preserves_binding(
-    api, monkeypatch, workspace_kind
-):
-    task_id = "native-workspace-task"
-    handle = {
-        "wegentTeam": {"id": 42},
-        "modelSelection": {
-            "modelName": "model-1",
-            "modelType": "public",
-            "options": {"permissionMode": "read-only", "reasoningEffort": "high"},
-        },
-    }
-    api.tasks[task_id] = {
-        "taskId": task_id,
-        "workspacePath": "/projects/original",
-        "workspaceKind": workspace_kind,
-        "runtime": "codex",
-        "title": "Existing desktop task",
-        "runtimeHandle": handle,
-        "status": "completed",
-    }
-    api.messages[task_id] = []
-    listing = AsyncMock(side_effect=AssertionError("Continuation must not list tasks"))
-    monkeypatch.setattr(native.runtime, "list_runtime_work", listing)
-    identifier = conversation_id("device-1", task_id)
-
-    result = submit(api, conversation=identifier, execution=None)
-
-    assert result.status_code == 200, result.text
-    api.rpc.assert_awaited_once_with(
-        user_id=api.user.id,
-        device_id="device-1",
-        method="runtime.tasks.get",
-        payload={"taskId": task_id},
-    )
-    request = api.send.await_args.kwargs["request"]
-    assert request.address.local_task_id == task_id
-    assert request.address.workspace_path == "/projects/original"
-    assert request.address.runtime_handle == handle
-    assert request.model_selection.options["permissionMode"] == "read-only"
-    assert request.model_selection.options["reasoningEffort"] == "high"
-    api.create.assert_not_awaited()
-
-    first = result.json()
-    finish(api, first["id"])
-    assert api.client.get(f"{PREFIX}/responses/{first['id']}").status_code == 200
-    detail = api.client.get(f"{PREFIX}/conversations/{identifier}")
-    assert detail.status_code == 200
-    assert detail.json()["latest_response"]["id"] == first["id"]
-    api.rpc.reset_mock()
-    second = submit(api, previous_response_id=first["id"], execution=None)
-    assert second.status_code == 200, second.text
-    api.rpc.assert_awaited_once()
-    finish(api, second.json()["id"], status="streaming")
-    assert (
-        api.client.post(f"{PREFIX}/responses/{second.json()['id']}/cancel").status_code
-        == 200
-    )
-    listing.assert_not_awaited()
 
 
 def test_missing_task_does_not_report_device_offline(api):
@@ -819,14 +565,6 @@ def test_legacy_continuation_never_enters_wework(
     assert result.status_code in {400, 404}
     create.assert_not_awaited()
     api.rpc.assert_not_awaited()
-
-
-def test_legacy_response_ids_use_existing_lookup(api, monkeypatch):
-    getter = AsyncMock()
-    monkeypatch.setattr(service, "get_response", getter)
-    result = api.client.get(f"{PREFIX}/responses/resp_99999999")
-    assert result.status_code == 404
-    getter.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

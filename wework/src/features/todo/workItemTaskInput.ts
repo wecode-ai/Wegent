@@ -1,46 +1,65 @@
-import type { CloudLoopItem } from '@/api/deliveries'
-import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 
-export function isSelfManagedWorkItem(item: Pick<CloudLoopItem, 'workflow'>): boolean {
-  const workflow = item.workflow
-  if (!workflow) return true
-  const stageMode = workflow.stage_mode ?? (workflow.nodes.length > 0 ? 'dag' : 'none')
-  return stageMode === 'none' && (workflow.advancement_policy ?? 'manual') === 'manual'
+export function workItemComposerReference(
+  project: Pick<CloudProject, 'id' | 'project_key'>,
+  item: Pick<CloudLoopItem, 'id' | 'sequence_number' | 'title'>
+): string {
+  const projectKey = project.project_key?.trim()
+  const issueKey = projectKey ? `${projectKey}-${item.sequence_number}` : `#${item.sequence_number}`
+  const title = item.title.replace(/[[\]\\\r\n]/g, ' ').trim()
+  const label = title ? `${issueKey} · ${title}` : issueKey
+  return `[$${label}](wework-issue://${encodeURIComponent(String(project.id))}/${encodeURIComponent(item.id)})`
 }
 
 export function workItemTaskInput(item: Pick<CloudLoopItem, 'title' | 'description'>): string {
   return item.title.trim() || item.description?.trim() || ''
 }
 
+export function workItemStartedUpdate(
+  item: { status: string; tags?: string[] | null; version: number },
+  associatedTags: string[]
+): { version: number; status?: 'in_progress'; tags?: string[] } | null {
+  const shouldStartIssue =
+    item.status === 'inbox' || item.status === 'pending' || item.status === 'in_review'
+  const currentTags = item.tags ?? []
+  const associationChanged =
+    associatedTags.length !== currentTags.length ||
+    associatedTags.some((tag, index) => tag !== currentTags[index])
+  if (!shouldStartIssue && !associationChanged) return null
+  return {
+    version: item.version,
+    ...(shouldStartIssue ? { status: 'in_progress' as const } : {}),
+    ...(associationChanged ? { tags: associatedTags } : {}),
+  }
+}
+
+export async function updateIssueWhenPersonalTaskStarts(
+  issues: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>,
+  issueId: string
+): Promise<string | null> {
+  try {
+    const latestIssue = await issues.get(issueId)
+    const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
+    if (startUpdate) {
+      await issues.update(latestIssue.id, startUpdate)
+    }
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : ''
+  }
+}
+
 export function shouldPrepareWorkItemTask(
-  item: Pick<
-    CloudLoopItem,
-    'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
-  >,
+  item: Pick<CloudLoopItem, 'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status'>,
   previousStatus: string,
   taskBindingCount: number
 ): boolean {
   return (
-    isSelfManagedWorkItem(item) &&
     !item.assignee_agent_id &&
     !item.assignee_team_id &&
     item.parent_id === null &&
     item.status !== previousStatus &&
     taskBindingCount === 0
-  )
-}
-
-export function shouldRevealWorkItemWorkflowActions(
-  item: Pick<CloudLoopItem, 'workflow'>,
-  statusChanged: boolean
-): boolean {
-  return (
-    statusChanged &&
-    !isSelfManagedWorkItem(item) &&
-    Boolean(
-      item.workflow?.nodes.some(
-        stage => workflowNodeExecutionMode(stage) === 'human' && stage.status === 'ready'
-      )
-    )
   )
 }

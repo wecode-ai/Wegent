@@ -11,6 +11,12 @@ describe('mock model E2E observability', () => {
     expect(mockServer).toContain('Mock response content:')
   })
 
+  it('applies scenario completion delays to both OpenAI streaming protocols', () => {
+    expect(
+      mockServer.match(/scenarioStep\?\.doneDelayMs \?\? streamRule\?\.doneDelayMs \?\? 0/g)
+    ).toHaveLength(2)
+  })
+
   it('uploads E2E service logs only when tests fail', () => {
     expect(workflow).toMatch(/- name: Upload backend logs\s+if: failure\(\)/)
     expect(workflow).toMatch(/- name: Upload executor logs\s+if: failure\(\)/)

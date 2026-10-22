@@ -6,6 +6,7 @@ import {
   ProviderNativeKnowledgeFixture,
 } from '../fixtures/provider-native-knowledge'
 import { ApiClient, createApiClient, createBackendRequestHeaders } from './api-client'
+import { modelToolDefinitions } from './model-tool-discovery'
 
 export const PROVIDER_NATIVE_API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 export const PROVIDER_NATIVE_MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -50,6 +51,11 @@ export interface RecordedTaskToolCall {
 export interface ToolScenarioStep {
   toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>
   responseContent?: string
+  doneDelayMs?: number
+}
+
+export interface ToolScenarioOptions {
+  matchHeaders?: Record<string, string | null>
 }
 
 export async function createProviderNativeResources(
@@ -247,10 +253,11 @@ export async function openProviderNativeChat(
 export async function configureToolScenario(
   request: APIRequestContext,
   matchText: string,
-  steps: ToolScenarioStep[]
+  steps: ToolScenarioStep[],
+  options: ToolScenarioOptions = {}
 ): Promise<void> {
   const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios`, {
-    data: { matchText, steps },
+    data: { matchText, matchHeaders: options.matchHeaders, steps },
   })
   expect(response.status(), await response.text()).toBe(200)
 }
@@ -438,21 +445,44 @@ export async function getScenarioModelBodies(
   return body.capturedRequests.filter(item => JSON.stringify(item).includes(prompt))
 }
 
+export async function getScenarioRequestHeaders(
+  request: APIRequestContext,
+  prompt: string
+): Promise<Array<Record<string, string | string[] | undefined>>> {
+  const response = await request.get(
+    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+  )
+  expect(response.status(), await response.text()).toBe(200)
+  const body = (await response.json()) as {
+    capturedHeaders?: Array<Record<string, string | string[] | undefined>>
+  }
+  return body.capturedHeaders ?? []
+}
+
+export async function getToolScenarioState(
+  request: APIRequestContext,
+  prompt: string
+): Promise<{ nextStep: number; capturedRequestCount: number }> {
+  const response = await request.get(
+    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+  )
+  expect(response.status(), await response.text()).toBe(200)
+  const body = (await response.json()) as {
+    nextStep?: number
+    capturedRequests?: unknown[]
+  }
+  return {
+    nextStep: body.nextStep ?? 0,
+    capturedRequestCount: body.capturedRequests?.length ?? 0,
+  }
+}
+
 export function modelRequestText(bodies: unknown[]): string {
   return JSON.stringify(bodies).replace(/\\\"/g, '"')
 }
 
 export function modelToolNames(bodies: Record<string, unknown>[]): string[] {
-  return bodies.flatMap(body => {
-    const tools = Array.isArray(body.tools) ? body.tools : []
-    return tools
-      .map(tool => {
-        if (!tool || typeof tool !== 'object') return ''
-        const value = tool as { name?: string; function?: { name?: string } }
-        return value.function?.name || value.name || ''
-      })
-      .filter(Boolean)
-  })
+  return bodies.flatMap(body => modelToolDefinitions(body).map(tool => tool.name))
 }
 
 export function authHeaders(token: string): Record<string, string> {

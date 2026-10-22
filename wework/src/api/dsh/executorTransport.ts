@@ -1,14 +1,26 @@
 import { createRequestId } from '@/lib/request-id'
+import { logModelLoading } from '@/lib/model-loading-diagnostics'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
+const executorEventSubscribers = new Map<symbol, (event: DshExecutorEventEnvelope) => void>()
+let disconnectExecutorEventStream: (() => void) | null = null
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
+const modelDiagnosticsDeadline = performance.now() + 30_000
+const modelDiagnosticMethods = new Set([
+  'runtime.tasks.list',
+  'runtime.codex.runtime_config.update',
+  'runtime.codex.ensure_started',
+  'executor.plugins.initialize_bundled_marketplace',
+  'runtime.codex.models.list',
+])
+const modelDiagnosticCounts = new Map<string, number>()
 
 export interface DshExecutorDescription {
   protocol_version: number
   device_id: string
-  runtime_instance_id?: string
+  runtime_instance_id: string
   version?: string
   capabilities: string[]
   renderer_methods: string[]
@@ -75,6 +87,15 @@ export async function describeDshExecutor(): Promise<DshExecutorDescription> {
       'DSH executor returned an invalid protocol description'
     )
   }
+  if (
+    typeof body.executor.runtime_instance_id !== 'string' ||
+    !body.executor.runtime_instance_id.trim()
+  ) {
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'DSH executor returned a missing or invalid Runtime identity'
+    )
+  }
   return body.executor
 }
 
@@ -84,12 +105,27 @@ export async function requestDshExecutor<T>(
 ): Promise<T> {
   const requestId = createRequestId('wework-local')
   const startedAt = Date.now()
+  const diagnosticCount = modelDiagnosticCounts.get(method) ?? 0
+  const diagnose =
+    performance.now() < modelDiagnosticsDeadline &&
+    modelDiagnosticMethods.has(method) &&
+    diagnosticCount < 3
+  if (diagnose) modelDiagnosticCounts.set(method, diagnosticCount + 1)
+  const diagnosticStart = performance.now()
+  const diagnostic = (stage: string, details: Record<string, number | boolean> = {}) => {
+    if (!diagnose) return
+    logModelLoading(requestId, `rpc.${method}.${stage}`, {
+      elapsedMs: Math.round(performance.now() - diagnosticStart),
+      ...details,
+    })
+  }
   console.debug('[Wework] Executor RPC request started', {
     request_id: requestId,
     method,
   })
   let response: Response
   try {
+    diagnostic('fetch_started')
     response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
       method: 'POST',
       headers: {
@@ -100,6 +136,7 @@ export async function requestDshExecutor<T>(
       body: JSON.stringify({ id: requestId, method, params }),
     })
   } catch (error) {
+    diagnostic('fetch_failed')
     console.warn('[Wework] Executor RPC transport failed', {
       request_id: requestId,
       method,
@@ -108,6 +145,7 @@ export async function requestDshExecutor<T>(
     })
     throw error
   }
+  diagnostic('headers_received', { status: response.status })
   console.debug('[Wework] Executor RPC response received', {
     request_id: requestId,
     method,
@@ -119,7 +157,9 @@ export async function requestDshExecutor<T>(
     body = (await response.json()) as
       | { ok: true; result: T }
       | ({ ok?: false } & DshExecutorErrorBody)
+    diagnostic('body_parsed', { ok: response.ok && body.ok === true })
   } catch (error) {
+    diagnostic('body_parse_failed')
     console.warn('[Wework] Executor RPC response parsing failed', {
       request_id: requestId,
       method,
@@ -145,6 +185,37 @@ export async function requestDshExecutor<T>(
 }
 
 export function subscribeDshExecutorEvents(
+  listener: (event: DshExecutorEventEnvelope) => void
+): () => void {
+  const subscription = Symbol('executor-event-subscriber')
+  executorEventSubscribers.set(subscription, listener)
+  if (!disconnectExecutorEventStream) {
+    disconnectExecutorEventStream = connectDshExecutorEventStream(event => {
+      for (const [id, subscriber] of [...executorEventSubscribers]) {
+        if (!executorEventSubscribers.has(id)) continue
+        try {
+          subscriber(event)
+        } catch (error) {
+          console.error('[Wework] Executor event listener failed', {
+            event: event.event,
+            sequence: event.sequence,
+            error,
+          })
+        }
+      }
+    })
+  }
+  return () => {
+    executorEventSubscribers.delete(subscription)
+    if (executorEventSubscribers.size === 0) {
+      disconnectExecutorEventStream?.()
+      disconnectExecutorEventStream = null
+    }
+  }
+}
+
+// All subscribers in a renderer share one SSE connection, leaving HTTP slots for RPCs.
+function connectDshExecutorEventStream(
   listener: (event: DshExecutorEventEnvelope) => void
 ): () => void {
   let cursor = 0

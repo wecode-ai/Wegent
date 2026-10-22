@@ -38,16 +38,42 @@ pub struct MinioConfig {
 }
 
 impl MinioConfig {
+    /// `get_storage_backend`'s `minio`/`s3` configuration (`ATTACHMENT_S3_*`).
+    /// `None` when the endpoint or credentials are absent, leaving the `mysql`
+    /// backend in effect. Like every source `settings.*` read, the values come
+    /// from the process environment or the source-compatible `/app/.env`
+    /// dotenv file.
+    pub fn from_env() -> Option<Self> {
+        let endpoint = crate::config::env_or_dotenv("ATTACHMENT_S3_ENDPOINT").unwrap_or_default();
+        let access_key =
+            crate::config::env_or_dotenv("ATTACHMENT_S3_ACCESS_KEY").unwrap_or_default();
+        let secret_key =
+            crate::config::env_or_dotenv("ATTACHMENT_S3_SECRET_KEY").unwrap_or_default();
+        if endpoint.is_empty() || access_key.is_empty() || secret_key.is_empty() {
+            return None;
+        }
+        Some(Self {
+            endpoint,
+            access_key,
+            secret_key,
+            bucket: crate::config::env_or_dotenv("ATTACHMENT_S3_BUCKET")
+                .unwrap_or_else(|| "attachments".to_string()),
+            region: crate::config::env_or_dotenv("ATTACHMENT_S3_REGION")
+                .unwrap_or_else(|| "us-east-1".to_string()),
+        })
+    }
+
     /// `Minio(endpoint_clean, ...)`: the scheme is stripped from the endpoint
     /// and decides `use_ssl`; the remaining `host:port` becomes the Host.
-    fn host(&self) -> &str {
+    pub fn host(&self) -> &str {
         self.endpoint
             .strip_prefix("http://")
             .or_else(|| self.endpoint.strip_prefix("https://"))
             .unwrap_or(&self.endpoint)
     }
 
-    fn scheme(&self) -> &str {
+    /// `Minio(..., secure=use_ssl)`: `http://` disables TLS.
+    pub fn scheme(&self) -> &str {
         if self.endpoint.starts_with("https://") {
             "https"
         } else {
@@ -62,6 +88,12 @@ pub enum StorageError {
     /// `None` and the endpoint renders 500 `Failed to retrieve attachment
     /// data`).
     Unavailable,
+    /// The object is absent: the object store answered `404`, which `minio-py`
+    /// surfaces as an `S3Error` with a `NoSuchKey`/`NoSuchObject`/`NotFound`
+    /// code. The attachment read path collapses this into the same `None` as
+    /// `Unavailable`; the transcript archive read path distinguishes it as its
+    /// 404 `archive_not_found`.
+    NotFound,
 }
 
 /// `MinIOStorageBackend` construction plus `bucket_exists`:
@@ -102,7 +134,9 @@ pub async fn ensure_bucket_exists(
 
 /// `MinIOStorageBackend.get(key)`: `GET {scheme}://{host}/{bucket}/{key}`.
 /// `NoSuchKey` and every other failure map to `None` in the source, which the
-/// endpoint renders as 500 `Failed to retrieve attachment data`.
+/// endpoint renders as 500 `Failed to retrieve attachment data`. A `404`
+/// upstream status is reported as `StorageError::NotFound` so the transcript
+/// archive read path can render its own 404.
 pub async fn get_object(
     client: &HttpClient,
     config: &MinioConfig,
@@ -111,6 +145,9 @@ pub async fn get_object(
     let host = config.host();
     let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
     let url = format!("{}://{host}{uri}", config.scheme());
+    // The `x-amz-date` below comes from the live signing clock, matching the
+    // source's minio-py signing; Replay tolerance for its drift is provided by
+    // the `attachment-s3-signing-time-get` dependency rule.
     let amz_date = s3_signing::amz_timestamp_now();
     let signed = s3_signing::sign(
         &config.access_key,
@@ -133,7 +170,11 @@ pub async fn get_object(
         .await
         .map_err(|_| StorageError::Unavailable)?;
     if !response.status().is_success() {
-        return Err(StorageError::Unavailable);
+        return if response.status().as_u16() == 404 {
+            Err(StorageError::NotFound)
+        } else {
+            Err(StorageError::Unavailable)
+        };
     }
     let body = response
         .bytes()
@@ -142,9 +183,140 @@ pub async fn get_object(
     Ok(body.to_vec())
 }
 
+/// `MinIOStorageBackend.exists(key)` / minio-py `stat_object`:
+/// `HEAD {scheme}://{host}/{bucket}/{key}`. A `404` upstream status is
+/// reported as [`StorageError::NotFound`] so callers can render a missing
+/// object; every other non-success status and transport failure is
+/// [`StorageError::Unavailable`].
+pub async fn stat_object(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+) -> Result<(), StorageError> {
+    let host = config.host();
+    let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
+    let url = format!("{}://{host}{uri}", config.scheme());
+    let amz_date = s3_signing::amz_timestamp_now();
+    let signed = s3_signing::sign(
+        &config.access_key,
+        &config.secret_key,
+        &config.region,
+        host,
+        "HEAD",
+        &uri,
+        &amz_date,
+    );
+    let response = client
+        .request(brz_http::Method::HEAD, &url)
+        .map_err(|_| StorageError::Unavailable)?
+        .header("authorization", signed.authorization)
+        .header("x-amz-content-sha256", signed.content_sha256)
+        .header("x-amz-date", signed.amz_date)
+        .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
+        .send()
+        .await
+        .map_err(|_| StorageError::Unavailable)?;
+    if response.status().is_success() {
+        Ok(())
+    } else if response.status().as_u16() == 404 {
+        Err(StorageError::NotFound)
+    } else {
+        Err(StorageError::Unavailable)
+    }
+}
+
+/// minio-py `put_object` for a single-part upload:
+/// `PUT {scheme}://{host}/{bucket}/{key}` with the object bytes as the body.
+/// The payload hash signs the request (`x-amz-content-sha256`) over the
+/// cleartext-HTTP transport the deployment uses, and the object is stored as
+/// `application/octet-stream`.
+pub async fn put_object(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+    body: &[u8],
+) -> Result<(), StorageError> {
+    let host = config.host();
+    let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
+    let url = format!("{}://{host}{uri}", config.scheme());
+    let amz_date = s3_signing::amz_timestamp_now();
+    let payload_sha256 = s3_signing::hex_sha256(body);
+    let signed = s3_signing::sign_headers(
+        &config.access_key,
+        &config.secret_key,
+        &config.region,
+        "PUT",
+        &uri,
+        &amz_date,
+        &payload_sha256,
+        &[
+            ("host", host),
+            ("content-type", "application/octet-stream"),
+            ("x-amz-content-sha256", &payload_sha256),
+            ("x-amz-date", &amz_date),
+        ],
+    );
+    let response = client
+        .request(brz_http::Method::PUT, &url)
+        .map_err(|_| StorageError::Unavailable)?
+        .header("authorization", signed.authorization)
+        .header("x-amz-content-sha256", signed.content_sha256)
+        .header("x-amz-date", signed.amz_date)
+        .header("content-type", "application/octet-stream")
+        .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|_| StorageError::Unavailable)?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(StorageError::Unavailable)
+    }
+}
+
+/// minio-py `remove_object`: `DELETE {scheme}://{host}/{bucket}/{key}` with
+/// an empty-payload signature. The source treats every failure as a storage
+/// error, so both a missing object and an unavailable store are
+/// [`StorageError::Unavailable`].
+pub async fn delete_object(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+) -> Result<(), StorageError> {
+    let host = config.host();
+    let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
+    let url = format!("{}://{host}{uri}", config.scheme());
+    let amz_date = s3_signing::amz_timestamp_now();
+    let signed = s3_signing::sign(
+        &config.access_key,
+        &config.secret_key,
+        &config.region,
+        host,
+        "DELETE",
+        &uri,
+        &amz_date,
+    );
+    let response = client
+        .request(brz_http::Method::DELETE, &url)
+        .map_err(|_| StorageError::Unavailable)?
+        .header("authorization", signed.authorization)
+        .header("x-amz-content-sha256", signed.content_sha256)
+        .header("x-amz-date", signed.amz_date)
+        .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
+        .send()
+        .await
+        .map_err(|_| StorageError::Unavailable)?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(StorageError::Unavailable)
+    }
+}
+
 /// URL-encode an object key the way `minio-py` does for path-style requests:
 /// percent-encode every byte except unreserved characters and `/`.
-fn encode_object_path(key: &str) -> String {
+pub fn encode_object_path(key: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(key.len());
     for &byte in key.as_bytes() {
@@ -162,11 +334,18 @@ fn encode_object_path(key: &str) -> String {
 }
 
 /// Build the process-lifetime storage HTTP client (the source builds one
-/// `Minio` client per backend instance sharing urllib3 pools).
+/// `Minio` client per backend instance sharing urllib3 pools). This is also the
+/// state's shared outbound transport, so it trusts the deployment's extra
+/// anchor when one is mounted; the source `httpx` clients resolve through the
+/// system trust store and therefore accept intercepted HTTPS dependencies.
 pub fn build_client() -> anyhow::Result<HttpClient> {
     HttpClient::builder()
         .connect_timeout(STORAGE_TIMEOUT)
         .read_timeout(STORAGE_TIMEOUT)
+        .configure(|builder| match crate::http_trust::trust_anchor() {
+            Some(anchor) => builder.add_root_certificate(anchor),
+            None => builder,
+        })
         .build()
         .context("failed to build the attachment storage HTTP client")
 }

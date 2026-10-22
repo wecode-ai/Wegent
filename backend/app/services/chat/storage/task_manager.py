@@ -29,6 +29,7 @@ from app.schemas.kind import Bot, Task, Team
 from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
 )
+from app.services.chat.task_source_group import get_or_create_task_source_group
 from app.services.readers import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
 from app.services.task_status import mark_task_completed
@@ -243,6 +244,21 @@ def create_new_task(
         )
         if not project_exists:
             raise HTTPException(status_code=404, detail="Project not found")
+    elif params.is_api_call:
+        params.project_id = get_or_create_task_source_group(
+            db, user_id=user.id, client_origin=params.client_origin, task_source="api"
+        ).id
+    elif (
+        params.message_source
+        and params.message_source.get("source") == "im"
+        and params.message_source.get("channel_type") == "dingtalk"
+    ):
+        params.project_id = get_or_create_task_source_group(
+            db,
+            user_id=user.id,
+            client_origin=params.client_origin,
+            task_source="dingtalk",
+        ).id
 
     def workspace_factory(task_id_value: int) -> tuple[str, str, dict[str, Any]]:
         workspace_name = f"workspace-{task_id_value}"
@@ -341,6 +357,7 @@ def create_new_task(
                 "taskType": task_type,
                 "autoDeleteExecutor": params.auto_delete_executor or "false",
                 "source": params.source,
+                **({"projectId": str(params.project_id)} if params.project_id else {}),
                 **({"is_api_call": "true"} if params.is_api_call else {}),
                 **({"modelId": params.model_id} if params.model_id else {}),
                 **(

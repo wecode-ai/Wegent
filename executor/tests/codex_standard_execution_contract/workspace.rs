@@ -37,7 +37,7 @@ async fn verify_workspace(streaming: bool, explicit: bool) {
     let workspace_root = if explicit {
         fixture.root.path().join("custom-workspaces")
     } else {
-        fixture.root.path().join("executor/workspace/projects")
+        fixture.root.path().join("workspaces")
     };
     let _root = EnvGuard::set(
         "WORKSPACE_ROOT",

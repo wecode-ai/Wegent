@@ -31,7 +31,6 @@ from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
-from shared.models.db.kind import utc_now_naive
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 logger = logging.getLogger(__name__)
@@ -600,7 +599,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         model_ref_name = f"{obj_in.name}-model"
         model_ref_namespace = namespace
 
-        if self._is_predefined_model(obj_in.agent_config):
+        if bool(obj_in.execution_policy) != bool(obj_in.model_policy):
+            raise HTTPException(
+                422, "Environment and model policies must be configured together"
+            )
+        if obj_in.execution_policy is not None:
+            model_ref_name = None
+        elif self._is_predefined_model(obj_in.agent_config):
             # Reference existing model by bind_model name
             model_ref_name = self._get_model_name_from_config(obj_in.agent_config)
             model_type = self._get_model_type_from_config(obj_in.agent_config)
@@ -665,6 +670,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             f"is_custom={shell_info['is_custom']}"
         )
 
+        from app.services.runner_routing import validate_agent_policies
+
+        validate_agent_policies(
+            db,
+            user_id=user_id,
+            policy=obj_in.execution_policy,
+            model_policy=obj_in.model_policy,
+            runtime={"Codex": "codex", "ClaudeCode": "claude_code"}.get(
+                shell_info["shell_type"], shell_info["shell_type"]
+            ),
+        )
+
         # Bot's shellRef directly points to the user-selected Shell
         # No need to create a dedicated shell for each bot
         # Use the shell's actual namespace (public shells are in 'default' namespace)
@@ -675,9 +692,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         bot_spec = {
             "ghostRef": {"name": ghost_name, "namespace": namespace},
             "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
-            "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
+            "modelRef": (
+                {"name": model_ref_name, "namespace": model_ref_namespace}
+                if model_ref_name
+                else None
+            ),
             "capability_mode": self._resolve_create_capability_mode(obj_in),
         }
+        for field in ("execution_policy", "model_policy"):
+            value = getattr(obj_in, field)
+            if value is not None:
+                bot_spec[field] = value.model_dump()
         if obj_in.secondary_model_name:
             bot_spec["secondaryModelRef"] = {
                 "name": obj_in.secondary_model_name,
@@ -997,7 +1022,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     )
 
         # Get related components
-        ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        ghost, shell, model = self._get_bot_components(
+            db, bot, bot.user_id, viewer_id=user_id
+        )
         if "default_knowledge_base_refs" in update_data:
             self._validate_default_knowledge_bases(
                 db,
@@ -1047,10 +1074,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             shell = get_shell_by_name(db, new_shell_name, user_id)
 
         if "agent_config" in update_data:
+            bot_crd = Bot.model_validate(bot.json)
             new_agent_config = update_data["agent_config"]
             logger.info(f"[DEBUG] Updating agent_config: {new_agent_config}")
 
-            if self._is_predefined_model(new_agent_config):
+            if obj_in.execution_policy is not None:
+                bot_crd.spec.modelRef = None
+                return_agent_config = new_agent_config
+            elif self._is_predefined_model(new_agent_config):
                 # For predefined model, update bot's modelRef to point to the selected model
                 model_name = self._get_model_name_from_config(new_agent_config)
                 model_type = self._get_model_type_from_config(new_agent_config)
@@ -1246,6 +1277,28 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")
 
+        if {"execution_policy", "model_policy"} & update_data.keys():
+            bot_crd = Bot.model_validate(bot.json)
+            for field in ("execution_policy", "model_policy"):
+                if field in update_data:
+                    setattr(bot_crd.spec, field, getattr(obj_in, field))
+            if bool(bot_crd.spec.execution_policy) != bool(bot_crd.spec.model_policy):
+                raise HTTPException(
+                    422, "Environment and model policies must be configured together"
+                )
+            if bot_crd.spec.execution_policy:
+                bot_crd.spec.modelRef = None
+                bot_crd.spec.routing_configuration_required = False
+                from app.services.runner_routing import validate_agent_policies
+
+                validate_agent_policies(
+                    db,
+                    user_id=user_id,
+                    policy=bot_crd.spec.execution_policy,
+                    model_policy=bot_crd.spec.model_policy,
+                )
+            bot.json = bot_crd.model_dump()
+            flag_modified(bot, "json")
         if "capability_mode" in update_data:
             bot_crd = Bot.model_validate(bot.json)
             bot_crd.spec.capability_mode = update_data["capability_mode"]
@@ -1345,15 +1398,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(ghost, "json")
             db.add(ghost)
 
-        # Update timestamps
-        bot.updated_at = utc_now_naive()
-        if ghost:
-            ghost.updated_at = utc_now_naive()
-        # Note: shell is now a reference to user's custom shell or public shell,
-        # we don't update its timestamp as it's not owned by this bot
-        if model and hasattr(model, "updated_at"):
-            model.updated_at = utc_now_naive()
-
+        # Timestamps are maintained by the ORM onupdate hook (database clock).
         db.commit()
         db.refresh(bot)
         if ghost:
@@ -2028,6 +2073,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "mcp_servers": mcp_servers,
             "plugins": plugins,
             "capability_mode": bot_crd.spec.capability_mode,
+            "execution_policy": bot_crd.spec.execution_policy,
+            "model_policy": bot_crd.spec.model_policy,
             "inherit_base_capabilities": inherit_base_capabilities,
             "default_knowledge_base_refs": default_knowledge_base_refs,
             "skills": skills,
@@ -2598,6 +2645,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             preload_skill_refs=preload_skill_refs_meta,
             plugins=bot_dict.get("plugins"),
             capability_mode=bot_dict["capability_mode"],
+            execution_policy=bot_dict.get("execution_policy"),
+            model_policy=bot_dict.get("model_policy"),
             inherit_base_capabilities=bot_dict.get("inherit_base_capabilities", False),
             namespace=namespace,
         )

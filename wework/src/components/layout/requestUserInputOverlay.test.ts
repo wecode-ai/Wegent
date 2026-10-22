@@ -68,6 +68,35 @@ describe('pendingRequestUserInputPayload', () => {
     })
   })
 
+  test('exposes a URL authorization with empty questions and request ID zero', () => {
+    const payload = {
+      kind: 'request_user_input',
+      requestId: 0,
+      interactionKind: 'mcp_url',
+      url: 'https://chatgpt.com/connect/github',
+      questions: [],
+    }
+    const messages = [
+      {
+        id: 'assistant-url',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        blocks: [
+          {
+            id: 'request-user-input-0',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'pending',
+            renderPayload: payload,
+          },
+        ],
+      },
+    ] as WorkbenchMessage[]
+    expect(pendingRequestUserInputPayload(messages)).toEqual(payload)
+    expect(pendingRequestUserInputPayload(messages, new Set(['request:0']))).toBeNull()
+  })
+
   test('ignores non-request_user_input blocks', () => {
     const messages = [
       {

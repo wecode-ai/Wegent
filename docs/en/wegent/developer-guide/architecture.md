@@ -374,6 +374,8 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 - **Runtime**: Claude Code, Agno, Dify
 - **Version Control**: Git
 
+Codex and Claude Code MCP transport configuration honors an explicit `type`: `stdio` starts a local command, while `http`, `streamable-http`, and `sse` use a remote URL. Without a type, only a nonblank string `command` selects stdio. Remote configurations with a URL and an empty, whitespace-only, or null command are normalized as HTTP and have their stdio fields removed. Explicit stdio configurations without a valid command still fail. Remote configurations do not inject stdio environment variables; continuation refreshes task context in their request headers.
+
 **Agent Types**:
 
 | Agent              | Type         | Description                                          |

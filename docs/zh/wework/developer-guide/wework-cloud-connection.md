@@ -33,11 +33,17 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
 
-Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Electron IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
+Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。如果桌面端连接的是本机 loopback Backend，而 Backend 返回的 Socket 地址仅把同一端口和路径换成另一主机名，则桌面端继续使用 loopback 地址；用户显式指定的 Socket 地址和独立端口的部署不受影响。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Electron IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 
+授权成功页显示 3 秒倒计时，结束后自动关闭页面；授权失败或取消时不启动倒计时。如果浏览器限制自动关闭，页面会提示手动关闭并返回 Wework。
+
 Backend 使用 `WEWORK_AUTHORIZE_BASE_URL` 生成授权页地址；未配置时复用 `FRONTEND_URL`。因此 API/Web 分离部署时必须显式配置 Web 根地址，Wework 客户端只打开 Backend 返回的完整 `authorize_url`，不自行推断网页版地址。
+
+连接底层 Socket.IO 关闭时，本机 executor 会立即清除已连接状态并启动现有重连流程，避免账户操作在等待心跳发现断连期间误以为后端可用。注册过程记录连接关闭代次，使用同一把锁发布就绪状态和处理关闭通知，避免注册完成覆盖刚发生的断连。旧连接的关闭回调不会影响新连接。
+
+插件账户认证进程禁用 Python 字节码写入，避免导入模块时修改经过校验的共享插件包。新发布记录包含归档内的 bytecode 路径。升级前生成的缓存若使包校验失败，会先计算排除候选缓存后的完整哈希，只有它与原始记录一致时才在包发布锁内清理；随后仍完整校验所有文件。归档内的 bytecode 始终受保护；旧记录若无法证明候选文件属于生成缓存，会拒绝校验并保持包原样。不重写校验记录，不忽略仍可能执行的文件。源码改动、特殊文件和缓存内的符号链接仍被拒绝，原始发布包中已校验的字节码保持不变。并发同步和发布共用该锁。包发布、仓库操作和 Agent Home 锁共用生命周期守卫，在所属操作结束时显式解锁，避免并发启动的子进程通过继承文件描述符延长锁寿命。
 
 ## 交互入口
 
@@ -149,7 +155,16 @@ Wework 管理的 Agent 环境和 macOS 用户级入口使用同一套分发规�
 
 ## 模型身份与执行传输
 
+任务输入框始终显示模型选择框，包括首次加载、目录刷新失败、没有可用模型、
+云端模型下线或本地配置删除后的任务恢复。模型不可用时禁止发送，但仍可打开
+选择框、添加本地模型或连接云端；手动选择可用模型后，可在原任务继续追问。
+不得把发送所需的模型就绪条件用于隐藏选择框，也不得擅自替换任务原有模型。
+桌面和紧凑输入布局遵循相同规则。`task-model-deletion` 桌面 E2E 检查点覆盖
+本地配置删除后重新进入任务、云端模型删除后冷启动，以及更换模型继续原会话。
+
 模型在 UI、任务状态和执行请求中始终使用同一份规范身份：`name`、`type`、`namespace` 和 `resourceUserId`。前端不得为了区分本机与远程执行而添加 `local:`、`cloud:` 前缀，也不得在模型配置中保存额外的 transport source。模型目录合并时，如果 Backend 合成的 runtime Codex 模型与 Executor 实时目录具有相同 `modelId`，保留 Executor 实时模型。
+
+模型选择器的本地目录和云端目录互相独立。本地目录依赖本机 Executor 状态和桌面偏好，这些前置条件失败时只能降级为“仅本地自定义模型”，不得让整个列表失败，也不得阻止云端目录加载；云端目录必须在同一个 `listModels` 调用里独立发起。内容无法解析的桌面偏好文件会先隔离为 `app-preferences.json.corrupt-<时间戳>`，然后按默认值继续；读权限、文件占用之类的操作性错误不会被隔离，仍按错误上报。因此一个坏文件只会丢掉被隔离的偏好，不会让用户永久看不到任何模型。
 
 目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`；选择云端或远程设备时，Wework 会在发送前按需同步该模型的 Codex 能力目录，并把任务所需的模型连接配置直接交给目标 Executor。
 

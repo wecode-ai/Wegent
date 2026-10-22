@@ -10,7 +10,9 @@
   "section": {
     "title": "Chat Groups",
     "empty": "No groups, click + to create",
-    "noTasks": "No tasks"
+    "noTasks": "No tasks",
+    "loadMore": "Load more",
+    "retryTasks": "Loading failed. Retry"
   },
   "workspaceSection": {
     "title": "Projects",
@@ -21,8 +23,12 @@
   },
   "actions": {
     "menu": "More actions",
+    "searchTasks": "Search tasks",
     "edit": "Edit",
     "delete": "Delete"
+  },
+  "search": {
+    "title": "Search in {{name}}"
   },
   "create": {
     "title": "New Group",

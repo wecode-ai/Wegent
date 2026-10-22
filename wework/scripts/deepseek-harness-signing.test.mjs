@@ -1,13 +1,27 @@
 import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   macosCodesignIdentityArguments,
   macosCodesignKeychainArguments,
   macosSigningFingerprint,
   signPreparedMacOsBinaries,
 } from './lib/deepseek-harness-signing.mjs'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    stat: async (...args) => {
+      const metadata = await actual.stat(...args)
+      // Model macOS executable permissions that Windows file metadata cannot expose.
+      if (process.platform === 'win32' && path.basename(String(args[0])) === 'node')
+        metadata.mode |= 0o111
+      return metadata
+    },
+  }
+})
 
 const temporaryDirectories = []
 

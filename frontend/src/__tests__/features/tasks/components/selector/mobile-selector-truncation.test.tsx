@@ -215,7 +215,8 @@ describe('mobile selector truncation', () => {
         displayName: 'Gemini Capable Model',
         type: 'public',
         provider: 'gemini',
-        modelId: 'gemini-capable-model',
+        modelId: 'private-upstream-model-id',
+        capability: 'Fast multimodal reasoning for everyday tasks',
         modelGroup: 'Overseas',
         modelSubGroup: 'Gemini',
         modelCapabilities: { supportsImage: true, supportsVideo: true },
@@ -240,6 +241,8 @@ describe('mobile selector truncation', () => {
     const modelOption = screen.getByTestId('mobile-model-option-gemini-capable-model')
     expect(modelOption).toHaveTextContent('图片理解')
     expect(modelOption).toHaveTextContent('视频理解')
+    expect(modelOption).toHaveTextContent('Fast multimodal reasoning for everyday tasks')
+    expect(modelOption).not.toHaveTextContent('private-upstream-model-id')
     expect(screen.getByTitle('图片理解')).toBeInTheDocument()
     expect(screen.getByTitle('视频理解')).toBeInTheDocument()
   })

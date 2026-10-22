@@ -4,15 +4,14 @@ Script to update a skill's binary data from the init_data/skills directory.
 
 Usage:
     cd backend
-    python scripts/update_skill_binary.py mermaid-diagram
+    uv run python scripts/update_skill_binary.py mermaid-diagram
 
 This will:
 1. Find the skill by name in the database
 2. Repackage the skill folder into a ZIP
-3. Update the SkillBinary record
+3. Update Skill metadata and SkillBinary together
 """
 
-import hashlib
 import io
 import os
 import sys
@@ -33,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.skill_binary import SkillBinary
+from app.services.adapters.skill_kinds import skill_kinds_service
 
 
 def create_skill_zip(skill_folder: Path) -> bytes:
@@ -67,6 +66,7 @@ def update_skill_binary(db: Session, skill_name: str, skill_folder: Path) -> boo
             Kind.user_id == 0,
             Kind.kind == "Skill",
             Kind.name == skill_name,
+            Kind.namespace == "default",
             Kind.is_active == True,
         )
         .first()
@@ -80,40 +80,24 @@ def update_skill_binary(db: Session, skill_name: str, skill_folder: Path) -> boo
 
     # Create ZIP from folder
     zip_data = create_skill_zip(skill_folder)
-    zip_hash = hashlib.sha256(zip_data).hexdigest()
     zip_name = f"{skill_name}.zip"
     print(f"Created ZIP: {len(zip_data)} bytes")
 
-    # Update or create SkillBinary
-    skill_binary = db.query(SkillBinary).filter(SkillBinary.kind_id == skill.id).first()
-
-    if skill_binary:
-        skill_binary.binary_data = zip_data
-        skill_binary.file_size = len(zip_data)
-        skill_binary.file_hash = zip_hash
-        skill_binary.file_name = zip_name
-        skill_binary.type = None
-        print(f"Updated existing SkillBinary record")
-    else:
-        skill_binary = SkillBinary(
-            kind_id=skill.id,
-            binary_data=zip_data,
-            file_size=len(zip_data),
-            file_hash=zip_hash,
-            file_name=zip_name,
-        )
-        db.add(skill_binary)
-        print(f"Created new SkillBinary record")
-
-    db.commit()
+    skill_kinds_service.update_skill(
+        db=db,
+        skill_id=skill.id,
+        user_id=skill.user_id,
+        file_content=zip_data,
+        file_name=zip_name,
+    )
     print(f"Successfully updated skill binary for '{skill_name}'")
     return True
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python scripts/update_skill_binary.py <skill_name>")
-        print("Example: python scripts/update_skill_binary.py mermaid-diagram")
+        print("Usage: uv run python scripts/update_skill_binary.py <skill_name>")
+        print("Example: uv run python scripts/update_skill_binary.py mermaid-diagram")
         sys.exit(1)
 
     skill_name = sys.argv[1]

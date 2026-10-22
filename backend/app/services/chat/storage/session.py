@@ -617,8 +617,8 @@ class SessionManager:
     async def publish_callback_event(self, subtask_id: int, event: Any) -> bool:
         """Publish an execution event to the callback stream channel.
 
-        Used by the /internal/callback handler to forward executor events to
-        any SSE consumers that are streaming a ClaudeCode/Agno/Dify task.
+        Used by HTTP callback and device WebSocket handlers to forward executor
+        events to active OpenAPI SSE consumers.
 
         Args:
             subtask_id: Subtask ID

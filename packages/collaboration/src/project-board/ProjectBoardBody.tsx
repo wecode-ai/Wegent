@@ -6,7 +6,6 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
-import * as ScrollArea from "@radix-ui/react-scroll-area";
 import { Tooltip } from "../issue-detail/Tooltip";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -19,6 +18,11 @@ import {
   type KanbanEmptyState,
 } from "../kanban/KanbanBoard";
 import type { ProjectBoardGroupBy } from "./useProjectBoardState";
+import type {
+  ProjectBoardSort,
+  ProjectBoardSortLabels,
+} from "./projectBoardSorting";
+import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
 
 function classNames(
   ...values: Array<string | false | null | undefined>
@@ -34,30 +38,18 @@ export function ProjectBoardScrollArea({
   viewportRef: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
-    <ScrollArea.Root
-      type="always"
+    <div
       data-testid="cloud-board-scroll-area"
-      className="relative min-h-0 min-w-0 flex-1"
+      className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
     >
-      <ScrollArea.Viewport
+      <div
         ref={viewportRef}
         data-testid="cloud-board-scroll"
-        className="h-full w-full [&>div]:!block [&>div]:h-full [&>div]:w-max [&>div]:min-w-full"
+        className="h-full w-full overflow-x-auto"
       >
         {children}
-      </ScrollArea.Viewport>
-      <ScrollArea.Scrollbar
-        forceMount
-        orientation="horizontal"
-        data-testid="cloud-board-horizontal-scrollbar"
-        className="project-board-scrollbar project-board-scrollbar-horizontal"
-      >
-        <ScrollArea.Thumb
-          data-testid="cloud-board-horizontal-scrollbar-thumb"
-          className="project-board-scrollbar-thumb"
-        />
-      </ScrollArea.Scrollbar>
-    </ScrollArea.Root>
+      </div>
+    </div>
   );
 }
 
@@ -86,9 +78,11 @@ export interface ProjectBoardStatePort {
   groupBy: ProjectBoardGroupBy;
   groupFilter: string;
   query: string;
+  getColumnSort(columnKey: string): ProjectBoardSort;
   quickCreateStatus: string | null;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   selectGroupBy(groupBy: ProjectBoardGroupBy): void;
+  selectColumnSort(columnKey: string, sortBy: ProjectBoardSort): void;
   setExternalGroupFilter(value: string): void;
   setExternalQuery(value: string): void;
   setGroupFilter(value: string): void;
@@ -175,9 +169,11 @@ export interface ProjectBoardBodyProps<TItem> {
     onChange: (value: ProjectBoardGroupBy) => void,
   ): ReactNode;
   renderBoardSettingsAction?(): ReactNode;
+  toolbarAction?: ReactNode;
   rootLabel: string;
   rootUnitLabel: string;
   searchPlaceholder: string;
+  sortLabels?: ProjectBoardSortLabels;
   saveGlobalDisabled: boolean;
   saveGlobalLabel: string;
   showQuickStart: boolean;
@@ -217,6 +213,7 @@ export function ProjectBoardBody<TItem>({
   renderExternalGroupPicker,
   renderGroupPicker,
   renderBoardSettingsAction,
+  toolbarAction,
   renderItem,
   renderItemsFooter,
   renderQuickStart,
@@ -225,6 +222,7 @@ export function ProjectBoardBody<TItem>({
   rootLabel,
   rootUnitLabel,
   searchPlaceholder,
+  sortLabels,
   saveGlobalDisabled,
   saveGlobalLabel,
   showQuickStart,
@@ -347,6 +345,7 @@ export function ProjectBoardBody<TItem>({
               className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
             />
           </label>
+          {toolbarAction}
           <div
             data-testid="cloud-board-view-actions"
             className="ml-auto flex shrink-0 items-center gap-2"
@@ -486,9 +485,22 @@ export function ProjectBoardBody<TItem>({
                 : "w-[292px]"
             }
             getColumnDragHint={getColumnDragHint}
-            renderColumnHeaderActions={(column, items) =>
-              renderColumnHeaderActions?.(column, items, state)
-            }
+            renderColumnHeaderActions={(column, items) => (
+              <>
+                {renderColumnHeaderActions?.(column, items, state)}
+                {sortLabels && !isExternalBoard ? (
+                  <ProjectBoardColumnSortPicker
+                    columnKey={column.key}
+                    columnLabel={column.label}
+                    labels={sortLabels}
+                    value={state.getColumnSort(column.key)}
+                    onChange={(value) =>
+                      state.selectColumnSort(column.key, value)
+                    }
+                  />
+                ) : null}
+              </>
+            )}
             getItemKey={getItemKey}
             renderItem={(item, column) => renderItem(item, column, state)}
             renderItemsFooter={renderItemsFooter}

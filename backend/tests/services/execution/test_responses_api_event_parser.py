@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.execution.dispatcher import (
+from app.services.execution.response_bridge import EmitterBridgeTransport
+from app.services.execution.response_parser import (
     InvalidToolCallEventError,
     ResponsesAPIEventParser,
 )
-from app.services.execution.response_bridge import EmitterBridgeTransport
 from shared.models import EventType
 from shared.models.responses_api import ResponsesAPIStreamEvents
 

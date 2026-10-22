@@ -19,8 +19,9 @@ describe('SecureValueStore', () => {
     const keyPath = join(directory, 'secure-values.key')
     expect(await readFile(valuesPath, 'utf8')).not.toContain('secret-value')
     expect((await readFile(keyPath)).byteLength).toBe(32)
-    expect((await stat(valuesPath)).mode & 0o777).toBe(0o600)
-    expect((await stat(keyPath)).mode & 0o777).toBe(0o600)
+    const permissions = process.platform === 'win32' ? 0o600 : 0o777
+    expect((await stat(valuesPath)).mode & permissions).toBe(0o600)
+    expect((await stat(keyPath)).mode & permissions).toBe(0o600)
     await rm(directory, { recursive: true, force: true })
   })
 

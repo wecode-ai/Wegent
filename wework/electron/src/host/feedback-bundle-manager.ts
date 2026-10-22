@@ -10,7 +10,7 @@ const MAX_LOG_BYTES = 200 * 1024 * 1024
 const MAX_ENTRY_PREVIEW_CHARS = 20_000
 const MAX_ATTACHMENT_COUNT = 20
 const MAX_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
-const MAX_COMPOSER_DIAGNOSTICS_BYTES = 256 * 1024
+const MAX_WEBVIEW_DIAGNOSTICS_BYTES = 256 * 1024
 
 interface FeedbackAttachment {
   name: string
@@ -27,6 +27,7 @@ export interface FeedbackExportRequest {
   taskContext: unknown | null
   screenshotDataUrl: string | null
   composerDiagnostics: unknown | null
+  conversationDiagnostics?: unknown | null
   attachments: FeedbackAttachment[]
 }
 
@@ -169,12 +170,16 @@ export class FeedbackBundleManager {
     if (request.includeRuntimeLogs) {
       const entryCount = entries.length
       await this.collectLogs(entries, logFiles, warnings)
-      if (request.composerDiagnostics != null) {
-        const content = JSON.stringify(redactJson(request.composerDiagnostics), null, 2)
-        if (Buffer.byteLength(content) <= MAX_COMPOSER_DIAGNOSTICS_BYTES) {
-          entries.push(textEntry('logs/webview/composer-diagnostics.json', content))
+      for (const [name, fileName, diagnostics] of [
+        ['Composer', 'composer-diagnostics.json', request.composerDiagnostics],
+        ['Conversation', 'conversation-diagnostics.json', request.conversationDiagnostics],
+      ] as const) {
+        if (diagnostics == null) continue
+        const content = JSON.stringify(redactJson(diagnostics), null, 2)
+        if (Buffer.byteLength(content) <= MAX_WEBVIEW_DIAGNOSTICS_BYTES) {
+          entries.push(textEntry(`logs/webview/${fileName}`, content))
         } else {
-          warnings.push('Composer diagnostics exceeded 256 KB and were skipped')
+          warnings.push(`${name} diagnostics exceeded 256 KB and were skipped`)
         }
       }
       if (entries.length === entryCount) skipped.push('runtimeLogs')

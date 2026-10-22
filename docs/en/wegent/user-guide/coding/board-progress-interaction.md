@@ -40,6 +40,10 @@ separate actions. This also follows `wework/DESIGN.md`.
   Becoming available again requires explicit activation.
 - Progress summaries and their repair/review actions are separate from the
   trigger. Radix Popover owns positioning, collision handling, and focus.
+- Opening an executed task conversation displays the model recorded for that
+  execution. The Agent configuration, execution record, and conversation use
+  the same model value and must not fall back to the **Select model**
+  placeholder.
 
 ```mermaid
 flowchart LR
@@ -71,3 +75,6 @@ selection, disabled previews, and read timers. The existing desktop CI
 explicit activation. Per repository policy, E2E and real-Electron verification
 are not run by default. Cursor stability still needs real-app verification;
 unit results do not establish a frame-by-frame visual fix.
+The desktop CI `collaboration-shared-core` scenario also verifies that an
+executed Issue conversation displays its recorded runtime model and excludes
+the **Select model** placeholder.

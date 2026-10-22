@@ -33,6 +33,14 @@ async function requestJson(cloud, path, options = {}) {
 }
 
 async function verifyMemberReply(cloud, issue, rootId) {
+  const privateAgent = await requestJson(
+    cloud,
+    `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ name: `board-private-${process.pid}`, visibility: 'private' }),
+    }
+  )
   const userName = `board-member-${process.pid}`
   const password = 'board-member-e2e-password'
   const member = await requestJson(cloud, '/api/admin/users', {
@@ -42,6 +50,10 @@ async function verifyMemberReply(cloud, issue, rootId) {
   await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}/members`, {
     method: 'POST',
     body: JSON.stringify({ user_id: member.id, role: 'Developer' }),
+  })
+  await requestJson(cloud, `/api/v1/loop-items/${issue.id}/collaborators`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: member.id }),
   })
   const login = await requestJson(cloud, '/api/auth/login', {
     method: 'POST',
@@ -53,9 +65,28 @@ async function verifyMemberReply(cloud, issue, rootId) {
     `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`
   )
   assert.ok(
-    !agents.some(agent => agent.id === cloud.agentId),
+    !agents.some(agent => agent.id === privateAgent.id),
     'The regression member must not see the admin-only agent'
   )
+  assert.ok(
+    agents.some(agent => agent.id === cloud.agentId),
+    'The regression member must see the shared project agent'
+  )
+  const privateAssignment = await fetch(
+    `${cloud.backendUrl}/api/v1/cloud-projects/${cloud.projectId}/loop-items`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${login.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Private Agent assignment must be denied',
+        assignee_agent_id: privateAgent.id,
+      }),
+    }
+  )
+  assert.equal(privateAssignment.status, 403, 'A member must not use the private agent')
   const { io } = createRequire(
     new URL('../../../../packages/chat-core/package.json', import.meta.url)
   )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
@@ -191,22 +222,31 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
   const badge = scope(`[data-testid="cloud-task-activity-execution-badge-${run.messageId}"]`)
   await control.command('waitFor', badge, { timeoutMs })
   await control.command('click', badge)
-  await control.command('waitFor', '[data-testid="runtime-execution-detail-body"]', {
+  const conversation = scope('[data-testid="ai-chat-modal"]')
+  await control.command('waitFor', conversation, {
     text: expectedText,
     timeoutMs,
   })
-  await control.command('waitFor', '[data-testid="runtime-execution-detail-status"]', {
-    text: '执行成功',
+  const modelSelector = `${conversation} [data-testid="model-selector-button"]`
+  await control.command('waitFor', modelSelector, {
+    text: PUBLIC_MODEL_ID,
     timeoutMs,
   })
-  const completedDialog = JSON.parse(
-    await control.command('snapshot', '[data-testid="runtime-execution-detail-overlay"]')
+  assert.doesNotMatch(
+    await control.command('getText', modelSelector),
+    /选择模型|Select model/u,
+    'An executed Issue must display its recorded runtime model instead of a placeholder'
+  )
+  const completedDialog = JSON.parse(await control.command('snapshot', conversation))
+  assert.ok(
+    completedDialog.testIds.includes('ai-chat-open-runtime-task'),
+    'The execution must open its full task in the right conversation drawer'
   )
   assert.ok(
-    !completedDialog.testIds.includes('runtime-execution-detail-stop'),
-    'An execution confirmed as finished must not offer a stop action'
+    !completedDialog.testIds.includes('runtime-execution-detail-overlay'),
+    'The removed execution overlay must not open from Collaboration'
   )
-  await control.command('click', '[data-testid="runtime-execution-detail-close"]')
+  await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   await control.command('waitFor', `${badge}[data-status="succeeded"]`, { timeoutMs })
   return badge
 }
@@ -346,7 +386,13 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         const rootId = original.runtime_handle.origin.rootCommentId
         assert.ok(rootId, 'The runtime task has no owning comment')
         assert.equal(rootId, initialRun.triggerMessageId)
-        const reply = `${activity} [data-testid="cloud-task-activity-card-composer-${rootId}"]`
+        await control.command(
+          'click',
+          `${activity} [data-testid="cloud-task-activity-reply-toggle-${rootId}"]`
+        )
+        const reply = scope(
+          '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+        )
         await control.command('fill', reply, { value: REPLY })
         await control.command('press', reply, { key: 'Enter' })
         const [replyRun] = await readPersistedExecutions(cloud, issue.id, [REPLY], uiTimeoutMs)

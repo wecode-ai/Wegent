@@ -54,6 +54,42 @@ def _referenced_model(
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
 
+    @pytest.mark.parametrize("mode", ["auto", "standard", "passthrough"])
+    def test_catalog_preserves_reasoning_and_policy_without_credentials(
+        self, mode: str
+    ) -> None:
+        model = _referenced_model(User(id=42), "glm-5.3-flash")
+        model.json["spec"]["modelConfig"].update(
+            {
+                "codex_request_mode": mode,
+                "env": {
+                    "model": "openai",
+                    "model_id": "glm-5.3-flash",
+                    "api_key": "private-provider-key",
+                    "thinking_config": {
+                        "reasoning": {"effort": "high", "summary": "detailed"},
+                        "secret": "private-provider-option",
+                    },
+                },
+            }
+        )
+
+        info = model_aggregation_service._extract_model_info_from_crd(model.json)
+        catalog = UnifiedModel(
+            name=model.name, model_type=ModelType.USER, config=info["config"]
+        ).to_dict()
+        public_catalog = ModelAdapter.to_model_dict(model)
+
+        for config in (catalog["config"], public_catalog["config"]):
+            assert config["reasoning"] == {"effort": "high", "summary": "detailed"}
+            assert config["codex_request_mode"] == mode
+            assert not config.get("env")
+            assert "private-provider-key" not in str(config)
+            assert "private-provider-option" not in str(config)
+            if mode != "auto":
+                assert config["native_tool_search"] is (mode == "passthrough")
+                assert config["native_namespace_tools"] is (mode == "passthrough")
+
     def test_same_name_references_list_smallest_kind_id(
         self,
         test_db: Session,
@@ -446,6 +482,60 @@ class TestModelAggregationService:
         assert "env" not in model["config"]
         assert public_model["config"]["codex_catalog_model_id"] == "operator-catalog"
         assert public_model["config"]["env"] == {}
+
+    def test_unified_model_preserves_picker_configuration(self) -> None:
+        picker_config = {
+            "family": "cloud-openai",
+            "defaultModel": True,
+            "reasoningEfforts": ["low", "medium", "high"],
+            "defaultReasoningEffort": "medium",
+            "sliderModelsConfig": {
+                "defaultPreset": "recommended",
+                "presets": [
+                    {
+                        "name": "recommended",
+                        "label": "Recommended",
+                        "description": "Default model set",
+                        "models": [
+                            {
+                                "modelName": "cloud-luna",
+                                "reasoningEfforts": ["high"],
+                            },
+                            {
+                                "modelName": "cloud-sol",
+                                "reasoningEfforts": ["low", "medium", "high"],
+                            },
+                        ],
+                    }
+                ],
+            },
+        }
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "cloud-sol", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "openai",
+                        "model_id": "cloud-sol-upstream",
+                        "api_key": "secret",
+                    },
+                    "ui": picker_config,
+                }
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+        response = UnifiedModel(
+            name="cloud-sol",
+            model_type=ModelType.PUBLIC,
+            config=info["config"],
+        ).to_dict()
+
+        assert response["config"]["ui"] == picker_config
+        assert "env" not in response["config"]
 
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""

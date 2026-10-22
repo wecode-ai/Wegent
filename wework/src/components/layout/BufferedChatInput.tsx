@@ -31,7 +31,9 @@ export interface BufferedChatInputInsertion {
 interface BufferedChatInputProps extends ChatInputProps {
   inputRef?: Ref<ChatInputHandle>
   autoFocus?: boolean
+  clearOnSubmit?: boolean
   insertion?: BufferedChatInputInsertion | null
+  replaceDraftKey?: number
   onDraftEdit?: (draft: string) => void
 }
 
@@ -42,7 +44,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   onChange,
   onSubmit,
   autoFocus,
+  clearOnSubmit = true,
   insertion,
+  replaceDraftKey,
   onDraftEdit,
   inputRef,
   onCompositionStart: onParentCompositionStart,
@@ -81,6 +85,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const publishedDraftsRef = useRef(
     new Map<string | undefined, Array<{ revision: number; value: string }>>()
   )
+  const lastReplaceDraftKeyRef = useRef(replaceDraftKey)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
@@ -216,12 +221,15 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   // Sync external value changes into composer and local state.
   useEffect(() => {
     const publications = publishedDraftsRef.current.get(scopeKey) ?? []
+    const replacingDraft = lastReplaceDraftKeyRef.current !== replaceDraftKey
+    lastReplaceDraftKeyRef.current = replaceDraftKey
     const acknowledgedPublicationIndex = publications.findLastIndex(
       publication => publication.value === value
     )
-    const acknowledgesPublishedDraft = acknowledgedPublicationIndex >= 0
+    const acknowledgesPublishedDraft = !replacingDraft && acknowledgedPublicationIndex >= 0
     const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
+      scopeKey: scopeKey ?? null,
       sourceValueLength: value.length,
       draftLength: draftRef.current.length,
       acknowledgesPublishedDraft,
@@ -231,7 +239,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       shouldSetComposer,
     })
     committedValueRef.current = value
-    if (acknowledgesPublishedDraft) {
+    if (replacingDraft) {
+      draftRef.current = value
+      setDraftState({ scopeKey, sourceValue: value, draft: value })
+    } else if (acknowledgesPublishedDraft) {
       publications.splice(0, acknowledgedPublicationIndex + 1)
       if (publications.length === 0) publishedDraftsRef.current.delete(scopeKey)
       setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
@@ -243,7 +254,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     if (shouldSetComposer) {
       setComposerValue(value, value.length)
     }
-  }, [scopeKey, setComposerValue, value])
+  }, [replaceDraftKey, scopeKey, setComposerValue, value])
 
   // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
@@ -322,7 +333,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       const submittedScopeKey = scopeKey
       const submission =
         options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
-      if (submittedDraft.trim()) {
+      if (clearOnSubmit && submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
@@ -345,7 +356,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         restoreSubmittedDraft()
       }, restoreSubmittedDraft)
     },
-    [cancelPendingFlush, onSubmit, publishDraft, scopeKey, setComposerValue]
+    [cancelPendingFlush, clearOnSubmit, onSubmit, publishDraft, scopeKey, setComposerValue]
   )
 
   return (

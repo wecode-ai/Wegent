@@ -108,6 +108,8 @@ flowchart LR
 
 连接方向仍然是单向的：Execution → Message/Automation/Workflow 投影。Message、`metadata.ai_state`、看板列和 UI 不能反向决定 Execution。
 
+Executor 拉取任务时，先用无锁查询寻找本 Runtime 未确认的 claim，再按已找到的主键加锁并重新校验。没有未确认 claim 时直接进入正常领取流程，不对队列范围加锁，避免与 Issue 优先的领取锁顺序形成死锁。
+
 设备并发 `D` 只有一个配置值。占用不是把两套计数相加，也不是取较大值，而是按 Runtime task identity 精确合并：`O = Runtime active + 持久化 capacity rows 中 runtime_task_id 不在 active_task_ids 的数量`。这样，已被 Runtime 看到的机器人任务不会重复计数，人工对话与尚未进入 Runtime 的 claim 也不会互相漏算。Runtime Scheduler 仍是所有普通对话、机器人和自动化共享的物理硬上限；没有物理槽位时，“立即运行”只能把任务移到队首，已接收的 Execution 显示 `waiting_runtime`，不能越过 `D` 或显示 `running`。
 
 设备容量是 Runtime 运行态，不写入 Device Kind/MySQL 冒充事实。Local 领取通过 IPC 直接读取 Runtime；Cloud 由 Runtime 心跳上报 `limit/active/active_task_ids/queued/runtimeInstanceId` 到已有 Redis 设备在线状态并受同一 TTL 约束。`active` 必须与唯一、非空的 `active_task_ids` 一一对应。容量观察缺失、过期、身份不完整或 Runtime 实例不匹配时停止 claim；Claim API 明确拒绝调用方自报 `deviceCapacity`，也不回退到固定常量。

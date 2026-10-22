@@ -13,6 +13,7 @@ export interface MarkdownServices {
   copyText: (text: string) => Promise<void>;
   onCopy?: () => void;
   openExternalUrl: (url: string) => void | Promise<unknown>;
+  openAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
   navigateTo?: (path: string) => void;
   openHtmlFile?: (path: string) => boolean;
   fetchAttachmentBlob?: (id: number) => Promise<Blob>;
@@ -66,14 +67,31 @@ export const markdownMessages = {
   },
 };
 
+async function copyBrowserText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  try {
+    textarea.select()
+    if (!document.execCommand?.('copy')) {
+      throw new Error('Clipboard copy is not supported')
+    }
+  } finally {
+    textarea.remove()
+  }
+}
+
 export const browserMarkdownServices: MarkdownServices = {
   translate: (key) =>
     markdownMessages.en[key as keyof typeof markdownMessages.en] ?? key,
-  copyText: async (text) => {
-    if (!navigator.clipboard?.writeText)
-      throw new Error("Clipboard copy is not supported");
-    await navigator.clipboard.writeText(text);
-  },
+  copyText: copyBrowserText,
   openExternalUrl: (url) => {
     const parsed = new URL(url, window.location.href);
     if (!["https:", "http:", "mailto:", "tel:"].includes(parsed.protocol))

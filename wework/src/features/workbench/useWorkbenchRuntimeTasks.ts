@@ -38,6 +38,7 @@ import {
   getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
   isSameRuntimeTaskIdentity,
+  mergeRuntimeTaskAddresses,
   projectTaskAddresses,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -55,6 +56,8 @@ import {
   completeRuntimeConversationHydration,
   evictRuntimeConversation,
 } from './runtimeConversationCache'
+import { archiveRuntimeTaskAddresses, findFailedRuntimeTaskArchive } from './runtimeTaskArchive'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -100,22 +103,23 @@ export function useWorkbenchRuntimeTasks({
       options?: { markOpened?: boolean; navigate?: boolean }
     ) => {
       const reopeningCurrentTask = isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)
-      currentRuntimeTaskRef.current = address
+      const openedAddress = mergeRuntimeTaskAddresses(currentRuntimeTaskRef.current, address)
+      currentRuntimeTaskRef.current = openedAddress
       if (options?.markOpened !== false) {
-        openedRuntimeTaskKeysRef.current.add(getRuntimeTaskRouteKey(address))
+        openedRuntimeTaskKeysRef.current.add(getRuntimeTaskRouteKey(openedAddress))
       }
       dispatch({
         type: 'runtime_task_opened',
-        address,
+        address: openedAddress,
         project,
       })
       console.info('[Wework] Runtime task view opened', {
-        address: runtimeAddressDebug(address),
+        address: runtimeAddressDebug(openedAddress),
         reopeningCurrentTask,
         navigate: options?.navigate === true,
       })
       if (options?.navigate && canNavigate()) {
-        navigateTo(buildRuntimeTaskRoute(address))
+        navigateTo(buildRuntimeTaskRoute(openedAddress))
       }
     },
     [canNavigate, dispatch]
@@ -129,6 +133,10 @@ export function useWorkbenchRuntimeTasks({
 
   const reconcileCurrentRuntimeTaskAddress = useCallback(
     (previousAddress: RuntimeTaskAddress, address: RuntimeTaskAddress) => {
+      currentRuntimeTaskRef.current = mergeRuntimeTaskAddresses(
+        currentRuntimeTaskRef.current,
+        address
+      )
       dispatch({
         type: 'runtime_task_address_reconciled',
         previousAddress,
@@ -274,38 +282,52 @@ export function useWorkbenchRuntimeTasks({
         address =>
           !localFailedTargets.some(localAddress => isSameRuntimeTaskAddress(localAddress, address))
       )
-      const results = await Promise.all(
-        persistedTargets.map(async address => {
-          try {
-            return { address, response: await executorClient.runtime.archiveConversation(address) }
-          } catch (error) {
-            return { address, error }
-          }
+      localFailedTargets.forEach(address =>
+        logRuntimeQueueStage(address, 'queue-archive-requested', { localOnly: true })
+      )
+      persistedTargets.forEach(address =>
+        logRuntimeQueueStage(address, 'queue-archive-requested', { localOnly: false })
+      )
+      const archiveResults = await archiveRuntimeTaskAddresses(persistedTargets, address =>
+        executorClient.runtime.archiveConversation(address)
+      )
+      localFailedTargets.forEach(address =>
+        logRuntimeQueueStage(address, 'queue-archive-result', {
+          localOnly: true,
+          accepted: true,
+          failed: false,
+        })
+      )
+      archiveResults.forEach(result =>
+        logRuntimeQueueStage(result.address, 'queue-archive-result', {
+          localOnly: false,
+          accepted: result.response?.accepted ?? false,
+          failed: !result.response,
         })
       )
       const archivedAddresses = [
         ...localFailedTargets,
-        ...results.flatMap(result => (result.response?.accepted ? [result.address] : [])),
+        ...archiveResults.flatMap(result => (result.response?.accepted ? [result.address] : [])),
       ]
-      let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
+        archivedAddresses.forEach(address => logRuntimeQueueStage(address, 'queue-archive-evicted'))
         markRuntimeTasksArchived(archivedAddresses)
-        worktreeCleanupSucceeded = await removeArchivedWorktrees(
+        const worktreeCleanupSucceeded = await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
-        if (worktreeCleanupSucceeded) {
-          track('feature_action_completed', { domain: 'conversation', action: 'archive' })
-        } else {
+        if (!worktreeCleanupSucceeded) {
           track('operation_failed', { operation: 'worktree_archive_cleanup' })
         }
       }
-      const failedResult = results.find(result => !result.response?.accepted)
-      if (!failedResult && worktreeCleanupSucceeded) return { status: 'archived' }
-      if (!failedResult) return { status: 'failed' }
+      const failedResult = findFailedRuntimeTaskArchive(archiveResults)
+      if (!failedResult) {
+        track('feature_action_completed', { domain: 'conversation', action: 'archive' })
+        return { status: 'archived' }
+      }
       track('operation_failed', { operation: 'conversation_archive' })
       dispatch({
         type: 'error_set',

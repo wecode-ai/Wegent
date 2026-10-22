@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Query, Session
 
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
@@ -18,14 +18,16 @@ from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatCommentExecution,
     ProjectChatMessageView,
-    ProjectChatWegentContinuation,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.identity import owned_device_aliases, same_owned_device
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.runtime_binding import (
     BoundCommentSession,
     resolve_bound_comment_session,
+    resolve_collaboration_manager_session,
+    resolve_collaboration_member_session,
 )
 from app.services.project_chat.service import bot_config, project_chat_service
 from shared.telemetry.decorators import trace_async
@@ -71,22 +73,50 @@ def _thread_agent(
     )
 
 
+def _session_execution(
+    db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
+) -> LoopItemExecution | None:
+    candidates = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.cloud_project_id == request.project_id,
+            LoopItemExecution.loop_item_id == request.task_id,
+            LoopItemExecution.runtime_task_id == target.runtime_task_id,
+        )
+        .order_by(LoopItemExecution.id.desc())
+        .all()
+    )
+    aliases = {
+        owner: owned_device_aliases(
+            db, user_id=owner, device_id=target.runtime_device_id
+        )
+        for owner in {row.executor_owner_user_id for row in candidates}
+    }
+    matches = [
+        row
+        for row in candidates
+        if row.runtime_device_id in aliases[row.executor_owner_user_id]
+    ]
+    if len({row.executor_owner_user_id for row in matches}) > 1:
+        raise HTTPException(409, "Project session has conflicting execution owners")
+    return matches[0] if matches else None
+
+
 def _execution(
     db: Session, request: ProjectChatCommentExecution, target: ProjectChatMessage
 ) -> LoopItemExecution | BoundCommentSession:
+    if (target.metadata_json or {}).get("dispatch_role") == "manager" and (
+        (target.metadata_json or {}).get("dispatch_id") or not target.agent_id
+    ):
+        return resolve_collaboration_manager_session(db, request, target)
     execution_id = (target.metadata_json or {}).get("execution_id")
+    if (target.metadata_json or {}).get(
+        "dispatch_role"
+    ) == "member" and not execution_id:
+        return resolve_collaboration_member_session(db, request, target)
     execution = db.get(LoopItemExecution, execution_id) if execution_id else None
     if execution is None and not execution_id:
-        execution = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.cloud_project_id == request.project_id,
-                LoopItemExecution.loop_item_id == request.task_id,
-                LoopItemExecution.runtime_device_id == target.runtime_device_id,
-                LoopItemExecution.runtime_task_id == target.runtime_task_id,
-            )
-            .first()
-        )
+        execution = _session_execution(db, request, target)
         if execution is None:
             return resolve_bound_comment_session(db, request, target)
     if (
@@ -100,7 +130,12 @@ def _execution(
         not target.runtime_task_id
         or not target.runtime_device_id
         or target.runtime_task_id != execution.runtime_task_id
-        or target.runtime_device_id != execution.runtime_device_id
+        or not same_owned_device(
+            db,
+            user_id=execution.executor_owner_user_id,
+            left_device_id=execution.runtime_device_id,
+            right_device_id=target.runtime_device_id,
+        )
     ):
         raise HTTPException(409, "The comment session no longer matches its execution")
     return execution
@@ -121,7 +156,7 @@ def _response(
         project_id=request.project_id,
         task_id=request.task_id,
         sender_type="agent",
-        sender_id=agent_id or f"automation_manager:{execution.automation_run_id}",
+        sender_id=agent_id or f"execution:{execution.id}",
         sender_name=name,
         agent_id=agent_id or "",
         content="",
@@ -135,6 +170,14 @@ def _response(
             "execution_id": execution.id,
             "executor_type": execution.executor_type,
             "run_status": "queued",
+            **(
+                {
+                    "dispatch_role": execution.runtime_origin_context["dispatch_role"],
+                    "dispatch_id": execution.runtime_origin_context.get("dispatch_id"),
+                }
+                if execution.runtime_origin_context.get("dispatch_role")
+                else {}
+            ),
         },
         status="pending",
     )
@@ -190,10 +233,6 @@ def _new_execution(
         access = require_cloud_project_role(
             db, request.project_id, user_id, BaseRole.Developer
         )
-        if not project_chat_service._agent_visible_to_user(agent, user_id, access.role):
-            raise HTTPException(
-                403, "The mentioned agent is not available to this member"
-            )
     config = bot_config(agent)
     execution = loop_item_execution_service.create_for_assignment(
         db,
@@ -206,6 +245,11 @@ def _new_execution(
         priority=item.priority,
         automation_context={
             "runtime_subject_user_id": agent.created_by_user_id,
+            "runner_selection": (
+                request.runner_selection.model_dump()
+                if request.runner_selection
+                else None
+            ),
             "comment_trigger_message_id": trigger.message_id,
             "comment_prompt": trigger.content,
             "rootCommentId": trigger.thread_root_message_id or trigger.message_id,
@@ -222,10 +266,6 @@ def _new_execution(
         "run_status": execution.status,
     }
     db.commit()
-    if execution.team_id:
-        from app.services.board_team_execution import schedule_board_robot_execution
-
-        schedule_board_robot_execution(db, execution)
     return response
 
 
@@ -251,6 +291,7 @@ async def _continue_runtime(
     intent = intent.model_copy(
         update={
             "message": trigger.content,
+            "new_session": False,
             "device_id": execution.runtime_device_id,
             "attachment_ids": [],
             "attachments": attachments,
@@ -262,21 +303,29 @@ async def _continue_runtime(
     response = _response(
         db, request, trigger, execution.agent_id, target.sender_name, execution
     )
-    response.status = "streaming"
-    # A follow-up owns a new turn, not the already completed automation run.
-    response.metadata_json = {**response.metadata_json, "run_status": "running"}
+    project_chat_service._set_task_ai_state(
+        db,
+        row=response,
+        trigger=trigger,
+        agent=None,
+        status_value="running",
+        prompt=trigger.content,
+        user_id=int(trigger.sender_id),
+    )
+    response.metadata_json = {**response.metadata_json, "run_status": "queued"}
     response.runtime_activity_key = project_chat_service._runtime_activity_key(
         execution.runtime_device_id, execution.runtime_task_id, trigger.message_id
     )
     db.commit()
     push_project_chat_message(
-        project_chat_service.to_view(response).model_dump(by_alias=True)
+        project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
     )
     try:
         payload = {
             "taskId": execution.runtime_task_id,
             "message": trigger.content,
             "clientUserMessageId": trigger.message_id,
+            "queueIfBusy": True,
             "executionRequest": compiled.payload["executionRequest"],
             "attachments": attachments,
         }
@@ -298,6 +347,21 @@ async def _continue_runtime(
             raise HTTPException(
                 502, str(result.get("error") or "Runtime rejected the reply")
             )
+        queued = result.get("status") == "queued"
+        response.status = "pending" if queued else "streaming"
+        response.metadata_json = {
+            **response.metadata_json,
+            "run_status": "queued" if queued else "running",
+            **(
+                {"queue_position": result.get("queuePosition")}
+                if result.get("queuePosition") is not None
+                else {}
+            ),
+        }
+        db.commit()
+        push_project_chat_message(
+            project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
+        )
     except Exception as exc:
         error = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         failed = project_chat_service.fail_agent_response(
@@ -313,6 +377,175 @@ async def _continue_runtime(
         push_project_chat_message(failed.model_dump(by_alias=True))
         raise HTTPException(502, error) from exc
     db.refresh(response)
+    return response
+
+
+def _queue_reply(
+    db: Session,
+    user_id: int,
+    request: ProjectChatCommentExecution,
+    trigger: ProjectChatMessage,
+    target: ProjectChatMessage,
+    original: LoopItemExecution | BoundCommentSession,
+    attachments: list[dict[str, Any]],
+) -> ProjectChatMessage:
+    """Keep offline replies in the same durable queue as first executions."""
+    from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
+    from app.services.device.identity import resolve_owned_device_alias
+    from app.services.project_chat.service import compiled_bot_config
+    from app.services.runner_routing import active_device, issue_binding, routing_error
+
+    bound_id = issue_binding(db, request.task_id)
+    bound = active_device(db, bound_id) if bound_id else None
+    if bound is None:
+        raise routing_error(
+            "ISSUE_RUNNER_CONFIGURATION_REQUIRED",
+            "The original session's environment must be restored before replying",
+        )
+    original_device = resolve_owned_device_alias(
+        db, user_id=bound.user_id, device_id=original.runtime_device_id
+    )
+    if original_device is None or original_device.id != bound.id:
+        raise routing_error(
+            "ISSUE_RUNNER_CONFLICT",
+            "The comment session belongs to a different environment than this Issue",
+        )
+
+    agent = project_chat_service._agent_row(
+        db, project_id=request.project_id, agent_id=original.agent_id, active_only=True
+    )
+    config = compiled_bot_config(db, agent, execution_user_id=user_id)
+    selection = (
+        request.runner_selection.model_dump(exclude_none=True)
+        if request.runner_selection
+        else {}
+    )
+    if (config.get("execution_policy") or {}).get(
+        "mode"
+    ) == "user_select" and "execution_policy" not in selection:
+        selection["execution_policy"] = {
+            "mode": "fixed",
+            "environment_id": bound_id,
+        }
+    if (config.get("model_policy") or {}).get(
+        "mode"
+    ) == "user_select" and "model" not in selection:
+        selection["model"] = (
+            getattr(original, "runtime_selection", {})
+            .get("runner_routing", {})
+            .get("model")
+        )
+    if not original.runtime_request:
+        raise HTTPException(409, "The original execution configuration is unavailable")
+    group_reply = (
+        original.runtime_origin_context.get("dispatch_kind") == "collaboration_group"
+    )
+    if group_reply:
+        from app.services.collaboration_group_execution import (
+            collaboration_group_snapshot_for_dispatch,
+        )
+
+        dispatch = db.get(
+            LoopItemExecution,
+            original.runtime_origin_context.get("collaboration_dispatch_execution_id"),
+        )
+        if (
+            dispatch is None
+            or dispatch.executor_type != "collaboration_group_dispatch"
+            or dispatch.cloud_project_id != request.project_id
+            or dispatch.loop_item_id != request.task_id
+            or dispatch.runtime_origin_context.get("dispatch_id")
+            != original.runtime_origin_context.get("dispatch_id")
+        ):
+            raise HTTPException(409, "The collaboration dispatch is unavailable")
+        collaboration_group_snapshot_for_dispatch(
+            item=db.get(LoopItem, request.task_id), execution=dispatch
+        )
+    context = {
+        **(
+            {
+                **original.runtime_origin_context,
+                "runtime_subject_user_id": original.executor_owner_user_id,
+            }
+            if group_reply
+            else {}
+        ),
+        "runner_selection": selection,
+        "runtime_subject_user_id": bound.user_id,
+        "comment_continue_task_id": original.runtime_task_id,
+        "comment_trigger_message_id": trigger.message_id,
+        "comment_prompt": trigger.content,
+        "rootCommentId": trigger.thread_root_message_id or trigger.message_id,
+        "attachments": attachments,
+        "comment_attachment_ids": request.attachment_ids,
+        "comment_user_id": user_id,
+    }
+    from app.services.loop_item_executions.profile import wework_execution_environment
+
+    environment = getattr(
+        original, "execution_environment", None
+    ) or wework_execution_environment(
+        db,
+        user_id=original.executor_owner_user_id,
+        execution_device_id=original.runtime_device_id,
+    )
+    execution = loop_item_execution_service.create_for_assignment(
+        db,
+        loop_item_id=request.task_id,
+        cloud_project_id=request.project_id,
+        agent=agent,
+        assigner_user_id=user_id,
+        environment=environment,
+        execution_device_id=original.runtime_device_id,
+        priority=None,
+        automation_context=context,
+    )
+    execution.executor_owner_user_id = bound.user_id
+    execution.runtime_device_id = original.runtime_device_id
+    runtime_selection = execution.runtime_selection
+    if context.get("dispatch_role") == "manager":
+        from app.services.runner_routing import resolve_group_routing
+
+        requirements = resolve_group_routing(
+            db,
+            group=context["collaboration_group"],
+            project_id=request.project_id,
+            issue_id=request.task_id,
+            user_id=user_id,
+            selection=selection,
+        )
+        runtime_selection = {
+            **runtime_selection,
+            "group_runner_requirements": requirements,
+        }
+    intent = RuntimeTaskMaterializeRequest.model_validate(
+        original.runtime_request
+    ).model_copy(
+        update={
+            "message": trigger.content,
+            "new_session": False,
+            "device_id": original.runtime_device_id,
+            "local_task_id": original.runtime_task_id,
+            "attachment_ids": [],
+            "attachments": attachments,
+            "origin": {
+                **(original.runtime_request.get("origin") or {}),
+                **context,
+                "type": "board_comment",
+                "executionId": execution.id,
+            },
+        }
+    )
+    execution.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection=runtime_selection,
+            origin_context=execution.runtime_origin_context,
+            runtime_request=intent.model_dump(by_alias=True, exclude_none=True),
+        )
+    )
+    response = _response(db, request, trigger, agent.id, target.sender_name, execution)
+    response.metadata_json = {**response.metadata_json, "run_status": execution.status}
+    db.commit()
     return response
 
 
@@ -354,14 +587,30 @@ async def execute_comment(
     if existing is not None:
         if existing.status == "failed":
             raise HTTPException(409, existing.content or "The comment execution failed")
-        return [project_chat_service.to_view(existing)]
+        return [project_chat_service.to_view(existing, db=db)]
     attachments = _attachments(db, user_id, request.attachment_ids)
     if target is None:
         response = _new_execution(db, user_id, request, trigger, attachments)
-        return [project_chat_service.to_view(response)] if response else []
-    if target.status in {"pending", "streaming"}:
-        raise HTTPException(409, "The previous reply is still running")
+        return [project_chat_service.to_view(response, db=db)] if response else []
     execution = _execution(db, request, target)
+    from app.services.collaboration_revocation import execution_authorized
+
+    authority = LoopItemExecution(
+        cloud_project_id=request.project_id,
+        loop_item_id=request.task_id,
+        assigner_user_id=user_id,
+        executor_owner_user_id=execution.executor_owner_user_id,
+        agent_id=execution.agent_id,
+        team_id=None,
+        execution_environment="local",
+        execution_device_id=execution.runtime_device_id,
+        runtime_device_id=execution.runtime_device_id,
+        execution_payload=loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={}, origin_context=execution.runtime_origin_context
+        ),
+    )
+    if not execution_authorized(db, authority):
+        raise HTTPException(403, "Comment execution authorization is revoked")
     if execution.agent_id:
         project_chat_service._agent_row(
             db,
@@ -369,22 +618,26 @@ async def execute_comment(
             agent_id=execution.agent_id,
             active_only=True,
         )
-    if execution.team_id:
-        from app.services.board_team_continuation import board_team_continuation_service
+    from app.services.project_chat.service import compiled_bot_config
 
-        result = await board_team_continuation_service.start(
-            db,
-            user_id=user_id,
-            request=ProjectChatWegentContinuation(
-                project_id=request.project_id,
-                task_id=request.task_id,
-                trigger_message_id=trigger.message_id,
-                agent_id=execution.agent_id,
-                attachment_ids=request.attachment_ids,
-            ),
-        )
-        return [result.message]
-    response = await _continue_runtime(
-        db, request, trigger, target, execution, attachments
+    current_agent = (
+        db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
     )
-    return [project_chat_service.to_view(response)]
+    routed = current_agent is not None and compiled_bot_config(
+        db, current_agent, execution_user_id=user_id
+    ).get("execution_policy")
+    if (
+        routed
+        or execution.runtime_origin_context.get("dispatch_kind")
+        == "collaboration_group"
+        or isinstance(execution, LoopItemExecution)
+        and execution.uses_runner_routing
+    ):
+        response = _queue_reply(
+            db, user_id, request, trigger, target, execution, attachments
+        )
+    else:
+        response = await _continue_runtime(
+            db, request, trigger, target, execution, attachments
+        )
+    return [project_chat_service.to_view(response, db=db)]

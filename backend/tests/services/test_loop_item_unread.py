@@ -7,6 +7,7 @@ from sqlalchemy.dialects import mysql
 from app.services.loop_item_unread import (
     _mysql_mark_read_expression,
     _mysql_read_revision_expression,
+    _mysql_set_user_cursor,
 )
 
 
@@ -36,4 +37,21 @@ def test_mysql_mark_read_initializes_missing_read_revisions_atomically() -> None
     assert "'$.read_revisions.\"86\"'" in compiled
     assert compiled.index("'$.read_revisions'") < compiled.index(
         "'$.read_revisions.\"86\"'"
+    )
+
+
+def test_mysql_activity_cursor_initializes_its_parent_object() -> None:
+    expression = _mysql_set_user_cursor(
+        func.json_object(), "activity_read_sequences", user_id=86, value=2
+    )
+    compiled = str(
+        select(expression).compile(
+            dialect=mysql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "json_type(json_extract(" in compiled
+    assert compiled.index("'$.activity_read_sequences'") < compiled.index(
+        "'$.activity_read_sequences.\"86\"'"
     )

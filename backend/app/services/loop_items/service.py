@@ -19,6 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
+from app.db.timezone import database_datetime_as_utc
 from app.models.cloud_project import (
     CloudProject,
     LoopItemTaskBinding,
@@ -37,8 +38,6 @@ from app.models.delivery import (
 )
 from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
@@ -52,13 +51,14 @@ from app.schemas.issue_workflow import (
     IssueWorkflowInstance,
     ProjectWorkflowDefinition,
     instantiate_workflow,
-    workflow_node_execution_mode,
 )
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
     issue_permissions,
+    issue_update_actions,
     require_cloud_project_role,
     require_issue_action,
 )
@@ -74,24 +74,34 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_item_executions.wake import wake_robot_creator
 from app.services.loop_item_status_history import (
     STATUS_HISTORY_KEY,
-    is_processing_status,
     project_board_statuses,
     write_status_change,
 )
 from app.services.loop_item_unread import (
+    activity_read_sequence,
     advance_content_revision,
     content_revision,
     initialize_content_revision,
     is_unread,
     mark_loop_item_read,
 )
-from app.services.loop_items.access import can_view_item, related_item_filter
-from app.services.loop_items.assignment_notification import (
-    notify_project_task_assignee,
+from app.services.loop_items.access import (
+    can_view_item,
+    default_issue_security,
+    item_security,
+    related_item_filter,
+    visible_item_filter,
 )
+from app.services.loop_items.ordering import (
+    persist_sibling_order,
+    position_siblings,
+    sibling_items,
+)
+from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
+from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
 
 TASK_AI_STATE_KEY = "ai_state"
@@ -130,10 +140,38 @@ def _task_binding_metadata(
     values: LoopItemTaskBind, *, include_workflow_node: bool = True
 ) -> dict[str, object]:
     metadata: dict[str, object] = {}
+    if values.wegent_team_id is not None:
+        metadata["wegent_team_id"] = values.wegent_team_id
     if include_workflow_node and values.workflow_node_id:
         metadata["workflow_node_id"] = values.workflow_node_id
     if values.model_selection:
         metadata["model_selection"] = values.model_selection.model_dump(by_alias=True)
+    if values.execution_context:
+        allowed_context = {
+            key: value.strip()
+            for key, value in values.execution_context.items()
+            if key
+            in {
+                "runtime",
+                "threadId",
+                "workspacePath",
+                "workspaceKind",
+                "worktreeId",
+            }
+            and isinstance(value, str)
+            and value.strip()
+        }
+        if allowed_context:
+            metadata["execution_context"] = allowed_context
+    for key in (
+        "human_assignment_id",
+        "dispatch_id",
+        "dispatch_round_id",
+        "assignment_id",
+    ):
+        value = getattr(values, key)
+        if value:
+            metadata[key] = value
     return metadata
 
 
@@ -147,19 +185,12 @@ class LoopItemService:
         db: Session,
         cloud_project_id: int,
         user_id: int,
-        required_role: BaseRole = BaseRole.Reporter,
-        *,
-        allow_public_visitor: bool = False,
+        required_role: BaseRole = BaseRole.Viewer,
     ) -> CloudProjectAccess:
         access = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, cloud_project_id, user_id, BaseRole.Viewer
         )
-        if access.is_public_visitor:
-            if not allow_public_visitor:
-                raise HTTPException(
-                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
-                )
-        elif not has_permission(access.role, required_role):
+        if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         project = access.project
         if project.task_provider != "local":
@@ -195,7 +226,7 @@ class LoopItemService:
         access: CloudProjectAccess | None = None,
     ) -> dict[str, object]:
         access = access or require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
         can_view_detail, can_edit = self._item_permissions(db, access, item, user_id)
         permissions = issue_permissions(
@@ -205,8 +236,11 @@ class LoopItemService:
         )
         values = {
             **item.__dict__,
+            "created_at": database_datetime_as_utc(db, item.created_at),
+            "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
             "can_edit": can_edit,
+            "security_level": item_security(item, access.project),
             "permissions": {
                 "edit_content": permissions.edit_content,
                 "comment": permissions.comment,
@@ -225,6 +259,8 @@ class LoopItemService:
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         group = metadata.get("collaboration_group")
+        if item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id:
+            group = None
         values["assignee_group_id"] = (
             group.get("id") if isinstance(group, dict) else None
         )
@@ -232,6 +268,7 @@ class LoopItemService:
             group.get("name") if isinstance(group, dict) else None
         )
         values["content_revision"] = content_revision(metadata)
+        values["activity_read_sequence"] = activity_read_sequence(metadata, user_id)
         values["is_unread"] = is_unread(metadata, user_id)
         automation = metadata.get("automation")
         values["automation"] = automation if isinstance(automation, dict) else None
@@ -272,9 +309,9 @@ class LoopItemService:
             db, item=item, execution=execution, user_id=user_id
         )
         values["approval"] = self._approval_view(execution)
-        from app.services.human_issue_work import human_issue_work_service
+        from app.services.collaboration_human_assignments import human_task_binding
 
-        values["human_work"] = human_issue_work_service.view(db, item, user_id)
+        values["human_task_binding"] = human_task_binding(db, item, user_id)
         if execution is not None:
             values["ai_state"] = execution_ai_state(
                 db,
@@ -343,8 +380,9 @@ class LoopItemService:
         if message is not None and message.status in {"completed", "failed"}:
             state["status"] = "succeeded" if message.status == "completed" else "failed"
             state["lease_expires_at"] = None
-            state["completed_at"] = message.updated_at.isoformat()
-            state["updated_at"] = message.updated_at.isoformat()
+            completed_at = database_datetime_as_utc(db, message.updated_at).isoformat()
+            state["completed_at"] = completed_at
+            state["updated_at"] = completed_at
             if message.status == "failed" and message.content:
                 state["last_error"] = message.content[:10_000]
             return state
@@ -390,7 +428,7 @@ class LoopItemService:
         action: IssueAction | None = None,
     ) -> CloudProjectAccess:
         access = require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
         can_view_detail, _ = self._item_permissions(db, access, item, user_id)
         if not can_view_detail:
@@ -420,7 +458,7 @@ class LoopItemService:
             db,
             item.cloud_project_id,
             collaborator_user_id,
-            BaseRole.RestrictedAnalyst,
+            BaseRole.Viewer,
         )
         collaborator = (
             db.query(LoopItemCollaborator)
@@ -504,13 +542,13 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
         assign_creator_if_unassigned: bool = True,
+        apply_project_workflow: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
             cloud_project_id,
             user_id,
             BaseRole.Developer,
-            allow_public_visitor=True,
         )
         if values.parent_id is not None:
             self._require_parent(db, values.parent_id, cloud_project_id)
@@ -522,7 +560,12 @@ class LoopItemService:
         )
         sequence = project.next_item_number
         project.next_item_number += 1
-        payload = values.model_dump(exclude={"notify_assignee"})
+        payload = values.model_dump(exclude={"notify_assignee", "runner_selection"})
+        runner_selection = (
+            values.runner_selection.model_dump(exclude_none=True)
+            if values.runner_selection is not None
+            else (automation_context or {}).get("runner_selection")
+        )
         tags = payload.pop("tags")
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
@@ -531,11 +574,14 @@ class LoopItemService:
         payload.pop("automation_rule_id", None)
         agent_id = payload.get("assignee_agent_id")
         team_id = payload.get("assignee_team_id")
+        group_id = payload.pop("assignee_group_id", None)
+        collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
+        task_metadata["security_level"] = default_issue_security(project)
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
-        elif values.parent_id is None:
+        elif values.parent_id is None and apply_project_workflow:
             project_metadata = (
                 project.metadata_json if isinstance(project.metadata_json, dict) else {}
             )
@@ -596,9 +642,16 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "AI assignee is not active in this project",
                 )
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            collaboration_permission_service.require_project_agent(
+                db, project.id, agent.id
+            )
             payload["assignee_user_id"] = None
             payload["assignee_team_id"] = None
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "agent",
@@ -620,19 +673,55 @@ class LoopItemService:
                     runtime_subject_user_id=int(agent.created_by_user_id or user_id),
                 )
         elif team_id:
-            team = runnable_wegent_team(db, user_id, team_id)
+            team = runnable_wegent_team(db, user_id, team_id, project_id=project.id)
             payload["assignee_user_id"] = None
             payload["assignee_agent_id"] = ""
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "team",
                 str(team.id),
                 team.name,
             )
+        elif group_id:
+            from app.services.workspaces import workspace_service
+
+            collaboration_group = next(
+                (
+                    entry
+                    for entry in workspace_service.list_project_collaboration_groups(
+                        db, cloud_project_id, user_id
+                    )
+                    if str(entry["id"]) == group_id
+                ),
+                None,
+            )
+            if collaboration_group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not in this project",
+                )
+            payload["assignee_user_id"] = None
+            payload["assignee_agent_id"] = ""
+            payload["assignee_team_id"] = None
+            task_metadata["collaboration_group"] = {
+                "id": str(collaboration_group["id"]),
+                "name": str(collaboration_group["name"]),
+            }
+            from app.services.collaboration_group_execution import new_assignment_key
+
+            task_metadata["collaboration_group_assignment_key"] = new_assignment_key()
+            self.record_assignment_change(
+                task_metadata,
+                user_id,
+                "group",
+                str(collaboration_group["id"]),
+                str(collaboration_group["name"]),
+            )
+            payload["status"] = "in_progress"
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "user",
@@ -640,7 +729,7 @@ class LoopItemService:
                 None,
             )
         elif payload.get("assignee_user_id"):
-            self._write_assignment_change(
+            self.record_assignment_change(
                 task_metadata,
                 user_id,
                 "user",
@@ -655,6 +744,10 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
+        if (agent_id or team_id) and requested_status is None:
+            started = self._robot_start_status(project, payload["status"])
+            if started is not None:
+                payload["status"] = started
         if payload["status"]:
             write_status_change(
                 task_metadata,
@@ -678,17 +771,33 @@ class LoopItemService:
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
+        db.flush()
+        if collaboration_group is not None:
+            from app.services.collaboration_group_execution import (
+                dispatch_collaboration_group_assignment,
+            )
+
+            dispatch_collaboration_group_assignment(
+                db,
+                item=item,
+                user_id=user_id,
+                group=collaboration_group,
+                runner_selection=runner_selection,
+                automatic=bool((automation_context or {}).get("run_id")),
+                automation_context=automation_context,
+            )
         assignment_member: tuple[str, str] | None = None
         if agent_id:
             assignment_member = ("agent", str(agent_id))
         elif team_id:
             assignment_member = ("team", str(team_id))
+        elif group_id:
+            assignment_member = None
         elif item.assignee_user_id:
             assignment_member = ("user", str(item.assignee_user_id))
         if assignment_member is not None:
             from app.services.issue_assignments import issue_assignment_service
 
-            db.flush()
             if assignment_member[0] == "agent":
                 issue_assignment_service.require_canonical_member(
                     db,
@@ -712,40 +821,45 @@ class LoopItemService:
                     else "automation" if automation_context is not None else "manual"
                 ),
             )
-        if agent_id and (
-            is_processing_status(project, item.status) or automation_context is not None
-        ):
+        if agent_id:
             db.flush()
             agent = db.get(ProjectChatAgent, agent_id)
             if agent is not None:
-                config = bot_config(agent)
-                loop_item_execution_service.create_for_assignment(
+                self._sync_execution_for_assignment(
                     db,
-                    loop_item_id=item.id,
-                    cloud_project_id=item.cloud_project_id,
+                    item=item,
+                    user_id=user_id,
+                    target_type="agent",
+                    target_id=str(agent.id),
                     agent=agent,
-                    assigner_user_id=user_id,
-                    environment=str(config.get("execution_environment") or "local"),
-                    execution_device_id=(
-                        config.get("execution_device_id")
-                        if isinstance(config.get("execution_device_id"), str)
-                        else None
-                    ),
+                    team=None,
                     priority=item.priority,
-                    automation_context=automation_context,
+                    automation_context=(
+                        {
+                            **(automation_context or {}),
+                            "runner_selection": runner_selection,
+                        }
+                        if runner_selection is not None
+                        else automation_context
+                    ),
                     instruction=instruction,
+                    cancel_existing=False,
                 )
         elif team_id:
             db.flush()
             team = db.get(Kind, team_id)
             if team is not None:
-                loop_item_execution_service.create_for_team_assignment(
+                self._sync_execution_for_assignment(
                     db,
-                    loop_item_id=item.id,
-                    cloud_project_id=item.cloud_project_id,
+                    item=item,
+                    user_id=user_id,
+                    target_type="team",
+                    target_id=str(team.id),
+                    agent=None,
                     team=team,
-                    assigner_user_id=user_id,
                     priority=item.priority,
+                    automation_context=automation_context,
+                    cancel_existing=False,
                 )
         self._notify_updated_assignee(
             db,
@@ -772,15 +886,13 @@ class LoopItemService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> list[LoopItem]:
-        access = self._require_internal_task_project(
-            db, cloud_project_id, user_id, allow_public_visitor=True
-        )
+        access = self._require_internal_task_project(db, cloud_project_id, user_id)
         query = db.query(LoopItem).filter(
             LoopItem.cloud_project_id == cloud_project_id,
             loop_datetime_is_unset(LoopItem.deleted_at),
         )
-        if access.restricts_unrelated_issues:
-            query = query.filter(related_item_filter(user_id))
+        if not has_permission(access.role, BaseRole.Maintainer):
+            query = query.filter(visible_item_filter(user_id, access.project))
         if assignee_type == "user" and assignee_id:
             try:
                 assignee_user_id = int(assignee_id)
@@ -811,7 +923,9 @@ class LoopItemService:
                     )
                 )
             )
-        return query.order_by(LoopItem.sort_order, LoopItem.updated_at.desc()).all()
+        return query.order_by(
+            LoopItem.sort_order, LoopItem.updated_at.desc(), LoopItem.id
+        ).all()
 
     def reorder(
         self,
@@ -820,29 +934,36 @@ class LoopItemService:
         user_id: int,
         values: LoopItemReorder,
     ) -> list[LoopItem]:
-        """Persist the manual order of the TODOs in one board lane."""
+        """Persist sibling order, optionally restricted to a status lane."""
 
-        self._require_internal_task_project(
+        access = self._require_internal_task_project(
             db, cloud_project_id, user_id, BaseRole.Developer
         )
-        if values.parent_id is None:
-            # MySQL stores unset parent ids as empty strings, so match both.
-            parent_filter = or_(LoopItem.parent_id.is_(None), LoopItem.parent_id == "")
-        else:
-            parent_filter = LoopItem.parent_id == values.parent_id
-        lane = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id == cloud_project_id,
-                LoopItem.status == values.status,
-                parent_filter,
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
-            .all()
-        )
+        siblings = sibling_items(db, str(cloud_project_id), values.parent_id)
+        visible_ids = None
+        if not has_permission(access.role, BaseRole.Maintainer):
+            visible_ids = {
+                item_id
+                for (item_id,) in db.query(LoopItem.id)
+                .filter(
+                    LoopItem.cloud_project_id == cloud_project_id,
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                    visible_item_filter(user_id, access.project),
+                )
+                .all()
+            }
+            if any(item_id not in visible_ids for item_id in values.item_ids):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        lane = [
+            item
+            for item in siblings
+            if (values.status is None or item.status == values.status)
+            and (visible_ids is None or item.id in visible_ids)
+        ]
         by_id = {item.id: item for item in lane}
-        requested_ids = [item_id for item_id in values.item_ids if item_id in by_id]
+        requested_ids = list(
+            dict.fromkeys(item_id for item_id in values.item_ids if item_id in by_id)
+        )
         if not requested_ids:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "TODO not found in lane"
@@ -852,10 +973,11 @@ class LoopItemService:
         ordered = [by_id[item_id] for item_id in requested_ids] + [
             item for item in lane if item.id not in requested_ids
         ]
-        for position, item in enumerate(ordered):
-            if item.sort_order != position:
-                item.sort_order = position
-                item.version += 1
+        lane_ids = set(by_id)
+        positions = iter(ordered)
+        persist_sibling_order(
+            [next(positions) if item.id in lane_ids else item for item in siblings]
+        )
         db.commit()
         for item in ordered:
             db.refresh(item)
@@ -962,10 +1084,10 @@ class LoopItemService:
     def list_project_attachments(
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[tuple[LoopItemAttachment, LoopItem]]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
+        access = require_cloud_project_role(db, cloud_project_id, user_id)
         attachment = aliased(LoopItemAttachment)
         item = aliased(LoopItem)
-        return (
+        query = (
             db.query(attachment, item)
             .join(item, item.id == attachment.loop_item_id)
             .filter(
@@ -973,8 +1095,32 @@ class LoopItemService:
                 loop_datetime_is_unset(item.deleted_at),
             )
             .order_by(attachment.created_at.desc(), item.sequence_number)
-            .all()
         )
+        if access.project.task_provider == "local":
+            if has_permission(access.role, BaseRole.Maintainer):
+                return query.all()
+            visible_ids = select(LoopItem.id).where(
+                visible_item_filter(user_id, access.project)
+            )
+            return query.filter(item.id.in_(visible_ids)).all()
+
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        rows = query.all()
+        visible_ids = {
+            str(item["id"])
+            for item in external_loop_item_provider.get_many(
+                db,
+                str(cloud_project_id),
+                user_id,
+                list({item.id for _, item in rows}),
+            )
+        }
+        return [
+            (attachment, item) for attachment, item in rows if item.id in visible_ids
+        ]
 
     def add_attachment(
         self,
@@ -986,9 +1132,7 @@ class LoopItemService:
         source: BinaryIO,
     ) -> LoopItemAttachment:
         item = self.get(db, item_id, user_id)
-        self._require_item_access(
-            db, item, user_id, action=self._attachment_action(db, item, user_id)
-        )
+        self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
@@ -1017,9 +1161,7 @@ class LoopItemService:
         from app.services.context.context_service import NotFoundException
 
         item = self.get(db, item_id, user_id)
-        self._require_item_access(
-            db, item, user_id, action=self._attachment_action(db, item, user_id)
-        )
+        self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
@@ -1287,23 +1429,10 @@ class LoopItemService:
     def delete_attachment(self, db: Session, attachment_id: str, user_id: int) -> None:
         attachment = self._get_attachment(db, attachment_id, user_id)
         item = self.get(db, attachment.loop_item_id, user_id)
-        self._require_item_access(
-            db, item, user_id, action=self._attachment_action(db, item, user_id)
-        )
+        self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         delivery_storage.remove_objects([attachment.object_key])
         db.delete(attachment)
         db.commit()
-
-    @staticmethod
-    def _attachment_action(db: Session, item: LoopItem, user_id: int) -> IssueAction:
-        from app.services.human_issue_work import human_issue_work_service
-
-        work = human_issue_work_service.view(db, item, user_id)
-        return (
-            IssueAction.COMMENT
-            if work is not None and work["can_submit"]
-            else IssueAction.EDIT_CONTENT
-        )
 
     def _get_attachment(
         self, db: Session, attachment_id: str, user_id: int
@@ -1321,19 +1450,31 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         values: LoopItemUpdate,
+        *,
+        commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        if "status" in values.model_fields_set and values.status != item.status:
-            from app.services.human_issue_work import human_issue_work_service
-
-            if human_issue_work_service.is_direct_human_assignment(db, item) or (
-                values.assignee_user_id is not None
-                and "assignee_user_id" in values.model_fields_set
-            ):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "Use the human Issue work actions to change status",
-                )
+        position_order = None
+        if values.position is not None:
+            self._require_internal_task_project(
+                db, int(item.cloud_project_id), user_id, BaseRole.Developer
+            )
+            if values.position.before_item_id is not None:
+                self.get(db, values.position.before_item_id, user_id)
+            position_order = position_siblings(
+                db,
+                item,
+                (
+                    values.parent_id
+                    if "parent_id" in values.model_fields_set
+                    else item.parent_id
+                ),
+                values.position,
+            )
+        if "security_level" in values.model_fields_set:
+            require_cloud_project_role(
+                db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
+            )
         assignee_fields = {
             "assignee_user_id",
             "assignee_agent_id",
@@ -1341,25 +1482,34 @@ class LoopItemService:
         }
         assignee_changed = bool(assignee_fields & values.model_fields_set)
         group_changed = "assignee_group_id" in values.model_fields_set
-        self._require_item_access(
-            db,
-            item,
-            user_id,
-            action=(
-                IssueAction.ASSIGN
-                if assignee_changed or group_changed
-                else IssueAction.EDIT_CONTENT
-            ),
-        )
+        access = self._require_item_access(db, item, user_id)
+        for action in issue_update_actions(values.model_fields_set) or [
+            IssueAction.EDIT_CONTENT
+        ]:
+            require_issue_action(
+                access,
+                action=action,
+                issue_creator_user_id=item.created_by_user_id,
+                user_id=user_id,
+            )
+        if item.version != values.version:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
+            )
         updates = values.model_dump(
             exclude={
                 "version",
                 "automation_rule_id",
                 "notify_assignee",
+                "runner_selection",
                 "assignee_group_id",
+                "security_level",
+                "position",
             },
             exclude_unset=True,
         )
+        collaboration_group: dict[str, Any] | None = None
         meaningful_change = group_changed or any(
             field in values.model_fields_set
             and (
@@ -1374,21 +1524,26 @@ class LoopItemService:
                 "assignee_agent_id",
                 "assignee_team_id",
                 "priority",
+                "start_at",
                 "due_at",
                 "parent_id",
                 "tags",
                 "workflow",
+                "security_level",
             )
         )
+        if "assignee_agent_id" in values.model_fields_set:
+            updates["assignee_agent_id"] = values.assignee_agent_id or ""
         if "assignee_team_id" in values.model_fields_set:
             team_id = values.assignee_team_id
             if team_id:
-                runnable_wegent_team(db, user_id, team_id)
+                runnable_wegent_team(
+                    db, user_id, team_id, project_id=item.cloud_project_id
+                )
                 updates["assignee_user_id"] = None
                 updates["assignee_agent_id"] = ""
         elif "assignee_agent_id" in values.model_fields_set:
             agent_id = values.assignee_agent_id
-            updates["assignee_agent_id"] = agent_id or ""
             if agent_id:
                 agent = db.get(ProjectChatAgent, agent_id)
                 if (
@@ -1400,6 +1555,13 @@ class LoopItemService:
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
                         "AI assignee is not active in this project",
                     )
+                from app.services.collaboration_permissions import (
+                    collaboration_permission_service,
+                )
+
+                collaboration_permission_service.require_project_agent(
+                    db, item.cloud_project_id, agent.id
+                )
                 updates["assignee_user_id"] = None
                 updates["assignee_team_id"] = None
         elif "assignee_user_id" in values.model_fields_set and values.assignee_user_id:
@@ -1407,16 +1569,35 @@ class LoopItemService:
             updates["assignee_team_id"] = None
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
+        effective_start_at = (
+            values.start_at if "start_at" in values.model_fields_set else item.start_at
+        )
+        effective_due_at = (
+            values.due_at if "due_at" in values.model_fields_set else item.due_at
+        )
+        if (
+            effective_start_at is not None
+            and effective_due_at is not None
+            and normalize_schedule_datetime(effective_start_at)
+            > normalize_schedule_datetime(effective_due_at)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "start_at cannot be after due_at",
+            )
         if (
             "tags" in values.model_fields_set
             or "workflow" in values.model_fields_set
             or "execution_config" in values.model_fields_set
+            or "security_level" in values.model_fields_set
         ):
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
             if "tags" in values.model_fields_set:
                 metadata["tags"] = updates.pop("tags") or []
+            if "security_level" in values.model_fields_set:
+                metadata["security_level"] = values.security_level
             if "workflow" in values.model_fields_set:
                 workflow = values.workflow
                 metadata["workflow"] = (
@@ -1436,9 +1617,8 @@ class LoopItemService:
         if group_changed:
             from app.services.workspaces import workspace_service
 
-            group = None
             if values.assignee_group_id:
-                group = next(
+                collaboration_group = next(
                     (
                         entry
                         for entry in workspace_service.list_project_collaboration_groups(
@@ -1448,27 +1628,71 @@ class LoopItemService:
                     ),
                     None,
                 )
-                if group is None:
+                if collaboration_group is None:
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
                         "Team is not in this project",
                     )
             metadata = dict(updates.get("metadata_json") or item.metadata_json or {})
             metadata["collaboration_group"] = (
-                {"id": str(group["id"]), "name": group["name"]} if group else None
+                {
+                    "id": str(collaboration_group["id"]),
+                    "name": collaboration_group["name"],
+                }
+                if collaboration_group
+                else None
             )
-            self._write_assignment_change(
+            previous_group = (item.metadata_json or {}).get("collaboration_group")
+            previous_group_id = (
+                str(previous_group.get("id") or "")
+                if isinstance(previous_group, dict)
+                else ""
+            )
+            if collaboration_group:
+                from app.services.collaboration_group_execution import (
+                    new_assignment_key,
+                )
+
+                if previous_group_id != str(collaboration_group["id"]):
+                    metadata["collaboration_group_assignment_key"] = (
+                        new_assignment_key()
+                    )
+            else:
+                metadata.pop("collaboration_group_assignment_key", None)
+            self.record_assignment_change(
                 metadata,
                 user_id,
-                "group" if group else None,
-                str(group["id"]) if group else None,
-                group["name"] if group else None,
+                "group" if collaboration_group else None,
+                str(collaboration_group["id"]) if collaboration_group else None,
+                collaboration_group["name"] if collaboration_group else None,
             )
             updates["metadata_json"] = metadata
-            if group:
+            if collaboration_group:
                 updates.update(
-                    assignee_user_id=None, assignee_agent_id="", assignee_team_id=None
+                    assignee_user_id=None,
+                    assignee_agent_id="",
+                    assignee_team_id=None,
+                    status="in_progress",
+                    completed_at=None,
+                    sort_order=0,
                 )
+                if (
+                    item.status != "in_progress"
+                    and "status" not in values.model_fields_set
+                ):
+                    project = db.get(CloudProject, item.cloud_project_id)
+                    if project is None:
+                        raise HTTPException(
+                            status.HTTP_404_NOT_FOUND, "Cloud project not found"
+                        )
+                    write_status_change(
+                        metadata,
+                        project=project,
+                        from_status=item.status,
+                        to_status="in_progress",
+                        trigger="collaboration_group_assignment",
+                        by_user_id=user_id,
+                    )
         if assignee_changed:
             # Legacy assignment path: record the chain and derive the queue
             # state on the task itself so every queue view stays a projection
@@ -1491,10 +1715,32 @@ class LoopItemService:
                     else None
                 )
             if target_id is None:
-                self._write_assignment_change(metadata, user_id, None, None, None)
+                if (
+                    "assignee_user_id" in values.model_fields_set
+                    and values.assignee_user_id is None
+                    and item.assignee_user_id is not None
+                ):
+                    from app.services.issue_assignments import issue_assignment_service
+
+                    assignment = issue_assignment_service.active(
+                        db,
+                        issue_id=item.id,
+                        member_type="human",
+                        member_id=str(item.assignee_user_id),
+                        workflow_step=None,
+                    )
+                    if assignment is not None:
+                        issue_assignment_service.remove(
+                            db,
+                            project_id=int(item.cloud_project_id),
+                            issue_id=item.id,
+                            assignment_id=assignment.id,
+                            user_id=user_id,
+                        )
+                self.record_assignment_change(metadata, user_id, None, None, None)
             elif target_type == "agent":
                 agent = db.get(ProjectChatAgent, target_id)
-                self._write_assignment_change(
+                self.record_assignment_change(
                     metadata,
                     user_id,
                     "agent",
@@ -1503,7 +1749,7 @@ class LoopItemService:
                 )
             elif target_type == "team":
                 team = db.get(Kind, int(target_id))
-                self._write_assignment_change(
+                self.record_assignment_change(
                     metadata,
                     user_id,
                     "team",
@@ -1511,7 +1757,7 @@ class LoopItemService:
                     team.name if team is not None else None,
                 )
             else:
-                self._write_assignment_change(
+                self.record_assignment_change(
                     metadata,
                     user_id,
                     "user",
@@ -1540,12 +1786,16 @@ class LoopItemService:
                     trigger="manual",
                 )
             if assignment_created:
-                if target_type == "user" and item.assignee_user_id != int(target_id):
-                    metadata.pop("human_work", None)
-                    if item.status in {"in_progress", "in_review", "completed"}:
-                        updates["status"] = "pending"
-                        updates["completed_at"] = None
-                        updates["sort_order"] = 0
+                if target_type in {"agent", "team"} and (
+                    "status" not in values.model_fields_set
+                ):
+                    self._start_robot_assignment(
+                        project=project,
+                        item=item,
+                        user_id=user_id,
+                        metadata=metadata,
+                        updates=updates,
+                    )
                 cancelled_runs = self._sync_execution_for_assignment(
                     db,
                     item=item,
@@ -1596,7 +1846,8 @@ class LoopItemService:
             )
             # Reset the manual lane position so the TODO lands at the top of
             # its new lane instead of an arbitrary stale position.
-            updates["sort_order"] = 0
+            if position_order is None:
+                updates["sort_order"] = 0
         if meaningful_change:
             metadata = updates.get("metadata_json")
             if not isinstance(metadata, dict):
@@ -1625,7 +1876,10 @@ class LoopItemService:
         )
         if updated != 1:
             db.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
+            )
         if status_changed:
             from app.services.workspace_cleanup_intents import sync_issue_status
 
@@ -1637,19 +1891,48 @@ class LoopItemService:
                 next_version=values.version + 1,
                 completed_at=updates.get("completed_at"),
             )
-        db.commit()
+        if collaboration_group is not None:
+            db.flush()
+            db.refresh(item)
+            from app.services.collaboration_group_execution import (
+                dispatch_collaboration_group_assignment,
+            )
+
+            dispatch_collaboration_group_assignment(
+                db,
+                item=item,
+                user_id=user_id,
+                group=collaboration_group,
+            )
+        if position_order is not None:
+            persist_sibling_order(position_order, updated_item_id=item.id)
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(item)
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 
             request_execution_cancellations(cancelled_runs)
         return item
 
-    def mark_read(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+    def mark_read(
+        self,
+        db: Session,
+        item_id: str,
+        user_id: int,
+        activity_sequence: int | None = None,
+    ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        mark_loop_item_read(db, item_id=item.id, user_id=user_id)
+        mark_loop_item_read(
+            db,
+            item_id=item.id,
+            user_id=user_id,
+            activity_sequence=activity_sequence,
+        )
         db.commit()
         db.expire(item)
         db.refresh(item)
@@ -1665,28 +1948,52 @@ class LoopItemService:
         previous_user_id: int | None,
         notify: bool,
     ) -> None:
-        if (
-            not target_user_id
-            or target_user_id == previous_user_id
-            or target_user_id == actor_user_id
-        ):
+        if not target_user_id or target_user_id == previous_user_id:
             return
+        from app.services.issue_assignments import issue_assignment_service
+
+        assignment = issue_assignment_service.active(
+            db,
+            issue_id=item.id,
+            member_type="human",
+            member_id=str(target_user_id),
+            workflow_step=None,
+        )
+        is_implicit_creator_assignment = (
+            target_user_id == actor_user_id
+            and assignment is not None
+            and assignment.metadata.get("trigger") == "default"
+        )
         project_id = int(item.cloud_project_id)
-        if target_user_id not in self._project_member_ids(db, project_id):
+        project = db.get(CloudProject, project_id)
+        if project is None or (
+            not is_implicit_creator_assignment
+            and target_user_id
+            not in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            )
+        ):
             raise HTTPException(422, "Assignee is not a member of this project")
         if not notify:
             return
-        project = db.get(CloudProject, project_id)
-        actor = db.get(User, actor_user_id)
-        notify_project_task_assignee(
+        from app.services.collaboration_human_assignments import (
+            notify_direct_human_assignment,
+        )
+
+        if assignment is None:
+            raise RuntimeError("Direct human assignment notification has no assignment")
+        if is_implicit_creator_assignment:
+            return
+        human = db.get(User, target_user_id)
+        if human is None:
+            raise HTTPException(422, "Assignee does not exist")
+        notify_direct_human_assignment(
             db,
+            project=project,
+            issue=item,
+            human=human,
             actor_user_id=actor_user_id,
-            user_id=target_user_id,
-            project_id=str(project_id),
-            project_name=project.name,
-            item_id=item.id,
-            item_title=item.title,
-            assigner_name=actor.user_name,
+            assignment_id=assignment.id,
         )
 
     def assign(
@@ -1710,13 +2017,27 @@ class LoopItemService:
         queue.
         """
 
-        access = self._require_internal_task_project(
-            db, project_id, user_id, BaseRole.Maintainer
-        )
+        access = self._require_internal_task_project(db, project_id, user_id)
         project = access.project
         item = self.get(db, item_id, user_id)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        position_order = None
+        if values.position is not None:
+            self._require_internal_task_project(
+                db, project_id, user_id, BaseRole.Developer
+            )
+            if values.position.before_item_id is not None:
+                self.get(db, values.position.before_item_id, user_id)
+            position_order = position_siblings(
+                db, item, item.parent_id, values.position
+            )
+        require_issue_action(
+            access,
+            action=IssueAction.ASSIGN,
+            issue_creator_user_id=item.created_by_user_id,
+            user_id=user_id,
+        )
         previous_assignee_user_id = item.assignee_user_id
         metadata = dict(item.metadata_json or {})
         assignment_created = False
@@ -1730,14 +2051,6 @@ class LoopItemService:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Robot is not active in this project",
-                )
-            access = require_cloud_project_role(
-                db, project_id, user_id, BaseRole.Reporter
-            )
-            if not self._agent_visible_to_user(agent, user_id, access.role):
-                raise HTTPException(
-                    status.HTTP_403_FORBIDDEN,
-                    "Robot is not visible to you",
                 )
             from app.services.issue_assignments import issue_assignment_service
 
@@ -1764,12 +2077,19 @@ class LoopItemService:
                 "assignee_user_id": None,
                 "assignee_team_id": None,
             }
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "agent",
                 agent.id,
                 agent.title or agent.name,
+            )
+            self._start_robot_assignment(
+                project=project,
+                item=item,
+                user_id=user_id,
+                metadata=metadata,
+                updates=assignee_updates,
             )
             effective_automation_context = automation_context
             if effective_automation_context is None:
@@ -1790,6 +2110,13 @@ class LoopItemService:
                     execution_config,
                     runtime_subject_user_id=int(agent.created_by_user_id or user_id),
                 )
+            if values.runner_selection is not None:
+                effective_automation_context = {
+                    **(effective_automation_context or {}),
+                    "runner_selection": values.runner_selection.model_dump(
+                        exclude_none=True
+                    ),
+                }
             cancelled_runs = (
                 self._sync_execution_for_assignment(
                     db,
@@ -1815,7 +2142,9 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            member_ids = self._project_member_ids(db, project_id)
+            member_ids = project_participant_ids(
+                db, project, required_role=BaseRole.Developer
+            )
             if target_user_id not in member_ids:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1835,29 +2164,13 @@ class LoopItemService:
                 trigger=values.trigger,
                 comment_id=assignment_comment_id,
             )
-            if assignment_created and previous_assignee_user_id != target_user_id:
-                metadata.pop("human_work", None)
-                if item.status in {"in_progress", "in_review", "completed"}:
-                    write_status_change(
-                        metadata,
-                        project=project,
-                        from_status=item.status,
-                        to_status="pending",
-                        trigger="reassignment",
-                        by_user_id=user_id,
-                    )
             assignee_updates = {
                 "assignee_user_id": target_user_id,
                 "assignee_agent_id": "",
                 "assignee_team_id": None,
             }
-            if assignment_created and previous_assignee_user_id != target_user_id:
-                if item.status in {"in_progress", "in_review", "completed"}:
-                    assignee_updates.update(
-                        status="pending", completed_at=None, sort_order=0
-                    )
             target = db.get(User, target_user_id)
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "user",
@@ -1889,7 +2202,9 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Team assignee id must be numeric",
                 ) from exc
-            team = runnable_wegent_team(db, user_id, target_team_id)
+            team = runnable_wegent_team(
+                db, user_id, target_team_id, project_id=project.id
+            )
             from app.services.issue_assignments import issue_assignment_service
 
             _, assignment_created = issue_assignment_service.record(
@@ -1909,12 +2224,19 @@ class LoopItemService:
                 "assignee_agent_id": "",
                 "assignee_team_id": team.id,
             }
-            self._write_assignment_change(
+            self.record_assignment_change(
                 metadata,
                 user_id,
                 "team",
                 str(team.id),
                 team.name,
+            )
+            self._start_robot_assignment(
+                project=project,
+                item=item,
+                user_id=user_id,
+                metadata=metadata,
+                updates=assignee_updates,
             )
             cancelled_runs = (
                 self._sync_execution_for_assignment(
@@ -1933,6 +2255,20 @@ class LoopItemService:
                 if assignment_created
                 else []
             )
+        elif values.assignee_type == "group":
+            return self.update(
+                db,
+                item_id,
+                user_id,
+                LoopItemUpdate(
+                    version=values.version,
+                    assignee_group_id=values.assignee_id,
+                    position=values.position,
+                    runner_selection=values.runner_selection,
+                    notify_assignee=values.notify_assignee,
+                ),
+                commit=commit,
+            )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
@@ -1948,16 +2284,32 @@ class LoopItemService:
             )
             and previous_assignee_user_id != target_user_id
         ):
-            assigner = db.get(User, user_id)
-            notify_project_task_assignee(
+            from app.services.collaboration_human_assignments import (
+                notify_direct_human_assignment,
+            )
+            from app.services.issue_assignments import issue_assignment_service
+
+            assignment = issue_assignment_service.active(
                 db,
+                issue_id=item.id,
+                member_type="human",
+                member_id=str(target_user_id),
+                workflow_step=values.workflow_step,
+            )
+            if assignment is None:
+                raise RuntimeError(
+                    "Direct human assignment notification has no assignment"
+                )
+            human = db.get(User, target_user_id)
+            if human is None:
+                raise HTTPException(422, "Assignee does not exist")
+            notify_direct_human_assignment(
+                db,
+                project=project,
+                issue=item,
+                human=human,
                 actor_user_id=user_id,
-                user_id=target_user_id,
-                project_id=str(project_id),
-                project_name=project.name or "",
-                item_id=item.id,
-                item_title=item.title or item.id,
-                assigner_name=assigner.user_name if assigner else str(user_id),
+                assignment_id=assignment.id,
             )
 
         metadata = advance_content_revision(metadata, actor_user_id=user_id)
@@ -1966,11 +2318,18 @@ class LoopItemService:
             item,
             values.version,
             metadata,
-            commit=commit,
+            commit=commit and position_order is None,
             **assignee_updates,
         )
+        if position_order is not None:
+            persist_sibling_order(position_order, updated_item_id=item.id)
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+            db.refresh(updated)
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 
@@ -2075,7 +2434,7 @@ class LoopItemService:
         return updated
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Soft delete a TODO subtree; rows are kept for the recycle bin."""
+        """Archive a completed TODO subtree; rows are kept for restoration."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
@@ -2094,13 +2453,23 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
-        # A deleted Issue must not leave a Run owning a real process. Cancel
+        incomplete = [
+            archived_item.id
+            for archived_item in archived_items
+            if archived_item.status != "completed"
+        ]
+        if incomplete:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Only completed TODO subtrees can be archived",
+            )
+        # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
         cancelled_runs = self._cancel_runs_for_items(
             db,
             item_ids=[archived_item.id for archived_item in archived_items],
-            note="Issue was deleted while the Run was active",
+            note="Issue was archived while the Run was active",
         )
         for archived_item in archived_items:
             archived_item.deleted_at = archived_at
@@ -2108,7 +2477,7 @@ class LoopItemService:
         db.commit()
         db.refresh(item)
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 
@@ -2144,34 +2513,85 @@ class LoopItemService:
                 cancelled_runs.append(cancelled)
         return cancelled_runs
 
-    def restore(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Restore a soft-deleted TODO from the recycle bin."""
+    def restore(self, db: Session, item_id: str, user_id: int) -> list[LoopItem]:
+        """Restore the TODO subtree archived in the same operation."""
 
         item = self._get_item_row(db, item_id, include_deleted=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         if loop_datetime_value_is_unset(item.deleted_at):
-            raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not deleted")
-        item.deleted_at = None
-        item.version += 1
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not archived")
+        archived_at = item.deleted_at
+        if item.parent_id:
+            parent = self._get_item_row(db, item.parent_id, include_deleted=True)
+            if parent.deleted_at == archived_at:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Restore the archived subtree from its root TODO",
+                )
+        restored_items = [item]
+        pending_parent_ids = [item.id]
+        while pending_parent_ids:
+            children = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == item.cloud_project_id,
+                    LoopItem.parent_id.in_(pending_parent_ids),
+                    LoopItem.deleted_at == archived_at,
+                )
+                .all()
+            )
+            pending_parent_ids = [child.id for child in children]
+            restored_items.extend(children)
+        for restored_item in restored_items:
+            restored_item.deleted_at = None
+            restored_item.version += 1
         db.commit()
-        db.refresh(item)
-        return item
+        for restored_item in restored_items:
+            db.refresh(restored_item)
+        return restored_items
 
     def list_deleted(
-        self, db: Session, cloud_project_id: int, user_id: int
-    ) -> list[LoopItem]:
-        """List soft-deleted TODOs of a project, most recently deleted first."""
+        self,
+        db: Session,
+        cloud_project_id: int,
+        user_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[LoopItem], str | None]:
+        """List archived subtree roots, most recently archived first."""
 
         access = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, cloud_project_id, user_id, BaseRole.Viewer
         )
-        query = db.query(LoopItem).filter(
-            LoopItem.cloud_project_id == cloud_project_id,
-            ~loop_datetime_is_unset(LoopItem.deleted_at),
+        parent = aliased(LoopItem)
+        query = (
+            db.query(LoopItem)
+            .outerjoin(parent, parent.id == LoopItem.parent_id)
+            .filter(
+                LoopItem.cloud_project_id == cloud_project_id,
+                ~loop_datetime_is_unset(LoopItem.deleted_at),
+                or_(
+                    LoopItem.parent_id.is_(None),
+                    LoopItem.parent_id == "",
+                    parent.id.is_(None),
+                    loop_datetime_is_unset(parent.deleted_at),
+                    parent.deleted_at != LoopItem.deleted_at,
+                ),
+            )
         )
-        if access.is_public_visitor:
-            query = query.filter(LoopItem.created_by_user_id == user_id)
-        return query.order_by(LoopItem.deleted_at.desc()).all()
+        if not has_permission(access.role, BaseRole.Maintainer):
+            query = query.filter(visible_item_filter(user_id, access.project))
+        rows = (
+            query.order_by(LoopItem.deleted_at.desc(), LoopItem.id.desc())
+            .offset(offset)
+            .limit(limit + 1)
+            .all()
+        )
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+        return items, next_cursor
 
     def _require_parent(
         self, db: Session, parent_id: str, cloud_project_id: int
@@ -2259,29 +2679,23 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
         self._validate_backend_task(db, values.backend_task_id, user_id)
-        active = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == values.device_id,
-                LoopItemTaskBinding.task_id == values.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .first()
+        logger.info(
+            "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
+            item_id,
+            values.task_id,
+            values.wegent_team_id,
+            values.model_selection is not None,
         )
-        if values.workflow_node_id:
-            self._validate_workflow_task_binding(
-                db,
-                item,
-                values.workflow_node_id,
-                (
-                    active
-                    if active is not None and active.loop_item_id == item_id
-                    else None
-                ),
-                allow_automated_stage=allow_automated_stage,
-            )
+        bindings = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
+        ).all()
+        active = bindings[0] if bindings else None
+        for duplicate in bindings[1:]:
+            duplicate.unlinked_at = self._now()
         if active is not None:
             if active.loop_item_id == item_id:
                 if values.task_title and active.task_title != values.task_title:
@@ -2296,19 +2710,6 @@ class LoopItemService:
                         ),
                         **metadata_updates,
                     }
-                if values.workflow_node_id:
-                    from app.services.workflow_stage_context import (
-                        workflow_stage_context_resolver,
-                    )
-
-                    if workflow_stage_context_resolver.binding_snapshot(active) is None:
-                        workflow_stage_context_resolver.freeze_binding(
-                            active,
-                            stage_snapshot
-                            or workflow_stage_context_resolver.resolve(
-                                db, item=item, target_node_id=values.workflow_node_id
-                            ),
-                        )
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
@@ -2331,18 +2732,6 @@ class LoopItemService:
             linked_at=self._now(),
             metadata_json=_task_binding_metadata(values) or None,
         )
-        if values.workflow_node_id:
-            from app.services.workflow_stage_context import (
-                workflow_stage_context_resolver,
-            )
-
-            workflow_stage_context_resolver.freeze_binding(
-                binding,
-                stage_snapshot
-                or workflow_stage_context_resolver.resolve(
-                    db, item=item, target_node_id=values.workflow_node_id
-                ),
-            )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         if commit:
@@ -2351,47 +2740,6 @@ class LoopItemService:
         else:
             db.flush()
         return binding
-
-    @staticmethod
-    def _validate_workflow_task_binding(
-        db: Session,
-        item: LoopItem,
-        workflow_node_id: str,
-        active_binding: LoopItemTaskBinding | None,
-        *,
-        allow_automated_stage: bool = False,
-    ) -> None:
-        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
-        workflow = metadata.get("workflow")
-        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-        node = next(
-            (
-                candidate
-                for candidate in nodes or []
-                if isinstance(candidate, dict)
-                and candidate.get("id") == workflow_node_id
-            ),
-            None,
-        )
-        if node is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if workflow_node_execution_mode(node) == "robot" and not allow_automated_stage:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Automated workflow stage does not accept a user task",
-            )
-        if active_binding is None and node.get("status") not in {
-            "ready",
-            "queued",
-            "running",
-            "awaiting_approval",
-            "changes_requested",
-            "failed",
-        }:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Workflow node is not ready",
-            )
 
     def bind_project_task(
         self,
@@ -2402,11 +2750,18 @@ class LoopItemService:
     ) -> LoopItemTaskBinding:
         """Associate a runtime Task with a cloud project without choosing a TODO."""
 
-        require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Viewer)
         self._validate_backend_task(db, values.backend_task_id, user_id)
-        active = self._active_task_binding(db, values, user_id, lock=True)
+        bindings = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
+        ).all()
+        active = bindings[0] if bindings else None
+        for duplicate in bindings[1:]:
+            duplicate.unlinked_at = self._now()
         if active is not None:
             if (
                 str(active.cloud_project_id) == str(cloud_project_id)
@@ -2470,18 +2825,14 @@ class LoopItemService:
         project = db.get(CloudProject, binding.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         item = db.get(LoopItem, binding.loop_item_id) if binding.loop_item_id else None
         return binding, project, item
 
     def unbind_cloud_context(
         self, db: Session, values: LoopItemTaskBind, user_id: int
     ) -> None:
-        binding = self._active_task_binding(db, values, user_id, lock=True)
-        if binding is None:
-            return
-        binding.unlinked_at = self._now()
-        db.commit()
+        self._unbind_task_bindings(db, values, user_id)
 
     @staticmethod
     def _validate_backend_task(
@@ -2498,23 +2849,30 @@ class LoopItemService:
         if backend_task is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
 
-    @staticmethod
-    def _active_task_binding(
+    def _unbind_task_bindings(
+        self,
         db: Session,
         values: LoopItemTaskBind,
         user_id: int,
         *,
-        lock: bool,
-    ) -> LoopItemTaskBinding | None:
-        query = db.query(LoopItemTaskBinding).filter(
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == values.device_id,
-            LoopItemTaskBinding.task_id == values.task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        item_id: str | None = None,
+    ) -> None:
+        query = active_task_binding_query(
+            db,
+            user_id=user_id,
+            device_id=values.device_id,
+            task_id=values.task_id,
+            lock=True,
         )
-        if lock:
-            query = query.with_for_update()
-        return query.first()
+        if item_id is not None:
+            query = query.filter(LoopItemTaskBinding.loop_item_id == item_id)
+        bindings = query.all()
+        if not bindings:
+            return
+        now = self._now()
+        for binding in bindings:
+            binding.unlinked_at = now
+        db.commit()
 
     def list_task_bindings(
         self, db: Session, item_id: str, user_id: int
@@ -2525,6 +2883,7 @@ class LoopItemService:
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .order_by(
                 LoopItemTaskBinding.linked_at.desc(),
@@ -2550,6 +2909,7 @@ class LoopItemService:
                 LoopItemTaskBinding.cloud_project_id == project_id,
                 LoopItemTaskBinding.loop_item_id.in_(item_ids),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
             .order_by(
                 LoopItemTaskBinding.loop_item_id.asc(),
@@ -2567,22 +2927,7 @@ class LoopItemService:
         user_id: int,
     ) -> None:
         self.get(db, item_id, user_id)
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.loop_item_id == item_id,
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == values.device_id,
-                LoopItemTaskBinding.task_id == values.task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .first()
-        )
-        if binding is None:
-            return
-        binding.unlinked_at = self._now()
-        db.commit()
+        self._unbind_task_bindings(db, values, user_id, item_id=item_id)
 
     def find_for_runtime_task(
         self,
@@ -2591,16 +2936,9 @@ class LoopItemService:
         device_id: str,
         task_id: str,
     ) -> LoopItem:
-        binding = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.device_id == device_id,
-                LoopItemTaskBinding.task_id == task_id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .first()
-        )
+        binding = active_task_binding_query(
+            db, user_id=user_id, device_id=device_id, task_id=task_id
+        ).first()
         if binding is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked TODO not found")
         return self.get(db, binding.loop_item_id, user_id)
@@ -2614,25 +2952,9 @@ class LoopItemService:
     ) -> list[dict[str, object]]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
-        memberships = select(ResourceMember.resource_id).where(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        projects = (
-            db.query(CloudProject)
-            .filter(
-                CloudProject.status == "active",
-                (CloudProject.created_by_user_id == user_id)
-                | CloudProject.id.in_(memberships)
-                | (
-                    CloudProject.metadata_json["visibility"].as_string()
-                    == "public_restricted"
-                ),
-            )
-            .all()
-        )
+        from app.services.cloud_project_visibility import accessible_cloud_projects
+
+        projects = accessible_cloud_projects(db, user_id).all()
         if not projects:
             return []
         project_by_id = {project.id: project for project in projects}
@@ -2648,29 +2970,6 @@ class LoopItemService:
             .limit(limit)
             .all()
         )
-        from app.services.human_issue_work import human_issue_work_service
-
-        known_item_ids = {item.id for item in items}
-        review_candidates = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id.in_(project_by_id),
-                LoopItem.status == "in_review",
-                LoopItem.metadata_json["human_work"]["state"].as_string()
-                == "submitted",
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
-            .all()
-        )
-        for candidate in review_candidates:
-            if candidate.id in known_item_ids:
-                continue
-            work = human_issue_work_service.view(db, candidate, user_id)
-            if work is not None and work["can_review"]:
-                items.append(candidate)
-        items.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        items = items[:limit]
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
         active_task_items = (
@@ -2806,7 +3105,6 @@ class LoopItemService:
                     ),
                     "content_revision": content_revision(metadata),
                     "is_unread": is_unread(metadata, user_id),
-                    "human_work": human_issue_work_service.view(db, item, user_id),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": (
                         execution_display_state(execution)
@@ -2859,36 +3157,6 @@ class LoopItemService:
         agent = db.get(ProjectChatAgent, item.assignee_agent_id)
         return agent is not None and agent.created_by_user_id == user_id
 
-    @staticmethod
-    def _agent_visible_to_user(
-        agent: ProjectChatAgent, user_id: int, role: BaseRole
-    ) -> bool:
-        """Robots are project assets that follow their creator's environment."""
-
-        return ProjectChatService._agent_visible_to_user(agent, user_id, role)
-
-    def _project_member_ids(self, db: Session, project_id: int) -> set[int]:
-        project = db.get(CloudProject, project_id)
-        member_ids: set[int] = set()
-        if project is not None and project.created_by_user_id:
-            member_ids.add(project.created_by_user_id)
-        rows = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-                ResourceMember.resource_id == project_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        for row in rows:
-            try:
-                member_ids.add(int(row.entity_id))
-            except (TypeError, ValueError):
-                continue
-        return member_ids
-
     def _require_bot_creator_scope(
         self, db: Session, project_id: int, item: LoopItem, user_id: int
     ) -> None:
@@ -2904,10 +3172,10 @@ class LoopItemService:
                 status.HTTP_403_FORBIDDEN,
                 "Only the robot creator can approve or reject this run",
             )
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
 
     @staticmethod
-    def _write_assignment_change(
+    def record_assignment_change(
         metadata: dict,
         user_id: int,
         to_type: str | None,
@@ -2934,6 +3202,50 @@ class LoopItemService:
         )
         metadata[ASSIGNMENT_HISTORY_KEY] = history
 
+    def _robot_start_status(
+        self, project: CloudProject, current_status: str
+    ) -> str | None:
+        """Board status a robot-owned Issue advances into when work starts.
+
+        Assigning a robot starts its work immediately, so the Issue enters the
+        in-progress column unless it is already there, already completed, or
+        the board has no such column -- mirroring the executor's local project
+        space. Returns the status to move to, or ``None`` for no change.
+        """
+        if current_status in {"in_progress", "completed"}:
+            return None
+        if "in_progress" not in self._project_status_ids(project):
+            return None
+        return "in_progress"
+
+    def _start_robot_assignment(
+        self,
+        *,
+        project: CloudProject,
+        item: LoopItem,
+        user_id: int,
+        metadata: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> None:
+        """Advance a robot-owned Issue into the in-progress column.
+
+        Assigning a robot starts its work immediately, so an Issue parked
+        before the in-progress column is moved there, the transition is
+        recorded, and ``updates`` receives the resulting column values.
+        """
+        started = self._robot_start_status(project, item.status)
+        if started is None:
+            return
+        write_status_change(
+            metadata,
+            project=project,
+            from_status=item.status,
+            to_status=started,
+            trigger="robot_assignment",
+            by_user_id=user_id,
+        )
+        updates.update(status=started, completed_at=None, sort_order=0)
+
     def _sync_execution_for_assignment(
         self,
         db: Session,
@@ -2959,7 +3271,6 @@ class LoopItemService:
         from app.models.loop_item_execution import LoopItemExecution
 
         cancelled_runs = []
-        preserve_run_id = str((automation_context or {}).get("run_id") or "")
         if cancel_existing:
             active = (
                 db.query(LoopItemExecution)
@@ -2970,12 +3281,6 @@ class LoopItemService:
                 .all()
             )
             for execution in active:
-                if (
-                    preserve_run_id
-                    and execution.executor_type == "automation_manager"
-                    and str(execution.automation_run_id or "") == preserve_run_id
-                ):
-                    continue
                 cancelled = loop_item_execution_service.cancel(
                     db,
                     execution_id=execution.id,
@@ -2984,17 +3289,9 @@ class LoopItemService:
                 )
                 if _execution_needs_runtime_cancellation(cancelled):
                     cancelled_runs.append(cancelled)
-        project = db.get(CloudProject, item.cloud_project_id)
-        if project is None:
-            raise RuntimeError("Assigned Issue project is unavailable")
-        if (
-            target_type == "agent"
-            and agent is not None
-            and (
-                is_processing_status(project, item.status)
-                or automation_context is not None
-            )
-        ):
+        if item.status == "completed":
+            return cancelled_runs
+        if target_type == "agent" and agent is not None:
             config = bot_config(agent)
             loop_item_execution_service.create_for_assignment(
                 db,
@@ -3037,13 +3334,18 @@ class LoopItemService:
         if agent is None or agent.status != "active":
             return item
         from app.schemas.issue_workflow import WorkflowExecutionConfig
-        from app.services.issue_execution_configuration import execution_context
+        from app.services.issue_execution_configuration import (
+            execution_context,
+            project_robot_execution_config,
+        )
 
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         raw_config = metadata.get("execution_config")
-        if not isinstance(raw_config, dict):
-            return item
-        config = WorkflowExecutionConfig.model_validate(raw_config)
+        config = (
+            WorkflowExecutionConfig.model_validate(raw_config)
+            if isinstance(raw_config, dict)
+            else project_robot_execution_config(db, agent)
+        )
         self._sync_execution_for_assignment(
             db,
             item=item,

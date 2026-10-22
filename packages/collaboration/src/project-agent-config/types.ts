@@ -6,18 +6,6 @@ import type { ReactNode } from "react";
 
 export type ProjectAgentMode = "existing" | "create";
 
-export interface ProjectAgentModeOption {
-  description: string;
-  label: string;
-  testId: string;
-  value: ProjectAgentMode;
-}
-
-export interface ProjectAgentSelectOption {
-  label: string;
-  value: string;
-}
-
 export interface ProjectAgentOwnerOption {
   label: string;
   namespace: string;
@@ -31,6 +19,7 @@ export interface ProjectAgentConfigurationHost {
    */
   supportsExistingAgentSelection?: boolean;
   renderAgentCreator?(props: {
+    projectId?: string;
     namespace: string;
     onClose(): void;
     onCreated(agent: { name: string; teamId: number }): Promise<void>;
@@ -47,6 +36,7 @@ export interface ProjectAgentConfigurationHost {
    * cannot reach the resource library omit it and no edit action is rendered.
    */
   renderAgentEditor?(props: {
+    projectId?: string;
     agent: { teamId: number };
     namespace: string;
     onClose(): void;
@@ -71,24 +61,5 @@ export interface ProjectAgentConfigurationHost {
       dialog: string;
     };
     title: string;
-  }): ReactNode;
-  renderModePicker(props: {
-    onChange(value: ProjectAgentMode): void;
-    options: ProjectAgentModeOption[];
-    value: ProjectAgentMode;
-  }): ReactNode;
-  renderSelect(props: {
-    ariaLabel: string;
-    onChange(value: string): void;
-    options: ProjectAgentSelectOption[];
-    placeholder: string;
-    testId: string;
-    value: string;
-  }): ReactNode;
-  renderPrimaryAction(props: {
-    children: ReactNode;
-    disabled: boolean;
-    onClick(): void;
-    testId: string;
   }): ReactNode;
 }

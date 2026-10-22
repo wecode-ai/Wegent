@@ -33,7 +33,16 @@ describe('WeworkDesktopControlBridge', () => {
           restore: vi.fn(),
           show: vi.fn(),
           webContents: {
-            capturePage: vi.fn(async () => ({ toDataURL: () => 'data:image/png;base64,AA==' })),
+            capturePage: vi.fn(async () => ({
+              isEmpty: () => false,
+              toDataURL: () => 'data:image/png;base64,AA==',
+            })),
+            debugger: {
+              attach: vi.fn(),
+              detach: vi.fn(),
+              isAttached: vi.fn(() => false),
+              sendCommand: vi.fn(),
+            },
             executeJavaScript,
             getTitle: () => 'Wework',
             getURL: () => 'http://127.0.0.1/workbench',
@@ -69,6 +78,70 @@ describe('WeworkDesktopControlBridge', () => {
 
     await bridge.stop()
     await expect(readdir(registryDirectory)).resolves.toEqual([])
+  })
+
+  test('falls back to CDP when Electron capturePage fails with UnknownVizError', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-screenshot-'))
+    directories.push(registryDirectory)
+    let debuggerAttached = false
+    const debuggerSession = {
+      attach: vi.fn(() => {
+        debuggerAttached = true
+      }),
+      detach: vi.fn(() => {
+        debuggerAttached = false
+      }),
+      isAttached: vi.fn(() => debuggerAttached),
+      sendCommand: vi.fn().mockResolvedValue({ data: 'Q0RQ' }),
+    }
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'plugin-development-example',
+      instanceKind: 'core-dsh-plugin-development',
+      displayName: 'Example',
+      projectRoot: '/workspace/example',
+      registryDirectory,
+      window: () =>
+        ({
+          focus: vi.fn(),
+          isFocused: () => false,
+          isMinimized: () => false,
+          isVisible: () => true,
+          restore: vi.fn(),
+          show: vi.fn(),
+          webContents: {
+            capturePage: vi.fn().mockRejectedValue(new Error('wework: UnknownVizError')),
+            debugger: debuggerSession,
+            executeJavaScript: vi.fn(),
+            getTitle: () => 'Wework',
+            getURL: () => 'http://127.0.0.1/workbench',
+            isDestroyed: () => false,
+          },
+        }) as never,
+    })
+
+    await bridge.start()
+    const [filename] = await readdir(registryDirectory)
+    const record = JSON.parse(await readFile(join(registryDirectory, filename), 'utf8'))
+    const screenshot = await fetch(`http://${record.address}/desktop`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${record.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'screenshot' }),
+    }).then(response => response.json())
+
+    expect(screenshot).toEqual({
+      ok: true,
+      data: { ok: true, dataUrl: 'data:image/png;base64,Q0RQ' },
+    })
+    expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: true,
+    })
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    await bridge.stop()
   })
 
   test('exposes only fixed Smart App verification actions', async () => {

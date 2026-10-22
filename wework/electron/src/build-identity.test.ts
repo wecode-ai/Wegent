@@ -200,7 +200,7 @@ test('builds the macOS installer without unused DMG update metadata', () => {
   expect(config.dmg.writeUpdateInfo).toBe(false)
 })
 
-test('builds a slim Host update without managed components', () => {
+test('builds a compressed slim Host update without managed components', () => {
   const config = JSON.parse(
     execFileSync(
       process.execPath,
@@ -231,7 +231,7 @@ process.stdout.write(JSON.stringify({
   )
 
   expect(config.output).toBe('release-online-update')
-  expect(config.compression).toBe('store')
+  expect(config.compression).toBe('normal')
   expect(config.resources).toEqual([
     { from: 'resources/components.json', to: 'components.json' },
     { from: '../resources/licenses', to: 'licenses' },
@@ -280,3 +280,41 @@ process.stdout.write(JSON.stringify(config.extraResources.map(resource => resour
     'LICENSE',
   ])
 })
+
+test.each([
+  ['false', 'false', false],
+  ['true', 'false', true],
+  ['true', 'true', false],
+])(
+  'bundles the Windows startup migration executor exactly once (host=%s, components=%s)',
+  (hostUpdate, includeComponents, bootstrapOnly) => {
+    const config = JSON.parse(
+      execFileSync(
+        process.execPath,
+        ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', builderConfigPath],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            WEWORK_ONLINE_UPDATE_BUILD: hostUpdate,
+            WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: includeComponents,
+          },
+        }
+      )
+    )
+    const resources = [...config.extraResources, ...config.win.extraResources]
+    expect(
+      resources.filter(resource => ['bin', 'bin/wegent-executor.exe'].includes(resource.to))
+    ).toHaveLength(1)
+    expect(config.win.extraResources).toEqual(
+      bootstrapOnly
+        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
+        : []
+    )
+    expect(config.mac.extraResources).toBeUndefined()
+    expect(config.linux.extraResources).toBeUndefined()
+    expect(require(builderConfigPath).afterPack).toBe(
+      require('../scripts/verify-windows-migration-lock.cjs')
+    )
+  }
+)

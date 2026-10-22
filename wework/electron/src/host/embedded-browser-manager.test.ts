@@ -1,140 +1,52 @@
-import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
+import {
+  electronMocks,
+  emitBeforeInput,
+  FakeWebContents,
+} from '../../test-fixtures/embedded-browser.js'
 import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browser-manager.js'
-
-const electronMocks = vi.hoisted(() => ({
-  appGetLocale: vi.fn(() => 'zh-CN'),
-  createBackgroundWebContents: vi.fn(),
-  browserSession: {
-    clearCache: vi.fn(),
-    clearStorageData: vi.fn(),
-    on: vi.fn(),
-    webRequest: {
-      onBeforeSendHeaders: vi.fn(),
-    },
-  },
-  menuPopup: vi.fn(),
-  menuBuildFromTemplate: vi.fn((items: unknown[]) => ({
-    items,
-    popup: electronMocks.menuPopup,
-  })),
-}))
-
-vi.mock('electron', () => ({
-  app: {
-    getLocale: electronMocks.appGetLocale,
-  },
-  BrowserWindow: {
-    getAllWindows: vi.fn(() => []),
-  },
-  WebContentsView: class {
-    readonly webContents = electronMocks.createBackgroundWebContents()
-  },
-  Menu: {
-    buildFromTemplate: electronMocks.menuBuildFromTemplate,
-  },
-  session: {
-    fromPartition: vi.fn(() => electronMocks.browserSession),
-  },
-  shell: {
-    openExternal: vi.fn(),
-  },
-}))
-
-class FakeWebContents extends EventEmitter {
-  private static nextId = 1
-  readonly id = FakeWebContents.nextId++
-  readonly debugger = {
-    attach: vi.fn(),
-    detach: vi.fn(),
-    isAttached: vi.fn(() => false),
-    sendCommand: vi.fn(),
-  }
-  readonly navigationHistory = {
-    canGoBack: vi.fn(() => false),
-    canGoForward: vi.fn(() => false),
-    goBack: vi.fn(),
-    goForward: vi.fn(),
-    getActiveIndex: vi.fn(() => 0),
-    getEntryAtIndex: vi.fn(() => ({ url: 'about:blank' })),
-    removeEntryAtIndex: vi.fn(() => true),
-  }
-  private destroyed = false
-  private url = 'about:blank'
-
-  close = vi.fn(() => {
-    this.destroyed = true
-    this.emit('destroyed')
-  })
-  executeJavaScript = vi.fn()
-  focus = vi.fn()
-  getTitle = vi.fn(() => '')
-  getUserAgent = vi.fn(() => 'Mozilla/5.0 Electron/43.4.1 Chrome/144.0.0.0')
-  getURL = vi.fn(() => this.url)
-  inspectElement = vi.fn()
-  isDestroyed = vi.fn(() => this.destroyed)
-  isDevToolsOpened = vi.fn(() => this.devToolsOpened)
-  isLoading = vi.fn(() => true)
-  loadURL = vi.fn<(url: string) => Promise<void>>()
-  openDevTools = vi.fn(() => {
-    this.devToolsOpened = true
-  })
-  closeDevTools = vi.fn(() => {
-    this.devToolsOpened = false
-  })
-  capturePage = vi.fn()
-  reload = vi.fn()
-  sendInputEvent = vi.fn()
-  setWindowOpenHandler = vi.fn()
-  setUserAgent = vi.fn((userAgent: string) => {
-    this.getUserAgent.mockReturnValue(userAgent)
-  })
-  setZoomFactor = vi.fn()
-  devToolsWebContents: object | null = {}
-  private devToolsOpened = false
-
-  commitUrl(url: string): void {
-    this.url = url
-  }
-}
-
-function emitBeforeInput(
-  contents: FakeWebContents,
-  input: Partial<{
-    type: string
-    key: string
-    code: string
-    isAutoRepeat: boolean
-    isComposing: boolean
-    alt: boolean
-    control: boolean
-    meta: boolean
-    shift: boolean
-  }> = {}
-) {
-  const event = { preventDefault: vi.fn() }
-  contents.emit('before-input-event', event, {
-    type: 'keyDown',
-    key: 'F12',
-    code: 'F12',
-    isAutoRepeat: false,
-    isComposing: false,
-    alt: false,
-    control: false,
-    meta: false,
-    shift: false,
-    ...input,
-  })
-  return event
-}
 
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('authenticates a Smart app browser session before navigating to the runtime', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-auth-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = Object.assign(new FakeWebContents(), { session: electronMocks.browserSession })
+    electronMocks.authCookiesGet.mockResolvedValue([{ name: 'dsh-auth-fixture', value: 'private' }])
+    contents.loadURL.mockImplementation(async () => {
+      expect(electronMocks.authCookiesSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'http://127.0.0.1:12345/',
+          name: 'dsh-auth-fixture',
+          value: 'private',
+        })
+      )
+    })
+    manager.attach('smart-app', contents as unknown as WebContents)
+    try {
+      await manager.open({
+        label: 'smart-app',
+        url: 'http://127.0.0.1:12345/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      expect(electronMocks.authCookiesGet).toHaveBeenCalledWith({
+        url: 'http://127.0.0.1:12345/',
+        name: expect.stringMatching(/^dsh-auth-[a-zA-Z0-9_-]{43}$/),
+      })
+      expect(contents.loadURL).toHaveBeenCalledOnce()
+    } finally {
+      manager.stop()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('applies request headers only to an exact HTTPS origin and path prefix', async () => {
@@ -304,7 +216,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('waits for a replacement webview before completing a close request', async () => {
+  test('completes a close without a replacement and waits for attachment only on reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const events: BrowserHostEvent[] = []
     const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
@@ -313,7 +225,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       contents.commitUrl(url)
     })
     manager.attach('workspace-browser', contents as unknown as WebContents)
-    await manager.open({
+    const initialState = await manager.open({
       label: 'workspace-browser',
       url: 'https://example.test/',
       bounds: { x: 0, y: 0, width: 800, height: 600 },
@@ -325,70 +237,55 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const closeRequest = manager.requestClose('workspace-browser').then(() => {
       closeCompleted = true
     })
-    await Promise.resolve()
+    let reopen: ReturnType<EmbeddedBrowserManager['open']> | undefined
+    try {
+      await Promise.resolve()
 
-    expect(closeCompleted).toBe(false)
-    expect(contents.close).toHaveBeenCalledOnce()
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'close-request',
-        payload: expect.objectContaining({ label: 'workspace-browser' }),
-      })
-    )
+      expect(closeCompleted).toBe(true)
+      expect(contents.close).toHaveBeenCalledOnce()
+      expect(manager.has('workspace-browser')).toBe(false)
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'close-request',
+          payload: {
+            label: 'workspace-browser',
+            nativeLabel: initialState.nativeLabel,
+          },
+        })
+      )
 
-    const replacement = new FakeWebContents()
-    manager.attach('workspace-browser', replacement as unknown as WebContents)
-    await closeRequest
+      const replacement = new FakeWebContents()
+      replacement.loadURL.mockImplementation(async url => replacement.commitUrl(url))
+      let reopenCompleted = false
+      reopen = manager
+        .open({
+          label: 'workspace-browser',
+          url: 'https://reopened.example.test/',
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          visible: true,
+          navigateExisting: true,
+        })
+        .then(state => {
+          reopenCompleted = true
+          return state
+        })
+      await Promise.resolve()
+      expect(reopenCompleted).toBe(false)
+      expect(replacement.loadURL).not.toHaveBeenCalled()
 
-    expect(closeCompleted).toBe(true)
-    await rm(directory, { recursive: true, force: true })
-  })
+      manager.attach('workspace-browser', replacement as unknown as WebContents)
+      const reopenedState = await reopen
 
-  test('ignores aborted load rejections instead of recording a navigation error', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
-    const contents = new FakeWebContents()
-    contents.loadURL.mockRejectedValue(
-      new Error('ERR_ABORTED (-3) loading "https://example.test/"')
-    )
-    manager.attach('workspace-browser', contents as unknown as WebContents)
-
-    const state = await manager.open({
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-
-    expect(state.navigationError).toBeNull()
-    expect(manager.state('workspace-browser').navigationError).toBeNull()
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  test('clears a stale navigation error when a main-frame navigation commits', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
-    const contents = new FakeWebContents()
-    contents.loadURL.mockImplementation(async url => {
-      contents.commitUrl(url)
-    })
-    manager.attach('workspace-browser', contents as unknown as WebContents)
-    await manager.open({
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-
-    contents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://example.test/', true)
-    expect(manager.state('workspace-browser').navigationError).toMatchObject({ code: -105 })
-
-    contents.commitUrl('https://example.test/')
-    contents.emit('did-navigate', {}, 'https://example.test/')
-    expect(manager.state('workspace-browser').navigationError).toBeNull()
-    await rm(directory, { recursive: true, force: true })
+      expect(reopenCompleted).toBe(true)
+      expect(replacement.loadURL).toHaveBeenCalledWith('https://reopened.example.test/')
+      expect(reopenedState.url).toBe('https://reopened.example.test/')
+      expect(reopenedState.nativeLabel).not.toBe(initialState.nativeLabel)
+    } finally {
+      manager.stop()
+      await closeRequest.catch(() => {})
+      await reopen?.catch(() => {})
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('keeps the host cursor visible briefly between adjacent agent actions', async () => {
@@ -477,95 +374,6 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     })
     await rm(directory, { recursive: true, force: true })
   })
-
-  test('registers an attached browser before its initial navigation settles', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
-    const contents = new FakeWebContents()
-    let finishNavigation: (() => void) | undefined
-    contents.loadURL.mockImplementation(
-      url =>
-        new Promise(resolve => {
-          contents.commitUrl(url)
-          finishNavigation = resolve
-        })
-    )
-    manager.attach('workspace-browser', contents as unknown as WebContents)
-
-    const opening = manager.open({
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-    await vi.waitFor(() => expect(contents.loadURL).toHaveBeenCalledOnce())
-
-    expect(manager.has('workspace-browser')).toBe(true)
-    expect(manager.state('workspace-browser').url).toBe('https://example.test/')
-    expect(manager.state('workspace-browser').visible).toBe(true)
-
-    contents.navigationHistory.canGoBack.mockReturnValue(true)
-    expect(manager.state('workspace-browser').canGoBack).toBe(true)
-    expect(manager.state('workspace-browser').canGoForward).toBe(false)
-
-    finishNavigation?.()
-    await expect(opening).resolves.toMatchObject({
-      label: 'workspace-browser',
-      url: 'https://example.test/',
-    })
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  test.each(['about:blank', 'https://previous.test/'])(
-    'removes only a bootstrap blank entry from initial history starting at %s',
-    async firstUrl => {
-      const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-      const manager = new EmbeddedBrowserManager(directory)
-      const contents = new FakeWebContents()
-      contents.loadURL.mockImplementation(async url => {
-        contents.commitUrl(url)
-        contents.emit('did-navigate', {}, url)
-      })
-      manager.attach('workspace-browser', contents as unknown as WebContents)
-      try {
-        await manager.open({
-          label: 'workspace-browser',
-          url: 'about:blank',
-          bounds: { x: 0, y: 0, width: 800, height: 600 },
-          visible: true,
-          navigateExisting: true,
-        })
-        expect(contents.navigationHistory.removeEntryAtIndex).not.toHaveBeenCalled()
-        contents.navigationHistory.getActiveIndex.mockReturnValue(1)
-        contents.navigationHistory.getEntryAtIndex.mockReturnValue({ url: firstUrl })
-        contents.navigationHistory.canGoBack.mockReturnValue(true)
-        contents.navigationHistory.removeEntryAtIndex.mockImplementation(() => {
-          contents.navigationHistory.canGoBack.mockReturnValue(false)
-          return true
-        })
-        await manager.navigate('workspace-browser', 'https://first.test/')
-        const blankBootstrap = firstUrl === 'about:blank'
-        expect(contents.navigationHistory.removeEntryAtIndex).toHaveBeenCalledTimes(
-          blankBootstrap ? 1 : 0
-        )
-        if (blankBootstrap) {
-          expect(contents.navigationHistory.removeEntryAtIndex).toHaveBeenCalledWith(0)
-        }
-        expect(manager.state('workspace-browser').canGoBack).toBe(!blankBootstrap)
-
-        contents.navigationHistory.removeEntryAtIndex.mockClear()
-        contents.navigationHistory.canGoBack.mockReturnValue(true)
-        await manager.navigate('workspace-browser', 'https://second.test/')
-        expect(contents.navigationHistory.removeEntryAtIndex).not.toHaveBeenCalled()
-        expect(manager.state('workspace-browser').canGoBack).toBe(true)
-        manager.goBack('workspace-browser')
-        expect(contents.navigationHistory.goBack).toHaveBeenCalledOnce()
-      } finally {
-        await rm(directory, { recursive: true, force: true })
-      }
-    }
-  )
 
   test('toggles the detached Inspector with a bare F12 keydown', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
@@ -1020,66 +828,6 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     expect(manager.consumeApprovedAgentRisk(taskLabel, 'click:button')).toBe(false)
     expect(internals.agentActive.has(taskLabel)).toBe(false)
     expect(internals.agentCursorStates.has(taskLabel)).toBe(false)
-    await rm(directory, { recursive: true, force: true })
-  })
-
-  test('records, searches, removes, and clears persisted browser history', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
-    const contents = new FakeWebContents()
-    contents.getTitle.mockReturnValue('Electron Docs')
-    contents.loadURL.mockImplementation(async url => {
-      contents.commitUrl(url)
-      contents.emit('did-start-navigation', {}, url, false, true)
-      contents.emit('did-finish-load')
-    })
-    manager.attach('workspace-browser', contents as unknown as WebContents)
-
-    await manager.open({
-      label: 'workspace-browser',
-      url: 'https://electronjs.org/docs',
-      bounds: { x: 0, y: 0, width: 800, height: 600 },
-      visible: true,
-      navigateExisting: true,
-    })
-    await vi.waitFor(async () =>
-      expect(
-        await manager.searchHistory({
-          text: 'ELECTRON',
-          endTimeMs: null,
-          offset: 0,
-          maxResults: 100,
-        })
-      ).toHaveLength(1)
-    )
-    const [entry] = await manager.searchHistory({
-      text: 'docs',
-      endTimeMs: null,
-      offset: 0,
-      maxResults: 100,
-    })
-    expect(entry).toMatchObject({
-      url: 'https://electronjs.org/docs',
-      title: 'Electron Docs',
-    })
-    expect(await manager.removeHistory([entry.id])).toBe(1)
-    expect(
-      await manager.searchHistory({ text: '', endTimeMs: null, offset: 0, maxResults: 100 })
-    ).toEqual([])
-
-    contents.getTitle.mockReturnValue('')
-    await manager.navigate('workspace-browser', 'https://example.test/')
-    await vi.waitFor(async () =>
-      expect(
-        await manager.searchHistory({ text: '', endTimeMs: null, offset: 0, maxResults: 100 })
-      ).toHaveLength(1)
-    )
-    await manager.clearData(['history'])
-    expect(electronMocks.browserSession.clearStorageData).not.toHaveBeenCalled()
-    expect(
-      await manager.searchHistory({ text: '', endTimeMs: null, offset: 0, maxResults: 100 })
-    ).toEqual([])
-    expect(JSON.parse(await readFile(join(directory, 'browser-history.json'), 'utf8'))).toEqual([])
     await rm(directory, { recursive: true, force: true })
   })
 

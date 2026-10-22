@@ -381,13 +381,6 @@ export function SendAreaSection({
                   </span>
                 ) : null
               }
-              renderModelMeta={model =>
-                model.provider || model.modelId ? (
-                  <span className="block truncate text-xs text-text-muted">
-                    {[model.provider, model.modelId].filter(Boolean).join(' · ')}
-                  </span>
-                ) : null
-              }
             />
             {modelRequired && !selectedModel && (
               <p className="text-xs text-destructive">{t('select_model_required')}</p>

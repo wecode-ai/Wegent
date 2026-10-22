@@ -6,13 +6,15 @@
 
 The queue is a derived view over this table: any non-terminal row is part of
 the queue. The task row keeps the assignment chain; this table records each
-run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
+run's lifecycle (approval, queuing, atomic claiming, lease, retries). Executors
+own local capacity and pull queued work when they have an available slot.
 """
 
 import json
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Column,
     DateTime,
@@ -20,9 +22,14 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    case,
     event,
     func,
+    text,
+    type_coerce,
 )
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.base import Base
 from shared.models.db.types import big_integer_id_type
@@ -174,9 +181,14 @@ class LoopItemExecution(Base):
     # the Local or Cloud compiler and are never persisted here.
     execution_payload = Column(Text, nullable=False, default="")
     version = Column(Integer, nullable=False, default=1, server_default="1")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
     updated_at = Column(
-        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=func.now(),
     )
 
     __table_args__ = (
@@ -213,11 +225,34 @@ class LoopItemExecution(Base):
         """Return the transport role without persisting redundant state."""
 
         configured = self.runtime_selection.get("executor_kind")
-        if configured in {"generic_robot", "automation_manager"}:
+        if configured in {"generic_robot", "collaboration_group_dispatch"}:
             return str(configured)
         if self.agent_id:
             return "project_robot"
-        return "wegent_team" if self.team_id else "automation_manager"
+        return "wegent_team" if self.team_id else "generic_robot"
+
+    @hybrid_property
+    def uses_runner_routing(self) -> bool:
+        """Identify routed work from its persisted intent, including in queue SQL."""
+        return isinstance(self.runtime_selection.get("runner_routing"), dict)
+
+    @uses_runner_routing.expression
+    def uses_runner_routing(cls) -> ColumnElement[bool]:
+        # Historical payloads may be empty or malformed; JSON functions must
+        # only inspect valid documents on both MySQL and SQLite.
+        payload = case(
+            (func.json_valid(cls.execution_payload) == 1, cls.execution_payload),
+            else_="{}",
+        )
+        document = type_coerce(payload, JSON)
+        routing = case(
+            (
+                func.lower(func.json_type(document["runtime_selection"])) == "object",
+                document["runtime_selection"]["runner_routing"],
+            ),
+            else_=document["runner_routing"],
+        )
+        return func.coalesce(func.lower(func.json_type(routing)) == "object", False)
 
     @property
     def runtime_selection(self) -> dict:

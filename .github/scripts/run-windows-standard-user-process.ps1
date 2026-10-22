@@ -15,6 +15,10 @@ $passwordText = [Convert]::ToBase64String(
 $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
 $credential = [PSCredential]::new("$env:COMPUTERNAME\$userName", $password)
 $workspace = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
+$logDirectory = Join-Path $workspace ".ci-artifacts/windows-standard-user"
+New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+$stdoutPath = Join-Path $logDirectory "stdout.log"
+$stderrPath = Join-Path $logDirectory "stderr.log"
 $userSid = $null
 
 try {
@@ -76,8 +80,32 @@ try {
     -LoadUserProfile `
     -WorkingDirectory $workspace `
     -NoNewWindow `
-    -Wait `
+    -RedirectStandardOutput $stdoutPath `
+    -RedirectStandardError $stderrPath `
     -PassThru
+  # Credentialed processes do not reliably inherit the runner's console handles.
+  # Keep independent logs and forward output while the process is still running.
+  $readers = @($stdoutPath, $stderrPath) | ForEach-Object {
+    [IO.StreamReader]::new([IO.File]::Open(
+      $_, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite
+    ))
+  }
+  try {
+    do {
+      $finished = $process.WaitForExit(1000)
+      foreach ($reader in $readers) {
+        $output = $reader.ReadToEnd()
+        if ($output) { Write-Host -NoNewline $output }
+      }
+    } while (-not $finished)
+    $process.WaitForExit()
+    foreach ($reader in $readers) {
+      $output = $reader.ReadToEnd()
+      if ($output) { Write-Host -NoNewline $output }
+    }
+  } finally {
+    foreach ($reader in $readers) { $reader.Dispose() }
+  }
   exit $process.ExitCode
 } finally {
   if ($userSid) {

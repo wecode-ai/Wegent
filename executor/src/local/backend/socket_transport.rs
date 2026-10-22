@@ -22,8 +22,8 @@ use tf_rust_socketio::{
 use tokio::sync::oneshot;
 
 use super::{
-    EventHandler, LocalBackendConfig, LocalBackendTransport, TransportFuture,
-    DEVICE_SYNC_CAPABILITIES_EVENT,
+    ConnectionClosedHandler, EventHandler, LocalBackendConfig, LocalBackendTransport,
+    TransportFuture, DEVICE_SYNC_CAPABILITIES_EVENT,
 };
 
 const NAMESPACE: &str = "/local-executor";
@@ -87,6 +87,7 @@ pub struct SocketIoTransport {
     client: Arc<tokio::sync::Mutex<Option<ConnectedSocket>>>,
     generation: Arc<AtomicU64>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
+    close_handlers: Arc<Mutex<Vec<ConnectionClosedHandler>>>,
 }
 
 impl SocketIoTransport {
@@ -100,11 +101,22 @@ impl SocketIoTransport {
 
     async fn invalidate_generation(&self, generation: u64) {
         let mut state = self.client.lock().await;
-        if state
-            .as_ref()
-            .is_some_and(|connected| connected.generation == generation)
+        if self.generation.load(Ordering::Acquire) != generation
+            || state
+                .as_ref()
+                .is_some_and(|connected| connected.generation != generation)
         {
-            state.take();
+            return;
+        }
+        state.take();
+        // Notify synchronously before a new generation can publish its client.
+        let listeners = self
+            .close_handlers
+            .lock()
+            .expect("close handler lock")
+            .clone();
+        for listener in listeners {
+            listener();
         }
     }
 }
@@ -117,19 +129,12 @@ impl LocalBackendTransport for SocketIoTransport {
             if let Some(previous) = previous {
                 let _ = previous.client.disconnect().await;
             }
-            // The backend socket must never travel through the user's HTTP
-            // proxy: macOS system proxies (for example Clash on 127.0.0.1)
-            // intercept `localhost` and break the Engine.IO connection.
-            // NO_PROXY only affects loopback hosts; model gateway and other
-            // external requests still use the configured proxy.
-            std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
             let handlers = self.handlers.lock().expect("handler lock").clone();
             let socket_url = normalize_socket_url(&config.socket_url);
             let (connect_sender, connect_receiver) = oneshot::channel();
             let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
             let closed = Arc::new(AtomicBool::new(false));
-            let close_state = Arc::clone(&self.client);
-            let close_generation = Arc::clone(&self.generation);
+            let close_transport = self.clone();
             let close_flag = Arc::clone(&closed);
             let mut builder = ClientBuilder::new(socket_url)
                 .namespace(NAMESPACE)
@@ -153,21 +158,11 @@ impl LocalBackendTransport for SocketIoTransport {
                     .boxed()
                 })
                 .on(Event::Close, move |_payload: Payload, _socket: Client| {
-                    let close_state = Arc::clone(&close_state);
-                    let close_generation = Arc::clone(&close_generation);
+                    let close_transport = close_transport.clone();
                     let close_flag = Arc::clone(&close_flag);
                     async move {
                         close_flag.store(true, Ordering::Release);
-                        if close_generation.load(Ordering::Acquire) != generation {
-                            return;
-                        }
-                        let mut state = close_state.lock().await;
-                        if state
-                            .as_ref()
-                            .is_some_and(|connected| connected.generation == generation)
-                        {
-                            state.take();
-                        }
+                        close_transport.invalidate_generation(generation).await;
                     }
                     .boxed()
                 });
@@ -299,6 +294,13 @@ impl LocalBackendTransport for SocketIoTransport {
             .expect("handler lock")
             .push((event.to_owned(), handler));
     }
+
+    fn on_close(&self, handler: ConnectionClosedHandler) {
+        self.close_handlers
+            .lock()
+            .expect("close handler lock")
+            .push(handler);
+    }
 }
 
 #[allow(deprecated)]
@@ -322,7 +324,32 @@ mod tests {
 
     use tokio::sync::oneshot;
 
-    use super::{dispatch_handler, format_socket_error, normalize_socket_url};
+    use super::{
+        dispatch_handler, format_socket_error, normalize_socket_url, LocalBackendTransport,
+        SocketIoTransport,
+    };
+
+    #[tokio::test]
+    async fn stale_socket_closure_cannot_invalidate_current_connection_state() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        for (closed_generation, expected_connected) in [(0, true), (1, false)] {
+            let transport = SocketIoTransport::default();
+            transport.generation.store(1, Ordering::Release);
+            let connected = Arc::new(AtomicBool::new(true));
+            let close_state = Arc::clone(&connected);
+            transport.on_close(Arc::new(move || {
+                close_state.store(false, Ordering::Release);
+            }));
+
+            transport.invalidate_generation(closed_generation).await;
+
+            assert_eq!(connected.load(Ordering::Acquire), expected_connected);
+        }
+    }
 
     #[derive(Debug, thiserror::Error)]
     #[error("outer transport error")]

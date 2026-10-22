@@ -22,6 +22,7 @@ from app.schemas.plugin_account_auth import (
 from app.services.device.identity import record_id_from_route
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.plugin_credential_cipher import PluginCredentialCipher
+from app.services.plugin_write_coordination import acquire_plugin_write_lock
 from shared.telemetry.decorators import trace_sync
 
 CONNECTION_KIND = "ConnectorConnection"
@@ -49,6 +50,7 @@ class PluginAccountConnectionService:
         self, db: Session, *, user_id: int, request: PluginCredentialWrite
     ) -> PluginAccountConnectionResponse:
         """Store a migrated credential; updates require the observed revision."""
+        self._coordinate_owner(db, user_id)
         plugin, definition = self._plugin(
             db, user_id, request.installed_plugin_id, request.connector_slug
         )
@@ -60,19 +62,12 @@ class PluginAccountConnectionService:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        # Serialize first enrollment, since Kind has no unique name constraint.
-        # MySQL holds this lock until the caller commits or rolls back.
-        self._lock_owner(db, user_id)
         from app.services.plugin_auth_transfers import require_no_pending_transfer
 
         require_no_pending_transfer(
             db, user_id, identity, request.connector_slug, request.account_id
         )
-        # A locking read observes the latest committed state even when earlier
-        # request authentication established a MySQL REPEATABLE READ snapshot.
-        row = (
-            self._query(db, user_id, name).populate_existing().with_for_update().first()
-        )
+        row = self._query(db, user_id, name).populate_existing().first()
         previous = dict(row.json["spec"]) if row else {}
         if (previous.get("oauthRevocation") or {}).get("state") in {
             "pending",
@@ -138,9 +133,8 @@ class PluginAccountConnectionService:
         device_id: str,
         expected_revision: int,
     ) -> PluginAccountConnectionResponse:
-        self._get(db, user_id, connection_id)
-        self._lock_owner(db, user_id)
-        row = self._get(db, user_id, connection_id, lock=True)
+        self._coordinate_owner(db, user_id)
+        row = self._get(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         self._require_connected(spec)
         self._validate_current_plugin(db, user_id, spec)
@@ -164,9 +158,8 @@ class PluginAccountConnectionService:
         device_id: str,
         expected_revision: int,
     ) -> PluginAccountConnectionResponse:
-        self._get(db, user_id, connection_id)
-        self._lock_owner(db, user_id)
-        row = self._get(db, user_id, connection_id, lock=True)
+        self._coordinate_owner(db, user_id)
+        row = self._get(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         grants = dict(spec["deviceGrants"])
         # Use the persisted logical ID so deleted/offline devices remain revocable.
@@ -188,9 +181,8 @@ class PluginAccountConnectionService:
         expected_revision: int,
         device_id: str | None = None,
     ) -> PluginAccountConnectionResponse:
-        self._get(db, user_id, connection_id)
-        self._lock_owner(db, user_id)
-        row = self._get(db, user_id, connection_id, lock=True)
+        self._coordinate_owner(db, user_id)
+        row = self._get(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         if spec["status"] == "connected" and spec["credentialType"] == "oauth2":
             devices = dict(spec["deviceGrants"])
@@ -279,14 +271,9 @@ class PluginAccountConnectionService:
         db.refresh(row)
 
     @staticmethod
-    def _lock_owner(db: Session, user_id: int) -> None:
-        owner = (
-            db.query(User)
-            .filter(User.id == user_id)
-            .populate_existing()
-            .with_for_update()
-            .first()
-        )
+    def _coordinate_owner(db: Session, user_id: int) -> None:
+        acquire_plugin_write_lock(db, user_id)
+        owner = db.query(User).filter(User.id == user_id).populate_existing().first()
         if owner is None or not owner.is_active:
             raise PluginAccountAuthError("plugin_auth_owner_unavailable", 403)
 
@@ -300,21 +287,15 @@ class PluginAccountConnectionService:
         )
         return query.filter(Kind.name == name) if name is not None else query
 
-    def _get(
-        self, db: Session, user_id: int, connection_id: str, *, lock: bool = False
-    ) -> Kind:
+    def _get(self, db: Session, user_id: int, connection_id: str) -> Kind:
         query = self._query(db, user_id, connection_id).populate_existing()
-        if lock:
-            query = query.with_for_update()
         row = query.first()
         if row is None:
             raise PluginAccountAuthError("plugin_auth_connection_not_found", 404)
         return row
 
     @staticmethod
-    def _plugin(
-        db: Session, user_id: int, plugin_id: int, slug: str
-    ) -> tuple[Kind, PluginAccountAuthDefinition]:
+    def _installed_plugin(db: Session, user_id: int, plugin_id: int) -> Kind:
         plugin = (
             db.query(Kind)
             .filter(
@@ -324,10 +305,18 @@ class PluginAccountConnectionService:
                 Kind.namespace == "default",
                 Kind.is_active.is_(True),
             )
+            .populate_existing()
             .first()
         )
         if plugin is None:
             raise PluginAccountAuthError("plugin_auth_plugin_not_found", 404)
+        return plugin
+
+    @classmethod
+    def _plugin(
+        cls, db: Session, user_id: int, plugin_id: int, slug: str
+    ) -> tuple[Kind, PluginAccountAuthDefinition]:
+        plugin = cls._installed_plugin(db, user_id, plugin_id)
         spec = plugin.json.get("spec", {})
         if spec.get("enabled") is False:
             raise PluginAccountAuthError("plugin_auth_plugin_disabled", 403)

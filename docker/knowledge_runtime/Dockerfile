@@ -11,9 +11,9 @@ WORKDIR /app
 COPY shared /app/shared
 RUN uv pip install --system --no-cache /app/shared
 
-# Copy and install knowledge_engine module
+# Copy and install knowledge_engine module with the retrieval extra used here
 COPY knowledge_engine /app/knowledge_engine
-RUN uv pip install --system --no-cache /app/knowledge_engine
+RUN uv pip install --system --no-cache "/app/knowledge_engine[retrieval]"
 
 # Copy pyproject.toml and install dependencies
 # Remove [tool.uv.sources] section as dependencies are already installed

@@ -2,12 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
-import {
-  isRuntimeMyWorkItem,
-  mergeRuntimeMyWorkItems,
-  projectBoundRuntimeTaskStatuses,
-  runtimeMyWorkItems,
-} from './runtimeMyWork'
+import { isRuntimeMyWorkItem, mergeRuntimeMyWorkItems, runtimeMyWorkItems } from './runtimeMyWork'
 
 const target = {
   projectId: 'default-work-items',
@@ -188,116 +183,5 @@ describe('mergeRuntimeMyWorkItems', () => {
         [persisted.id]
       )
     ).toEqual([persisted])
-  })
-})
-
-describe('projectBoundRuntimeTaskStatuses', () => {
-  it('projects a stale persisted Issue into review after Runtime Task success', () => {
-    const lifecycleStore = new RuntimeTaskLifecycleStore('runtime-my-work-bound-success')
-    lifecycleStore.syncRuntimeWork(
-      runtimeWork([
-        task({
-          taskId: 'completed-task',
-          running: false,
-          status: 'done',
-          completedAt: 1_700_000_000,
-        }),
-      ])
-    )
-
-    expect(
-      projectBoundRuntimeTaskStatuses(
-        [issue({ status: 'in_progress' })],
-        [
-          {
-            loop_item_id: 'ISSUE-1',
-            device_id: 'device-1',
-            task_id: 'completed-task',
-          },
-        ],
-        lifecycleStore.getSnapshot()
-      )
-    ).toEqual([expect.objectContaining({ status: 'in_review' })])
-  })
-
-  it('keeps failed Runtime Tasks in review and running Runtime Tasks in progress', () => {
-    const lifecycleStore = new RuntimeTaskLifecycleStore('runtime-my-work-bound-terminal')
-    lifecycleStore.syncRuntimeWork(
-      runtimeWork([
-        task({
-          taskId: 'failed-task',
-          running: false,
-          status: 'failed',
-          completedAt: 1_700_000_000,
-        }),
-        task({
-          taskId: 'running-task',
-          running: true,
-          status: 'running',
-          turnStatus: 'running',
-        }),
-      ])
-    )
-
-    expect(
-      projectBoundRuntimeTaskStatuses(
-        [issue({ id: 'FAILED-1', status: 'completed' }), issue({ id: 'RUNNING-1' })],
-        [
-          {
-            loop_item_id: 'FAILED-1',
-            device_id: 'device-1',
-            task_id: 'failed-task',
-          },
-          {
-            loop_item_id: 'RUNNING-1',
-            device_id: 'device-1',
-            task_id: 'running-task',
-          },
-        ],
-        lifecycleStore.getSnapshot()
-      ).map(item => [item.id, item.status])
-    ).toEqual([
-      ['FAILED-1', 'in_review'],
-      ['RUNNING-1', 'in_progress'],
-    ])
-  })
-
-  it('does not complete an Issue when any bound Runtime Task failed', () => {
-    const lifecycleStore = new RuntimeTaskLifecycleStore('runtime-my-work-bound-aggregate')
-    lifecycleStore.syncRuntimeWork(
-      runtimeWork([
-        task({
-          taskId: 'completed-task',
-          running: false,
-          status: 'done',
-          completedAt: 1_700_000_000,
-        }),
-        task({
-          taskId: 'failed-task',
-          running: false,
-          status: 'failed',
-          completedAt: 1_700_000_001,
-        }),
-      ])
-    )
-
-    expect(
-      projectBoundRuntimeTaskStatuses(
-        [issue({ status: 'in_review' })],
-        [
-          {
-            loop_item_id: 'ISSUE-1',
-            device_id: 'device-1',
-            task_id: 'completed-task',
-          },
-          {
-            loop_item_id: 'ISSUE-1',
-            device_id: 'device-1',
-            task_id: 'failed-task',
-          },
-        ],
-        lifecycleStore.getSnapshot()
-      )
-    ).toEqual([expect.objectContaining({ status: 'in_review' })])
   })
 })

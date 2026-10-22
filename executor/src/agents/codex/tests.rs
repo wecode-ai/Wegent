@@ -7,6 +7,79 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn named_home_rpc_clients_preserve_process_isolation() {
+    let _environment = environment::LaunchEnvironment::new();
+    let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());
+    let client = CodexAppServerClient::new("synthetic-home-rpc-client");
+    let mut request: ExecutionRequest = serde_json::from_value(json!({
+        "user_name":"synthetic", "team_namespace":"default", "team_name":"agent-a",
+        "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}]
+    }))
+    .unwrap();
+    let first = client.for_request(&request).unwrap();
+    let repeated = client.for_request(&request).unwrap();
+    assert!(Arc::ptr_eq(&first.state, &repeated.state));
+    assert!(!Arc::ptr_eq(&client.state, &first.state));
+    request
+        .extra
+        .insert("team_name".to_owned(), json!("agent-b"));
+    let second = client.for_request(&request).unwrap();
+    assert!(!Arc::ptr_eq(&first.state, &second.state));
+    assert_eq!(
+        first.process_environment(&BTreeMap::new(), &BTreeMap::new())["CODEX_HOME"],
+        root.join("agents")
+            .join("synthetic")
+            .join("default")
+            .join("agent-a")
+            .display()
+            .to_string()
+    );
+    request.extra.insert("team_id".to_owned(), json!(0));
+    assert!(Arc::ptr_eq(
+        &client.state,
+        &client.for_request(&request).unwrap().state
+    ));
+}
+
+#[path = "tests/environment.rs"]
+pub(super) mod environment;
+
+#[test]
+fn inject_session_headers_adds_plain_header_for_direct_providers() {
+    let mut headers = vec![("user".to_owned(), "alice".to_owned())];
+    inject_session_headers(&mut headers, "123");
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
+    assert!(!headers
+        .iter()
+        .any(|(key, _)| key == "X-Wegent-Upstream-Header-wecode-session-id"));
+}
+
+#[test]
+fn inject_session_headers_adds_upstream_variant_for_gateway() {
+    let mut headers = vec![("X-Wegent-Model-Type".to_owned(), "public".to_owned())];
+    inject_session_headers(&mut headers, "123");
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "X-Wegent-Upstream-Header-wecode-session-id" && value == "123"));
+}
+
+#[test]
+fn inject_session_headers_skips_empty_task_id_and_overrides_stale_value() {
+    let mut headers = vec![("wecode-session-id".to_owned(), "explicit".to_owned())];
+    inject_session_headers(&mut headers, "");
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "explicit");
+    inject_session_headers(&mut headers, "123");
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "123");
+}
+
+#[test]
 fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     assert_eq!(
         windows_codex_router_auth_script(),
@@ -27,6 +100,7 @@ fn spawn_idle_app_server_child() -> Child {
         command.args(["-c", "sleep 60"]);
         command
     };
+    configure_codex_app_server_process_group(&mut command);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -34,6 +108,43 @@ fn spawn_idle_app_server_child() -> Child {
         .kill_on_drop(true)
         .spawn()
         .expect("the idle app-server child should start")
+}
+
+#[tokio::test]
+async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
+    let mut client = CodexAppServerClient::new("codex-restart-admission-test");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+    let cleanup_gate = pending.lock().await;
+    let restarting_client = client.clone();
+    let (started_tx, started_rx) = oneshot::channel();
+    let restart = tokio::spawn(async move {
+        started_tx
+            .send(())
+            .expect("the restart observer should remain available");
+        restarting_client.restart().await;
+    });
+    started_rx.await.expect("the restart should start");
+    let admission_locked = client.state.try_lock().is_err();
+    drop(cleanup_gate);
+    restart
+        .await
+        .expect("restart should finish after cleanup is released");
+
+    assert!(
+        admission_locked,
+        "new process admission raced with old process cleanup"
+    );
+    assert!(client.state.lock().await.process.is_none());
 }
 
 #[tokio::test]
@@ -139,13 +250,58 @@ async fn auth_mutation_is_rejected_while_a_turn_is_active() {
 
     assert_eq!(
         result,
-        Err(CodexAuthMutationError::Busy {
+        Err(CodexIdleMutationError::Busy {
             active_turn_count: 1,
             pending_request_count: 0,
         })
     );
     assert!(!mutation_called.load(std::sync::atomic::Ordering::SeqCst));
     client.mark_thread_idle("thread-1", false).await;
+}
+
+#[tokio::test]
+async fn plugin_mutation_waits_for_idle_and_unchanged_sync_preserves_thread_generations() {
+    let client = CodexAppServerClient::new("codex-plugin-mutation-active-test");
+    client.mark_thread_active("thread-1").await;
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((true, true)) })
+            .await,
+        Err(CodexIdleMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0
+        })
+    );
+    client.mark_thread_idle("thread-1", false).await;
+    client
+        .state
+        .lock()
+        .await
+        .thread_generations
+        .insert("existing-thread".to_owned(), 42);
+
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((false, false)) })
+            .await,
+        Ok(false)
+    );
+    assert_eq!(
+        client
+            .state
+            .lock()
+            .await
+            .thread_generations
+            .get("existing-thread"),
+        Some(&42)
+    );
+    assert_eq!(
+        client
+            .mutate_configuration_if_idle(|| async { Ok((true, true)) })
+            .await,
+        Ok(true)
+    );
+    assert!(client.state.lock().await.thread_generations.is_empty());
 }
 
 #[tokio::test]
@@ -360,12 +516,21 @@ fn environment_change_diagnostics_report_keys_without_values() {
         &current,
         &requested,
         &active_threads,
+        0,
+    ));
+    assert!(!codex_process_environment_requires_restart(
+        "rpc_request",
+        &current,
+        &requested,
+        &HashMap::new(),
+        1,
     ));
     assert!(codex_process_environment_requires_restart(
         "turn_start",
         &current,
         &requested,
         &HashMap::new(),
+        0,
     ));
 }
 
@@ -528,6 +693,27 @@ fn codex_app_server_uses_codex_home_as_working_directory() {
 }
 
 #[test]
+fn codex_app_server_uses_native_desktop_http_identity() {
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE".to_owned(),
+        "untrusted".to_owned(),
+    );
+    let command = codex_app_server_command("codex", Path::new("/tmp/codex"), &config);
+    let identity = command
+        .as_std()
+        .get_envs()
+        .find(|(key, _)| *key == "CODEX_INTERNAL_ORIGINATOR_OVERRIDE");
+    assert_eq!(
+        identity
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str()),
+        Some("Codex")
+    );
+    assert_eq!(initialize_params()["clientInfo"]["name"], "wegent_executor");
+}
+
+#[test]
 fn mcp_thread_diagnostics_report_names_without_config_values() {
     let params = json!({
         "config": {
@@ -552,6 +738,7 @@ fn mcp_thread_diagnostics_report_names_without_config_values() {
 
 #[test]
 fn vision_sidecar_thread_start_forwards_selected_reasoning_effort() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         model_config: json!({
             "model_id": "deepseek-v4-pro",
@@ -625,6 +812,101 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
             {"label": "仅自己", "description": "owner"},
             {"label": "指定人", "description": "custom"}
         ])
+    );
+}
+
+#[test]
+fn mcp_url_elicitation_is_visible_and_requires_explicit_consent() {
+    let params = json!({
+        "serverName": "codex_apps", "mode": "url",
+        "message": "Connect GitHub", "elicitationId": "github-auth-1",
+        "url": "https://chatgpt.com/connect/github?state=secret"
+    });
+    let message = json!({"id": 0, "method": "mcpServer/elicitation/request", "params": params});
+    let payload = mcp_server_elicitation_request_user_input_params(&message["params"]).unwrap();
+    assert_eq!(payload["interactionKind"], "mcp_url");
+    assert_eq!(payload["elicitationId"], "github-auth-1");
+    assert_eq!(payload["url"], message["params"]["url"]);
+    assert!(codex_notification_requires_user_input(&message));
+    assert!(!is_mcp_tool_call_approval_request(&message));
+    for action in ["accept", "cancel", "decline"] {
+        let result = mcp_server_elicitation_response(
+            &message,
+            Some(&json!({
+                "requestId": 0, "answers": {"__mcp_url": {"answers": [action]}}
+            })),
+        )
+        .unwrap();
+        assert_eq!(result, json!({"action": action}));
+    }
+    assert_eq!(
+        url_elicitation::response_result(&json!({"answers": {"other": {"answers": ["accept"]}}})),
+        json!({"action": "cancel"})
+    );
+}
+
+#[test]
+fn mcp_url_elicitation_rejects_unsafe_or_incomplete_requests() {
+    for address in [
+        "javascript:alert(1)",
+        "file:///tmp/auth",
+        "http://example.com/login",
+        "https://user:password@example.com",
+        "not-a-url",
+    ] {
+        let params = json!({"mode": "url", "url": address, "elicitationId": "1"});
+        assert!(mcp_server_elicitation_request_user_input_params(&params).is_none());
+        let result = mcp_server_elicitation_response(&json!({"params": params}), None).unwrap();
+        assert_eq!(result["action"], "decline");
+    }
+    for address in ["http://127.0.0.1:1234/auth", "http://[::1]:1234/auth"] {
+        assert!(
+            url_elicitation::request_params(&json!({"url": address, "elicitationId": "1"}))
+                .is_some()
+        );
+    }
+    assert!(url_elicitation::request_params(&json!({"url": "https://example.com"})).is_none());
+}
+
+#[tokio::test]
+async fn mcp_shared_unsupported_elicitation_does_not_wait_for_invisible_input() {
+    let (_sender, receiver) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(receiver);
+    let message = json!({"id": 0, "params": {"mode": "unsupported"}});
+    let result = timeout(
+        Duration::from_secs(1),
+        url_elicitation::shared_response(&message, Some(router), "0".to_owned(), true),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(result["action"], "decline");
+}
+
+#[tokio::test]
+async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
+    let (sender, receiver) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(receiver);
+    let message = json!({"id": 0, "params": {
+        "mode": "url", "url": "https://chatgpt.com/connect/github", "elicitationId": "1",
+        "_meta": {"codex_approval_kind": "mcp_tool_call"}
+    }});
+    assert!(!is_mcp_tool_call_approval(&message["params"]));
+    let task = tokio::spawn(async move {
+        url_elicitation::shared_response(&message, Some(router), "0".to_owned(), true).await
+    });
+    sender
+        .send(json!({"requestId": 0, "answers": {"__mcp_url": {"answers": ["cancel"]}}}))
+        .await
+        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Some(json!({"action": "cancel"}))
     );
 }
 
@@ -826,15 +1108,23 @@ fn wework_codex_home_defaults_to_executor_home_codex() {
 #[test]
 fn wework_codex_home_ignores_empty_executor_home() {
     let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _platform_home = EnvRestore::capture("HOME");
+    let _workbench_home = EnvRestore::capture("WEGENT_WORKBENCH_HOME");
+    env::set_var("HOME", temp.path());
+    env::remove_var("WEGENT_WORKBENCH_HOME");
     let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
 
     env::set_var("WEGENT_EXECUTOR_HOME", "");
     env::remove_var(WEGENT_CODEX_HOME_ENV);
 
-    let expected = dirs::home_dir()
-        .map(|home| home.join(".wegent-executor").join("codex"))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor/codex"));
+    let expected = temp
+        .path()
+        .join(".wegent")
+        .join("workbench")
+        .join("executor")
+        .join("codex");
     assert_eq!(wework_codex_home(), expected);
 }
 
@@ -1070,6 +1360,23 @@ fn prepare_wework_codex_home_preserves_user_symlink_when_subscription_disabled()
 }
 
 #[test]
+fn prepare_wework_codex_home_preserves_config_when_reading_fails() {
+    let _environment = environment::LaunchEnvironment::new();
+    let codex_home = wework_codex_home();
+    let path = codex_home.join("config.toml");
+    let original = b"model = \"gpt-5.5\"\nopenai_base_url = \"http://127.0.0.1:1/v1\"\n# \xff\n";
+    fs::write(&path, original).unwrap();
+
+    let result = prepare_wework_codex_home(&codex_home);
+
+    assert!(
+        result.is_err(),
+        "An unreadable existing config must stop startup"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn prepare_wework_codex_home_migrates_base_instruction_override() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("wework-codex-config-migration");
@@ -1213,6 +1520,7 @@ fn strip_wework_browser_instructions_removes_all_generated_versions() {
 
 #[test]
 fn codex_launch_config_enables_streaming_patch_updates() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1675,6 +1983,43 @@ fn internal_catalog_provider_is_never_used_for_thread_inference() {
 }
 
 #[test]
+fn built_in_provider_does_not_emit_reserved_model_provider_overrides() {
+    let _lock = crate::test_env::lock();
+    let request = ExecutionRequest {
+        task_id: "project-ai-task".to_owned(),
+        model_config: json!({
+            "model_id": "gpt-6-luna",
+            "model_provider": "openai",
+            "default_headers": {
+                "X-Custom-Header": "custom-value"
+            },
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": true,
+                    "configured": true
+                }
+            }
+        }),
+        extra: json!({
+            "project_id": "project-1"
+        })
+        .as_object()
+        .expect("extra must be an object")
+        .clone(),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
+    assert!(!launch_config
+        .config_overrides
+        .iter()
+        .any(|value| value.starts_with("model_providers.openai.")));
+}
+
+#[test]
 fn configured_inference_provider_reads_the_unmodified_user_config() {
     let root = unique_test_path("configured-inference-provider");
     fs::create_dir_all(&root).expect("test directory should be created");
@@ -1839,7 +2184,45 @@ fn configured_inference_provider_rejects_the_internal_catalog_provider() {
 }
 
 #[test]
+fn header_overrides_do_not_redefine_builtin_codex_providers() {
+    for provider in ["openai", "amazon-bedrock", "ollama", "lmstudio"] {
+        assert!(
+            header_overrides(
+                provider,
+                Some(&json!({"X-Wegent-Test": "test-value"})),
+                Some("42"),
+                "task-1",
+            )
+            .is_empty(),
+            "built-in provider {provider} must not receive model_providers overrides"
+        );
+    }
+}
+
+#[test]
+fn header_overrides_preserve_custom_provider_headers() {
+    let overrides = header_overrides(
+        "openai-custom",
+        Some(&json!({"X-Wegent-Test": "test-value"})),
+        Some("42"),
+        "task-1",
+    );
+
+    assert!(overrides
+        .iter()
+        .any(|value| value
+            == "model_providers.openai-custom.http_headers.X-Wegent-Test=\"test-value\""));
+    assert!(overrides
+        .iter()
+        .any(|value| value == "model_providers.openai-custom.http_headers.wecode-project=\"42\""));
+    assert!(overrides.iter().any(|value| {
+        value == "model_providers.openai-custom.http_headers.wecode-session-id=\"task-1\""
+    }));
+}
+
+#[test]
 fn codex_launch_config_forwards_web_search_mode() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1865,11 +2248,12 @@ fn codex_launch_config_forwards_web_search_mode() {
 }
 
 #[test]
-fn codex_launch_config_defaults_context_window_to_256k() {
+fn codex_launch_config_preserves_catalog_context_window() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
-            "model_id": "moonshot-kimi-k3",
+            "model_id": "gpt-6.1-sol",
         }),
         ..ExecutionRequest::default()
     };
@@ -1882,12 +2266,28 @@ fn codex_launch_config_defaults_context_window_to_256k() {
         .and_then(Value::as_object)
         .expect("thread config should be present");
 
-    assert_eq!(config.get("model_context_window"), Some(&json!(262_144)));
+    assert_eq!(config.get("model_context_window"), None);
     assert_eq!(config.get("model_auto_compact_token_limit"), None);
 }
 
 #[test]
+fn codex_output_budget_without_context_window_preserves_catalog_limits() {
+    let overrides = codex_model_config_overrides(&json!({
+        "model_id": "gpt-6.1-sol",
+        "max_output_tokens": 32_000,
+    }));
+
+    assert!(!overrides
+        .iter()
+        .any(|value| value.starts_with("model_context_window=")));
+    assert!(!overrides
+        .iter()
+        .any(|value| value.starts_with("model_auto_compact_token_limit=")));
+}
+
+#[test]
 fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -1938,6 +2338,7 @@ fn auto_compact_limit_requires_a_usable_output_budget() {
 
 #[test]
 fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -2019,7 +2420,79 @@ fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
 }
 
 #[test]
+fn binds_an_idle_thread_to_the_task_model_route() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("idle-thread-route");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "idle-thread-route-task".to_owned(),
+        subtask_id: "idle-thread-route-task-context-compact".to_owned(),
+        model_config: json!({
+            "model_id": "selected-model",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    assert!(
+        !local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
+        "an idle thread starts without a bound route"
+    );
+
+    let registration = bind_codex_thread_model_route(&request, "idle-thread-route-thread")
+        .expect("binding the task route should succeed")
+        .expect("payload providers must route through the local model proxy");
+    assert!(
+        local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
+        "the thread should resolve the task route"
+    );
+
+    // Action routes share the task scope with the turns that launched them.
+    let launch = build_codex_launch_config(&request).expect("launch config should register");
+    assert_eq!(
+        launch
+            .local_proxy_registration
+            .as_ref()
+            .expect("launch route")
+            .0,
+        registration.0
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn skips_the_local_route_for_providers_that_are_reached_directly() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("direct-provider-route");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "direct-provider-route-task".to_owned(),
+        model_config: json!({
+            "model": "gpt-5.6-sol",
+            "api_key": "test-cloud-key",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert!(
+        bind_codex_thread_model_route(&request, "direct-provider-thread")
+            .expect("a direct provider needs no local route")
+            .is_none()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
+    let _environment = environment::LaunchEnvironment::new();
     let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
     let luna_request = ExecutionRequest {
         task_id: task_id.clone(),
@@ -2068,6 +2541,7 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
 
 #[test]
 fn codex_launch_config_forwards_runtime_proxy_to_standalone_engine() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
@@ -2182,6 +2656,7 @@ fn replacing_proxy_environment_preserves_local_mcp_auth() {
 
 #[test]
 fn codex_launch_config_forwards_task_identity_to_thread_only() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
@@ -2206,6 +2681,13 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         .get("config")
         .and_then(Value::as_object)
         .expect("thread config should include shell env");
+
+    assert!(!launch_config
+        .config_overrides
+        .iter()
+        .any(|argument| argument.contains("task-jwt")
+            || argument.contains("runtime-jwt")
+            || argument.contains("skill-jwt")));
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
@@ -2242,6 +2724,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 
 #[test]
 fn codex_worktree_launch_config_sets_pnpm_environment() {
+    let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         workspace_source: Some("git_worktree".to_owned()),
         ..ExecutionRequest::default()
@@ -3065,6 +3548,28 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 }
 
 #[test]
+fn single_collaboration_mode_disables_codex_native_subagents() {
+    let mut request = ExecutionRequest {
+        model_config: json!({"model_id": "gpt-5.5-codex"}),
+        ..ExecutionRequest::default()
+    };
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2=false".to_owned()));
+    assert!(codex_collaboration_mode_payload(&request, &CodexLaunchConfig::default()).is_none());
+}
+
+#[test]
 fn turn_start_params_includes_client_user_message_id() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -3112,6 +3617,58 @@ fn thread_start_uses_paginated_history_mode() {
     let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
 
     assert_eq!(params["historyMode"], "paginated");
+}
+
+#[test]
+fn stdio_mcp_environment_is_private_per_service_in_start_and_resume_rpc() {
+    let request = ExecutionRequest {
+        bot: json!([{"shell_type":"Codex", "mcp_servers": {
+            "first": {"command":"tool-one", "env":{"TOKEN":"first-secret", "OPENAI_API_KEY":"key-one", "PATH":"/one/bin"}},
+            "second": {"command":"tool-two", "env":{"TOKEN":"second-secret", "OPENAI_API_KEY":"key-two", "PATH":"/two/bin"}}
+        }}]),
+        ..Default::default()
+    };
+    let mut launch = CodexLaunchConfig::default();
+    let (overrides, environment) =
+        runtime_capabilities::request_mcp_config_overrides(&request, &mut launch.thread_config)
+            .unwrap();
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(environment);
+    for name in ["TOKEN", "OPENAI_API_KEY", "PATH"] {
+        assert!(!launch.env.contains_key(name));
+    }
+    let argv = launch.config_overrides.join("\n");
+    for value in [
+        "first-secret",
+        "second-secret",
+        "key-one",
+        "key-two",
+        "/one/bin",
+        "/two/bin",
+    ] {
+        assert!(!argv.contains(value));
+    }
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("existing-thread", &request, &launch),
+    ] {
+        assert_eq!(
+            params["config"]["mcp_servers.first.env"]["TOKEN"],
+            "first-secret"
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.second.env"]["TOKEN"],
+            "second-secret"
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.first.env"]["OPENAI_API_KEY"],
+            "key-one"
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.second.env"]["PATH"],
+            "/two/bin"
+        );
+    }
 }
 
 #[test]
@@ -3304,6 +3861,7 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
         assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert!(instructions.contains(local_connector_auth::INSTRUCTIONS));
     }
 }
 
@@ -3809,9 +4367,13 @@ fn turn_input_preserves_collaboration_references_as_text() {
 
 #[test]
 fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
-    let path = dirs::home_dir()
+    let _lock = crate::test_env::lock();
+    let path = crate::local::command::configured_home_dir()
         .expect("test user has a home directory")
-        .join(".agents/skills/test-skill/SKILL.md");
+        .join(".agents")
+        .join("skills")
+        .join("test-skill")
+        .join("SKILL.md");
     let input = turn_input(&Value::String(format!(
         "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
         path.display()
@@ -3918,18 +4480,55 @@ fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
 }
 
 #[test]
+fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
+    for marketplace in ["openai-bundled", "openai-curated-remote"] {
+        let input = turn_input(&json!(format!(
+            "[$GitHub](plugin://github@{marketplace}) list repositories"
+        )));
+        assert_eq!(
+            input,
+            vec![text_input("GitHub (gh) list repositories".to_owned())]
+        );
+    }
+    assert_eq!(
+        turn_input(&json!([{"type":"mention", "name":"GitHub", "path":"app://github"}])),
+        vec![text_input("GitHub (gh)".to_owned())]
+    );
+    assert_eq!(
+        turn_input(&json!(
+            "[$GitHub](app://connector_account_specific_id) list repositories"
+        )),
+        vec![text_input("GitHub (gh) list repositories".to_owned())]
+    );
+    assert_eq!(
+        turn_input(
+            &json!([{"type":"mention", "name":"GitHub", "path":"app://connector_account_specific_id"}])
+        ),
+        vec![text_input("GitHub (gh)".to_owned())]
+    );
+    let instructions = codex_thread_developer_instructions("user settings", "task settings");
+    assert!(instructions.contains(github_cli::INSTRUCTIONS));
+    assert!(instructions.contains("connectorSlug=wework-github-cli"));
+}
+
+#[test]
 fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
     let root = unique_test_path("managed-plugin-skill-input");
     let codex_home = root.join("codex");
-    let manifest_path = root.join("capabilities/manifest.json");
-    let plugin_root = codex_home.join("plugins/cache/wegent/dingtalk/0.2.0");
-    let skill_path = plugin_root.join("skills/dws/SKILL.md");
+    let manifest_path = root.join("capabilities").join("manifest.json");
+    let plugin_root = codex_home
+        .join("plugins")
+        .join("cache")
+        .join("wegent")
+        .join("dingtalk")
+        .join("0.2.0");
+    let skill_path = plugin_root.join("skills").join("dws").join("SKILL.md");
     fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
         .expect("skill directory should be created");
     fs::create_dir_all(plugin_root.join(".codex-plugin"))
         .expect("plugin manifest directory should be created");
     fs::write(
-        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".codex-plugin").join("plugin.json"),
         r#"{"name":"dingtalk","version":"0.2.0","skills":"./skills/"}"#,
     )
     .expect("plugin manifest should be written");
@@ -4193,6 +4792,8 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
 
 #[test]
 fn codex_thread_binds_project_space_through_context_grant() {
+    let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let mut request = ExecutionRequest {
         task_id: "runtime-task-1".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4215,17 +4816,14 @@ fn codex_thread_binds_project_space_through_context_grant() {
 
     assert!(request.mcp_servers.is_empty());
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
     assert_eq!(
         config["mcp_servers.wework_space.env_http_headers.Authorization"],
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
     );
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
-        "Bearer test-space-mcp-instance-token"
+        format!("Bearer {}", endpoint.token)
     );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
@@ -4235,9 +4833,11 @@ fn codex_thread_binds_project_space_through_context_grant() {
         config["mcp_servers.wework_space.default_tools_approval_mode"],
         "approve"
     );
-    assert_eq!(
-        config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"],
-        "test-space-mcp-context-handle"
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
     let mcp_config = config
         .iter()
@@ -4253,6 +4853,8 @@ fn codex_thread_binds_project_space_through_context_grant() {
 
 #[test]
 fn codex_thread_exposes_project_space_to_issue_automation_executor() {
+    let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let mut request = ExecutionRequest {
         task_id: "runtime-executor-1".to_owned(),
         ..ExecutionRequest::default()
@@ -4273,14 +4875,13 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
     let config = params["config"].as_object().expect("thread config");
 
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(
-        config["mcp_servers.wework_space.url"],
-        "http://127.0.0.1:1/mcp"
-    );
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
 }
 
 #[test]
 fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
+    let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -4298,12 +4899,14 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
         .all(|name| !name.starts_with("WEGENT_CODEX_SPACE_MCP_HEADER_")));
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
-        "Bearer test-space-mcp-instance-token"
+        format!("Bearer {}", endpoint.token)
     );
 }
 
 #[test]
 fn codex_thread_exposes_notifications_without_project_context() {
+    let _environment = environment::LaunchEnvironment::new();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest {
         task_id: "runtime-task-notification".to_owned(),
         backend_url: Some("https://wework.example.com".to_owned()),
@@ -4320,11 +4923,16 @@ fn codex_thread_exposes_notifications_without_project_context() {
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
-        "http://127.0.0.1:1/notifications/mcp"
+        format!(
+            "{}/notifications/mcp",
+            endpoint.url.trim_end_matches("/mcp")
+        )
     );
-    assert_eq!(
-        config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"],
-        "test-space-mcp-context-handle"
+    assert!(
+        !config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
         config["mcp_servers.wework_notifications.env_http_headers.Authorization"],
@@ -4787,4 +5395,31 @@ fn codex_run_state_ignores_cross_thread_turn_completion() {
             content: "root".to_owned()
         }
     );
+}
+
+#[tokio::test]
+async fn named_home_action_protects_only_its_request_scoped_process() {
+    let _environment = environment::LaunchEnvironment::new();
+    let client = CodexAppServerClient::new("codex-named-thread-action-test");
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "user_name": "synthetic", "team_namespace": "default",
+        "team_name": "compact-agent", "team_id": 12,
+        "bot": [{"id": 31, "shell_type": "Codex"}]
+    }))
+    .unwrap();
+    let scoped = client.for_request(&request).unwrap();
+    scoped
+        .run_thread_action("compact-thread", async {
+            assert_eq!(
+                client
+                    .for_request(&request)
+                    .unwrap()
+                    .restart_if_idle()
+                    .await,
+                Err((1, 0))
+            );
+            assert_eq!(client.restart_if_idle().await, Ok(()));
+        })
+        .await;
+    assert_eq!(scoped.restart_if_idle().await, Ok(()));
 }

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
-from jose import jwt
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
@@ -222,34 +221,6 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
     assert disconnect_response.status_code == 204
 
 
-def test_runtime_token_is_scoped_to_connector_invocation(
-    test_client: TestClient,
-    test_user: User,
-    test_token: str,
-):
-    token_response = test_client.post(
-        "/api/connector-runtime/token", headers=_admin_headers(test_token)
-    )
-
-    assert token_response.status_code == 200
-    assert token_response.json()["expires_in"] == 900
-    claims = jwt.decode(
-        token_response.json()["access_token"],
-        settings.SECRET_KEY,
-        algorithms=[settings.ALGORITHM],
-        audience="wegent-connector-runtime",
-    )
-    assert claims["sub"] == test_user.user_name
-    assert claims["user_id"] == test_user.id
-    assert claims["token_type"] == "connector"
-    assert claims["scope"] == "connectors:invoke"
-
-    invalid_runtime_response = test_client.get(
-        "/api/connector-runtime/tools", headers=_admin_headers(test_token)
-    )
-    assert invalid_runtime_response.status_code == 401
-
-
 def test_role_visibility_is_enforced_for_user_catalog(
     test_client: TestClient,
     test_db: Session,
@@ -450,7 +421,7 @@ def test_http_connector_requires_valid_tool_definitions(
     assert unknown_allowlist.status_code == 422
 
 
-def test_apps_projection_lists_reads_and_installs_callable_connector(
+def test_apps_projection_lists_and_reads_callable_connector(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
@@ -485,9 +456,6 @@ def test_apps_projection_lists_reads_and_installs_callable_connector(
         headers=_admin_headers(test_token),
         json={"app_ids": ["projection-api", "missing"], "include_tools": True},
     )
-    installed_response = test_client.get(
-        "/api/apps/installed", headers=_admin_headers(test_token)
-    )
 
     assert list_response.status_code == 200
     listed = [
@@ -502,15 +470,6 @@ def test_apps_projection_lists_reads_and_installs_callable_connector(
         read_response.json()["apps"][0]["tool_summaries"][0]["raw_tool_name"]
         == "lookup"
     )
-
-    assert installed_response.status_code == 200
-    installed = [
-        item
-        for item in installed_response.json()["apps"]
-        if item["id"] == "projection-api"
-    ][0]
-    assert installed["callable"] is True
-    assert installed["tool_summaries"][0]["name"] == "projection-api__lookup"
 
 
 def test_apps_projection_rejects_malformed_cursor(

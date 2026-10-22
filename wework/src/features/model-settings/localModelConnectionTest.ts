@@ -22,6 +22,7 @@ export interface TestLocalModelConnectionInput {
 export interface TestLocalModelConnectionOptions {
   fetcher?: typeof fetch
   timeoutMs?: number
+  verifyExactProbePayload?: boolean
 }
 
 export interface TestLocalModelConnectionResult {
@@ -237,7 +238,8 @@ async function readResponsesProbeBody(response: Response): Promise<unknown> {
 function hasProbeToolCall(
   apiFormat: LocalModelApiFormat,
   toolProfile: LocalModelToolProfile,
-  body: unknown
+  body: unknown,
+  verifyExactProbePayload: boolean
 ): boolean {
   const value = recordOf(body)
   if (!value) return false
@@ -262,7 +264,10 @@ function hasProbeToolCall(
     return (
       (candidate?.type === 'custom_tool_call' || candidate?.type === 'function_call') &&
       candidate.name === expectedToolName &&
-      (toolProfile !== 'custom' || candidate.input === APPLY_PATCH_PROBE)
+      (toolProfile !== 'custom' ||
+        (verifyExactProbePayload
+          ? candidate.input === APPLY_PATCH_PROBE
+          : typeof candidate.input === 'string' && candidate.input.trim().length > 0))
     )
   })
 }
@@ -349,7 +354,7 @@ export async function testLocalModelConnection(
       apiFormat === 'openai-responses'
         ? await readResponsesProbeBody(response)
         : await response.json()
-    if (!hasProbeToolCall(apiFormat, toolProfile, body)) {
+    if (!hasProbeToolCall(apiFormat, toolProfile, body, options.verifyExactProbePayload ?? true)) {
       throw new Error(
         `Model did not return the required capability probe tool call (${summarizeProbeFailure(body)})`
       )

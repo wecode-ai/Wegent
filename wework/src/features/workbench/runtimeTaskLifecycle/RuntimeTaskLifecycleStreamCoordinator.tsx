@@ -1,3 +1,4 @@
+import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { useEffect, useMemo } from 'react'
 import {
   createExecutorClientForWorkbenchServices,
@@ -8,30 +9,31 @@ import {
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
-  setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { runtimeTaskLifecycleTransitionChanged } from './RuntimeTaskLifecycleStore'
 import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import {
+  hasRequestUserInputResponse,
+  isAsyncRequestUserInputPayload,
+} from '@/components/chat/requestUserInputMessages'
 
-function isPendingRequestUserInputBlock(payload: {
+function pendingRequestUserInputBlockPayload(payload: {
   block: { type: string; status?: string; renderPayload?: unknown; render_payload?: unknown }
-}): boolean {
-  if (payload.block.type !== 'tool' || payload.block.status === 'error') return false
+}): RequestUserInputPayload | null {
+  if (payload.block.type !== 'tool' || payload.block.status === 'error') return null
   const renderPayload = payload.block.renderPayload ?? payload.block.render_payload
   if (!renderPayload || typeof renderPayload !== 'object' || Array.isArray(renderPayload)) {
-    return false
+    return null
   }
-  const request = renderPayload as Record<string, unknown>
-  return (
-    request.kind === 'request_user_input' &&
-    !request.response &&
-    !request.requestUserInputResponse &&
-    !request.request_user_input_response
-  )
+  const request = renderPayload as RequestUserInputPayload
+  return request.kind === 'request_user_input' && !hasRequestUserInputResponse(request)
+    ? request
+    : null
 }
 
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
@@ -101,8 +103,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           return
         }
         const goal = response.goal ?? null
-        setRuntimeConversationGoal(address, goal)
-        store.goalStatusReceived(address, goal?.status ?? null)
+        syncRuntimeGoal(store, address, goal)
       } catch (error) {
         console.warn('[Wework] Runtime Goal reconciliation failed', {
           reason,
@@ -182,21 +183,22 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const settleMatchingTask = (
       payload: LifecycleEventPayload,
       outcome: 'succeeded' | 'failed' | 'cancelled'
-    ): { address: RuntimeTaskAddress; settled: boolean } | null => {
+    ): { address: RuntimeTaskAddress; settled: boolean; terminalTurnId: string | null } | null => {
       const address = matchingLifecycleAddress(store, payload)
       if (!address) return null
       const terminalTurnId = payload.subtaskId?.trim() || null
       const activeTurnId = store.getTask(address)?.turn.id
       if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
-        return { address, settled: false }
+        return { address, settled: false, terminalTurnId }
       }
       store.turnSettled(address, terminalTurnId, outcome)
-      return { address, settled: true }
+      return { address, settled: true, terminalTurnId }
     }
 
     const reconcileTerminalTranscript = async (
       address: RuntimeTaskAddress,
-      outcome?: 'succeeded' | 'failed' | 'cancelled'
+      outcome?: 'succeeded' | 'failed' | 'cancelled',
+      terminalTurnId?: string | null
     ) => {
       const expectedSnapshot = store.getTask(address)
       try {
@@ -204,11 +206,25 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           ...address,
           limit: 50,
           refresh: true,
+          includeFullContent: true,
         })
         if (disposed) return
         const transcript = projectRuntimePaneTranscript(transcriptResponse)
-        reconcileRuntimeConversationSnapshot(address, transcript.turns)
-        if (runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))) return
+        const currentSnapshot = store.getTask(address)
+        if (
+          didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId) ||
+          (currentSnapshot?.turn.active &&
+            terminalTurnId &&
+            store.isPriorTurn(address, terminalTurnId))
+        ) {
+          reconcileRuntimeConversationSnapshot(address, transcript.turns)
+          return
+        }
+        if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
+          replaceRuntimeConversationSnapshot(address, transcript.turns)
+        } else {
+          reconcileRuntimeConversationSnapshot(address, transcript.turns)
+        }
         store.syncTranscript(address, transcript)
         if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
           store.turnSettled(address, null, outcome)
@@ -229,15 +245,19 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         store.turnStarted(address, payload.subtaskId?.trim() || null)
       },
       onBlockCreated: payload => {
-        if (!isPendingRequestUserInputBlock(payload)) return
+        const request = pendingRequestUserInputBlockPayload(payload)
+        if (!request) return
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
-        store.userInputRequested(address)
+        store.userInputRequested(
+          address,
+          isAsyncRequestUserInputPayload(request) ? 'async' : undefined
+        )
       },
       onChatDone: payload => {
         const match = settleMatchingTask(payload, 'succeeded')
         if (match) {
-          void reconcileTerminalTranscript(match.address, 'succeeded')
+          void reconcileTerminalTranscript(match.address, 'succeeded', match.terminalTurnId)
         }
       },
       onChatError: payload => {
@@ -245,10 +265,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           payload,
           isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
         )
-        if (match && !match.settled) {
+        if (match) {
           void reconcileTerminalTranscript(
             match.address,
-            isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
+            isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed',
+            match.terminalTurnId
           )
         }
       },
@@ -267,6 +288,17 @@ export function RuntimeTaskLifecycleStreamCoordinator({
   }, [executorClient, recoverRuntimeConnections, services.chatStream, store])
 
   return null
+}
+
+function didStartNewerTurn(
+  expected: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
+  current: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
+  terminalTurnId: string | null | undefined
+): boolean {
+  // A newly submitted action is active before its first stream event arrives.
+  if (!current || !current.turn.active) return false
+  if (terminalTurnId && current.turn.id === terminalTurnId) return false
+  return expected?.turn.phase !== current.turn.phase || expected.turn.id !== current.turn.id
 }
 
 function runtimeRecoveryAddresses(

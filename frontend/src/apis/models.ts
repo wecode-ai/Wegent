@@ -3,9 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import { getClientRequestCache } from '@wegent/chat-core/request-cache'
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'video' | 'image'
+export type ModelCategoryType =
+  | 'llm'
+  | 'tts'
+  | 'stt'
+  | 'embedding'
+  | 'rerank'
+  | 'video'
+  | 'image'
+  | 'decision'
 
 // Type-specific configurations
 export interface TTSConfig {
@@ -193,6 +202,7 @@ export interface ModelSpecConfig {
   isVisible?: boolean
   isWeworkAvailable?: boolean
   costIndex?: string
+  capability?: string | Record<string, unknown>
   modelType?: ModelCategoryType
   modelGroup?: string
   modelSubGroup?: string
@@ -283,6 +293,7 @@ export interface UnifiedModel {
   contextWindow?: number | null
   maxOutputTokens?: number | null
   costIndex?: string | null
+  capability?: string | null
   modelCapabilities?: ModelCapabilities | null
   created_at?: string | null
   updated_at?: string | null
@@ -312,6 +323,7 @@ export interface TestConnectionRequest {
     | 'gemini-deep-research'
     | 'openai-responses'
     | 'gpt-image'
+    | 'systemone'
     | 'custom'
   model_id: string
   api_key: string
@@ -323,6 +335,21 @@ export interface TestConnectionRequest {
 export interface TestConnectionResponse {
   success: boolean
   message: string
+}
+
+export interface DecisionModel {
+  id: string
+  displayName: string
+  modelId: string
+  protocol: 'systemone' | 'openai'
+  type: ModelTypeEnum
+  namespace: string
+}
+
+export interface DecisionModelCatalog {
+  protocolVersion: 1
+  defaultModel: string
+  models: DecisionModel[]
 }
 
 // Fetch Available Models Types
@@ -358,6 +385,10 @@ export interface CompatibleModelsResponse {
 // Model Services
 // Model Services
 export const modelApis = {
+  async getDecisionModels(): Promise<DecisionModelCatalog> {
+    return apiClient.get('/models/decisions')
+  },
+
   /**
    * Get model names for a specific shell type (legacy API, use getUnifiedModels for new implementations)
    */
@@ -401,7 +432,8 @@ export const modelApis = {
       params.append('model_category_type', modelCategoryType)
     }
     const queryString = params.toString()
-    return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`)
+    const endpoint = `/models/unified${queryString ? `?${queryString}` : ''}`
+    return getClientRequestCache(apiClient).get(endpoint, () => apiClient.get(endpoint))
   },
 
   /**
@@ -468,7 +500,12 @@ export const modelApis = {
    */
   async createModel(model: ModelCRD): Promise<ModelCRD> {
     const namespace = model.metadata.namespace || 'default'
-    return apiClient.post(`/v1/namespaces/${encodeURIComponent(namespace)}/models`, model)
+    const saved = await apiClient.post<ModelCRD>(
+      `/v1/namespaces/${encodeURIComponent(namespace)}/models`,
+      model
+    )
+    getClientRequestCache(apiClient).invalidate('/models/unified')
+    return saved
   },
 
   /**
@@ -478,10 +515,12 @@ export const modelApis = {
    */
   async updateModel(name: string, model: ModelCRD): Promise<ModelCRD> {
     const namespace = model.metadata.namespace || 'default'
-    return apiClient.put(
+    const saved = await apiClient.put<ModelCRD>(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`,
       model
     )
+    getClientRequestCache(apiClient).invalidate('/models/unified')
+    return saved
   },
 
   /**
@@ -490,9 +529,10 @@ export const modelApis = {
    * @param namespace - Namespace (default: 'default')
    */
   async deleteModel(name: string, namespace: string = 'default'): Promise<void> {
-    return apiClient.delete(
+    await apiClient.delete(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`
     )
+    getClientRequestCache(apiClient).invalidate('/models/unified')
   },
 
   /**

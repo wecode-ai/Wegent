@@ -15,12 +15,16 @@ def _to_camel(value: str) -> str:
     return head + "".join(part.capitalize() for part in tail)
 
 
-BotVisibility = Literal["private", "creator_admin", "public"]
+BotVisibility = Literal["public", "creator_admin", "private"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
+BotCapabilityMode = Literal["follow_device", "manual"]
 BotRuntime = Literal["codex", "claude_code", "wegent"]
 BotWorkspacePolicy = Literal["project", "git_worktree"]
 WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
+
+from app.schemas.loop_item_position import LoopItemPosition
+from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
 
 
 class ProjectChatSchema(BaseModel):
@@ -115,7 +119,12 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     model_options: dict[str, str] = Field(default_factory=dict)
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
-    visibility: BotVisibility = "creator_admin"
+    capability_mode: BotCapabilityMode = "follow_device"
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
+
+    visibility: BotVisibility = "public"
+    share_with_workspace: bool = False
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
     execution_device_id: str | None = Field(default=None, max_length=100)
@@ -143,8 +152,13 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     model_options: dict[str, str] | None = None
     system_prompt: str | None = Field(default=None, max_length=20_000)
     capability_description: str | None = Field(default=None, max_length=2_000)
+    capability_mode: BotCapabilityMode | None = None
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
+
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
+    share_with_workspace: bool = False
     execution_environment: BotExecutionEnvironment | None = None
     execution_mode: BotExecutionMode | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
@@ -173,6 +187,9 @@ class ProjectChatAgentView(ProjectChatSchema):
     model_options: dict[str, str]
     system_prompt: str
     capability_description: str
+    capability_mode: BotCapabilityMode
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     status: Literal["active", "archived"]
     visibility: BotVisibility
     execution_environment: BotExecutionEnvironment
@@ -188,6 +205,9 @@ class ProjectChatAgentView(ProjectChatSchema):
     mcp_servers: dict[str, Any]
     created_by_user_id: int | None
     created_by_user_name: str | None = None
+    can_edit: bool = False
+    can_use: bool = False
+    unavailable_reason: str | None = None
     version: int
     created_at: str
     updated_at: str
@@ -196,11 +216,13 @@ class ProjectChatAgentView(ProjectChatSchema):
 class LoopItemAssign(ProjectChatSchema):
     """Assign a loop item to a project member or board robot."""
 
+    runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     notify_self: bool = False
+    position: LoopItemPosition | None = None
 
     version: int = Field(ge=1)
-    assignee_type: Literal["user", "agent", "team"]
+    assignee_type: Literal["user", "agent", "team", "group"]
     assignee_id: str = Field(min_length=1, max_length=128)
     workflow_step: str | None = Field(default=None, max_length=128)
     trigger: Literal[
@@ -217,31 +239,6 @@ class LoopItemApproval(ProjectChatSchema):
 
     version: int = Field(ge=1)
     reason: str | None = Field(default=None, max_length=2_000)
-
-
-class LoopItemExecutionClaim(ProjectChatSchema):
-    """Claim the next queued run for one robot on one device."""
-
-    model_config = ConfigDict(
-        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
-    )
-
-    agent_id: str = Field(min_length=1, max_length=128)
-    execution_device_id: str = Field(min_length=1, max_length=100)
-    execution_environment: Literal["local", "cloud"] = "local"
-    lease_seconds: int = Field(default=300, ge=60, le=3600)
-    assigner_user_id: int | None = Field(default=None)
-
-
-class LoopItemExecutionDeviceClaim(ProjectChatSchema):
-    """Claim the next queued local run for any robot bound to a device."""
-
-    model_config = ConfigDict(
-        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
-    )
-
-    execution_device_id: str = Field(min_length=1, max_length=100)
-    lease_seconds: int = Field(default=300, ge=60, le=3600)
 
 
 class LoopItemExecutionHeartbeat(ProjectChatSchema):
@@ -287,7 +284,70 @@ class LoopItemExecutionCancel(ProjectChatSchema):
     note: str | None = Field(default=None, max_length=2_000)
 
 
+class LoopItemExecutionBatchItem(ProjectChatSchema):
+    """One exact execution command submitted by an Executor-owned manager."""
+
+    assignment_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=500)
+    instructions: str = Field(min_length=1, max_length=100_000)
+    assignee_type: Literal["agent", "human"]
+    assignee_id: str = Field(min_length=1, max_length=128)
+    workflow_stage_id: str | None = Field(default=None, max_length=128)
+
+
+class LoopItemExecutionBatchCreate(ProjectChatSchema):
+    """Persist an Executor-decided collaboration round without advancing it."""
+
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    round_id: str = Field(min_length=1, max_length=128)
+    manager_runtime_task_id: str = Field(min_length=1, max_length=255)
+    manager_agent_id: str = Field(min_length=1, max_length=128)
+    items: list[LoopItemExecutionBatchItem] = Field(min_length=1, max_length=20)
+
+
+class LoopItemExecutionManagerDecision(ProjectChatSchema):
+    """One explicit status decision made by the collaboration-group manager."""
+
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    manager_agent_id: str = Field(min_length=1, max_length=128)
+    manager_runtime_task_id: str | None = Field(
+        default=None, min_length=1, max_length=255
+    )
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    target_status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
+    reason: str = Field(min_length=1, max_length=2_000)
+    comment: str = Field(default="", max_length=100_000)
+
+
+class LoopItemExecutionStatusQuery(ProjectChatSchema):
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    human_assignment_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_targets(self) -> "LoopItemExecutionStatusQuery":
+        if len(self.human_assignment_ids) > 20:
+            raise ValueError("Provide between 1 and 20 human assignment ids")
+        return self
+
+
+class LoopItemExecutionAssignmentStatus(ProjectChatSchema):
+    """Display-only status reported by an Executor-owned collaboration member."""
+
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    round_id: str = Field(min_length=1, max_length=128)
+    assignment_id: str = Field(min_length=1, max_length=128)
+    runtime_device_id: str = Field(min_length=1, max_length=255)
+    runtime_task_id: str = Field(min_length=1, max_length=255)
+    status: Literal["running", "completed", "failed", "cancelled"]
+    result: str = Field(default="", max_length=100_000)
+    error: str = Field(default="", max_length=2_000)
+
+
 class LoopItemExecutionView(ProjectChatSchema):
+    runner_routing: dict[str, Any] | None = None
     id: int
     workspace_id: SnowflakeId | None = None
     loop_item_id: str
@@ -397,31 +457,13 @@ class ProjectChatAgentFailure(ProjectChatSchema):
     error: str | None = Field(default=None, max_length=2_000)
 
 
-class ProjectChatAutomationManagerContinuation(ProjectChatSchema):
-    """Open one reply in a custom automation manager's Runtime session."""
-
-    project_id: str = Field(min_length=1, max_length=64)
-    task_id: str = Field(min_length=1, max_length=64)
-    trigger_message_id: str = Field(min_length=1, max_length=64)
-    manager_message_id: str = Field(min_length=1, max_length=64)
-
-
 class ProjectChatCommentExecution(ProjectChatSchema):
     """Execute a saved comment using its project assignment or thread binding."""
 
     project_id: str = Field(min_length=1, max_length=64)
     task_id: str = Field(min_length=1, max_length=64)
+    runner_selection: RunnerSelection | None = None
     trigger_message_id: str = Field(min_length=1, max_length=64)
-    attachment_ids: list[int] = Field(default_factory=list, max_length=64)
-
-
-class ProjectChatWegentContinuation(ProjectChatSchema):
-    """Continue the native Wegent Task behind one board comment thread."""
-
-    project_id: str = Field(min_length=1, max_length=64)
-    task_id: str = Field(min_length=1, max_length=64)
-    trigger_message_id: str = Field(min_length=1, max_length=64)
-    agent_id: str = Field(min_length=1, max_length=128)
     attachment_ids: list[int] = Field(default_factory=list, max_length=64)
 
 

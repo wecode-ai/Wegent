@@ -27,7 +27,17 @@ from app.schemas.workspace import (
 )
 
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
-ProjectVisibility = Literal["private", "public_restricted", "public"]
+ProjectVisibility = Literal["private", "public"]
+PublicAccessRole = Literal["Viewer"]
+
+
+class PublicAccessGrant(BaseModel):
+    role: PublicAccessRole = "Viewer"
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def read_legacy_public_role(cls, value):
+        return "Viewer" if value == "Developer" else value
 
 
 def _normalize_repository(task_provider: str, repository: str) -> str:
@@ -78,6 +88,7 @@ def normalize_provider_config(
 
 class CloudProjectCreate(BaseModel):
     workspace_id: SnowflakeId | None = None
+    membership_mode: Literal["inherit", "restricted"] = "inherit"
     project_key: str | None = Field(
         default=None, min_length=2, max_length=16, pattern=r"^[A-Za-z0-9]+$"
     )
@@ -86,6 +97,8 @@ class CloudProjectCreate(BaseModel):
     task_provider: TaskProvider = "local"
     provider_config: dict[str, object] = Field(default_factory=dict)
     visibility: ProjectVisibility = "private"
+    public_access: PublicAccessGrant | None = None
+    default_issue_security: Literal["open", "related"] = "open"
 
     @field_validator("project_key")
     @classmethod
@@ -97,10 +110,15 @@ class CloudProjectCreate(BaseModel):
         self.provider_config = normalize_provider_config(
             self.task_provider, self.provider_config
         )
-        if self.visibility == "public_restricted" and self.task_provider != "local":
-            raise ValueError(
-                "Related-task visibility is only available for built-in tasks"
-            )
+        if self.visibility == "private" and self.public_access is not None:
+            raise ValueError("Private projects cannot grant public access")
+        if self.visibility == "public" and self.public_access is None:
+            self.public_access = PublicAccessGrant()
+        if (
+            self.task_provider == "dingtalk_aitable"
+            and self.default_issue_security != "open"
+        ):
+            raise ValueError("DingTalk table records use DingTalk permissions")
         return self
 
 
@@ -127,12 +145,25 @@ def default_board_statuses() -> list[CloudProjectBoardStatus]:
     ]
 
 
+class CloudProjectScheduleViewConfig(BaseModel):
+    status_filter: str | None = Field(default=None, max_length=32)
+    assignee_filter: str | None = Field(default=None, max_length=128)
+    tag_filter: str | None = Field(default=None, max_length=80)
+    group_by: Literal["none", "status", "priority", "assignee", "tag"] = "none"
+    sort_by: Literal["start_asc", "due_asc", "updated_desc", "priority_desc"] = (
+        "start_asc"
+    )
+
+
 class CloudProjectBoardConfig(BaseModel):
     group_by: Literal["status", "priority", "assignee", "tag"] = "status"
     statuses: list[CloudProjectBoardStatus] = Field(
         default_factory=default_board_statuses
     )
     processing_start_status_id: str | None = None
+    schedule_view: CloudProjectScheduleViewConfig = Field(
+        default_factory=CloudProjectScheduleViewConfig
+    )
 
     @model_validator(mode="after")
     def validate_statuses(self) -> "CloudProjectBoardConfig":
@@ -191,11 +222,14 @@ class CloudProjectPullRequestAutomation(BaseModel):
 
 
 class CloudProjectUpdate(BaseModel):
+    membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     provider_config: dict[str, object] | None = None
     visibility: ProjectVisibility | None = None
+    public_access: PublicAccessGrant | None = None
+    default_issue_security: Literal["open", "related"] | None = None
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
     ai_automation: CloudProjectAiAutomation | None = None
@@ -211,6 +245,8 @@ class CloudProjectUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "CloudProjectUpdate":
+        if self.visibility == "private" and self.public_access is not None:
+            raise ValueError("Private projects cannot grant public access")
         if self.provider_config is not None:
             # The provider kind is immutable. The service validates this config
             # against the project's current provider before persisting it.
@@ -229,6 +265,9 @@ class CloudProjectResponse(BaseModel):
 
     id: SnowflakeId
     workspace_id: SnowflakeId | None = None
+    membership_mode: Literal["inherit", "restricted"] = "inherit"
+    workspace_access_role: BaseRole | None = None
+    permission_sources: list[dict] = Field(default_factory=list)
     workspace_context: WorkspaceNavigationContextResponse | None = None
     public_id: str
     project_key: str
@@ -260,10 +299,12 @@ class CloudProjectResponse(BaseModel):
         default_factory=ExecutionEnvironmentConfig
     )
     visibility: ProjectVisibility = "private"
+    public_access: PublicAccessGrant | None = None
+    default_issue_security: Literal["open", "related"] = "open"
     created_by_user_id: int
     current_user_id: int = 0
     current_user_name: str = ""
-    access_role: BaseRole = BaseRole.RestrictedAnalyst
+    access_role: BaseRole = BaseRole.Viewer
     status: str
     tags: list[str] = []
     version: int
@@ -291,11 +332,10 @@ class CloudProjectResponse(BaseModel):
                 "workflow_definition": metadata.get("workflow_definition", {}),
                 "workflow_automation_id": metadata.get("workflow_automation_id"),
                 "execution_environment": metadata.get("execution_environment", {}),
-                "visibility": (
-                    metadata.get("visibility")
-                    if metadata.get("visibility")
-                    in {"private", "public_restricted", "public"}
-                    else "private"
+                "visibility": value.get("visibility", "private"),
+                "public_access": value.get("public_access"),
+                "default_issue_security": metadata.get(
+                    "default_issue_security", "open"
                 ),
                 "tags": normalize_tags(metadata.get("tags")),
             }
@@ -314,8 +354,11 @@ class CloudProjectMemberCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def reject_owner(cls, value: BaseRole) -> BaseRole:
-        if value == BaseRole.Owner:
-            raise ValueError("Owner cannot be assigned")
+        from app.schemas.base_role import COLLABORATION_ROLE_ALIASES
+
+        value = BaseRole(COLLABORATION_ROLE_ALIASES.get(value.value, value.value))
+        if value not in {BaseRole.Maintainer, BaseRole.Developer, BaseRole.Viewer}:
+            raise ValueError("Only project member roles may be assigned")
         return value
 
 
@@ -326,8 +369,16 @@ class CloudProjectMemberUpdate(BaseModel):
     @field_validator("role")
     @classmethod
     def reject_owner(cls, value: BaseRole | None) -> BaseRole | None:
-        if value == BaseRole.Owner:
-            raise ValueError("Owner cannot be assigned")
+        from app.schemas.base_role import COLLABORATION_ROLE_ALIASES
+
+        if value is not None:
+            value = BaseRole(COLLABORATION_ROLE_ALIASES.get(value.value, value.value))
+        if value is not None and value not in {
+            BaseRole.Maintainer,
+            BaseRole.Developer,
+            BaseRole.Viewer,
+        }:
+            raise ValueError("Only project member roles may be assigned")
         return value
 
     @model_validator(mode="after")
@@ -343,6 +394,11 @@ class CloudProjectMemberResponse(BaseModel):
     user_name: str
     email: str | None
     role: BaseRole
+    direct_role: BaseRole | None = None
+    inherited_role: BaseRole | None = None
+    permission_sources: list[dict] = Field(default_factory=list)
+    inherited_from_workspace_id: SnowflakeId | None = None
+    can_be_assignee: bool = False
     capability_description: str = ""
 
 

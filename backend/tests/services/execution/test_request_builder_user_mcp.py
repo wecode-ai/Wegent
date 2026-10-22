@@ -10,7 +10,12 @@ import pytest
 
 from app.services import mcp_provider_registry
 from app.services.execution.request_builder import TaskRequestBuilder
-from app.services.user_mcp_service import user_mcp_service
+from app.services.user_mcp_oauth import user_mcp_oauth_service
+from app.services.user_mcp_service import (
+    MCP_AUTH_MODE_OAUTH,
+    MCP_AUTH_MODE_URL,
+    user_mcp_service,
+)
 
 
 class TestUserScopedMcpInjection:
@@ -392,6 +397,8 @@ class TestUserScopedMcpInjection:
         )
 
         assert "mcpServers" not in skill_data
+        assert skill_data["configuration_required"] is True
+        assert "Use DingTalk docs MCP." not in skill_data["prompt"]
         assert "Configuration Required" in skill_data["prompt"]
         assert "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs" in (
             skill_data["prompt"]
@@ -572,7 +579,10 @@ class TestUserScopedMcpInjection:
             }
         }
 
-    def test_get_bot_skills_resolves_agent_skill_as_agent_owner(self, test_db, mocker):
+    @pytest.mark.parametrize("preloaded", [None, 55, 56])
+    def test_get_bot_skills_resolves_agent_skill_as_agent_owner(
+        self, test_db, mocker, preloaded
+    ):
         builder = TaskRequestBuilder(test_db)
         team = SimpleNamespace(user_id=7, namespace="default")
         bot = SimpleNamespace(
@@ -605,6 +615,7 @@ class TestUserScopedMcpInjection:
                             "skill_id": 55,
                             "namespace": "default",
                             "is_public": False,
+                            "content_hash": "sha256:old-version",
                         }
                     },
                 },
@@ -615,14 +626,31 @@ class TestUserScopedMcpInjection:
             name="owner-private-skill",
             user_id=7,
             namespace="default",
-            json={},
+            json={"status": {"fileHash": "current-version"}},
+        )
+        if preloaded:
+            ghost.json["spec"]["preload_skill_refs"] = {
+                "owner-private-skill": {
+                    "skill_id": preloaded,
+                    "namespace": "other" if preloaded == 56 else "default",
+                    "content_hash": "sha256:old-preload-version",
+                }
+            }
+        other_skill = SimpleNamespace(
+            id=56,
+            name=skill.name,
+            user_id=7,
+            namespace="other",
+            json={"status": {"fileHash": "other-version"}},
         )
 
         mock_query = mocker.Mock()
         mock_query.filter.return_value.first.return_value = ghost
         mocker.patch.object(builder.db, "query", return_value=mock_query)
         find_attached_skill_by_ref = mocker.patch.object(
-            builder, "_find_attached_skill_by_ref", return_value=skill
+            builder,
+            "_find_attached_skill_by_ref",
+            side_effect=lambda name, skill_id: {55: skill, 56: other_skill}[skill_id],
         )
         mocker.patch.object(
             builder,
@@ -630,20 +658,31 @@ class TestUserScopedMcpInjection:
             return_value={"name": "owner-private-skill"},
         )
 
-        skills, preload_skills, user_selected_skills, _ = builder._get_bot_skills(
+        skills, preload_skills, user_selected_skills, refs = builder._get_bot_skills(
             bot=bot,
             team=team,
             user=SimpleNamespace(id=99, preferences="{}"),
             user_id=99,
         )
 
-        find_attached_skill_by_ref.assert_called_once_with(
+        find_attached_skill_by_ref.assert_any_call(
             "owner-private-skill",
             skill_id=55,
         )
+        assert find_attached_skill_by_ref.call_count == (2 if preloaded == 56 else 1)
         assert skills == [{"name": "owner-private-skill"}]
         assert preload_skills == ["owner-private-skill"]
         assert user_selected_skills == ["owner-private-skill"]
+        assert refs["owner-private-skill"]["content_hash"] == (
+            "sha256:other-version" if preloaded == 56 else "sha256:current-version"
+        )
+        assert refs["owner-private-skill"]["namespace"] == (
+            "other" if preloaded == 56 else "default"
+        )
+        assert (
+            ghost.json["spec"]["skill_refs"]["owner-private-skill"]["content_hash"]
+            == "sha256:old-version"
+        )
 
     def test_get_bot_skills_excludes_ghost_skills_when_following_device(
         self, test_db, mocker
@@ -853,3 +892,123 @@ class TestUserScopedMcpInjection:
             match="Shell reference 'default/missing-shell' is unavailable",
         ):
             builder._resolve_shell_info(bot, user_id=1)
+
+
+class TestUserMcpOAuthHeaderInjection:
+    """Tests for OAuth bearer injection into provider MCP servers."""
+
+    RESOURCE_URL = "https://mcp-gw.dingtalk.com/oauth/server/aitable"
+
+    def _skill(self, server_name: str = "dingtalk_ai_table") -> SimpleNamespace:
+        return SimpleNamespace(
+            id=201,
+            user_id=0,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "dingtalk-ai-table", "namespace": "default"},
+                "spec": {
+                    "description": "DingTalk AI table runtime skill",
+                    "prompt": "Use DingTalk AI tables.",
+                    "bindShells": ["Chat"],
+                    "mcpServers": {
+                        server_name: {
+                            "type": "streamable-http",
+                            "url": (
+                                "${{task_data.user_mcps.dingtalk.services.ai_table"
+                                ".credentials.url}}"
+                            ),
+                        }
+                    },
+                },
+            },
+        )
+
+    def _user(self, auth_mode: str) -> SimpleNamespace:
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="ai_table",
+                enabled=True,
+                url=self.RESOURCE_URL,
+                auth_mode=auth_mode,
+            )
+        )
+        return SimpleNamespace(preferences=preferences, id=1)
+
+    def test_oauth_mode_injects_bearer_header(self, test_db, monkeypatch):
+        builder = TaskRequestBuilder(test_db)
+        monkeypatch.setattr(
+            user_mcp_oauth_service,
+            "ensure_access_token_sync",
+            lambda *args, **kwargs: "dingtalk-access",
+        )
+
+        skill_data = builder._build_skill_data(
+            self._skill(), user=self._user(MCP_AUTH_MODE_OAUTH)
+        )
+
+        assert skill_data["mcpServers"]["dingtalk_ai_table"]["headers"] == {
+            "Authorization": "Bearer dingtalk-access"
+        }
+
+    def test_oauth_mode_supports_legacy_hyphenated_server_name(
+        self, test_db, monkeypatch
+    ):
+        """Deployed Skill assets may still use hyphenated server names."""
+        builder = TaskRequestBuilder(test_db)
+        monkeypatch.setattr(
+            user_mcp_oauth_service,
+            "ensure_access_token_sync",
+            lambda *args, **kwargs: "dingtalk-access",
+        )
+
+        skill_data = builder._build_skill_data(
+            self._skill("dingtalk-ai-table"),
+            user=self._user(MCP_AUTH_MODE_OAUTH),
+        )
+
+        assert skill_data["mcpServers"]["dingtalk-ai-table"]["headers"] == {
+            "Authorization": "Bearer dingtalk-access"
+        }
+
+    def test_url_mode_keeps_no_authorization_header(self, test_db, monkeypatch):
+        builder = TaskRequestBuilder(test_db)
+
+        def fail(*args, **kwargs):
+            raise AssertionError("URL mode must not refresh OAuth tokens")
+
+        monkeypatch.setattr(user_mcp_oauth_service, "ensure_access_token_sync", fail)
+
+        skill_data = builder._build_skill_data(
+            self._skill(), user=self._user(MCP_AUTH_MODE_URL)
+        )
+
+        assert "headers" not in skill_data["mcpServers"]["dingtalk_ai_table"]
+
+    def test_insecure_resource_url_never_receives_a_bearer_header(
+        self, test_db, monkeypatch
+    ):
+        """An OAuth token is not attached to a cleartext MCP endpoint."""
+        builder = TaskRequestBuilder(test_db)
+        user = self._user(MCP_AUTH_MODE_OAUTH)
+        preferences = user_mcp_service.set_provider_service_config(
+            user.preferences,
+            provider_id="dingtalk",
+            service_id="ai_table",
+            enabled=True,
+            url="http://mcp.example.com/oauth/server/aitable",
+            auth_mode=MCP_AUTH_MODE_OAUTH,
+        )
+        user = SimpleNamespace(
+            preferences=user_mcp_service.dump_preferences(preferences), id=1
+        )
+
+        def fail(*args, **kwargs):
+            raise AssertionError("insecure transports must not request a token")
+
+        monkeypatch.setattr(user_mcp_oauth_service, "ensure_access_token_sync", fail)
+
+        skill_data = builder._build_skill_data(self._skill(), user=user)
+
+        assert "headers" not in skill_data["mcpServers"]["dingtalk_ai_table"]

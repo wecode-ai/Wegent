@@ -18,3 +18,8 @@ This directory contains the Wegent web frontend (Next.js, React, and TypeScript)
 - Mobile is `<=767px`, tablet `768px–1023px`, and desktop `>=1024px`.
 - Split mobile and desktop components when layout or interaction differs materially; otherwise use responsive classes. Mobile controls must be at least `44px × 44px`.
 - Use the existing design tokens and shared UI components. Dialog primary actions use `variant="primary"`.
+
+## Shared collaboration UI
+
+- Web collaboration pages import `@wegent/collaboration/styles.css`, and Tailwind scans `packages/collaboration/src`. Keep shared collaboration structure and visual rules in that package instead of duplicating overrides under `frontend/`.
+- Add browser coverage for collaboration layout or style regressions under `frontend/e2e/tests/collaboration/`; those specs run in the default Chromium CI project.

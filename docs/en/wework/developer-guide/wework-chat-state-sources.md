@@ -14,6 +14,14 @@ This document records the state sources for the Wework chat path. The goal is to
 4. `useWorkbenchPaneSession` owns pane content such as messages and queued input, but reads all task and turn lifecycle facts from the Store.
 5. `runtimePaneStatus.ts` is a read-only projection from a lifecycle snapshot to existing pane presentation fields. It must not infer execution or turn state independently.
 
+Sidebar priority filtering also reads explicit `interactionStatus` through the
+lifecycle Store projection. A stale task-list snapshot must not override an
+accepted user reply in the view layer.
+
+## Latest Turn Identity
+
+`turn.id` identifies the active turn and may be cleared after completion. `turn.latestId` retains the latest turn identity confirmed by runtime events, transcripts, or executor snapshots. Task-list refreshes, completion timestamp precision changes, and other metadata updates must not clear it. Reply predictions use `turn.latestId` as their request identity and wait until a real turn identity is available. Starting a new turn still invalidates the previous suggestion.
+
 ## State Source Inventory
 
 | State                                 | Single Source                                                                                                                                                                            | Derived Values / Consumers                                                                                         | Maintenance Rule                                                                                                                                                                                                                            |
@@ -137,6 +145,22 @@ WebView or executor rebuild. A thread ID change must clear both the completed
 message cache and transcript snapshot so messages cannot cross thread
 boundaries.
 
+History snapshots must retain the Provider's before and after cursors. Default
+reads during execution may reuse a snapshot, but explicit pagination must use
+native history. A tail snapshot is not complete history. Merge live assistant
+blocks and runtime items by item ID so new items cannot replace loaded history.
+Adding live items must not upgrade a summary turn's `itemsView` to full.
+
+Automatic Goal continuation owns a new turn. It must neither carry the previous
+turn's client user message association nor rewrite its subtask-to-turn mapping.
+The starting-next-turn label ends when that turn produces visible text or tools;
+history reconciliation remains active until continuation settles.
+
+The capability publication lock covers session preparation and runtime
+initialization only. Codex and Claude Code release the read lease before model
+execution. Capability synchronization publishes under the write lease, so a
+long model run cannot block other tasks from starting.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
@@ -224,6 +248,14 @@ These rules apply only to local Codex projects. Remote and cloud tasks retain
 their existing single-workspace selection semantics; local multi-root support
 must not implicitly broaden a remote execution scope.
 
+### Context Compaction Results
+
+The executor live-item cache must retain compaction start/completion status. Persisting an interrupted turn must preserve the incomplete result of an unfinished compaction.
+
+Only a compaction completion event can mark `context_compaction` successful. When a turn ends or the user stops it, an unfinished compaction displays “Context compaction did not complete”; ordinary block settlement must not mark it `done`. A completed compaction stays successful even if its containing turn is subsequently stopped.
+
+Interrupted compaction has not reduced the context, so the next turn may compact again. History refresh must not turn an interrupted attempt into a success; Codex history may omit unfinished attempts. The desktop `context-compaction` checkpoint covers successful compaction, interruption, history refresh, and subsequent compaction recovery.
+
 ### Web Search Tool Blocks
 
 A Codex web search may not include its query action in `item/started`; the final `action` can arrive only in `item/completed`. The executor must update the same block id, settle its status as `done`, and write the final `action` into `tool_input`. Otherwise Wework keeps showing a running web search whose expanded details are empty. Live events and historical transcripts must produce the same `web_search` tool block shape.
@@ -241,6 +273,19 @@ Pane caches and React components only restore and present those timing fields. A
 The collapsed tool activity preview shows at most three rows and follows the latest activity while no tool detail is expanded. Auto-scroll must react both to changes in the tool row count and to the bottom “Thinking” row appearing or disappearing. When a tool completes without changing the row count, the thinking row must remain inside the inner scroll area's visible range. Expanding a detail removes the preview height limit, so forced scrolling must not override the user's reading position in that state.
 
 ## Goal and Task Execution State
+
+Full goal updates must go through `syncRuntimeGoal`. This
+entry point reconciles the runtime goal with the conversation cache and projects
+the accepted status into the lifecycle, keeping the goal bar and sidebar on the
+same goal version. Do not write the cache and raw event status separately: when
+the cache rejects an older update, the lifecycle must retain the accepted state
+too. Valid updates with equal timestamps are accepted in arrival order, including
+pause, block, resume, objective, and usage changes. Snapshot request versions
+continue to isolate late asynchronous responses.
+
+The center dot in the sidebar running indicator represents only an `active`
+goal. Paused and blocked goals still exist but do not show this dot; its absence
+does not mean that no goal exists.
 
 The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.
 
@@ -352,6 +397,19 @@ Canonical `turns` are the frontend transcript's only input, so restoring a
 message only in the compatibility `messages` array is insufficient.
 
 ### Assistant In-Turn Display Order and Typography
+
+The running transcript cache serves existing messages when reopening a task or
+restoring a page. When a cached message has `runtimeItems`, canonical `turns`
+must use those items directly, preserving native item IDs, types, and order,
+including an empty array. Rebuilding items from presentation `content` and
+`blocks` changes the text identity to an aggregate message ID and moves it
+before process messages, so later deltas with the native ID create a second
+text segment. Text extraction must also preserve raw whitespace: trailing spaces
+or newlines in a snapshot can separate the next delta and must not be trimmed
+like metadata. The `streaming-content` E2E restores the page after a paragraph
+break in a partial plain-text response and then resumes output, checking cached
+items, text uniqueness, and process placement before completion as well as the
+final state.
 
 Final text, process text, and tool blocks within one assistant turn must be
 projected in runtime item arrival order. The UI must not group them by type and

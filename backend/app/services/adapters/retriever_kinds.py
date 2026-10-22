@@ -17,12 +17,10 @@ from app.models.namespace import Namespace
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.base import BaseService
-from app.services.capability_reference_service import (
-    get_referenced_capability,
-    list_referenced_capabilities,
-)
+from app.services.capability_reference_service import list_referenced_capabilities
 from app.services.group_permission import check_group_permission, get_user_groups
 from app.services.knowledge.namespace_utils import is_organization_namespace
+from shared.db.capability_reference import resolve_retriever_kind
 
 logger = logging.getLogger(__name__)
 
@@ -178,14 +176,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         """
         Get a specific retriever by name with public retriever fallback.
 
-        Query logic:
-        - If namespace='default': query with user_id filter (personal retriever),
-          fall back to public retriever (user_id=0) if not found
-        - If namespace!='default': query without user_id filter (group retriever),
-          fall back to public retriever if not found
-          Group retrievers may be created by other users in the same group.
-
-        Priority: personal/group retriever > public retriever
+        Resolution is shared with knowledge_runtime and keeps the previous
+        precedence: in ``default`` the caller's own Retriever precedes the
+        public Retriever, which precedes an approved capability reference; in a
+        group namespace the group's Retriever precedes an approved reference
+        and the public fallback. Group retrievers may be created by other users
+        in the same group.
 
         Args:
             db: Database session
@@ -209,68 +205,11 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                     status_code=403, detail="Access denied to this group"
                 )
 
-        # Query retriever with priority fallback
-        # For group resources (namespace != 'default'), don't filter by user_id
-        # since the retriever may be created by other users in the same group
-        kind = None
-
-        if namespace == "default":
-            # Personal retriever: filter by user_id, fallback to public (user_id=0)
-            kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.name == name,
-                    Kind.kind == "Retriever",
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,
-                )
-                .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-                .order_by(
-                    Kind.user_id.desc()
-                )  # Prioritize user's retriever (user_id > 0)
-                .first()
-            )
-            if not kind:
-                kind = get_referenced_capability(
-                    db,
-                    kind="Retriever",
-                    name=name,
-                    user_id=user_id,
-                    namespace=namespace,
-                )
-        else:
-            # Group retriever: no user_id filter
-            kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.name == name,
-                    Kind.kind == "Retriever",
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if not kind:
-                kind = get_referenced_capability(
-                    db,
-                    kind="Retriever",
-                    name=name,
-                    user_id=user_id,
-                    namespace=namespace,
-                )
-            # Fallback to public retriever if not found in group
-            if not kind:
-                kind = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == 0,
-                        Kind.name == name,
-                        Kind.kind == "Retriever",
-                        Kind.namespace == "default",
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
+        # One shared rule resolves direct, approved-reference and public
+        # retrievers, so the runtime loads the same Kind Backend authorized.
+        kind = resolve_retriever_kind(
+            db, name=name, namespace=namespace, user_id=user_id
+        )
 
         if not kind:
             raise HTTPException(status_code=404, detail="Retriever not found")

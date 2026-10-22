@@ -9,8 +9,8 @@ import type {
   WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
-  WorkspaceWorkflowPlan,
 } from "../ports/SharedWorkspaceApi";
+import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAssignment,
   CollaborationExecution,
@@ -69,63 +69,26 @@ export function mapWorkspaceTaskBindingDto(
     taskId: String(row.task_id ?? row.taskId ?? ""),
     taskTitle: nullableString(row.task_title ?? row.taskTitle),
     backendTaskId: nullableNumber(row.backend_task_id ?? row.backendTaskId),
+    humanAssignmentId: nullableString(
+      row.human_assignment_id ?? row.humanAssignmentId,
+    ),
+    dispatchId: nullableString(row.dispatch_id ?? row.dispatchId),
+    dispatchRoundId: nullableString(
+      row.dispatch_round_id ?? row.dispatchRoundId,
+    ),
+    assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
     modelSelection:
-      (row.modelSelection as Record<string, unknown> | null | undefined) ??
-      (row.model_selection as Record<string, unknown> | null | undefined) ??
+      (row.modelSelection as ModelSelectionConfig | null | undefined) ??
+      (row.model_selection as ModelSelectionConfig | null | undefined) ??
       null,
-    workflowNodeId: nullableString(row.workflow_node_id ?? row.workflowNodeId),
+    executionContext:
+      (row.executionContext as WorkspaceTaskBinding["executionContext"]) ??
+      (row.execution_context as WorkspaceTaskBinding["executionContext"]) ??
+      null,
     ...(bindingType === "system" || bindingType === "user"
       ? { bindingType }
       : {}),
     linkedAt: String(row.linked_at ?? row.linkedAt ?? ""),
-  };
-}
-
-export function mapWorkspaceWorkflowPlanDto(
-  input: WorkspaceDto,
-): WorkspaceWorkflowPlan {
-  const row = asRecord(input);
-  return {
-    runId: String(row.run_id ?? row.runId ?? ""),
-    issueId: String(row.issue_id ?? row.issueId ?? ""),
-    stageId: String(row.stage_id ?? row.stageId ?? ""),
-    planVersion: Number(row.plan_version ?? row.planVersion),
-    approvalPolicy:
-      (row.approval_policy ?? row.approvalPolicy) === "automatic"
-        ? "automatic"
-        : "required",
-    status: row.status as WorkspaceWorkflowPlan["status"],
-    summary: String(row.summary ?? ""),
-    items: Array.isArray(row.items)
-      ? row.items.map((item) => ({ ...(item as Record<string, unknown>) }))
-      : [],
-    managerRun:
-      ((row.manager_run ?? row.managerRun) as
-        | Record<string, unknown>
-        | null
-        | undefined) ?? null,
-  };
-}
-
-export function mapWorkspaceWorkflowStageContextDto(
-  input: WorkspaceDto,
-): Record<string, unknown> & { compiledTaskInstruction: string } {
-  const row = asRecord(input);
-  const {
-    compiled_task_instruction: compiledTaskInstructionSnake,
-    compiledTaskInstruction: compiledTaskInstructionCamel,
-    ...context
-  } = row;
-  const compiledTaskInstruction =
-    compiledTaskInstructionCamel ?? compiledTaskInstructionSnake;
-  if (typeof compiledTaskInstruction !== "string") {
-    throw new TypeError(
-      "Workspace workflow stage context is missing compiled_task_instruction",
-    );
-  }
-  return {
-    ...context,
-    compiledTaskInstruction,
   };
 }
 
@@ -282,18 +245,28 @@ export function mapCollaborationWorkspaceDto(
   return {
     id: String(row.id),
     location: "cloud",
+    ...((row.owner_user_id ?? row.ownerUserId) === undefined
+      ? {}
+      : { owner_user_id: Number(row.owner_user_id ?? row.ownerUserId) }),
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     namespace: String(row.namespace ?? "default"),
-    access_role: (row.access_role ??
-      row.accessRole ??
-      "Member") as CollaborationWorkspace["access_role"],
+    access_role: ((row.access_role ?? row.accessRole) === "Reporter"
+      ? "Viewer"
+      : (row.access_role ??
+        row.accessRole ??
+        "Viewer")) as CollaborationWorkspace["access_role"],
     member_count: Number(row.member_count ?? row.memberCount ?? 0),
     agent_count: Number(row.agent_count ?? row.agentCount ?? 0),
     execution_environment_count: Number(
       row.execution_environment_count ?? row.executionEnvironmentCount ?? 0,
     ),
     execution_environment: {
+      workspace_policy:
+        (executionEnvironment.workspace_policy ??
+          executionEnvironment.workspacePolicy) === "project"
+          ? "project"
+          : "git_worktree",
       repositories: Array.isArray(repositories)
         ? repositories.map((value) => {
             const repository = asRecord(value);
@@ -374,12 +347,14 @@ export function mapCollaborationExecutionEnvironmentDto(
     row.device_id ?? row.deviceId ?? row.resource_id ?? row.resourceId,
   );
   const deviceKey = nullableString(row.device_key ?? row.deviceKey);
+  const appDeviceId = nullableString(row.app_device_id ?? row.appDeviceId);
   const ownerType =
     (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
   return {
     id: String(resourceId ?? deviceId ?? deviceKey ?? row.id),
     ...(deviceId == null ? {} : { device_id: deviceId }),
     ...(deviceKey == null ? {} : { device_key: deviceKey }),
+    ...(appDeviceId == null ? {} : { app_device_id: appDeviceId }),
     name: String(row.name ?? ""),
     kind:
       (row.kind ?? row.environment_type ?? row.environmentType) === "cloud_host"
@@ -393,6 +368,10 @@ export function mapCollaborationExecutionEnvironmentDto(
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
     status: (row.status ??
       "offline") as CollaborationExecutionEnvironment["status"],
+    can_use: (row.can_use ?? row.canUse) !== false,
+    unavailable_reason: nullableString(
+      row.unavailable_reason ?? row.unavailableReason,
+    ),
     updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
   };
 }
@@ -409,6 +388,7 @@ export function mapCollaborationOwnedAgentDto(
     (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
   return {
     id: String(resourceId ?? teamId ?? row.id),
+    can_edit: (row.can_edit ?? row.canEdit) === true,
     name: String(row.name ?? ""),
     ...((row.agent_id ?? row.agentId)
       ? { agent_id: String(row.agent_id ?? row.agentId) }
@@ -491,7 +471,6 @@ export function mapCollaborationAssignmentDto(
     target_type: rawType === "agent" ? "agent" : "human",
     target_id: String(row.target_id ?? row.targetId ?? ""),
     target_name: String(row.target_name ?? row.targetName ?? ""),
-    workflow_step: nullableString(row.workflow_step ?? row.workflowStep),
     body: String(row.body ?? ""),
     comment_id: nullableString(row.comment_id ?? row.commentId),
     created_by_user_id: Number(

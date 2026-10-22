@@ -70,6 +70,57 @@ fn response_field_order_matches_schema() {
     assert!(body.contains(r#""created_at":"2026-09-02T09:41:03""#));
 }
 
+/// `serialize_updated_at`: the doc_row fixture's updated_at precedes its
+/// created_at, so the +8h repair applies (07:47:06 -> 15:47:06).
+#[test]
+fn legacy_naive_utc_updated_at_is_repaired() {
+    let item = serde_json::to_value(build_item(
+        doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1),
+        None,
+    ))
+    .unwrap();
+    assert_eq!(item["created_at"], "2026-09-02T09:41:03");
+    assert_eq!(item["updated_at"], "2026-09-02T15:47:06");
+}
+
+/// A non-legacy updated_at (at or after created_at) passes through as-is.
+#[test]
+fn updated_at_at_or_after_created_at_is_unchanged() {
+    let mut row = doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1);
+    row.knowledge_documents_updated_at = row.knowledge_documents_created_at;
+    let item = serde_json::to_value(build_item(row, None)).unwrap();
+    assert_eq!(item["updated_at"], "2026-09-02T09:41:03");
+
+    // A gap larger than 8h cannot be repaired to a valid value and stays.
+    let mut row = doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1);
+    row.knowledge_documents_updated_at = Some(
+        chrono::NaiveDateTime::parse_from_str("2026-09-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+    );
+    let item = serde_json::to_value(build_item(row, None)).unwrap();
+    assert_eq!(item["updated_at"], "2026-09-01T00:00:00");
+}
+
+/// Exactly the +8h boundary: the repair must reach (not stay below)
+/// created_at to apply.
+#[test]
+fn updated_at_repair_requires_reaching_created_at() {
+    let mut row = doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1);
+    // created 09:41:03; updated 01:41:03 + 8h = 09:41:03 (equal, repaired).
+    row.knowledge_documents_updated_at = Some(
+        chrono::NaiveDateTime::parse_from_str("2026-09-02 01:41:03", "%Y-%m-%d %H:%M:%S").unwrap(),
+    );
+    let item = serde_json::to_value(build_item(row, None)).unwrap();
+    assert_eq!(item["updated_at"], "2026-09-02T09:41:03");
+
+    // One second earlier the repair stays below created_at and is dropped.
+    let mut row = doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1);
+    row.knowledge_documents_updated_at = Some(
+        chrono::NaiveDateTime::parse_from_str("2026-09-02 01:41:02", "%Y-%m-%d %H:%M:%S").unwrap(),
+    );
+    let item = serde_json::to_value(build_item(row, None)).unwrap();
+    assert_eq!(item["updated_at"], "2026-09-02T01:41:02");
+}
+
 #[test]
 fn normalized_splitter_config_uses_model_field_order() {
     let normalized = serde_json::to_value(normalize_splitter_config(&flat_splitter())).unwrap();
@@ -198,28 +249,126 @@ fn processing_error_invalid_payloads_are_hidden() {
 #[test]
 fn params_defaults_match_source() {
     let params =
-        parse_params(Some("210837"), None, None, None, None, None, None, None).expect("valid");
+        parse_params(210837, None, None, None, None, None, None, None, None).expect("valid");
     assert_eq!(params.knowledge_base_id, 210837);
     assert_eq!(params.sort_by, "createdAt");
     assert_eq!(params.sort_order, "desc");
     assert_eq!(params.limit, 50);
     assert_eq!(params.offset, 0);
     assert!(!params.include_subfolders);
-    assert!(parse_params(None, None, None, None, None, None, None, None).is_err());
-    assert!(parse_params(Some("abc"), None, None, None, None, None, None, None).is_err());
+    assert!(params.origin.is_none());
     assert!(
         parse_params(
-            Some("1"),
+            1,
             None,
             None,
             None,
             Some("bogus".to_string()),
             None,
             None,
+            None,
             None
         )
         .is_err()
     );
-    assert!(parse_params(Some("1"), None, None, None, None, None, Some("0"), None).is_err());
-    assert!(parse_params(Some("1"), Some("-1"), None, None, None, None, None, None).is_err());
+    assert!(parse_params(1, None, None, None, None, None, None, Some("0"), None).is_err());
+    assert!(parse_params(1, Some("-1"), None, None, None, None, None, None, None).is_err());
+    assert!(
+        parse_params(
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("bogus".to_string()),
+            None,
+            None
+        )
+        .is_err()
+    );
+    assert_eq!(
+        parse_params(
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("generated".to_string()),
+            None,
+            None
+        )
+        .unwrap()
+        .origin
+        .as_deref(),
+        Some("generated")
+    );
+}
+
+#[test]
+fn knowledge_base_id_sources_validate_like_fastapi() {
+    // The path endpoint requires a parsable id (`loc: ["path", ...]`).
+    assert_eq!(parse_knowledge_base_id_path("236829").unwrap(), 236829);
+    let error = parse_knowledge_base_id_path("abc").unwrap_err();
+    assert_eq!(
+        error.validation_detail(),
+        r#"[{"type":"int_parsing","loc":["path","knowledge_base_id"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"abc"}]"#
+    );
+    // The open endpoint requires the query parameter (`loc: ["query", ...]`).
+    assert_eq!(
+        parse_knowledge_base_id_query(Some("210837")).unwrap(),
+        210837
+    );
+    assert!(parse_knowledge_base_id_query(None).is_err());
+    assert!(parse_knowledge_base_id_query(Some("abc")).is_err());
+}
+
+#[test]
+fn list_response_field_order_matches_schema() {
+    let response = KnowledgeDocumentListResponse {
+        total: 3,
+        returned_count: 1,
+        limit: 500,
+        offset: 0,
+        has_more: true,
+        items: vec![build_item(
+            doc_row(flat_splitter(), StoredSourceConfig::default(), "success", 1),
+            Some("zhaoliu".to_string()),
+        )],
+    };
+    let body = serde_json::to_string(&response).unwrap();
+    assert!(body.starts_with(
+        r#"{"total":3,"returned_count":1,"limit":500,"offset":0,"has_more":true,"items":[{"id":1"#
+    ));
+    // The doc_row fixture's updated_at is a legacy naive UTC value; the
+    // serializer repair renders it +8h.
+    assert!(body.ends_with(r#""updated_at":"2026-09-02T15:47:06"}]}"#));
+}
+
+#[test]
+fn false_like_escape_matches_source() {
+    assert_eq!(escape_sql_like("a%b_c\\d"), "a\\%b\\_c\\\\d");
+    assert_eq!(mysql_string_literal("a\\%b"), "'a\\\\%b'");
+}
+
+/// A recorded `splitter_config` of `{}` (392 of 430 rows in the offset-500
+/// case) must decode and normalize to the flat default, not fail the row.
+#[test]
+fn empty_splitter_config_decodes_to_flat_default() {
+    let stored: StoredSplitterConfig =
+        serde_json::from_str("{}").expect("empty splitter config decodes");
+    let value = serde_json::to_value(normalize_splitter_config(&stored)).unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "chunk_strategy": "flat",
+            "format_enhancement": "none",
+            "flat_config": {"chunk_size": 1024, "chunk_overlap": 200, "separator": "\n\n"},
+            "hierarchical_config": null,
+            "semantic_config": null,
+            "markdown_enhancement": {"enabled": false},
+            "legacy_type": null,
+        })
+    );
 }

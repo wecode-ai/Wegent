@@ -12,7 +12,6 @@ import {
 } from '@/lib/workspace-file-contract'
 import { requestLocalExecutor } from './localExecutor'
 
-const WORKSPACE_ROOTS_ENV = 'WEGENT_WORKSPACE_ROOTS'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 
 function assertCommandSuccess(response: DeviceCommandResponse, fallbackMessage: string): void {
@@ -21,29 +20,20 @@ function assertCommandSuccess(response: DeviceCommandResponse, fallbackMessage: 
   }
 }
 
-function executeWorkspaceCommand(
-  workspaceRoot: string,
-  params: {
-    command_key: string
-    path: string
-    args?: string[]
-    timeout_seconds: number
-    max_output_bytes: number
-  }
-): Promise<DeviceCommandResponse> {
-  return requestLocalExecutor<DeviceCommandResponse>('device.execute_command', {
-    ...params,
-    env: {
-      [WORKSPACE_ROOTS_ENV]: workspaceRoot,
-    },
-  })
+function executeWorkspaceCommand(params: {
+  command_key: string
+  path: string
+  args?: string[]
+  timeout_seconds: number
+  max_output_bytes: number
+}): Promise<DeviceCommandResponse> {
+  return requestLocalExecutor<DeviceCommandResponse>('device.execute_command', params)
 }
 
 export async function listLocalWorkspaceEntries(
-  workspaceRoot: string,
   directoryPath: string
 ): Promise<WorkspaceTreeResponse> {
-  const response = await executeWorkspaceCommand(workspaceRoot, {
+  const response = await executeWorkspaceCommand({
     command_key: 'workspace_tree',
     path: directoryPath,
     timeout_seconds: 15,
@@ -54,11 +44,10 @@ export async function listLocalWorkspaceEntries(
 }
 
 export async function readLocalWorkspaceTextFile(
-  workspaceRoot: string,
   filePath: string
 ): Promise<WorkspaceTextFileResponse> {
   const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-  const response = await executeWorkspaceCommand(workspaceRoot, {
+  const response = await executeWorkspaceCommand({
     command_key: 'workspace_read_text_file',
     path: parentPath,
     args: [fileName],
@@ -70,12 +59,11 @@ export async function readLocalWorkspaceTextFile(
 }
 
 export async function readLocalWorkspaceFileChunk(
-  workspaceRoot: string,
   filePath: string,
   offset: number
 ): Promise<WorkspaceFileChunkResponse> {
   const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-  const response = await executeWorkspaceCommand(workspaceRoot, {
+  const response = await executeWorkspaceCommand({
     command_key: 'workspace_read_file_chunk',
     path: parentPath,
     args: [fileName, String(offset)],

@@ -17,18 +17,29 @@ import type {
 } from "@wegent/chat-core/runtime";
 export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
 import { hasImplementationPlanText } from "@wegent/chat-core/runtime-user-input";
+import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
 
 interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
+  compact?: boolean;
   disabled?: boolean;
   onSubmit?: (
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
   onIgnore?: () => void;
+  onOpenAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
 }
 
-export function RequestUserInputCard({
+export function RequestUserInputCard(props: RequestUserInputCardProps) {
+  if (props.payload.interactionKind === "mcp_url") {
+    return <McpUrlAuthorizationCard {...props} />;
+  }
+  return <RequestUserInputForm {...props} />;
+}
+
+function RequestUserInputForm({
   payload,
+  compact = false,
   disabled = false,
   onSubmit,
   onIgnore,
@@ -41,6 +52,11 @@ export function RequestUserInputCard({
     [payload, t],
   );
   const isImplementationPlanRequest = isImplementationPlanQuestions(questions);
+  const optionOnly =
+    compact &&
+    questions.length === 1 &&
+    questions[0].options.length > 0 &&
+    !questions[0].allowCustom;
   const [selectedAnswers, setSelectedAnswers] = useState<
     Record<string, string>
   >(() => initialAnswers(questions));
@@ -146,18 +162,20 @@ export function RequestUserInputCard({
 
   const actionControls = (
     <>
-      <button
-        type="button"
-        data-testid="request-user-input-ignore-button"
-        disabled={isDisabled || !onIgnore}
-        onClick={onIgnore}
-        className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
-      >
-        {t("request_user_input.ignore")}
-        <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
-          ESC
-        </kbd>
-      </button>
+      {(!compact || onIgnore) && (
+        <button
+          type="button"
+          data-testid="request-user-input-ignore-button"
+          disabled={isDisabled || !onIgnore}
+          onClick={onIgnore}
+          className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
+        >
+          {t("request_user_input.ignore")}
+          <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
+            ESC
+          </kbd>
+        </button>
+      )}
       <button
         type="button"
         data-testid="request-user-input-submit-button"
@@ -180,7 +198,12 @@ export function RequestUserInputCard({
       onSubmit={handleFormSubmit}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
-      className="mx-auto flex max-h-[min(60dvh,36rem)] w-full max-w-2xl flex-col rounded-2xl border border-border/70 bg-base px-3 py-3 shadow-sm"
+      className={cn(
+        "mx-auto flex max-h-[min(60dvh,36rem)] w-full max-w-2xl flex-col px-3 py-3",
+        compact
+          ? "rounded-lg bg-muted/70"
+          : "rounded-2xl border border-border/70 bg-base shadow-sm",
+      )}
     >
       <div
         data-testid="request-user-input-questions"
@@ -200,7 +223,12 @@ export function RequestUserInputCard({
                 </div>
               ) : null}
               {question.options.length > 0 ? (
-                <div className="flex flex-col gap-1">
+                <div
+                  className={cn(
+                    "flex",
+                    compact ? "flex-wrap gap-2" : "flex-col gap-1",
+                  )}
+                >
                   {question.options.map((option, index) => {
                     const isSelected =
                       selectedAnswers[question.id] === option.value &&
@@ -214,21 +242,26 @@ export function RequestUserInputCard({
                         disabled={isDisabled}
                         onClick={() => selectOption(question, option)}
                         className={cn(
-                          "flex min-h-9 w-full min-w-0 items-start gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition-colors",
+                          "flex min-w-0 items-start gap-2.5 px-2.5 py-1.5 text-left transition-colors",
+                          compact
+                            ? "min-h-11 rounded-md border border-border md:min-h-7"
+                            : "min-h-9 w-full rounded-xl",
                           isSelected ? "bg-muted" : "hover:bg-muted/70",
                           isDisabled && "cursor-not-allowed opacity-60",
                         )}
                       >
-                        <span
-                          className={cn(
-                            "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none",
-                            isSelected
-                              ? "bg-text-primary text-background"
-                              : "bg-muted text-text-muted",
-                          )}
-                        >
-                          {index + 1}
-                        </span>
+                        {!compact && (
+                          <span
+                            className={cn(
+                              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none",
+                              isSelected
+                                ? "bg-text-primary text-background"
+                                : "bg-muted text-text-muted",
+                            )}
+                          >
+                            {index + 1}
+                          </span>
+                        )}
                         <span className="min-w-0 flex-1 whitespace-normal break-words">
                           <span className="text-sm font-medium leading-5 text-text-primary">
                             {option.label}
@@ -272,9 +305,11 @@ export function RequestUserInputCard({
           ))}
         </div>
       </div>
-      <div className="mt-2 flex shrink-0 items-center justify-end gap-2">
-        {actionControls}
-      </div>
+      {!optionOnly && (
+        <div className="mt-2 flex shrink-0 items-center justify-end gap-2">
+          {actionControls}
+        </div>
+      )}
     </form>
   );
 }
@@ -304,6 +339,16 @@ export function RequestUserInputSummary({
     };
   });
 
+  if (payload.interactionKind === "mcp_url") {
+    return (
+      <div
+        data-testid="request-user-input-summary"
+        className="text-sm text-text-secondary"
+      >
+        {t("request_user_input.url_summary")}
+      </div>
+    );
+  }
   if (rows.length === 0) return null;
 
   return (

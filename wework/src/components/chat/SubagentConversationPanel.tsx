@@ -189,6 +189,7 @@ export function SubagentConversationPanel({
                       forceExpanded
                       processingPhase={message.status === 'streaming' ? 'live' : 'final'}
                       showSummary={false}
+                      showThinkingBlocks
                       stateKey={`subagent-transcript:${block.id}:${message.id}`}
                       onOpenWorkspaceFile={onOpenWorkspaceFile}
                       onOpenSubagent={onOpenSubagent}
@@ -213,6 +214,7 @@ export function SubagentConversationPanel({
               forceExpanded
               processingPhase={isRunning ? 'live' : 'final'}
               showSummary={false}
+              showThinkingBlocks
               stateKey={`subagent-panel:${block.id}`}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onOpenSubagent={onOpenSubagent}

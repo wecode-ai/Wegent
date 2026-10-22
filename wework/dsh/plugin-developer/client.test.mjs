@@ -130,7 +130,7 @@ test('documents and demonstrates every extension point declared by the Wework ho
   const catalog = await readFile(new URL('references/extension-points.md', pluginRoot), 'utf8')
   const demo = await readFile(new URL('assets/ui-extension-demo/client.js', pluginRoot), 'utf8')
   const declarationBlock = hostSource.match(
-    /const SLOT_GROUPS = \{(?<body>[\s\S]*?)\n    \}\n    const SLOT_DECLARATIONS/
+    /const SLOT_GROUPS = \{(?<body>[\s\S]*?)\r?\n    \}\r?\n    const SLOT_DECLARATIONS/
   )?.groups?.body
   assert.ok(declarationBlock, 'The Wework host slot declarations could not be read')
 

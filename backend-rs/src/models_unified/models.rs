@@ -5,7 +5,7 @@
 //! Unified model aggregation, ported from
 //! `app/services/model_aggregation_service.py` and
 //! `app/services/adapters/public_model.py`.
-use crate::json_compat::raw_json;
+use brz_json::raw_json;
 use serde_json::{Map as JsonMap, Value as Json};
 
 pub const MODEL_TYPE_USER: &str = "user";
@@ -63,7 +63,8 @@ pub struct UnifiedModel {
     pub context_window: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub cost_index: Option<String>,
-    pub model_capabilities: Option<crate::json_compat::OpaqueJson>,
+    pub capability: Option<String>,
+    pub model_capabilities: Option<brz_json::OpaqueJson>,
     pub resource_id: Option<i64>,
     pub resource_user_id: Option<i64>,
     pub created_at: Option<String>,
@@ -120,9 +121,11 @@ impl UnifiedModel {
             context_window: self.context_window,
             max_output_tokens: self.max_output_tokens,
             cost_index: self.cost_index,
-            model_capabilities: self.model_capabilities.as_ref().map(|value| {
-                serde_json::value::to_raw_value(value).expect("capabilities serialize")
-            }),
+            capability: self.capability,
+            model_capabilities: self
+                .model_capabilities
+                .as_ref()
+                .map(|value| brz_json::to_raw_value(value).expect("capabilities serialize")),
             runtime,
             config: raw_json(&serde_json::Value::Object(safe_config)),
             created_at: self.created_at,
@@ -156,9 +159,10 @@ pub struct UnifiedModelResponse {
     context_window: Option<i64>,
     max_output_tokens: Option<i64>,
     cost_index: Option<String>,
-    model_capabilities: Option<Box<serde_json::value::RawValue>>,
+    capability: Option<String>,
+    model_capabilities: Option<brz_json::RawJson>,
     runtime: ModelRuntimeResponse,
-    config: Box<serde_json::value::RawValue>,
+    config: brz_json::RawJson,
     #[serde(rename = "created_at")]
     created_at: Option<String>,
     #[serde(rename = "updated_at")]
@@ -191,6 +195,7 @@ pub struct ModelInfo {
     pub context_window: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub cost_index: Option<String>,
+    pub capability: Option<String>,
     pub model_capabilities: Option<ModelCapabilities>,
 }
 
@@ -208,6 +213,7 @@ fn default_info() -> ModelInfo {
         context_window: None,
         max_output_tokens: None,
         cost_index: None,
+        capability: None,
         model_capabilities: None,
     }
 }
@@ -243,14 +249,27 @@ pub fn extract_model_info(model_data: &Json) -> ModelInfo {
     let model_category_type = spec
         .get("modelType")
         .and_then(Json::as_str)
+        .or_else(|| model_config.get("modelType").and_then(Json::as_str))
         .unwrap_or("llm")
         .to_string();
+    if model_category_type == "decision"
+        && crate::decisions::validate_spec(&Json::Object(spec.clone())).is_err()
+    {
+        return default_info();
+    }
 
     let mut config: JsonMap<String, Json> = model_config
         .iter()
         .filter(|(key, _)| key.as_str() != "modelCapabilities")
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
+
+    // `_extract_model_info_from_crd` folds the codex catalog id into the config
+    // before the catalog normalization, then appends protocol/apiFormat.
+    if let Some(catalog_id) = codex_catalog_model_id_from_config(&env) {
+        config.insert("codex_catalog_model_id".into(), Json::String(catalog_id));
+    }
+    config = wework_model_catalog_config(config);
 
     if let Some(protocol) = str_field(spec, "protocol") {
         config.insert("protocol".into(), Json::String(protocol));
@@ -313,6 +332,7 @@ pub fn extract_model_info(model_data: &Json) -> ModelInfo {
             spec.get("maxOutputTokens"),
         ),
         cost_index: str_field(spec, "costIndex"),
+        capability: capability_description(spec.get("capability")),
         model_capabilities,
     }
 }
@@ -331,6 +351,138 @@ fn token_limit(
         Json::Number(number) => number.as_i64(),
         _ => None,
     }
+}
+
+/// `get_model_capability_description`: read a model summary from a text value
+/// or existing publication metadata (`{"description": "..."}`).
+fn capability_description(capability: Option<&Json>) -> Option<String> {
+    match capability? {
+        Json::String(value) => Some(value.clone()),
+        Json::Object(map) => map
+            .get("description")
+            .and_then(Json::as_str)
+            .map(ToOwned::to_owned),
+        _ => None,
+    }
+}
+
+/// Python truthiness for the `a or b` fallback used by the catalog options.
+fn json_truthy(value: &Json) -> bool {
+    match value {
+        Json::Null => false,
+        Json::Bool(value) => *value,
+        Json::Number(number) => number.as_f64().map(|value| value != 0.0).unwrap_or(true),
+        Json::String(value) => !value.is_empty(),
+        Json::Array(value) => !value.is_empty(),
+        Json::Object(value) => !value.is_empty(),
+    }
+}
+
+/// `shared.codex_model_catalog.codex_catalog_model_id_from_config`: the first
+/// non-empty, trimmed string catalog id across the snake_case and camelCase
+/// keys.
+fn codex_catalog_model_id_from_config(env: &JsonMap<String, Json>) -> Option<String> {
+    for key in ["codex_catalog_model_id", "codexCatalogModelId"] {
+        if let Some(value) = env.get(key).and_then(Json::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `wework_model_config.REASONING_VALUES`.
+const REASONING_EFFORT_VALUES: [&str; 8] = [
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+const REASONING_SUMMARY_VALUES: [&str; 3] = ["auto", "concise", "detailed"];
+
+/// `wework_model_config.CODEX_REQUEST_MODES`.
+const CODEX_REQUEST_MODES: [&str; 3] = ["auto", "standard", "passthrough"];
+
+/// `wework_model_config.wework_model_catalog_config`: drop an invalid
+/// `codex_request_mode`, then merge the derived catalog options. The CRD itself
+/// is not modified because the caller works on its own config copy.
+fn wework_model_catalog_config(mut model_config: JsonMap<String, Json>) -> JsonMap<String, Json> {
+    let valid_mode = matches!(
+        model_config.get("codex_request_mode"),
+        Some(Json::String(mode)) if CODEX_REQUEST_MODES.contains(&mode.as_str())
+    );
+    if !valid_mode {
+        model_config.remove("codex_request_mode");
+    }
+    for (key, value) in wework_model_config_options(&model_config) {
+        model_config.insert(key, value);
+    }
+    model_config
+}
+
+/// `wework_model_config.wework_model_config_options`: the supported reasoning
+/// and request-policy fields derived from the model config and its env.
+fn wework_model_config_options(model_config: &JsonMap<String, Json>) -> JsonMap<String, Json> {
+    let env = model_config.get("env").and_then(Json::as_object);
+    let mut options = JsonMap::new();
+
+    let reasoning = env
+        .and_then(|env| {
+            // `env.get("thinking_config") or env.get("thinkingConfig")`: the
+            // snake_case alias wins only while it is truthy, matching Python's
+            // `or` rather than key presence.
+            env.get("thinking_config")
+                .filter(|value| json_truthy(value))
+                .or_else(|| env.get("thinkingConfig"))
+        })
+        .and_then(Json::as_object)
+        .and_then(|thinking| thinking.get("reasoning"))
+        .and_then(Json::as_object);
+    if let Some(reasoning) = reasoning {
+        let mut safe = JsonMap::new();
+        for (key, allowed) in [
+            ("effort", &REASONING_EFFORT_VALUES[..]),
+            ("summary", &REASONING_SUMMARY_VALUES[..]),
+        ] {
+            if let Some(value) = reasoning.get(key).and_then(Json::as_str) {
+                let normalized = value.trim().to_lowercase();
+                if allowed.contains(&normalized.as_str()) {
+                    safe.insert(key.to_string(), Json::String(normalized));
+                }
+            }
+        }
+        if !safe.is_empty() {
+            options.insert("reasoning".into(), Json::Object(safe));
+        }
+    }
+
+    let mode = model_config
+        .get("codex_request_mode")
+        .and_then(Json::as_str);
+    if let Some(mode) = mode
+        && CODEX_REQUEST_MODES.contains(&mode)
+    {
+        options.insert("codex_request_mode".into(), Json::String(mode.to_string()));
+    }
+
+    for (key, alias) in [
+        ("native_tool_search", "nativeToolSearch"),
+        ("native_namespace_tools", "nativeNamespaceTools"),
+    ] {
+        for source in [Some(model_config), env] {
+            let Some(source) = source else { continue };
+            if let Some(Json::Bool(value)) = source.get(key).or_else(|| source.get(alias)) {
+                options.insert(key.into(), Json::Bool(*value));
+                break;
+            }
+        }
+        if let Some(mode) = mode
+            && matches!(mode, "standard" | "passthrough")
+        {
+            options.insert(key.into(), Json::Bool(mode == "passthrough"));
+        }
+    }
+
+    options
 }
 
 /// Normalize capability maps to the canonical `{supportsImage, supportsVideo}`
@@ -353,7 +505,7 @@ fn normalize_capabilities(value: Json) -> Option<ModelCapabilities> {
         #[serde(rename = "supportsVideo")]
         supports_video: Option<bool>,
     }
-    let input = crate::json_compat::JsonProjection::<Input>::from(value).value?;
+    let input = brz_json::JsonProjection::<Input>::from(value).value?;
     let capabilities = ModelCapabilities {
         supports_image: input.supports_image,
         supports_video: input.supports_video,
@@ -362,7 +514,7 @@ fn normalize_capabilities(value: Json) -> Option<ModelCapabilities> {
         .then_some(capabilities)
 }
 
-impl From<ModelCapabilities> for crate::json_compat::OpaqueJson {
+impl From<ModelCapabilities> for brz_json::OpaqueJson {
     fn from(value: ModelCapabilities) -> Self {
         serde_json::to_value(value)
             .expect("capabilities serialize")
@@ -423,11 +575,15 @@ pub fn is_codex_compatible_config(config: &JsonMap<String, Json>) -> bool {
 }
 
 pub fn is_model_compatible_with_shell(
+    category: &str,
     provider: Option<&str>,
     shell_type: &str,
     support_model: &[String],
     config: &JsonMap<String, Json>,
 ) -> bool {
+    if category == "decision" {
+        return false;
+    }
     let provider = provider.unwrap_or_default();
     if !support_model.is_empty() && !support_model.iter().any(|item| item == provider) {
         return false;
@@ -461,6 +617,7 @@ mod json_contract_tests {
                             is_active:populated,namespace:"default".into(),model_category_type:"llm".into(),is_advanced:populated,
                             model_group:optional.map(str::to_owned),model_sub_group:optional.map(str::to_owned),
                             context_window:populated.then_some(0),max_output_tokens:populated.then_some(1024),cost_index:optional.map(str::to_owned),
+                            capability:optional.map(str::to_owned),
                             model_capabilities:populated.then(|| json!({"images":true}).into()),resource_id:populated.then_some(9),resource_user_id:populated.then_some(0),
                             created_at:optional.map(str::to_owned),updated_at:optional.map(str::to_owned),is_reference };
                         output.push(
@@ -607,5 +764,59 @@ mod model_spec_contracts {
         assert!(info.config.is_empty());
         assert_eq!(info.provider, None);
         assert_eq!(info.context_window, None);
+    }
+
+    #[test]
+    fn reasoning_options_come_from_env_thinking_config() {
+        // `wework_model_config_options` derives `reasoning` from
+        // `env.thinking_config.reasoning`, keeping only the allowlisted keys
+        // and normalizing their values.
+        let info = extract_model_info(&spec(
+            json!({"env": {"model": "openai", "thinking_config": {"reasoning": {"effort": "HIGH", "summary": "bogus"}}}}),
+            json!({}),
+        ));
+        assert_eq!(
+            info.config.get("reasoning"),
+            Some(&json!({"effort": "high"}))
+        );
+    }
+
+    #[test]
+    fn thinking_config_alias_falls_back_like_a_python_or() {
+        // An empty snake_case alias is falsy, so the camelCase alias wins.
+        let info = extract_model_info(&spec(
+            json!({"env": {"thinking_config": {}, "thinkingConfig": {"reasoning": {"summary": "auto"}}}}),
+            json!({}),
+        ));
+        assert_eq!(
+            info.config.get("reasoning"),
+            Some(&json!({"summary": "auto"}))
+        );
+    }
+
+    #[test]
+    fn an_invalid_codex_request_mode_is_dropped() {
+        // `wework_model_catalog_config` omits an unsupported request mode
+        // instead of failing the whole extraction.
+        let info = extract_model_info(&spec(
+            json!({"env": {}, "codex_request_mode": "weird"}),
+            json!({}),
+        ));
+        assert!(info.config.get("codex_request_mode").is_none());
+    }
+
+    #[test]
+    fn capability_description_reads_text_or_publication_metadata() {
+        let text = extract_model_info(&spec(json!({"env": {}}), json!({"capability": "fast"})));
+        assert_eq!(text.capability.as_deref(), Some("fast"));
+
+        let metadata = extract_model_info(&spec(
+            json!({"env": {}}),
+            json!({"capability": {"description": "vision"}}),
+        ));
+        assert_eq!(metadata.capability.as_deref(), Some("vision"));
+
+        let absent = extract_model_info(&spec(json!({"env": {}}), json!({})));
+        assert_eq!(absent.capability, None);
     }
 }

@@ -1,5 +1,15 @@
 import { spawn } from 'node:child_process'
-import { access, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
@@ -16,6 +26,7 @@ const SNAPSHOT_FILES = [
 export const IMMUTABLE_CORE_DSH_PLUGINS = new Set([
   '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-web-app',
+  '@wework/dsh-browser-auth',
   '@wegent/dsh-app-wework',
   '@wegent/dsh-electron-host',
   '@wegent/dsh-executor-runtime',
@@ -358,22 +369,49 @@ export class CoreDshPluginManager {
   private async runPnpm(args: string[]): Promise<void> {
     const command = this.options.nodeCommand
     const pnpmEntry = join(this.options.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+    const commandArgs = runtimeNodeArgs(this.options.environment, [
+      pnpmEntry,
+      '--store-dir',
+      join(this.options.dshHome, 'pnpm-store'),
+      ...args,
+    ])
+    await this.logManagedAssets('before-pnpm')
     try {
-      await this.runCommand(
-        command,
-        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
-        this.pnpmCommandOptions()
-      )
+      await this.runCommand(command, commandArgs, this.pnpmCommandOptions())
     } catch (error) {
       const matcher = parseBlockedBuildMatcher(commandOutput(error))
       if (!matcher) throw commandError('pnpm', error)
       await allowBuild(this.profileRoot, matcher)
-      await this.runCommand(
-        command,
-        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
-        this.pnpmCommandOptions()
-      ).catch(reason => {
+      await this.runCommand(command, commandArgs, this.pnpmCommandOptions()).catch(reason => {
         throw commandError('pnpm', reason)
+      })
+    } finally {
+      await this.logManagedAssets('after-pnpm')
+    }
+  }
+
+  private async logManagedAssets(stage: string): Promise<void> {
+    if (process.platform !== 'win32' || this.options.environment.VITE_WEWORK_E2E !== 'true') return
+    try {
+      const manifest = await this.readManifest()
+      const spec = manifest.dependencies?.['@wegent/dsh-app-wework']
+      if (!spec?.startsWith('file:')) return
+      const path = resolve(this.profileRoot, spec.slice('file:'.length), 'web', 'assets')
+      const result = await readdir(path).then(
+        entries => ({ fileCount: entries.length }),
+        error => ({ errorCode: (error as NodeJS.ErrnoException).code })
+      )
+      console.info('[core-dsh-plugins-assets]', {
+        stage,
+        path,
+        ...result,
+        target: await readlink(path).catch(error => ({ errorCode: error.code })),
+        resolved: await realpath(path).catch(error => ({ errorCode: error.code })),
+      })
+    } catch (error) {
+      console.info('[core-dsh-plugins-assets]', {
+        stage,
+        errorCode: (error as NodeJS.ErrnoException).code,
       })
     }
   }
@@ -395,6 +433,8 @@ export class CoreDshPluginManager {
 
   private async writeDevelopmentPatch(sourceRoot: string): Promise<void> {
     const patch = [
+      '- id: client-hmr',
+      '  disabled: false',
       '- id: hmr',
       '  disabled: false',
       '  config:',

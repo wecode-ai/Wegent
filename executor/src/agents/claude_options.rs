@@ -54,6 +54,17 @@ pub(super) fn merge_claude_mcp_servers(
     Ok(servers)
 }
 
+pub(super) fn extract_claude_mcp_templates(
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    convert_mcp_servers_to_dict(&Value::Array(collect_mcp_servers_for_claude(
+        request,
+        primary_bot(request),
+        global_mcps,
+    )))
+}
+
 pub fn extract_claude_options(
     request: &ExecutionRequest,
     global_mcps: &BTreeMap<String, Value>,
@@ -212,13 +223,30 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
     let Some(config) = server.as_object() else {
         return server.clone();
     };
-    let server_type = config.get("type").and_then(Value::as_str).map(|value| {
-        if value == "streamable-http" {
-            "http"
-        } else {
-            value
-        }
-    });
+    let server_type = config
+        .get("type")
+        .and_then(Value::as_str)
+        .map(|value| {
+            if value == "streamable-http" {
+                "http"
+            } else {
+                value
+            }
+        })
+        .or_else(|| {
+            if crate::mcp_utils::is_stdio_mcp_server(server) {
+                Some("stdio")
+            } else if config
+                .get("url")
+                .or_else(|| config.get("base_url"))
+                .and_then(Value::as_str)
+                .is_some_and(|url| !url.trim().is_empty())
+            {
+                Some("http")
+            } else {
+                None
+            }
+        });
 
     match server_type {
         Some("http" | "sse") => {
@@ -253,7 +281,7 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
             }
             Value::Object(normalized)
         }
-        Some("stdio") | None if config.contains_key("command") => {
+        Some("stdio") => {
             let mut normalized = Map::new();
             normalized.insert("type".to_owned(), Value::String("stdio".to_owned()));
             for key in ["command", "args", "env"] {
@@ -344,6 +372,20 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
 mod mcp_config_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn remote_mcp_empty_command_is_removed_and_url_alias_is_normalized() {
+        for command in [json!(""), json!(" \t"), Value::Null] {
+            for url_key in ["url", "base_url"] {
+                let mut server = json!({"command": command, "args": [], "env": {}});
+                server[url_key] = json!("https://example.test/mcp");
+                assert_eq!(
+                    normalize_mcp_server_for_claude(&server),
+                    json!({"type": "http", "url": "https://example.test/mcp"})
+                );
+            }
+        }
+    }
 
     #[test]
     fn followup_preserves_omitted_servers_and_replaces_matching_services_in_full() {

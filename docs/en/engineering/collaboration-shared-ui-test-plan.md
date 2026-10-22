@@ -25,6 +25,70 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Execution activity ordering regression
+
+Run `collaboration-local-agent-dispatch` and `collaboration-remote-agent-dispatch`
+in isolated Electron sessions with independent project and Issue fixtures. Mock
+only model responses; storage, scheduling, and executors remain real.
+
+1. Assign an Issue to one Agent and hold its model response. The in-progress
+   status event must precede the execution card.
+2. Release the response and wait for review. The completion status event must
+   precede the execution details, which must contain the actual result.
+3. For comment-triggered execution, retain the discussion at creation time and
+   place the execution card separately after its status event. Follow-up replies
+   retain their original discussion and session without duplicate execution.
+4. Persistence tests compare status events with activity timestamps, including
+   different subsecond precision within one second. Cover success, failure,
+   cancellation, and reconnect reconciliation; user discussions keep creation time.
+
+Execution cards use UTC `metadata.activity_at` recorded after the status change.
+Historical executions without this field use their stored update time at its
+original precision. Display and sorting use the same shared function. Stop the
+isolated Electron session after verification and retain runner logs and screenshots
+in the test-results directory without committing temporary artifacts.
+
+### Asynchronous save regressions found in the merge queue
+
+- `task-model-deletion` deletes a model through the real settings UI. When a native
+  notification supersedes the refresh after saving, save must wait for the final
+  snapshot before closing the editor. Select a replacement in the original task
+  and continue its existing conversation.
+- Web `settings-bot.spec.ts` must not submit creation before the real execution
+  engine catalog loads. Save shared base capabilities after loading, inspect Bot
+  and Team requests and persistence, and clean up the created resources.
+- Focused unit tests delay native refresh and execution engine responses to cover
+  these waits. Existing E2E assertions remain unchanged.
+
+### Execution duration timezone regression
+
+`collaboration-shared-core` runs the real Backend and isolated Electron with
+`TZ=Asia/Shanghai`. After the existing comment execution flow creates task bindings,
+return to Issue details and compare `issue-execution-duration` with the earliest valid
+binding time from the real `/loop-items/{id}/tasks` response, allowing one minute for rounding.
+A fresh execution must show minutes, without adding eight hours by interpreting a
+timezone-less UTC timestamp as local time. Unit tests cover explicit offsets, mixed
+timestamp ordering and invalid values; no duration is shown when all values are invalid.
+The existing cleanup archives the fixture project without touching user projects.
+
+Run: `pnpm --filter wework e2e:desktop --segment collaboration-shared-core`.
+
+Linux and macOS desktop build fingerprints must include `packages/collaboration`
+so shared UI changes cannot reuse stale artifacts. Cache script tests cover both
+adding and modifying shared-package files.
+
+Run the accompanying state regression with `e2e:desktop:cloud --segment model-routing`:
+after a real remote executor completes the text turn, the tool turn must execute and
+write its artifact instead of remaining queued behind a stale running snapshot. State
+tests replay a millisecond-precision start and a same-second, second-precision completion;
+the old snapshot must not revive the task, while a newer execution remains accepted.
+`e2e:desktop:cloud --segment goal-lifecycle` covers reading the mounted remote directory
+control and the complete Goal lifecycle. Mounting and value checks share the original
+step timeout; isolated devices and databases are cleaned up after each scenario.
+Executor task lists must preserve `goalExecutionStatus` so a restarted UI can recognize
+running or recovering Goals between turns. Response serialization tests cover running,
+recovering, needs-attention, and ordinary tasks without this field.
+
 This plan must prove more than “both hosts appear to work”:
 
 1. Wegent Web and Wework mount the same collaboration root component exported by

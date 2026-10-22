@@ -44,6 +44,11 @@ async fn get_task_skills(
     run(state, task_id, user.id).await
 }
 
+// Note (recording re-verification): this route was re-opened for re-verification
+// on 2026-10-11 after the recording-enabled startup-env override
+// (`WEGENT_RS_RECORDING_ENABLED=false`) was applied. Target behavior here is
+// unchanged; this note records why the round re-verifies.
+
 /// The endpoint flow after authentication.
 async fn run(
     state: &AppState,
@@ -51,7 +56,7 @@ async fn run(
     user_id: i64,
 ) -> Result<resolver::TaskSkills, HttpError> {
     // `task_store.get_active_task`.
-    let Some(task) = repo::get_active_task(&state.mysql, task_id)
+    let Some(task) = repo::get_active_task(&*state.task_store, task_id)
         .await
         .map_err(HttpError::dependency)?
     else {
@@ -91,7 +96,7 @@ async fn is_member(
     owner_user_id: i64,
     user_id: i64,
 ) -> Result<bool, HttpError> {
-    if repo::get_active_task(&state.mysql, task_id)
+    if repo::get_accessible_task(&*state.task_store, task_id)
         .await
         .map_err(HttpError::dependency)?
         .is_none()

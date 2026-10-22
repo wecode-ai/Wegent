@@ -30,7 +30,6 @@ jest.mock('@/features/layout/TopNavigation', () => ({
 
 jest.mock('@/features/tasks/components/sidebar', () => ({
   TaskSidebar: () => <div>task-sidebar</div>,
-  SearchDialog: () => <div>search-dialog</div>,
 }))
 
 jest.mock('@/features/theme/ThemeToggle', () => ({
@@ -73,12 +72,6 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
     taskState: null,
     selectTask: jest.fn(),
     refreshSelectedTaskDetail: jest.fn(),
-  }),
-}))
-
-jest.mock('@/features/tasks/hooks/useSearchShortcut', () => ({
-  useSearchShortcut: () => ({
-    shortcutDisplayText: 'Ctrl+K',
   }),
 }))
 

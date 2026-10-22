@@ -37,7 +37,7 @@ describe('createLocalProjectChatClient', () => {
     vi.useRealTimers()
   })
 
-  it('creates a comment and enqueues a robot run when an agent is mentioned', async () => {
+  it('persists a comment before explicitly preparing and enqueueing its run', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -45,10 +45,21 @@ describe('createLocalProjectChatClient', () => {
           metadata: { mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }] },
         })
       }
+      if (method === 'todos.comment.list')
+        return [
+          commentRecord({
+            content: '@Bot 跑一下',
+            metadata: { mentions: [{ type: 'agent', id: 'a1' }] },
+          }),
+        ]
       return {}
     })
     const client = createLocalProjectChatClient(request, {
       currentUser: { id: 0, user_name: 'local' },
+      prepareExecution: vi.fn(async ({ text }) => ({
+        message: text,
+        runnerRouting: { environment_id: 'local-device' },
+      })),
     })
 
     const message = await client.send({
@@ -59,6 +70,13 @@ describe('createLocalProjectChatClient', () => {
       mentions: [{ type: 'agent', id: 'a1', label: 'Bot' }],
     })
 
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+    await client.executeTaskComment!({
+      projectId: 'p1',
+      taskId: 't1',
+      triggerMessageId: message.messageId,
+      attachmentIds: [],
+    })
     expect(message.messageId).toBe('m-1')
     expect(request).toHaveBeenCalledWith(
       'todos.comment.create',
@@ -77,10 +95,55 @@ describe('createLocalProjectChatClient', () => {
       expect.objectContaining({
         agent_id: 'a1',
         trigger_message_id: 'm-1',
-        payload: expect.objectContaining({ text: '@Bot 跑一下' }),
+        payload: expect.objectContaining({
+          message: '@Bot 跑一下',
+          runnerRouting: { environment_id: 'local-device' },
+        }),
       })
     )
   })
+
+  it.each([undefined, 7])(
+    'queues replies using the persisted thread format (execution %s)',
+    async executionId => {
+      const root = commentRecord({
+        message_id: 'root',
+        sender_type: 'agent',
+        sender_id: 'a1',
+        thread_root_message_id: 'root',
+        metadata: {
+          runtime_address: { deviceId: 'runner-a', taskId: 'session' },
+          ...(executionId ? { execution_id: executionId } : {}),
+        },
+      })
+      const reply = commentRecord({
+        message_id: 'reply',
+        reply_to_message_id: 'root',
+        thread_root_message_id: 'root',
+      })
+      request.mockImplementation(async method =>
+        method === 'todos.comment.list' ? [root, reply] : {}
+      )
+      const prepareExecution = vi.fn(async () => ({
+        runnerRouting: { environment_id: 'runner-a' },
+      }))
+      const client = createLocalProjectChatClient(request, {
+        currentUser: { id: 0, user_name: 'local' },
+        prepareExecution,
+      })
+      await client.executeTaskComment!({
+        projectId: 'p1',
+        taskId: 't1',
+        triggerMessageId: 'reply',
+        attachmentIds: [],
+      })
+      expect(prepareExecution).toHaveBeenCalledTimes(executionId ? 0 : 1)
+      expect(request).toHaveBeenCalledWith(
+        'executions.enqueue',
+        expect.objectContaining({ agent_id: 'a1', trigger_message_id: 'reply' })
+      )
+    }
+  )
 
   it('does not enqueue a run without an agent mention', async () => {
     request.mockResolvedValue(commentRecord())
@@ -145,7 +208,7 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
-  it('carries the selected local code project into the comment and enqueue payload', async () => {
+  it('keeps the composer code project on the saved comment', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -179,12 +242,7 @@ describe('createLocalProjectChatClient', () => {
         }),
       })
     )
-    expect(request).toHaveBeenCalledWith(
-      'executions.enqueue',
-      expect.objectContaining({
-        payload: expect.objectContaining({ local_project_id: 91 }),
-      })
-    )
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
   it('delivers initial comments and polls for status updates', async () => {
@@ -225,6 +283,45 @@ describe('createLocalProjectChatClient', () => {
 
     expect(onMessage).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 'm-2', status: 'completed', content: '搞定' })
+    )
+    subscription.unsubscribe()
+  })
+
+  it('delivers metadata-only activity updates even within the same timestamp', async () => {
+    vi.useFakeTimers()
+    const planning = commentRecord({
+      sender_type: 'agent',
+      sender_id: 'leader',
+      sender_name: '负责人',
+      status: 'streaming',
+      metadata: { dispatch_role: 'manager', dispatch_assignments: [] },
+    })
+    const assigned = {
+      ...planning,
+      metadata: {
+        dispatch_role: 'manager',
+        dispatch_assignments: [{ task_title: '采集证据', agent_name: '执行智能体' }],
+      },
+    }
+    request.mockResolvedValueOnce([planning]).mockResolvedValueOnce([assigned])
+
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const onMessage = vi.fn()
+    const subscription = await client.subscribe('p1', 't1', 0, onMessage)
+    onMessage.mockClear()
+
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          dispatch_assignments: [
+            expect.objectContaining({ task_title: '采集证据', agent_name: '执行智能体' }),
+          ],
+        }),
+      })
     )
     subscription.unsubscribe()
   })

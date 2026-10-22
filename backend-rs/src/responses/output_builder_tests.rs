@@ -14,9 +14,9 @@ use serde_json::Value;
 
 fn chain_subtask(result: Value) -> SubtaskRow {
     SubtaskRow {
-        id: 429_771_607_670_244,
-        user_id: 3127,
-        task_id: 429_771_607_670_241,
+        id: 100_000_000_000_004,
+        user_id: 301,
+        task_id: 100_000_000_000_001,
         role: "ASSISTANT".to_string(),
         status: "COMPLETED".to_string(),
         result: Some(brz_mysql::Json(result.into())),
@@ -24,15 +24,25 @@ fn chain_subtask(result: Value) -> SubtaskRow {
 }
 
 fn serialized_items(subtask: &SubtaskRow) -> Vec<Value> {
-    build_output_items_for_subtask(subtask)
+    build_output_items_for_subtask(subtask, &test_config())
+        .expect("builds")
         .iter()
         .map(|item| serde_json::to_value(item).expect("serializable"))
         .collect()
 }
 
+/// A minimal `AuthConfig` for the generation download-URL signing.
+fn test_config() -> crate::config::AuthConfig {
+    crate::config::AuthConfig {
+        jwt_key: "test-key".to_string(),
+        legacy_jwt_keys: Vec::new(),
+        algorithm: "HS256".to_string(),
+    }
+}
+
 #[test]
 fn messages_chain_builds_one_message_per_assistant_entry() {
-    // Recorded case 0bb6eb20: the chain message carries a reasoning
+    // Message shape: the chain message carries a reasoning
     // block (text under `reasoning`) and a text block; only the text
     // block contributes, producing a single `msg_{id}_0` output message
     // with just the output_text content.
@@ -55,7 +65,7 @@ fn messages_chain_builds_one_message_per_assistant_entry() {
     });
     let items = serialized_items(&chain_subtask(result));
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["id"], "msg_429771607670244_0");
+    assert_eq!(items[0]["id"], "msg_100000000000004_0");
     assert_eq!(items[0]["content"].as_array().unwrap().len(), 1);
     assert_eq!(items[0]["content"][0]["type"], "output_text");
     assert_eq!(items[0]["content"][0]["text"], "final answer");
@@ -69,7 +79,7 @@ fn messages_chain_without_assistant_text_falls_back_to_value() {
     });
     let items = serialized_items(&chain_subtask(result));
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["id"], "msg_429771607670244");
+    assert_eq!(items[0]["id"], "msg_100000000000004");
     assert_eq!(items[0]["content"][0]["text"], "the value");
 }
 
@@ -85,14 +95,14 @@ fn no_chain_keeps_the_blocks_path() {
     // (`len(output)`), so the second message carries `_1`.
     assert_eq!(items.len(), 2);
     assert_eq!(items[0]["content"][0]["type"], "reasoning");
-    assert_eq!(items[0]["id"], "msg_429771607670244_0");
+    assert_eq!(items[0]["id"], "msg_100000000000004_0");
     assert_eq!(items[1]["content"][0]["type"], "output_text");
-    assert_eq!(items[1]["id"], "msg_429771607670244_1");
+    assert_eq!(items[1]["id"], "msg_100000000000004_1");
 }
 
 #[test]
 fn blocks_path_indexes_tool_items_into_message_ids() {
-    // Recorded case 53a36b98 shape: tool blocks and text blocks interleave;
+    // Interleaved content shape: tool blocks and text blocks interleave;
     // a message after tool items carries the item count as its index.
     let result = serde_json::json!({
         "value": "v",
@@ -106,13 +116,13 @@ fn blocks_path_indexes_tool_items_into_message_ids() {
     let items = serialized_items(&chain_subtask(result));
     assert_eq!(items.len(), 3);
     assert_eq!(items[0]["type"], "function_call");
-    assert_eq!(items[1]["id"], "msg_429771607670244_1");
-    assert_eq!(items[2]["id"], "msg_429771607670244_2");
+    assert_eq!(items[1]["id"], "msg_100000000000004_1");
+    assert_eq!(items[2]["id"], "msg_100000000000004_2");
 }
 
 #[test]
 fn chain_tool_calls_emit_tool_items_in_order() {
-    // Recorded case 8e0862f6 shape: one assistant chain entry with two
+    // Assistant content shape: one assistant chain entry with two
     // mcp tool calls followed by text; the mcp blocks provide protocol,
     // server_label, and tool_output. Item ids index the emitted output.
     let result = serde_json::json!({
@@ -120,7 +130,7 @@ fn chain_tool_calls_emit_tool_items_in_order() {
         "messages_chain": [{
             "role": "assistant",
             "tool_calls": [
-                {"id": "call_a", "function": {"name": "alertor-proxy-mcp_video_agent",
+                {"id": "call_a", "function": {"name": "example_video_tool",
                     "arguments": "{\"input\": \"alert\"}"}},
                 {"id": "call_b", "function": {"name": "wegent-knowledge_wegent-knowledge_wegent_kb_search_knowledge_base",
                     "arguments": "{\"knowledge_base_id\": 212868}"}}
@@ -129,7 +139,7 @@ fn chain_tool_calls_emit_tool_items_in_order() {
         }],
         "blocks": [
             {"id": "text-1", "type": "text", "status": "done", "content": "Analyze this alert."},
-            {"id": "call_a", "type": "tool", "status": "done", "tool_name": "alertor-proxy-mcp_video_agent",
+            {"id": "call_a", "type": "tool", "status": "done", "tool_name": "example_video_tool",
              "tool_protocol": "mcp_call", "server_label": "", "tool_use_id": "call_a",
              "tool_input": {"input": "alert"}, "tool_output": [{"id": "lc_1", "text": "example output", "type": "text"}]},
             {"id": "call_b", "type": "tool", "status": "done", "tool_name": "wegent-knowledge_wegent-knowledge_wegent_kb_search_knowledge_base",
@@ -148,13 +158,13 @@ fn chain_tool_calls_emit_tool_items_in_order() {
     assert_eq!(items[1]["type"], "mcp_call");
     assert_eq!(items[1]["id"], "call_b");
     assert_eq!(items[2]["type"], "message");
-    assert_eq!(items[2]["id"], "msg_429771607670244_2");
+    assert_eq!(items[2]["id"], "msg_100000000000004_2");
     assert_eq!(items[2]["content"][0]["text"], "Analyze this alert.");
 }
 
 #[test]
 fn shell_tool_call_builds_shell_item_from_arguments() {
-    // Recorded case b4aa819f shape: `exec` tool calls map to the
+    // Tool call shape: `exec` tool calls map to the
     // shell_call item with parsed commands and `input`.
     let result = serde_json::json!({
         "value": "",
@@ -194,14 +204,14 @@ fn function_call_uses_plain_item_shape() {
             "role": "assistant",
             "tool_calls": [{
                 "id": "call_fn",
-                "function": {"name": "load_skill", "arguments": "{\"skill_name\": \"live-outlook-skill\"}"}
+                "function": {"name": "load_skill", "arguments": "{\"skill_name\": \"example-skill\"}"}
             }],
             "content": []
         }],
         "blocks": [
             {"id": "call_fn", "type": "tool", "status": "done", "tool_name": "load_skill",
              "tool_protocol": "function_call", "tool_use_id": "call_fn",
-             "tool_input": {"skill_name": "live-outlook-skill"}}
+             "tool_input": {"skill_name": "example-skill"}}
         ]
     });
     let items = serialized_items(&chain_subtask(result));
@@ -210,15 +220,12 @@ fn function_call_uses_plain_item_shape() {
     assert_eq!(items[0]["id"], "call_fn");
     assert_eq!(items[0]["call_id"], "call_fn");
     assert_eq!(items[0]["name"], "load_skill");
-    assert_eq!(
-        items[0]["arguments"],
-        "{\"skill_name\": \"live-outlook-skill\"}"
-    );
+    assert_eq!(items[0]["arguments"], "{\"skill_name\": \"example-skill\"}");
 }
 
 #[test]
 fn chain_reasoning_only_entry_falls_back_to_bare_id_message() {
-    // Recorded case b4aa819f subtask 10445360621078: the chain entry
+    // Reasoning-only assistant entry: the chain entry
     // carries only a reasoning content block, so the message is built
     // from result.reasoning_content with the bare `msg_{id}` id.
     let result = serde_json::json!({
@@ -232,16 +239,16 @@ fn chain_reasoning_only_entry_falls_back_to_bare_id_message() {
             "content": "The user has multiple requests."}]
     });
     let subtask = SubtaskRow {
-        id: 10_445_360_621_078,
-        user_id: 76,
-        task_id: 10_445_360_621_073,
+        id: 100_000_000_000_008,
+        user_id: 301,
+        task_id: 100_000_000_000_003,
         role: "ASSISTANT".to_string(),
         status: "COMPLETED".to_string(),
         result: Some(brz_mysql::Json(result.into())),
     };
     let items = serialized_items(&subtask);
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["id"], "msg_10445360621078");
+    assert_eq!(items[0]["id"], "msg_100000000000008");
     assert_eq!(items[0]["content"][0]["type"], "reasoning");
     assert_eq!(
         items[0]["content"][0]["text"],
@@ -257,17 +264,17 @@ fn block_tool_items_render_from_tool_input() {
         "value": "",
         "messages_chain": [{"role": "tool", "content": "ok"}],
         "blocks": [
-            {"id": "call_m", "type": "tool", "status": "error", "tool_name": "statusServer_convertMid",
-             "tool_protocol": "mcp_call", "server_label": "status", "tool_use_id": "call_m",
-             "tool_input": {"mid": "RbO0njLRG"}, "tool_output": [{"id": "lc_3", "text": "5328138314712228", "type": "text"}]}
+            {"id": "call_m", "type": "tool", "status": "error", "tool_name": "example_lookup",
+             "tool_protocol": "mcp_call", "server_label": "example", "tool_use_id": "call_m",
+             "tool_input": {"mid": "Example01"}, "tool_output": [{"id": "lc_3", "text": "1000000000000001", "type": "text"}]}
         ]
     });
     let items = serialized_items(&chain_subtask(result));
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["type"], "mcp_call");
     assert_eq!(items[0]["status"], "failed");
-    assert_eq!(items[0]["server_label"], "status");
-    assert_eq!(items[0]["arguments"], "{\"mid\": \"RbO0njLRG\"}");
+    assert_eq!(items[0]["server_label"], "example");
+    assert_eq!(items[0]["arguments"], "{\"mid\": \"Example01\"}");
     assert_eq!(items[0]["output"][0]["id"], "lc_3");
 }
 
@@ -313,13 +320,15 @@ fn task_json() -> Value {
 #[test]
 fn converts_the_recorded_running_task() {
     let task = TaskRow {
-        id: 12_232_067_055_387,
-        user_id: 1001,
-        json: brz_mysql::Json(crate::json_compat::OpaqueJson::from(task_json())),
+        id: 100_000_000_000_011,
+        user_id: 301,
+        json: brz_mysql::Json(brz_json::OpaqueJson::from(task_json())),
         created_at: None,
     };
-    let response = task_to_response_object(&task, "example#example-team", &[], None);
-    assert_eq!(response.id, "resp_12232067055387");
+    let response =
+        task_to_response_object(&task, "example#example-team", &[], None, &test_config())
+            .expect("builds");
+    assert_eq!(response.id, "resp_100000000000011");
     assert_eq!(response.object, "response");
     // 2026-09-05T09:10:52 (+08:00) == 1788570652.
     assert_eq!(response.created_at, 1_788_570_652);
@@ -346,12 +355,12 @@ fn failed_task_with_message_builds_error() {
     let task = TaskRow {
         id: 1,
         user_id: 1,
-        json: brz_mysql::Json(crate::json_compat::OpaqueJson::from(serde_json::json!({
+        json: brz_mysql::Json(brz_json::OpaqueJson::from(serde_json::json!({
             "status": {"status": "FAILED", "errorMessage": "boom"}
         }))),
         created_at: None,
     };
-    let response = task_to_response_object(&task, "m", &[], None);
+    let response = task_to_response_object(&task, "m", &[], None, &test_config()).expect("builds");
     let error = response.error.expect("error present");
     assert_eq!(error.code, "task_failed");
     assert_eq!(error.message, "boom");
@@ -360,9 +369,9 @@ fn failed_task_with_message_builds_error() {
 
 fn subtask(role: &str, status: &str, result: Option<Value>) -> SubtaskRow {
     SubtaskRow {
-        id: 12_232_067_055_390,
-        user_id: 1001,
-        task_id: 12_232_067_055_387,
+        id: 100_000_000_000_014,
+        user_id: 301,
+        task_id: 100_000_000_000_011,
         role: role.to_string(),
         status: status.to_string(),
         result: result.map(|result| brz_mysql::Json(result.into())),
@@ -376,7 +385,11 @@ fn null_result_produces_no_output() {
         subtask("USER", "COMPLETED", Some(Value::Null)),
         subtask("ASSISTANT", "RUNNING", None),
     ];
-    assert!(build_response_output(&subtasks).is_empty());
+    assert!(
+        build_response_output(&subtasks, &test_config())
+            .expect("builds")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -386,10 +399,10 @@ fn value_result_builds_message() {
         "COMPLETED",
         Some(serde_json::json!({"value": "hello"})),
     )];
-    let output = build_response_output(&subtasks);
+    let output = build_response_output(&subtasks, &test_config()).expect("builds");
     assert_eq!(output.len(), 1);
     let item = serde_json::to_value(&output[0]).unwrap();
-    assert_eq!(item["id"], "msg_12232067055390");
+    assert_eq!(item["id"], "msg_100000000000014");
     assert_eq!(item["status"], "completed");
     assert_eq!(item["content"][0]["text"], "hello");
 }
@@ -401,14 +414,70 @@ fn running_assistant_message_is_in_progress() {
         "RUNNING",
         Some(serde_json::json!({"value": "partial"})),
     )];
-    let output = build_response_output(&subtasks);
+    let output = build_response_output(&subtasks, &test_config()).expect("builds");
     let item = serde_json::to_value(&output[0]).unwrap();
     assert_eq!(item["status"], "in_progress");
 }
 
 #[test]
+fn video_generation_block_builds_the_recorded_item() {
+    // Video placeholder shape: the assistant subtask carries one streaming
+    // `video` placeholder block (no attachment) and the response output is a
+    // single `wegent_video_generation_call` with only `progress` in metadata.
+    let result = serde_json::json!({
+        "blocks": [{
+            "id": "video-example-01", "type": "video", "status": "streaming",
+            "content": "", "video_url": "",
+            "is_placeholder": true, "video_duration": null, "video_progress": 0,
+            "video_thumbnail": null, "video_attachment_id": null
+        }],
+        "video_job": {"status": "creating", "progress": 0, "video_block_id": "video-example-01"}
+    });
+    let items = serialized_items(&subtask("ASSISTANT", "RUNNING", Some(result)));
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0],
+        serde_json::json!({
+            "type": "wegent_video_generation_call",
+            "id": "video-example-01",
+            "status": "in_progress",
+            "video_url": null,
+            "video_attachment_id": null,
+            "metadata": {"progress": 0}
+        })
+    );
+}
+
+#[test]
+fn completed_video_block_signs_a_download_url() {
+    // A finished video block carries an attachment id; the item exposes the
+    // signed one-hour public download URL plus its expiry metadata.
+    let result = serde_json::json!({
+        "blocks": [{
+            "id": "video-1", "type": "video", "status": "completed",
+            "video_url": "", "video_progress": 100, "video_duration": 8,
+            "video_attachment_id": 101
+        }]
+    });
+    let items = serialized_items(&subtask("ASSISTANT", "COMPLETED", Some(result)));
+    assert_eq!(items.len(), 1);
+    let item = &items[0];
+    assert_eq!(item["type"], "wegent_video_generation_call");
+    assert_eq!(item["status"], "completed");
+    assert_eq!(item["video_attachment_id"], 101);
+    assert_eq!(item["metadata"]["progress"], 100);
+    assert_eq!(item["metadata"]["duration"], 8);
+    assert_eq!(item["metadata"]["download_url_expires_in_seconds"], 3600);
+    let url = item["video_url"].as_str().expect("signed URL");
+    assert!(
+        url.contains("/api/attachments/download/shared?token="),
+        "{url}"
+    );
+}
+
+#[test]
 fn shell_input_passes_arguments_dict_through() {
-    // Recorded case b4aa819f: the shell item's `input` is the parsed
+    // Shell input shape: the shell item's `input` is the parsed
     // arguments dict verbatim — only the arguments' own keys, their
     // order, and original number forms (30 stays an int), while
     // `action` re-renders commands/timeout_ms.

@@ -237,17 +237,19 @@ MCP 工具（例如抓取图片的工具）会以 base64 返回媒体内容，�
 
 | Shell 类型 | 流式支持 | 响应模式 |
 |------------|----------|----------|
-| Chat Shell | 是 | 同步或 SSE 流式 |
-| 其他（ClaudeCode、Agno、Dify） | 否 | 排队（轮询获取完成状态） |
+| Chat Shell | 是 | 同步或 SSE 流式；设备任务的非流式请求返回排队状态 |
+| 其他（ClaudeCode、Codex、Agno、Dify） | 是 | 非流式请求排队；流式请求返回 SSE |
 
 **Chat Shell（stream=false）：**
-- 阻塞直到 LLM 完成
-- 直接返回已完成的响应
+- 未绑定设备时，阻塞直到 LLM 完成并直接返回已完成的响应
+- 绑定设备时，立即返回状态为 `queued` 的响应
 
-**Chat Shell（stream=true）：**
+**stream=true（Chat Shell 和非 Chat Shell）：**
 - 返回与 OpenAI v1/responses 兼容的 SSE 事件流
+- 设备或执行器的单条、批量回调均可传递文本和终态事件
+- 视频模型不支持流式请求，返回 HTTP 400
 
-**非 Chat Shell：**
+**非 Chat Shell（stream=false）：**
 - 立即返回状态为 `queued` 的响应
 - 使用 `GET /api/v1/responses/{response_id}` 轮询获取完成状态
 
@@ -382,7 +384,7 @@ curl -X DELETE "https://your-domain/api/v1/responses/resp_123" \
 
 ## 流式事件
 
-当设置 `stream=true` 时（仅 Chat Shell 类型），API 返回 OpenAI v1/responses 格式的服务器推送事件（SSE）。
+当设置 `stream=true` 时，Chat Shell 和非 Chat Shell 均可返回 OpenAI v1/responses 格式的服务器推送事件（SSE）。视频模型不支持流式请求。
 
 ### 事件类型
 
@@ -497,6 +499,8 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 ```
 
 这会追加到同一个任务，保持对话上下文。
+
+如果该任务绑定了设备，后续请求会继续发送到该设备。设备离线时返回 HTTP 503。
 
 ---
 

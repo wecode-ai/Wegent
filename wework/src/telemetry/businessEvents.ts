@@ -1,4 +1,4 @@
-import type { AnalyticsEvent, AnalyticsEventMap } from './events'
+import type { AnalyticsEvent, AnalyticsEventMap, AnalyticsEventName } from './events'
 import type { PluginInvocationIdentityContext, WeworkTelemetryContext } from './facts'
 
 type PluginEventName =
@@ -14,17 +14,27 @@ type BusinessTelemetryEvent = AnalyticsEvent & { readonly context?: WeworkTeleme
 
 const listeners = new Set<(event: BusinessTelemetryEvent) => void>()
 
-export function trackPluginEvent<Name extends PluginEventName>(
+export function trackBusinessEvent<Name extends AnalyticsEventName>(
   name: Name,
-  properties: AnalyticsEventMap[Name]
+  properties: AnalyticsEventMap[Name],
+  context?: WeworkTelemetryContext
 ): void {
   for (const listener of listeners) {
     try {
-      listener({ name, properties } as AnalyticsEvent)
+      listener(
+        (context ? { name, properties, context } : { name, properties }) as BusinessTelemetryEvent
+      )
     } catch {
       // Observers must not change the business result.
     }
   }
+}
+
+export function trackPluginEvent<Name extends PluginEventName>(
+  name: Name,
+  properties: AnalyticsEventMap[Name]
+): void {
+  trackBusinessEvent(name, properties)
 }
 
 export function trackPluginInvocationEvent<
@@ -34,13 +44,7 @@ export function trackPluginInvocationEvent<
   properties: AnalyticsEventMap[Name],
   pluginInvocation: PluginInvocationIdentityContext
 ): void {
-  for (const listener of listeners) {
-    try {
-      listener({ name, properties, context: { pluginInvocation } } as BusinessTelemetryEvent)
-    } catch {
-      // Observers must not change the business result.
-    }
-  }
+  trackBusinessEvent(name, properties, { pluginInvocation })
 }
 
 export function subscribeBusinessEvents(

@@ -465,10 +465,15 @@ sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 **基本信息**:
 - **名称**: 给 Model 起一个描述性的名称 (如 `my-claude-sonnet`)
 - **显示名称**: 可选的在界面上显示的人类可读名称
+- **能力描述**: 可选，保存到 `spec.capability`，在模型名称下说明能力与适用场景。长描述会自动换行；留空时只显示名称。模型选择列表不再显示真实模型 ID，仍可通过详情入口查看。
 - **一级分组**: 可选，用于模型选择器的第一级分组
 - **二级分组**: 可选，用于一级分组下的第二级分组
 
 分组字段会保存到 Model 的 `spec.modelGroup` 和 `spec.modelSubGroup` 中。它们只影响模型列表和选择器的展示组织方式，搜索仍会匹配模型名称、显示名称和分组名称。留空时，模型会进入默认的未分组或未分类分组。
+
+部署时可在前端服务的环境变量（本地开发为 `frontend/.env.local`，Docker Compose 为根目录 `.env`）设置 `WEGENT_MODEL_SELECTION_GUIDE_URL`，在模型选择器底部显示“如何选择模型？”链接。英文界面显示“How to choose a model”。链接在新标签页打开；未设置或留空时不显示，无需重新构建前端。
+
+已发布到能力广场的模型会在 `spec.capability` 中保存发布信息，能力描述使用该对象的 `description` 字段。编辑或清空能力描述会保留发布状态、版本及安装权限；普通模型仍可直接使用文本形式的 `spec.capability`。
 
 **提供商配置**:
 - **提供商类型**: 选择 `OpenAI` 或 `Anthropic`

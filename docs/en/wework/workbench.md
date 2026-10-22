@@ -4,6 +4,22 @@ sidebar_position: 5
 
 # Coding workbench
 
+## Application menu
+
+macOS uses the system menu bar. The frameless Windows and Linux windows show an application-menu button at the left of the title bar (also reachable with `Alt+F` or `F10`).
+
+The menu contains only unambiguous, genuinely useful items: Application (About, Settings, Services, Hide, Quit), Edit (undo, redo, cut, copy, paste, select all), File (new task tab, new project space tab, close workspace tab), Work (Tasks, Project spaces, Plugins, Scheduled, Applications), View (Search tasks, toggle sidebar/side panel/terminal, toggle full screen, font size), Window (Minimize, Close window, Show main window), and Help (GitHub project, report an issue, developer tools).
+
+Menu items follow the current workbench state: when an action is not available on the current surface — for example there is no closable tab, or the active surface is not a task workspace — the item is hidden instead of remaining as a clickable entry that does nothing. Menu actions reuse the controls that already exist in the interface; they never introduce a second navigation path.
+
+The Developer tools submenu also offers a **Process Explorer**. It opens a separate window that shows a collapsible tree grouped by the object that owns each process: the application, its windows (including embedded browser views), local runtimes (core runtime, executor, workbench runtimes, plugin development, and their children), and Chromium helpers. Each row shows the process name, process ID, CPU, memory, and uptime; selecting a row shows its launch details in the footer. Column widths can be adjusted by dragging a header edge and reset by double-clicking it. A filter matches names, PIDs, and launch details. The selected row detail is shown in full in the footer, can be scrolled when long, and can be copied with a small icon; there is no diagnostics export. The window follows the current WeWork language and theme, and can be pinned on top. The explorer is read-only and never terminates a process; a full WeWork restart remains the reliable recovery path.
+
+Process attribution and collection have the following limits:
+
+- Tabs in the main window share a renderer process, so its memory cannot be split by tab. Independent workbench runtimes can be attributed to their tabs.
+- Executor children are grouped under the executor, without mapping them to individual tasks. Orphaned processes from a previous launch that have left the current process tree are outside the collection scope.
+- The explorer does not start periodic process collection until its window opens, although the application still loads the related modules and initializes the collection service. The open window refreshes every two seconds, including while minimized. Closing it stops periodic refreshes; an outstanding collection may still finish.
+
 ## Use top-level tabs
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
@@ -13,6 +29,8 @@ When experimental features are enabled, the first main window shows three defaul
 Task and Workspace tabs retain their mounted interface while they are in the background instead of recreating it whenever the user returns. Unsent drafts, the selected project, board routes, and panel state therefore restore immediately, and background tabs do not restart the workbench runtime. The first Task workbench centrally prewarms the Codex app catalog needed by composers; mounting a composer or switching tabs does not request the catalog again. A Workspace board loads task-composer model and skill catalogs on demand only when the user creates a runtime task from an issue, avoiding the complete Task-workbench startup cost during ordinary board browsing.
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
+
+In a separate window, right-click a tab and choose **Move to main window** to return it with its current page and unsent draft. Fixed tabs remain fixed and restore in the main window after restarting. Moving the last tab closes the separate window; a window with other tabs stays open. If the main window cannot accept the tab, it remains in the separate window.
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
@@ -44,7 +62,9 @@ Lanes follow actual execution state: a task that is explicitly queued but has no
 
 Hover anywhere on a board card to open a task-progress panel at a stable position in the viewport's upper-right corner; moving across cards does not make the panel jump with each anchor. Its header shows the current issue title. When the runtime exposes one, the preview shows the current conversation goal. It directly reuses the task conversation component and always starts at the latest message instead of restoring the Task page's saved scroll position. While the current turn is active but has not produced new response text, the preview does not present the previous turn's final response as the latest progress. When a runtime task is associated with a board item, both local and cloud task bindings must persist that conversation's model selection. The preview restores the model from the binding instead of falling back to the global default for new conversations. Message loading, live updates, continuation, and attachments behave exactly as they do on the task page, with the composer collapsed by default. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Clicking the card's task-progress area, the pin action in the panel header, or the composer pins the same panel in place instead of opening a separate side conversation. While pinned, hovering other cards does not replace its content; clicking another card's task-progress area switches the pinned panel in the same position. Use the top-right close button or press `Esc` to leave the pinned state and restore normal hover previews.
 
-The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+The work-item control above the composer shows the current project or linked issue and provides actions to view its details or board. Opening the linked board focuses the work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+
+When changing the composer's project-space association, filter by owning space on the left. Each project on the right shows its name, key, and owning space to distinguish duplicate names. Search combines project names, space names, and project keys. Projects default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **Do not add to another project space** removes the extra association.
 
 Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
 
@@ -144,6 +164,8 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
 
 After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
+Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
 
 ## Navigate long conversations
 

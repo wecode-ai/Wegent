@@ -10,9 +10,9 @@
 //! (unknown fields dropped, model defaults added) and `interface_json`
 //! through `PluginInterface`. These helpers reproduce that normalization via
 //! `OpaqueJson::project` with the same default semantics.
-use crate::json_compat::OpaqueJson;
 use crate::json_compat::OptionalOpaqueJsonExt;
-use serde::{Deserialize, Deserializer, de::IgnoredAny};
+use brz_json::OpaqueJson;
+use serde::Deserialize;
 
 use super::db::{PluginReleaseRow, PluginRow};
 use super::models::{
@@ -29,52 +29,14 @@ pub fn interface_object<'a>(
         .find(|interface| interface.is_nonempty_object())
 }
 
-#[derive(Debug, Default)]
-pub struct StringItems(pub Vec<String>);
+#[derive(Debug, Default, Deserialize)]
+pub struct StringItems(
+    #[serde(deserialize_with = "brz_json::adapters::nonnull_items")] pub Vec<String>,
+);
 
-impl<'de> Deserialize<'de> for StringItems {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = StringItems;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("an array")
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut sequence: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut output = Vec::new();
-                while let Some(item) = sequence.next_element::<Option<String>>()? {
-                    output.extend(item);
-                }
-                Ok(StringItems(output))
-            }
-        }
-        deserializer.deserialize_seq(Visitor)
-    }
-}
-
-#[derive(Debug, Default)]
-struct LooseObject<T>(T);
-
-impl<'de, T> Deserialize<'de> for LooseObject<T>
-where
-    T: Deserialize<'de> + Default,
-{
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Input<T> {
-            Object(T),
-            Other(IgnoredAny),
-        }
-        Ok(Self(match Input::deserialize(deserializer)? {
-            Input::Object(value) => value,
-            Input::Other(_) => T::default(),
-        }))
-    }
-}
+#[derive(Debug, Default, Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de> + Default"))]
+struct LooseObject<T>(#[serde(deserialize_with = "brz_json::adapters::invalid_as_default")] T);
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]

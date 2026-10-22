@@ -1,4 +1,5 @@
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import { LOCAL_USER } from '@/api/local/localSession'
 import {
   NotificationTaskSourceBridge,
   NotificationTaskSourceProvider,
@@ -9,11 +10,13 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react'
 import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
@@ -35,13 +38,14 @@ import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
-import { AppearanceProvider } from '@/features/appearance'
+import { AppearanceProvider, useAppearance } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
 import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
+import { ApplicationMenuWorkspaceBridge } from '@/desktop/ApplicationMenuWorkspaceBridge'
 import {
   clearHarnessAppLaunch,
   harnessAppInstallationIdFromPath,
@@ -109,6 +113,7 @@ import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { HarnessAppAutoLauncher } from '@/features/harness-apps/HarnessAppAutoLauncher'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
@@ -309,7 +314,7 @@ interface WorkspaceTabSurfaceProps {
   user: User
 }
 
-export function WorkspaceTabSurface({
+export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
@@ -473,6 +478,7 @@ export function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
               loadTaskComposerCatalogs
@@ -521,7 +527,7 @@ export function WorkspaceTabSurface({
       </Activity>
     </WorkspaceTabPortalOwner>
   )
-}
+})
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const { pathname: path, search } = useCurrentLocation()
@@ -532,7 +538,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const experimentalFeatures = useExperimentalFeaturesState()
   const workspaceTabs = useOptionalWorkspaceTabs()
   const [mountedTabs, setMountedTabs] = useState(() => ({
-    activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
     nativeWorkbenchKinds: new Map(
       workspaceTabs?.tabs.flatMap(tab =>
@@ -607,10 +612,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     if (smartAppRoute) return
     track('feature_opened', { feature: telemetryFeature })
   }, [path, smartAppRoute, telemetryFeature])
+  const openTabIds = new Set(workspaceTabs?.tabs.map(tab => tab.id) ?? [])
+  const nextMountedTabIds = new Set([...mountedTabs.ids].filter(id => openTabIds.has(id)))
+  const mountedTabIdsChanged = nextMountedTabIds.size !== mountedTabs.ids.size
   const nextNativeWorkbenchKinds = new Map(
-    [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
-      workspaceTabs?.tabs.some(tab => tab.id === id)
-    )
+    [...mountedTabs.nativeWorkbenchKinds].filter(([id]) => openTabIds.has(id))
   )
   for (const tab of workspaceTabs?.tabs ?? []) {
     if (tab.kind === 'task' || tab.kind === 'board') {
@@ -624,11 +630,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     )
   if (
     workspaceTabs &&
-    (mountedTabs.activeTabId !== workspaceTabs.activeTabId || nativeWorkbenchKindsChanged)
+    (!nextMountedTabIds.has(workspaceTabs.activeTabId) ||
+      mountedTabIdsChanged ||
+      nativeWorkbenchKindsChanged)
   ) {
     setMountedTabs({
-      activeTabId: workspaceTabs.activeTabId,
-      ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
+      ids: new Set([...nextMountedTabIds, workspaceTabs.activeTabId]),
       nativeWorkbenchKinds: nextNativeWorkbenchKinds,
     })
   }
@@ -694,7 +701,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-        <NotificationEventsBridge chatStream={services.chatStream} />
+        <NotificationEventsBridge
+          chatStream={services.chatStream}
+          currentUserId={workbenchIdentity?.id}
+          localUserId={LOCAL_USER.id}
+        />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
@@ -719,7 +730,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-      <NotificationEventsBridge chatStream={services.chatStream} />
+      <NotificationEventsBridge
+        chatStream={services.chatStream}
+        currentUserId={workbenchIdentity?.id}
+        localUserId={LOCAL_USER.id}
+      />
       {mountedWorkspaceTabs.map(tab => (
         <WorkspaceTabSurface
           key={tab.id}
@@ -741,7 +756,16 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
 export default function App() {
   const path = useCurrentPath()
-  const content = isDesktopRuntime() && path === '/system-drag' ? <SystemDragPanel /> : <MainApp />
+  const content =
+    isDesktopRuntime() && path === '/system-drag' ? (
+      <SystemDragPanel />
+    ) : isDesktopRuntime() && path === '/process-explorer' ? (
+      <AppEnvironment persistAppearance={false} syncAppearanceFromPreferences>
+        <ProcessExplorerPage />
+      </AppEnvironment>
+    ) : (
+      <MainApp />
+    )
   return (
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
@@ -765,21 +789,50 @@ function MainApp() {
   }, [])
 
   return (
-    <AppearanceProvider>
+    <AppEnvironment>
+      <AppUpdateProvider>
+        <CloudConnectionProvider>
+          <AuthProvider>
+            <TelemetryBridge />
+            <TelemetryAgent />
+            <AppShell />
+          </AuthProvider>
+        </CloudConnectionProvider>
+      </AppUpdateProvider>
+    </AppEnvironment>
+  )
+}
+
+function AppEnvironment({
+  children,
+  persistAppearance = true,
+  syncAppearanceFromPreferences = false,
+}: {
+  children: ReactNode
+  persistAppearance?: boolean
+  syncAppearanceFromPreferences?: boolean
+}) {
+  return (
+    <AppearanceProvider persist={persistAppearance}>
       <AppPreferencesProvider>
+        {syncAppearanceFromPreferences ? <AppearancePreferenceSync /> : null}
         <LanguagePreferenceInitializer />
-        <AppUpdateProvider>
-          <CloudConnectionProvider>
-            <AuthProvider>
-              <TelemetryBridge />
-              <TelemetryAgent />
-              <AppShell />
-            </AuthProvider>
-          </CloudConnectionProvider>
-        </AppUpdateProvider>
+        {children}
       </AppPreferencesProvider>
     </AppearanceProvider>
   )
+}
+
+function AppearancePreferenceSync() {
+  const appPreferences = useAppPreferencesState()
+  const { setAppearance } = useAppearance()
+
+  useEffect(() => {
+    if (!appPreferences?.loaded) return
+    setAppearance({ mode: appPreferences.preferences.appearanceMode })
+  }, [appPreferences?.loaded, appPreferences?.preferences.appearanceMode, setAppearance])
+
+  return null
 }
 
 function LanguagePreferenceInitializer() {
@@ -858,8 +911,12 @@ function AppShell() {
   )
   const fixedWorkspaceTabs = useMemo(
     () =>
-      isMainWindow && appPreferences?.loaded
+      appPreferences?.loaded
         ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
+            const belongsToCurrentWindow = isMainWindow
+              ? !preference.windowLabel
+              : preference.windowLabel === currentWindowLabel
+            if (!belongsToCurrentWindow) return []
             if (preference.kind === 'smart_app') {
               if (
                 !appPreferences.preferences.experimentalFeaturesEnabled ||
@@ -879,12 +936,14 @@ function AppShell() {
             return [
               createWorkspaceTab(preference.kind, workspaceTabLabels, {
                 id: preference.id,
+                ...(preference.title ? { title: preference.title } : {}),
+                ...(preference.contentRoute ? { contentRoute: preference.contentRoute } : {}),
                 fixed: true,
               }),
             ]
           })
         : [],
-    [appPreferences, isMainWindow, t, workspaceTabLabels]
+    [appPreferences, currentWindowLabel, isMainWindow, t, workspaceTabLabels]
   )
   const startupWorkspaceTabId = useMemo(() => {
     if (!isMainWindow || !appPreferences?.loaded) return undefined
@@ -1163,6 +1222,7 @@ function AppShell() {
       >
         <ElectronWorkbenchTabBridge />
         <WeworkSchemeBridge />
+        {isElectron && !isPopoutWindow ? <ApplicationMenuWorkspaceBridge pathname={path} /> : null}
         <div
           data-testid="app-shell"
           className={cn(

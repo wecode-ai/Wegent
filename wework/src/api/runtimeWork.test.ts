@@ -3,6 +3,31 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('never sends qualified local sidebar mutations through the backend transport', async () => {
+    const post = vi.fn()
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const options = {
+      localSidebarIdentity: {
+        deviceId: 'electron',
+        runtimeInstanceId: 'runtime',
+        provenance: 'local-ipc' as const,
+      },
+    }
+    await expect(
+      Promise.resolve().then(() =>
+        api.syncRuntimeRemoteProjects({ deviceId: 'electron', projects: [] }, options)
+      )
+    ).rejects.toThrow('local-sidebar-ipc-required')
+    await expect(
+      Promise.resolve().then(() =>
+        api.activateRuntimeProject(
+          { deviceId: 'electron', projectKey: 'key', workspacePath: '/repo' },
+          options
+        )
+      )
+    ).rejects.toThrow('local-sidebar-ipc-required')
+    expect(post).not.toHaveBeenCalled()
+  })
   test('waits for the delivery fence and never posts if it is rejected', async () => {
     const post = vi.fn().mockResolvedValue({ accepted: true })
     const api = createRuntimeWorkApi({ post } as unknown as HttpClient)

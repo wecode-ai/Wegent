@@ -23,6 +23,7 @@ export function createComposerMentionRows<
   filteredCloudProjectCandidates,
   canSetGoal,
   canSetPlanMode,
+  canDraw = false,
   planModeActive,
   workspaceMatches,
 }: {
@@ -40,6 +41,7 @@ export function createComposerMentionRows<
   filteredCloudProjectCandidates: C[]
   canSetGoal: boolean
   canSetPlanMode: boolean
+  canDraw?: boolean
   planModeActive: boolean
   workspaceMatches: RuntimeWorkspaceSearchItem[]
 }): MentionMenuRow<C, E>[] {
@@ -60,6 +62,7 @@ export function createComposerMentionRows<
       ...externalRows,
       ...(canSetGoal ? [{ kind: 'goal-action' } as const] : []),
       ...(!planModeActive && canSetPlanMode ? [{ kind: 'plan-action' } as const] : []),
+      ...(canDraw ? [{ kind: 'draw-action' } as const] : []),
       ...(cloudSpaceEnabled ? [{ kind: 'cloud-space-direct-action' } as const] : []),
       ...(cloudSpaceEnabled && cloudProjectCandidates.length
         ? [{ kind: 'cloud-projects-action' } as const]

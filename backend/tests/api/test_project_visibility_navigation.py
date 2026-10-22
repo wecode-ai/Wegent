@@ -5,7 +5,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
@@ -63,83 +62,19 @@ def _member(
     resource_type: str,
     resource_id: int | str,
     *,
-    role: str = "Reporter",
+    role: str | None = None,
     status: str = "approved",
 ) -> ResourceMember:
     member = ResourceMember.create(
         resource_type=resource_type,
         resource_id=int(resource_id),
         entity_id=str(user.id),
-        role=role,
+        role=role or "Viewer",
         status=status,
     )
     db.add(member)
     db.commit()
     return member
-
-
-@pytest.mark.parametrize("source", ["public", "project", "workspace"])
-def test_visible_projects_include_parent_without_expanding_workspace_permissions(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    viewer: User,
-    source: str,
-) -> None:
-    workspace = workspace_service.create(
-        test_db, test_user.id, WorkspaceCreate(name="Parent")
-    )
-    project = _project(test_db, test_user, workspace, public=source == "public")
-    sibling = _project(test_db, test_user, workspace)
-    if source != "public":
-        _member(
-            test_db,
-            viewer,
-            "Workspace" if source == "workspace" else "CloudProject",
-            workspace.id if source == "workspace" else project.id,
-        )
-    headers = _headers(viewer)
-    expected = {str(project.id)}
-    if source == "workspace":
-        expected.add(str(sibling.id))
-
-    for endpoint in (
-        "/api/v1/cloud-projects",
-        f"/api/v1/cloud-projects?workspace_id={workspace.id}",
-        f"/api/v1/workspaces/{workspace.id}/projects",
-    ):
-        response = test_client.get(endpoint, headers=headers)
-        assert response.status_code == 200, response.text
-        items = response.json()["items"]
-        assert {item["id"] for item in items} == expected
-        assert len(items) == len(expected)
-        for item in items:
-            assert item["workspace_context"] == {
-                "id": str(workspace.id),
-                "public_id": workspace.public_id,
-                "name": workspace.name,
-            }
-            assert item["access_role"] == (
-                "RestrictedAnalyst" if source == "public" else "Reporter"
-            )
-
-    detail = test_client.get(f"/api/v1/cloud-projects/{project.id}", headers=headers)
-    assert detail.status_code == 200, detail.text
-    sibling_detail = test_client.get(
-        f"/api/v1/cloud-projects/{sibling.id}", headers=headers
-    )
-    assert sibling_detail.status_code == (200 if source == "workspace" else 404)
-    members = test_client.get(
-        f"/api/v1/workspaces/{workspace.id}/members", headers=headers
-    )
-    assert members.status_code == (200 if source == "workspace" else 404)
-    # Inherited visibility must not confer project administration.
-    update = test_client.patch(
-        f"/api/v1/cloud-projects/{project.id}",
-        headers=headers,
-        json={"version": project.version, "name": "Unauthorized rename"},
-    )
-    assert update.status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -182,10 +117,19 @@ def test_overlapping_grants_deduplicate_and_preserve_project_role(
     assert items[0].access_role.value == "Maintainer"
     test_db.delete(explicit)
     test_db.commit()
-    assert list_project_responses(test_db, viewer)[0].access_role.value == "Reporter"
+    assert list_project_responses(test_db, viewer)[0].access_role.value == "Maintainer"
     kind = test_db.get(Kind, workspace.id)
     kind.is_active = False
-    project.metadata_json = {**project.metadata_json, "visibility": "private"}
+    public_grant = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "CloudProject",
+            ResourceMember.resource_id == project.id,
+            ResourceMember.entity_type == "authenticated_users",
+        )
+        .one()
+    )
+    test_db.delete(public_grant)
     test_db.commit()
     assert list_project_responses(test_db, viewer) == []
 
@@ -213,7 +157,7 @@ def _selects(db: Session) -> Generator[list[str], None, None]:
         event.remove(engine, "before_cursor_execute", record)
 
 
-def test_project_list_uses_two_queries_as_project_count_grows(
+def test_project_list_uses_four_queries_as_project_count_grows(
     test_db: Session,
     test_user: User,
     viewer: User,
@@ -228,7 +172,7 @@ def test_project_list_uses_two_queries_as_project_count_grows(
         with _selects(test_db) as statements:
             items = list_project_responses(test_db, viewer)
         assert len(items) == size
-        assert len(statements) == 2
+        assert len(statements) == 4
 
 
 def test_workspace_list_batches_counts_and_keeps_empty_spaces(

@@ -31,7 +31,7 @@ Wegent is an AI agent management platform based on Kubernetes-style CRD design, 
 
 - **Frontend**: Next.js + TypeScript + Tailwind CSS
 - **Backend**: FastAPI + SQLAlchemy + MySQL
-- **Executor**: Python + Docker containers
+- **Executor**: Rust + Docker containers
 - **Executor Manager**: Task scheduling and management
 - **AI Services**: Claude Code (supporting more model extensions)
 
@@ -43,6 +43,7 @@ Wegent is an AI agent management platform based on Kubernetes-style CRD design, 
 - Docker Compose >= 2.0
 - Node.js >= 18.0 (for frontend development)
 - Python >= 3.10 (for backend development)
+- Rust >= 1.77 (for executor development)
 - Git
 
 ### Quick Start
@@ -88,9 +89,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ```bash
 cd executor
-./start.sh
-# Or manually: uv sync && source .venv/bin/activate && python main.py
+cargo build --release --locked
+# Binary: target/release/wegent-executor
+
+# Build and restart the local executor
+./local.sh all
 ```
+
+See the [Executor build guide](./executor/BUILD.md) for Docker mode and
+[Local mode guide](./executor/docs/LOCAL_MODE.md) for local configuration.
 
 ## 🏗️ Project Architecture
 
@@ -211,7 +218,7 @@ pre-commit run eslint-frontend --all-files
 
 ## 📝 Code Standards
 
-### Python Code Standards (Backend/Executor)
+### Python Code Standards (Backend)
 
 - Follow PEP 8 standards
 - Use Black for code formatting
@@ -225,6 +232,18 @@ isort .
 
 # Code checking
 pylint app/
+```
+
+### Rust Code Standards (Executor)
+
+- Use `rustfmt` for formatting
+- Treat Clippy warnings as errors
+- Keep the lockfile unchanged during reproducible builds
+
+```bash
+cd executor
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 ### TypeScript Code Standards (Frontend)
@@ -326,15 +345,15 @@ npm run test:coverage
 ```bash
 # Executor tests
 cd executor
-pytest tests/ --cov=agents
+cargo test --all-features
 
 # Executor Manager tests
 cd executor_manager
-pytest tests/ --cov=executors
+uv run pytest
 
 # Shared utilities tests
 cd shared
-pytest tests/ --cov=utils
+uv run pytest
 ```
 
 ### Test Organization Best Practices
@@ -355,7 +374,7 @@ All tests run automatically via GitHub Actions on:
 
 The test suite includes:
 - Backend tests (Python 3.10, 3.11, 3.12)
-- Executor tests
+- Executor tests (Rust)
 - Executor Manager tests
 - Shared utilities tests
 - Frontend tests (Node.js 18.x)
@@ -363,9 +382,9 @@ The test suite includes:
 Coverage reports are uploaded to Codecov.
 
 For detailed testing documentation, see:
-- 📖 [Complete Testing Guide (English)](./docs/en/developer-guide/testing.md) - Comprehensive test framework documentation
-- 📖 [完整测试指南（中文）](./docs/zh/developer-guide/testing.md) - 综合测试框架文档
-- 📖 [Developer Setup Guide](./docs/en/developer-guide/setup.md) - Testing section
+- 📖 [Complete Testing Guide (English)](./docs/en/wegent/developer-guide/testing.md) - Comprehensive test framework documentation
+- 📖 [完整测试指南（中文）](./docs/zh/wegent/developer-guide/testing.md) - 综合测试框架文档
+- 📖 [Developer Setup Guide](./docs/en/wegent/developer-guide/setup.md) - Testing section
 
 ## 📚 Documentation Requirements
 

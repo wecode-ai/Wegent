@@ -63,6 +63,21 @@ export function composerAppPluginKey(app: LocalDeviceApp): string {
   return app.pluginDisplayNames?.[0] ?? app.id
 }
 
+/** A package reference can enter chat to authorize; an inaccessible app cannot be invoked. */
+export function composerAppNeedsAuthorization(app: LocalDeviceApp): boolean {
+  return (
+    app.source === 'installed-plugin' &&
+    app.skillPath?.startsWith('plugin://') === true &&
+    app.isAccessible === false
+  )
+}
+
+export function isComposerAppSelectable(app: LocalDeviceApp): boolean {
+  return (
+    app.isEnabled !== false && (app.isAccessible !== false || composerAppNeedsAuthorization(app))
+  )
+}
+
 function pluginAliases(plugin: ComposerInstalledPlugin): Set<string> {
   const source = plugin.spec.source
   const payload = plugin.spec.sourcePayload
@@ -126,10 +141,13 @@ function bestPluginForApp<Plugin extends ComposerInstalledPlugin>(
   return best
 }
 
-function isComposerVisiblePlugin(plugin: ComposerInstalledPlugin): boolean {
+export function isComposerVisiblePlugin(plugin: ComposerInstalledPlugin): boolean {
   return (
     Boolean(plugin.spec.enabled) &&
-    (plugin.spec.installState === 'installed' || plugin.spec.installState === 'update_available')
+    (plugin.spec.installState === 'installed' ||
+      plugin.spec.installState === 'update_available' ||
+      (plugin.spec.installState === 'not_installed' &&
+        plugin.spec.sourcePayload?.localPresent === true))
   )
 }
 
@@ -206,31 +224,58 @@ export function enrichComposerApps<Plugin extends ComposerInstalledPlugin>(
   installedPlugins: Plugin[],
   presentation: (plugin: Plugin) => ComposerPluginPresentation
 ): LocalDeviceApp[] {
-  return apps.flatMap(app => {
-    const plugin = bestPluginForApp(app, installedPlugins)
-    // Composer only lists installed plugins. Remote Codex apps and authorized
-    // cloud connectors are not shown unless they match an installed plugin.
-    if (!plugin) return []
-    if (!isComposerVisiblePlugin(plugin)) {
-      return []
-    }
+  return apps
+    .flatMap<LocalDeviceApp>(app => {
+      const plugin = bestPluginForApp(app, installedPlugins)
+      // Composer only lists installed plugins. Remote Codex apps and authorized
+      // cloud connectors are not shown unless they match an installed plugin.
+      if (!plugin) return []
+      if (!isComposerVisiblePlugin(plugin)) {
+        return []
+      }
+      // Name aliases help identify packages, but are not an app dependency.
+      // A package with local skills can run independently of an unrelated app.
+      // Keep app authorization conservative when only a summary is available.
+      const declaredId = app.source === 'wegent-connector' ? app.id.replace(/^wegent:/, '') : app.id
+      if (
+        plugin.spec.components?.skills?.length &&
+        !pluginAppIds(plugin).has(normalized(declaredId))
+      )
+        return []
 
-    const { shortDescription, logoUrl, logoUrlDark, trialTemplates } = presentation(plugin)
-    return [
-      {
-        ...app,
-        name: plugin.spec.displayName || app.name,
-        pluginKey: plugin.spec.source.pluginKey,
-        description: shortDescription || plugin.spec.description || app.description || null,
-        logoUrl: logoUrl || app.logoUrl || null,
-        logoUrlDark: logoUrlDark || app.logoUrlDark || null,
-        pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
-          (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
-        ),
-        trialTemplates: trialTemplates,
-      },
-    ]
-  })
+      const pluginPresentation = presentation(plugin)
+      if (app.isAccessible === false) {
+        const entry = installedPluginAsComposerApp(plugin, pluginPresentation)
+        return entry
+          ? [
+              {
+                ...entry,
+                isAccessible: false,
+                isEnabled: entry.isEnabled !== false && app.isEnabled !== false,
+                installUrl: app.installUrl,
+              },
+            ]
+          : []
+      }
+      const { shortDescription, logoUrl, logoUrlDark, trialTemplates } = pluginPresentation
+      return [
+        {
+          ...app,
+          name: plugin.spec.displayName || app.name,
+          pluginKey: plugin.spec.source.pluginKey,
+          description: shortDescription || plugin.spec.description || app.description || null,
+          logoUrl: logoUrl || app.logoUrl || null,
+          logoUrlDark: logoUrlDark || app.logoUrlDark || null,
+          pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
+            (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
+          ),
+          trialTemplates: trialTemplates,
+        },
+      ]
+    })
+    .filter(
+      (app, index, entries) => entries.findIndex(candidate => candidate.id === app.id) === index
+    )
 }
 
 /** Include enabled installed plugins that have no Codex/app entry yet (e.g. skill-only). */

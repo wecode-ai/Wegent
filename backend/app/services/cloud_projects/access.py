@@ -4,6 +4,7 @@
 
 """Role-aware authorization for cloud collaboration resources."""
 
+from collections.abc import Set
 from dataclasses import dataclass
 from enum import Enum
 
@@ -22,16 +23,11 @@ from app.services.cloud_project_visibility import (
 class CloudProjectAccess:
     project: CloudProject
     role: BaseRole
+    sources: tuple[dict, ...] = ()
 
     @property
-    def is_public_visitor(self) -> bool:
-        return self.role == BaseRole.RestrictedAnalyst
-
-    @property
-    def restricts_unrelated_issues(self) -> bool:
-        return self.project.visibility == "public_restricted" and not has_permission(
-            self.role, BaseRole.Maintainer
-        )
+    def is_viewer(self) -> bool:
+        return self.role == BaseRole.Viewer
 
 
 class IssueAction(str, Enum):
@@ -41,6 +37,47 @@ class IssueAction(str, Enum):
     COMMENT = "comment"
     ASSIGN = "assign"
     EXECUTE = "execute"
+
+
+# LoopItemUpdate fields that change Issue content rather than its assignee.
+ISSUE_CONTENT_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "status",
+        "priority",
+        "start_at",
+        "due_at",
+        "parent_id",
+        "tags",
+        "workflow",
+        "execution_config",
+    }
+)
+# LoopItemUpdate fields that select the Issue assignee.
+ISSUE_ASSIGNMENT_FIELDS = frozenset(
+    {
+        "assignee_user_id",
+        "assignee_agent_id",
+        "assignee_team_id",
+        "assignee_group_id",
+    }
+)
+
+
+def issue_update_actions(changed_fields: Set[str]) -> list[IssueAction]:
+    """List the actions required for an update touching ``changed_fields``.
+
+    Assignment and content changes are authorized independently, so an update
+    that mixes both kinds of fields must satisfy every action it implies.
+    """
+
+    actions: list[IssueAction] = []
+    if changed_fields & ISSUE_ASSIGNMENT_FIELDS:
+        actions.append(IssueAction.ASSIGN)
+    if changed_fields & ISSUE_CONTENT_FIELDS:
+        actions.append(IssueAction.EDIT_CONTENT)
+    return actions
 
 
 @dataclass(frozen=True)
@@ -60,21 +97,18 @@ def issue_permissions(
     issue_creator_user_id: int | None,
     user_id: int,
 ) -> IssuePermissions:
-    """Resolve action-specific permissions without a generic edit shortcut."""
+    """Resolve action-specific permissions without a generic edit shortcut.
 
-    if access.is_public_visitor:
-        owns_issue = issue_creator_user_id == user_id
-        return IssuePermissions(
-            edit_content=owns_issue,
-            comment=owns_issue,
-            assign=False,
-            execute=owns_issue,
-        )
+    Assignment follows the role hierarchy, but the Issue creator always keeps
+    control of their own assignee.
+    """
+
+    is_developer = has_permission(access.role, BaseRole.Developer)
     return IssuePermissions(
-        edit_content=has_permission(access.role, BaseRole.Developer),
-        comment=has_permission(access.role, BaseRole.Reporter),
-        assign=has_permission(access.role, BaseRole.Maintainer),
-        execute=has_permission(access.role, BaseRole.Reporter),
+        edit_content=is_developer,
+        comment=is_developer,
+        assign=is_developer,
+        execute=is_developer,
     )
 
 
@@ -98,14 +132,18 @@ def require_cloud_project_role(
     db: Session,
     cloud_project_id: int,
     user_id: int,
-    required_role: BaseRole = BaseRole.Reporter,
+    required_role: BaseRole = BaseRole.Viewer,
 ) -> CloudProjectAccess:
-    result = project_access_query(db, user_id, cloud_project_id).first()
-    if result is None:
+    from app.services.collaboration_permissions import collaboration_permission_service
+
+    decision = collaboration_permission_service.check(
+        db, user_id, "read", cloud_project_id
+    )
+    if decision.role is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-    project, priority = result
-    role = ROLES_BY_PRIORITY[priority]
+    project = db.get(CloudProject, str(cloud_project_id))
+    role = decision.role
 
     if not has_permission(role, required_role):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-    return CloudProjectAccess(project=project, role=role)
+    return CloudProjectAccess(project=project, role=role, sources=decision.sources)

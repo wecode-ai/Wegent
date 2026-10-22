@@ -12,8 +12,6 @@ import {
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
-  mapWorkspaceWorkflowPlanDto,
-  mapWorkspaceWorkflowStageContextDto,
 } from '@wegent/collaboration'
 import type {
   CollaborationAttachment,
@@ -32,7 +30,7 @@ import { getToken } from '@/apis/user'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 
 export interface WebWorkspaceHttpClient {
-  get<T>(endpoint: string): Promise<T>
+  get<T>(endpoint: string, options?: { cache?: RequestCache }): Promise<T>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   postForm<T>(endpoint: string, data: FormData): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
@@ -210,46 +208,6 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     endpoint: 'GET /v1/loop-items/{id}/tasks',
   },
   {
-    capability: 'workflowPlans.get',
-    status: 'supported',
-    endpoint: 'GET /v1/loop-items/{id}/workflow-plan',
-  },
-  {
-    capability: 'workflowPlans.approve',
-    status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/approve',
-  },
-  {
-    capability: 'workflowPlans.approveReview',
-    status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/review',
-  },
-  {
-    capability: 'workflowPlans.pause',
-    status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/pause',
-  },
-  {
-    capability: 'workflowPlans.resume',
-    status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/resume',
-  },
-  {
-    capability: 'workflowPlans.replan',
-    status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/replan',
-  },
-  {
-    capability: 'workflowPlans.decideNode',
-    status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-nodes/{nodeId}/decision',
-  },
-  {
-    capability: 'workflowPlans.getStageContext',
-    status: 'supported',
-    endpoint: 'GET /v1/loop-items/{id}/workflow-nodes/{nodeId}/input-context',
-  },
-  {
     capability: 'members.list',
     status: 'supported',
     endpoint: 'GET /v1/cloud-projects/{id}/members',
@@ -389,11 +347,6 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     capability: 'automations.runNow',
     status: 'supported',
     endpoint: 'POST /v1/cloud-projects/{id}/automations/{automationId}/run',
-  },
-  {
-    capability: 'automations.runWorkflowNode',
-    status: 'supported',
-    endpoint: 'POST /v1/cloud-projects/{id}/loop-items/{issueId}/workflow-nodes/{nodeId}/run',
   },
   {
     capability: 'automations.listRuns',
@@ -672,7 +625,7 @@ export function createWebSharedWorkspaceApi(
           CollaborationBoardSnapshot & {
             task_bindings: Array<Record<string, unknown>>
           }
-        >(`/v1/cloud-projects/${encoded(projectId)}/board-snapshot`)
+        >(`/v1/cloud-projects/${encoded(projectId)}/board-snapshot`, { cache: 'no-store' })
         return {
           items: response.items,
           members: response.members,
@@ -704,6 +657,7 @@ export function createWebSharedWorkspaceApi(
             version: input.version,
             assignee_team_id: teamId,
             notify_assignee: input.notifyAssignee ?? true,
+            position: input.position,
           })
         }
         return client.post(
@@ -726,6 +680,24 @@ export function createWebSharedWorkspaceApi(
       archive(issueId) {
         return client.delete(`/v1/loop-items/${encoded(issueId)}`)
       },
+      async listArchived(projectId, input) {
+        const query = new URLSearchParams({
+          limit: String(input?.limit ?? 50),
+        })
+        if (input?.cursor) query.set('cursor', input.cursor)
+        const response = await client.get<{
+          items: CollaborationIssue[]
+          next_cursor: string | null
+        }>(`/v1/cloud-projects/${encoded(projectId)}/archived-loop-items?${query.toString()}`)
+        return { items: response.items, nextCursor: response.next_cursor }
+      },
+      async restore(issueId) {
+        const response = await client.post<{ items: CollaborationIssue[] }>(
+          `/v1/loop-items/${encoded(issueId)}/restore`,
+          {}
+        )
+        return response.items
+      },
       async reorder(projectId, input) {
         const response = await client.post<{ items: CollaborationIssue[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/loop-items/reorder`,
@@ -737,8 +709,10 @@ export function createWebSharedWorkspaceApi(
         )
         return response.items
       },
-      markRead(issueId) {
-        return client.post(`/v1/loop-items/${encoded(issueId)}/read`)
+      markRead(issueId, activitySequence) {
+        return client.post(`/v1/loop-items/${encoded(issueId)}/read`, {
+          activity_sequence: activitySequence ?? null,
+        })
       },
     },
     comments: sharedHttpApi.comments,
@@ -801,61 +775,6 @@ export function createWebSharedWorkspaceApi(
           `/v1/loop-items/${encoded(issueId)}/tasks`
         )
         return response.map(binding => mapWorkspaceTaskBindingDto(binding, projectId))
-      },
-    },
-    workflowPlans: {
-      async get(issueId) {
-        const response = await client.get<Record<string, unknown> | null>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan`
-        )
-        return response ? mapWorkspaceWorkflowPlanDto(response) : null
-      },
-      async approve(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/approve`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async approveReview(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/review`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async pause(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/pause`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async resume(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/resume`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async replan(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/replan`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      decideNode(issueId, workflowNodeId, action, reason) {
-        return client.post(
-          `/v1/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/decision`,
-          { action, reason: reason ?? '' }
-        )
-      },
-      async getStageContext(issueId, workflowNodeId) {
-        const response = await client.get<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/input-context`
-        )
-        return mapWorkspaceWorkflowStageContextDto(response)
       },
     },
     members: {
@@ -1030,12 +949,6 @@ export function createWebSharedWorkspaceApi(
       runNow(projectId, automationId) {
         return client.post(
           `/v1/cloud-projects/${encoded(projectId)}/automations/${encoded(automationId)}/run`
-        )
-      },
-      runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-        const query = `automation_id=${encodeURIComponent(automationId)}`
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/run?${query}`
         )
       },
       listRuns(projectId, automationId) {

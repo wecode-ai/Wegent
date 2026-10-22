@@ -6,6 +6,7 @@ import { AppUpdateService } from './app-update-service.js'
 class FakeUpdater extends EventEmitter {
   autoDownload = true
   autoInstallOnAppQuit = true
+  disableDifferentialDownload = false
   allowPrerelease = false
   channel: string | null = null
   setFeedURL = vi.fn()
@@ -49,6 +50,7 @@ describe('AppUpdateService', () => {
     })
     expect(updater.autoDownload).toBe(false)
     expect(updater.autoInstallOnAppQuit).toBe(false)
+    expect(updater.disableDifferentialDownload).toBe(true)
     expect(updater.channel).toBe('latest')
     expect(updater.allowPrerelease).toBe(false)
     expect(updater.setFeedURL).toHaveBeenCalledWith({
@@ -258,10 +260,53 @@ describe('AppUpdateService', () => {
         errorMessage: 'fetch failed for [URL removed]',
       })
     )
+    expect(appUpdate.downloadProgress()).toMatchObject({
+      phase: 'failed',
+      failure: { message: 'fetch failed for https://example.com/private', code: 'ECONNRESET' },
+    })
+  })
+
+  test('clears a recorded download failure when the update is retried', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates.mockResolvedValue({
+      updateInfo: {
+        version: '0.2.7',
+        files: [],
+        path: 'pending',
+        sha512: 'sha',
+        releaseDate: '2026-08-25T00:00:00Z',
+      },
+      cancellationToken: {} as never,
+      downloadPromise: null,
+      isUpdateAvailable: true,
+    })
+    updater.downloadUpdate.mockRejectedValueOnce(new Error('fetch failed'))
+    const appUpdate = service(updater)
+
+    await appUpdate.check('stable')
+    await expect(appUpdate.download()).rejects.toThrow('fetch failed')
+    expect(appUpdate.downloadProgress()).toMatchObject({ phase: 'failed' })
+
+    await appUpdate.download()
+    expect(appUpdate.downloadProgress()).toEqual({
+      downloadedBytes: 0,
+      totalBytes: null,
+      phase: 'ready',
+    })
+  })
+
+  test('records a failed download state when no pending update exists', async () => {
+    const appUpdate = service(new FakeUpdater())
+
+    await expect(appUpdate.download()).rejects.toThrow('No pending Wework update')
+    expect(appUpdate.downloadProgress()).toMatchObject({
+      phase: 'failed',
+      failure: { message: 'No pending Wework update is available.' },
+    })
   })
 })
 
-test('preserves an active download across repeated checks and accumulates failed differential bytes', async () => {
+test('preserves an active full download across repeated checks', async () => {
   const updater = new FakeUpdater()
   const updateInfo = {
     version: '0.4.2',
@@ -279,14 +324,8 @@ test('preserves an active download across repeated checks and accumulates failed
     release = resolve
   })
   updater.downloadUpdate.mockImplementation(async () => {
-    updater.emit('wework-download-phase', { mode: 'differential', totalBytes: 20 })
-    updater.emit('download-progress', { transferred: 20, total: 20 })
+    updater.emit('download-progress', { transferred: 20, total: 100 })
     await gate
-    updater.emit('wework-download-phase', {
-      mode: 'full',
-      reason: 'differential-failed',
-      totalBytes: 100,
-    })
     updater.emit('download-progress', { transferred: 100, total: 100 })
     return []
   })
@@ -315,10 +354,9 @@ test('preserves an active download across repeated checks and accumulates failed
   release()
   await Promise.all([download, duplicate])
   expect(appUpdate.downloadProgress()).toMatchObject({
-    downloadedBytes: 170,
-    totalBytes: 170,
+    downloadedBytes: 150,
+    totalBytes: 150,
     phase: 'ready',
-    reason: 'differential-failed',
   })
   await appUpdate.check('stable')
   await appUpdate.download()

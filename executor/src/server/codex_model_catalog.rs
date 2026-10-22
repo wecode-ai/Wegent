@@ -10,6 +10,7 @@
 
 use axum::{
     extract::Query,
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
@@ -20,10 +21,14 @@ use std::{
     env, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::OnceLock,
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::{
+    process::Command,
+    sync::{Mutex, OnceCell},
+};
 use toml_edit::DocumentMut;
 
 use crate::logging::log_executor_event;
@@ -87,20 +92,18 @@ pub(crate) struct ModelsQuery {
 }
 
 pub(crate) async fn handle(Query(query): Query<ModelsQuery>) -> Response {
-    let catalog = match upstream_catalog(query.client_version.as_deref()).await {
-        Ok(Some(mut catalog)) => {
-            merge_capability_models(&mut catalog);
-            catalog
-        }
-        Ok(None) => catalog(),
+    let mut catalog = match load_baseline_catalog(query.client_version.as_deref()).await {
+        Ok(catalog) => catalog,
         Err(error) => {
             log_executor_event(
                 "codex router model catalog failed",
                 &[("error", error.clone())],
             );
-            catalog()
+            return (StatusCode::BAD_GATEWAY, Json(json!({ "error": error }))).into_response();
         }
     };
+    apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
+    append_catalog_vision_sidecars(&mut catalog);
     let model_count = catalog
         .get("models")
         .and_then(Value::as_array)
@@ -111,19 +114,6 @@ pub(crate) async fn handle(Query(query): Query<ModelsQuery>) -> Response {
         &[("model_count", model_count.to_string())],
     );
     Json(catalog).into_response()
-}
-
-pub(crate) fn catalog() -> Value {
-    let mut catalog = json!({
-        "models": models()
-    });
-    apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
-    append_catalog_vision_sidecars(&mut catalog);
-    catalog
-}
-
-pub(crate) fn models() -> Vec<Value> {
-    base_models()
 }
 
 fn base_models() -> Vec<Value> {
@@ -209,8 +199,7 @@ pub(crate) async fn write_model_override(slug: &str, entry: &Value) -> Result<bo
         })
         .cloned()
         .ok_or_else(|| format!("model catalog entry `{slug}` is not available"))?;
-    let normalized = normalize_compatibility_fields(entry.clone());
-    let fields = catalog_override_fields(&baseline, &normalized, slug)?;
+    let fields = catalog_override_fields(&baseline, entry, slug)?;
     let mut effective = baseline;
     apply_override_fields(&mut effective, &fields);
     validate_catalog_model(&effective)?;
@@ -253,18 +242,7 @@ pub(crate) fn invalidate_models_cache() -> Result<(), String> {
 }
 
 fn codex_models_cache_path() -> PathBuf {
-    env::var_os("WEGENT_CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("WEGENT_EXECUTOR_HOME")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .map(|home| home.join("codex"))
-        })
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor/codex")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor/codex"))
-        .join("models_cache.json")
+    crate::agents::wework_codex_home().join("models_cache.json")
 }
 
 fn invalidate_models_cache_at(path: &Path) -> Result<(), String> {
@@ -327,19 +305,12 @@ fn catalog_override_fields(
 }
 
 fn custom_models_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-        .join("capabilities/model-catalog.json")
+    crate::local::capabilities::default_manifest_path().with_file_name("model-catalog.json")
 }
 
 fn catalog_overrides_path() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-        .join("capabilities/model-catalog-overrides.json")
+    crate::local::capabilities::default_manifest_path()
+        .with_file_name("model-catalog-overrides.json")
 }
 
 fn read_custom_models() -> Vec<Value> {
@@ -437,10 +408,8 @@ struct CodexCatalogModel {
     supported_in_api: bool,
     priority: i64,
     base_instructions: String,
-    supports_reasoning_summaries: bool,
     support_verbosity: bool,
     truncation_policy: Value,
-    supports_parallel_tool_calls: bool,
     #[serde(default)]
     experimental_supported_tools: Vec<String>,
 }
@@ -575,6 +544,13 @@ async fn upstream_catalog(client_version: Option<&str>) -> Result<Option<Value>,
             );
         }
     };
+    if let Err(error) = validate_catalog(&catalog) {
+        return stale_catalog_or_error(
+            cache.as_ref(),
+            &upstream_id,
+            format!("upstream /models: {error}"),
+        );
+    }
     *cache = Some(CatalogCacheEntry {
         upstream_id,
         catalog: catalog.clone(),
@@ -632,30 +608,77 @@ fn configured_catalog_upstream() -> Option<(String, String)> {
 }
 
 async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, String> {
-    let mut catalog = upstream_catalog(client_version)
-        .await?
-        .unwrap_or_else(|| json!({ "models": base_models() }));
-    merge_base_models(&mut catalog);
-    Ok(catalog)
-}
-
-pub(crate) async fn effective_catalog() -> Result<Value, String> {
-    let mut catalog = load_baseline_catalog(None).await?;
-    merge_capability_models(&mut catalog);
-    Ok(catalog)
-}
-
-fn merge_capability_models(catalog: &mut Value) {
-    merge_base_models(catalog);
-    apply_catalog_overrides(catalog, &read_catalog_overrides());
-    append_catalog_vision_sidecars(catalog);
-}
-
-fn merge_base_models(catalog: &mut Value) {
-    let Some(upstream_models) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
-        *catalog = json!({ "models": base_models() });
-        return;
+    let mut catalog = match upstream_catalog(client_version).await {
+        Ok(Some(catalog)) => catalog,
+        Ok(None) => bundled_catalog().await?.clone(),
+        Err(error) => {
+            log_executor_event(
+                "codex router upstream model catalog unavailable",
+                &[("error", error)],
+            );
+            bundled_catalog().await?.clone()
+        }
     };
+    merge_base_models(&mut catalog)?;
+    Ok(catalog)
+}
+
+async fn bundled_catalog() -> Result<&'static Value, String> {
+    static CATALOG: OnceCell<Value> = OnceCell::const_new();
+    CATALOG
+        .get_or_try_init(|| async {
+            let binary =
+                crate::agents::resolve_codex_binary_path(&crate::agents::resolve_codex_binary());
+            export_bundled_catalog(&binary, &crate::agents::wework_codex_home()).await
+        })
+        .await
+}
+
+async fn export_bundled_catalog(binary: &str, home: &Path) -> Result<Value, String> {
+    let output = Command::new(binary)
+        .args(["debug", "models", "--bundled"])
+        .env("CODEX_HOME", home)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(Duration::from_secs(10), output)
+        .await
+        .map_err(|_| "Codex bundled catalog export timed out".to_owned())?
+        .map_err(|error| format!("Codex bundled catalog export failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Codex bundled catalog export failed: {}",
+            output.status
+        ));
+    }
+    let catalog: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Invalid Codex bundled catalog: {error}"))?;
+    validate_catalog(&catalog)?;
+    Ok(catalog)
+}
+
+fn validate_catalog(catalog: &Value) -> Result<(), String> {
+    let models = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Codex model catalog must contain a models array".to_owned())?;
+    if models.iter().any(|model| {
+        !model
+            .get("slug")
+            .and_then(Value::as_str)
+            .is_some_and(|slug| !slug.trim().is_empty())
+    }) {
+        return Err("Codex model catalog entries must contain a nonempty string slug".to_owned());
+    }
+    Ok(())
+}
+
+fn merge_base_models(catalog: &mut Value) -> Result<(), String> {
+    validate_catalog(catalog)?;
+    let upstream_models = catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "Codex model catalog must contain a models array".to_owned())?;
     for capability_model in base_models() {
         let slug = capability_model.get("slug").and_then(Value::as_str);
         if !upstream_models
@@ -665,6 +688,7 @@ fn merge_base_models(catalog: &mut Value) {
             upstream_models.push(capability_model);
         }
     }
+    Ok(())
 }
 
 fn apply_catalog_overrides(catalog: &mut Value, overrides: &[CatalogOverride]) {
@@ -796,381 +820,5 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_includes_verified_builtin_kimi_profiles() {
-        let catalog = catalog();
-        let models = catalog["models"].as_array().expect("models array");
-        assert!(models.len() >= 2);
-        assert_eq!(models[0]["slug"], KIMI_K3_MODEL);
-        assert!(models[0]["base_instructions"]
-            .as_str()
-            .is_some_and(|instructions| instructions.len() > 10_000
-                && !instructions.contains("based on GPT-5")));
-        assert_eq!(models[0]["context_window"], 1_048_576);
-        assert_eq!(models[0]["auto_compact_token_limit"], 786_432);
-        assert_eq!(models[0]["default_reasoning_level"], "low");
-        assert_eq!(models[0]["supports_parallel_tool_calls"], false);
-        assert_eq!(models[0]["supports_search_tool"], true);
-        assert_eq!(models[1]["slug"], KIMI_K27_MODEL);
-        assert_eq!(models[1]["context_window"], 262_144);
-        assert_eq!(models[1]["supports_search_tool"], true);
-    }
-
-    #[test]
-    fn catalog_includes_native_deepseek_v4_profiles() {
-        let catalog = catalog();
-        let model = catalog["models"]
-            .as_array()
-            .expect("models array")
-            .iter()
-            .find(|model| model["slug"] == DEEPSEEK_V4_FLASH_MODEL)
-            .expect("DeepSeek V4 Flash entry");
-
-        assert_eq!(model["context_window"], 1_048_576);
-        assert_eq!(model["default_reasoning_level"], "high");
-        assert_eq!(model["apply_patch_tool_type"], "freeform");
-        assert_eq!(model["supports_parallel_tool_calls"], true);
-        assert_eq!(model["multi_agent_version"], "v2");
-        assert_eq!(model["supports_search_tool"], true);
-        assert_eq!(model["visibility"], "none");
-        assert_eq!(model["input_modalities"], json!(["text"]));
-
-        let pro_model = catalog["models"]
-            .as_array()
-            .expect("models array")
-            .iter()
-            .find(|model| model["slug"] == DEEPSEEK_V4_PRO_MODEL)
-            .expect("DeepSeek V4 Pro entry");
-        assert_eq!(pro_model["context_window"], 1_048_576);
-        assert_eq!(pro_model["default_reasoning_level"], "high");
-        assert_eq!(pro_model["apply_patch_tool_type"], "freeform");
-        assert_eq!(pro_model["supports_parallel_tool_calls"], true);
-        assert_eq!(pro_model["multi_agent_version"], "v2");
-        assert_eq!(pro_model["supports_search_tool"], true);
-        assert_eq!(pro_model["visibility"], "none");
-        assert_eq!(pro_model["input_modalities"], json!(["text"]));
-
-        for base_slug in [DEEPSEEK_V4_FLASH_MODEL, DEEPSEEK_V4_PRO_MODEL] {
-            let slug = vision_sidecar_catalog_model_id(base_slug);
-            let vision_model = catalog["models"]
-                .as_array()
-                .expect("models array")
-                .iter()
-                .find(|model| model["slug"] == slug.as_str())
-                .expect("DeepSeek vision delegation entry");
-            assert_eq!(vision_model["context_window"], 1_048_576);
-            assert_eq!(vision_model["default_reasoning_level"], "high");
-            assert_eq!(vision_model["apply_patch_tool_type"], "freeform");
-            assert_eq!(vision_model["supports_parallel_tool_calls"], true);
-            assert_eq!(vision_model["multi_agent_version"], "v2");
-            assert_eq!(vision_model["visibility"], "none");
-            assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
-        }
-    }
-
-    #[test]
-    fn catalog_derives_a_vision_variant_for_every_base_profile() {
-        let catalog = catalog();
-        let models = catalog["models"].as_array().expect("models array");
-        let base_model = models
-            .iter()
-            .find(|model| model["slug"] == KIMI_K27_MODEL)
-            .expect("Kimi base entry");
-        let vision_slug = vision_sidecar_catalog_model_id(KIMI_K27_MODEL);
-        let vision_model = models
-            .iter()
-            .find(|model| model["slug"] == vision_slug)
-            .expect("derived Kimi vision entry");
-
-        assert_eq!(vision_model["context_window"], base_model["context_window"]);
-        assert_eq!(
-            vision_model["supports_parallel_tool_calls"],
-            base_model["supports_parallel_tool_calls"]
-        );
-        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
-        assert_eq!(vision_model["visibility"], "none");
-    }
-
-    #[test]
-    fn vision_derivation_preserves_arbitrary_catalog_capabilities() {
-        let mut models = vec![json!({
-            "slug": "operator-model",
-            "display_name": "Operator Model",
-            "description": "Operator-defined capabilities",
-            "visibility": "list",
-            "context_window": 777_777,
-            "default_reasoning_level": "max",
-            "supports_parallel_tool_calls": true,
-            "experimental_supported_tools": ["custom_tool"],
-            "input_modalities": ["text", "audio"]
-        })];
-
-        append_vision_sidecar_models(&mut models);
-
-        let vision_model = models
-            .iter()
-            .find(|model| model["slug"] == "operator-model-vision-sidecar")
-            .expect("derived operator vision entry");
-        assert_eq!(vision_model["context_window"], 777_777);
-        assert_eq!(vision_model["default_reasoning_level"], "max");
-        assert_eq!(vision_model["supports_parallel_tool_calls"], true);
-        assert_eq!(
-            vision_model["experimental_supported_tools"],
-            json!(["custom_tool"])
-        );
-        assert_eq!(
-            vision_model["input_modalities"],
-            json!(["text", "audio", "image"])
-        );
-        assert_eq!(vision_model["visibility"], "none");
-    }
-
-    #[test]
-    fn vision_derivation_adds_text_to_an_image_only_profile() {
-        let base = json!({
-            "slug": "image-only-model",
-            "display_name": "Image-only Model",
-            "input_modalities": ["image"]
-        });
-
-        let vision_model = vision_sidecar_catalog_model(&base).expect("derived model");
-
-        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
-    }
-
-    #[test]
-    fn merge_derives_vision_from_the_effective_upstream_base_profile() {
-        let mut catalog = json!({
-            "models": [{
-                "slug": GPT_56_SOL_MODEL,
-                "display_name": "Upstream Sol",
-                "description": "Effective upstream profile",
-                "context_window": 999_999,
-                "supports_parallel_tool_calls": true,
-                "input_modalities": ["text"]
-            }]
-        });
-
-        merge_capability_models(&mut catalog);
-
-        let vision_slug = vision_sidecar_catalog_model_id(GPT_56_SOL_MODEL);
-        let vision_model = catalog["models"]
-            .as_array()
-            .expect("models array")
-            .iter()
-            .find(|model| model["slug"] == vision_slug)
-            .expect("derived upstream vision entry");
-        assert_eq!(
-            vision_model["display_name"],
-            "Upstream Sol with vision delegation"
-        );
-        assert_eq!(vision_model["context_window"], 999_999);
-        assert_eq!(vision_model["supports_parallel_tool_calls"], true);
-        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
-    }
-
-    #[test]
-    fn catalog_includes_wework_gpt_56_compatibility_profiles() {
-        let catalog = catalog();
-        let models = catalog["models"].as_array().expect("models array");
-        let slugs: Vec<&str> = models
-            .iter()
-            .filter_map(|model| model["slug"].as_str())
-            .collect();
-        assert!(slugs.contains(&WEWORK_GPT_56_SOL_MODEL));
-        assert!(slugs.contains(&WEWORK_GPT_56_TERRA_MODEL));
-        assert!(slugs.contains(&WEWORK_GPT_56_LUNA_MODEL));
-
-        let sol = models
-            .iter()
-            .find(|model| model["slug"] == WEWORK_GPT_56_SOL_MODEL)
-            .expect("wework gpt-5.6-sol entry");
-        assert_eq!(sol["apply_patch_tool_type"], "freeform");
-        assert_eq!(sol["supports_parallel_tool_calls"], false);
-        assert_eq!(sol["supports_search_tool"], true);
-        assert_eq!(sol["visibility"], "none");
-        assert_eq!(sol["context_window"], 272_000);
-        assert_eq!(sol["max_context_window"], Value::Null);
-    }
-
-    #[test]
-    fn catalog_lists_official_gpt_56_models_without_exposing_internal_profiles() {
-        let catalog = catalog();
-        let models = catalog["models"].as_array().expect("models array");
-
-        for (slug, priority) in [
-            (GPT_56_SOL_MODEL, 1),
-            (GPT_56_TERRA_MODEL, 2),
-            (GPT_56_LUNA_MODEL, 3),
-        ] {
-            let model = models
-                .iter()
-                .find(|model| model["slug"] == slug)
-                .unwrap_or_else(|| panic!("missing official model {slug}"));
-            assert_eq!(model["visibility"], "list");
-            assert_eq!(model["priority"], priority);
-            assert_eq!(model["supports_search_tool"], true);
-            assert_eq!(model["max_context_window"], 272_000);
-        }
-
-        for slug in [
-            KIMI_K3_MODEL,
-            KIMI_K27_MODEL,
-            DEEPSEEK_V4_FLASH_MODEL,
-            DEEPSEEK_V4_PRO_MODEL,
-            WEWORK_GPT_56_SOL_MODEL,
-            WEWORK_GPT_56_TERRA_MODEL,
-            WEWORK_GPT_56_LUNA_MODEL,
-        ] {
-            let model = models
-                .iter()
-                .find(|model| model["slug"] == slug)
-                .unwrap_or_else(|| panic!("missing internal profile {slug}"));
-            assert_eq!(model["visibility"], "none");
-        }
-    }
-
-    #[test]
-    fn validates_complete_custom_catalog_entries_without_accepting_official_slugs() {
-        let mut entry = model_entry(
-            "wework-custom-registration-test",
-            "Registration test",
-            Some("freeform"),
-        );
-        entry["supports_parallel_tool_calls"] = Value::Bool(true);
-
-        assert!(validate_custom_model(&entry).is_ok());
-
-        entry["slug"] = Value::String("gpt-5.6-sol".to_owned());
-        assert!(validate_custom_model(&entry).is_err());
-    }
-
-    #[test]
-    fn normalizes_reasoning_summary_fields_for_codex_versions() {
-        let mut entry = model_entry(
-            "wework-custom-compatibility-test",
-            "Compatibility test",
-            Some("freeform"),
-        );
-        entry
-            .as_object_mut()
-            .expect("catalog entry")
-            .remove("supports_reasoning_summaries");
-        entry["supports_reasoning_summary_parameter"] = Value::Bool(false);
-
-        let normalized = normalize_compatibility_fields(entry);
-
-        assert_eq!(normalized["supports_reasoning_summaries"], false);
-        assert_eq!(normalized["supports_reasoning_summary_parameter"], false);
-        assert!(validate_custom_model(&normalized).is_ok());
-    }
-
-    #[test]
-    fn persists_custom_catalog_entries_atomically() {
-        let root = tempfile::tempdir().expect("temporary catalog directory");
-        let path = root.path().join("capabilities/model-catalog.json");
-        let entry = model_entry(
-            "wework-custom-persistence-test",
-            "Persistence test",
-            Some("freeform"),
-        );
-
-        write_custom_models_to(&path, std::slice::from_ref(&entry))
-            .expect("custom model catalog should be written");
-
-        let stored: Vec<Value> = serde_json::from_slice(
-            &fs::read(path).expect("custom model catalog should be readable"),
-        )
-        .expect("custom model catalog should contain JSON");
-        assert_eq!(stored, vec![entry]);
-    }
-
-    #[test]
-    fn stores_only_changed_catalog_fields_and_preserves_null_values() {
-        let baseline = json!({
-            "slug": "gpt-test",
-            "display_name": "GPT Test",
-            "context_window": 272_000,
-            "auto_compact_token_limit": 200_000,
-            "future_capability": {"enabled": true}
-        });
-        let entry = json!({
-            "slug": "gpt-test",
-            "display_name": "GPT Test",
-            "context_window": 300_000,
-            "auto_compact_token_limit": null,
-            "future_capability": {"enabled": true}
-        });
-
-        let fields = catalog_override_fields(&baseline, &entry, "gpt-test").expect("catalog diff");
-
-        assert_eq!(
-            fields,
-            BTreeMap::from([
-                ("auto_compact_token_limit".to_owned(), Value::Null),
-                ("context_window".to_owned(), json!(300_000)),
-            ])
-        );
-    }
-
-    #[test]
-    fn applies_catalog_overrides_before_deriving_vision_sidecars() {
-        let mut catalog = json!({
-            "models": [{
-                "slug": "gpt-test",
-                "display_name": "GPT Test",
-                "context_window": 272_000,
-                "input_modalities": ["text"]
-            }]
-        });
-        let overrides = vec![CatalogOverride {
-            slug: "gpt-test".to_owned(),
-            fields: BTreeMap::from([("context_window".to_owned(), json!(300_000))]),
-        }];
-
-        apply_catalog_overrides(&mut catalog, &overrides);
-        append_catalog_vision_sidecars(&mut catalog);
-
-        let models = catalog["models"].as_array().expect("models array");
-        assert_eq!(models[0]["context_window"], 300_000);
-        let sidecar = models
-            .iter()
-            .find(|model| model["slug"] == "gpt-test-vision-sidecar")
-            .expect("vision sidecar");
-        assert_eq!(sidecar["context_window"], 300_000);
-    }
-
-    #[test]
-    fn persists_catalog_overrides_atomically() {
-        let root = tempfile::tempdir().expect("temporary catalog directory");
-        let path = root
-            .path()
-            .join("capabilities/model-catalog-overrides.json");
-        let overrides = vec![CatalogOverride {
-            slug: "gpt-test".to_owned(),
-            fields: BTreeMap::from([("context_window".to_owned(), json!(300_000))]),
-        }];
-
-        write_catalog_overrides_to(&path, &overrides).expect("catalog overrides should be written");
-
-        assert_eq!(
-            read_catalog_overrides_from(&path).expect("catalog overrides should be readable")[0]
-                .fields,
-            overrides[0].fields
-        );
-    }
-
-    #[test]
-    fn invalidates_models_cache_and_accepts_missing_cache() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("models_cache.json");
-        fs::write(&path, b"cached").expect("cache fixture");
-
-        invalidate_models_cache_at(&path).expect("cache should be removed");
-        assert!(!path.exists());
-        invalidate_models_cache_at(&path).expect("missing cache should be accepted");
-    }
-}
+#[path = "codex_model_catalog_tests.rs"]
+mod tests;

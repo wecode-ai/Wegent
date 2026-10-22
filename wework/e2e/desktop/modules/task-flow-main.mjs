@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -103,12 +104,12 @@ import {
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyComposerPluginNetworkIsolation,
   verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
   verifySkillMentionRendering,
   verifyStartupIgnoresBlockedCodexNetwork,
-  waitForBundledMarketplaceRegistration,
 } from './plugin-flows.mjs'
 
 import {
@@ -131,6 +132,8 @@ import {
 } from './resilience-flows.mjs'
 
 import { matrixCaseId } from './response-protocol.mjs'
+import { collectWindowsNetworkDiagnostics } from './windows-network-diagnostics.mjs'
+import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -157,8 +160,6 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
-  DESKTOP_CONTROL_SERVER_PORT,
-  DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_SCENARIO_ONLY,
   DESKTOP_SEGMENT,
@@ -275,6 +276,8 @@ import {
 } from './shared.mjs'
 
 import {
+  verifyAsyncRequestUserInput,
+  verifyAsyncQuestionWaitingIndicator,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
@@ -284,6 +287,7 @@ import {
 } from './task-state-flows.mjs'
 
 import {
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
   verifyBackgroundTaskWindowLifecycle,
   verifyCrossProviderSwitchRetry,
@@ -316,14 +320,14 @@ const PROJECT_AI_INITIAL_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_INITIAL: preserve this instruction for the existing conversation.'
 const PROJECT_AI_UPDATED_INSTRUCTIONS =
   'WEWORK_DESKTOP_E2E_PROJECT_AI_UPDATED: apply this instruction only to new conversations.'
-const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
-const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
+const PROJECT_AI_MODEL_ID = 'local-model:desktop-e2e-vision-main'
+const PROJECT_AI_MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
 const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
 const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
-const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
-const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
+const REMEMBERED_TASK_MODEL_ID = 'gpt-6.1-sol'
+const REMEMBERED_TASK_MODEL_LABEL = 'GPT-6.1 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
-const GPT_6_SOL_MODEL_ID = 'gpt-6-sol'
+const GPT_6_1_SOL_MODEL_ID = 'gpt-6.1-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
@@ -502,16 +506,15 @@ async function waitForProjectComposerPlugin(control) {
 async function selectRememberedTaskModel(control) {
   await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
   await control.command('click', '[data-testid="model-selector-button"]')
-  await control.command('click', '[data-testid="model-control-menu-reasoning"]')
   await control.command('waitFor', '[data-testid="model-control-reasoning-high"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     visible: true,
   })
   await control.command('click', '[data-testid="model-control-reasoning-high"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
-    'The task composer did not select GPT 5.6 Sol with high reasoning'
+    'The task composer did not select GPT-6.1 Sol with high reasoning'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -565,7 +568,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The follow-global project did not remember the selected model and reasoning effort'
   )
@@ -800,7 +803,7 @@ async function verifyProjectAiSettings({
   await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
-    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    await control.command('getText', '[data-testid="model-simple-header"]'),
     /High|高/,
     'The next task did not restore the project model and reasoning effort'
   )
@@ -826,7 +829,8 @@ async function verifyLocalModelRouting({
     control,
     composerSelector,
     CHECKPOINT_TASK_PROMPT,
-    'checkpoint_task'
+    'checkpoint_task',
+    WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CHECKPOINT_TASK_COMPLETION_TEXT,
@@ -845,11 +849,38 @@ async function verifyLocalModelRouting({
     'The model selector did not expose its selected model before refresh'
   )
 
-  setPhase('model-catalog-gpt-6-sol')
-  const gpt6SolMenu = await ensureModelOptionVisible(control, GPT_6_SOL_MODEL_ID, modelSelector)
+  setPhase('model-catalog-chatgpt-picker')
+  await control.command('clickWhenEnabled', modelSelector, {
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-header"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-simple-source"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
   assert.ok(
-    gpt6SolMenu.testIds.includes(`model-option-${GPT_6_SOL_MODEL_ID}`),
-    'The Codex model selector did not expose GPT-6 Sol'
+    (await control.command('getText', '[data-testid="model-simple-source"]')).trim(),
+    'The compact model picker did not identify the selected model source'
+  )
+  const compactPicker = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    compactPicker.testIds.includes('model-advanced-panel'),
+    'The ChatGPT-style compact model picker did not expose its model power slider'
+  )
+
+  const gpt61SolMenu = await ensureModelOptionVisible(control, GPT_6_1_SOL_MODEL_ID, modelSelector)
+  assert.ok(
+    gpt61SolMenu.testIds.includes(`model-option-${GPT_6_1_SOL_MODEL_ID}`),
+    'The Codex model selector did not expose GPT-6.1 Sol'
+  )
+  assert.ok(
+    gpt61SolMenu.testIds.includes('model-source-local-chatgpt'),
+    'The advanced model picker did not expose the local ChatGPT account source'
   )
   await control.command('press', 'body', { key: 'Escape' })
   await control.command('waitFor', modelSelector, {
@@ -1040,6 +1071,14 @@ async function verifyLocalModelRouting({
   })
 }
 
+async function writeLocalHarnessDiagnostics(control, resultDir) {
+  await writeFile(
+    join(resultDir, 'local-harness-diagnostics.json'),
+    `${await control.command('getLocalHarnessDiagnostics', 'body', { timeoutMs: 5000 })}\n`,
+    'utf8'
+  )
+}
+
 async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
@@ -1047,7 +1086,7 @@ async function main() {
   await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
-  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
+  const secondaryProjectPath = join(resultDir, 'Codex', 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -1067,7 +1106,24 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
+    mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  // Exercise consent explicitly; the product default already marks it as asked.
+  await writeFile(
+    join(electronUserDataDirectory, 'app-preferences.json'),
+    `${JSON.stringify({ telemetryConsentAsked: false, telemetryEnabled: false })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
+  // Background update dialogs steal focus from unrelated keyboard scenarios.
+  // Update scenarios still exercise explicit checks and downloads.
+  await writeFile(
+    join(electronUserDataDirectory, 'renderer-local-storage.json'),
+    `${JSON.stringify({
+      version: 1,
+      entries: { 'wework:autoDownloadUpdates': 'false' },
+    })}\n`,
+    { flag: 'wx', mode: 0o600 }
+  )
   await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
@@ -1114,6 +1170,8 @@ async function main() {
     await createPluginMarketplaceFixture(marketplacePluginPath)
   }
   await runChecked('git', ['init'], { cwd: workspacePath })
+  // Fixture assertions compare exact bytes after Git snapshot restoration.
+  await runChecked('git', ['config', 'core.autocrlf', 'false'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
@@ -1130,10 +1188,27 @@ async function main() {
   })
 
   const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
-  const desktopScenario = await loadDesktopScenario(
-    process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
-    {
+  let desktopScenario
+  const control = new DesktopE2EServer(workspacePath, workspacePath, null, {
+    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
+  })
+  const modelSwitchVerification = []
+  let app
+  const applicationProcessHistory = []
+  let appBundlePath
+  let blockingNetworkProxy
+  let cloudEnvironment
+  let phase = 'startup'
+  let desktopScenarioVerified = false
+  let testFailed = false
+  try {
+    await control.start()
+    // Publish bound ports for scenarios without releasing the listening sockets.
+    process.env.WEWORK_E2E_MODEL_SERVER_PORT = new URL(control.url).port
+    process.env.WEWORK_E2E_CONTROL_SERVER_PORT = new URL(control.controlUrl).port
+    desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
+      checkpoint: SELECTED_DESKTOP_SEGMENT,
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       codexSqliteHome,
@@ -1144,26 +1219,15 @@ async function main() {
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
+      recordScenarioRequest: (scenario, request) =>
+        control.recordScenarioRequest(scenario, request),
       workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       workspacePath,
+    })
+    if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
+      throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
     }
-  )
-  if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
-    throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
-  }
-  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
-    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
-  })
-  const modelSwitchVerification = []
-  let app
-  let appBundlePath
-  let blockingNetworkProxy
-  let cloudEnvironment
-  let phase = 'startup'
-  let desktopScenarioVerified = false
-  let testFailed = false
-  try {
-    await control.start()
+    control.setDesktopScenario(desktopScenario)
     if (RUNS_PLUGIN_E2E) {
       blockingNetworkProxy = new BlockingNetworkProxy()
       await blockingNetworkProxy.start()
@@ -1232,7 +1296,9 @@ async function main() {
         }`,
         'openai-responses',
         desktopScenario?.modelProviderConfigToml,
-        desktopScenario?.modelProviderAuthToml
+        desktopScenario?.modelProviderAuthToml,
+        desktopScenario?.modelProviderId,
+        desktopScenario?.modelId
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1242,7 +1308,7 @@ async function main() {
     }
 
     const needsPackagedHarnessRuntime =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ||
+      SELECTED_DESKTOP_SEGMENT?.startsWith('harness-app-') ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
     const usesReleasePackageRuntimeAssets =
       desktopScenario?.usesReleasePackageRuntimeAssets === true
@@ -1268,6 +1334,7 @@ async function main() {
       CODEX_BIN: resolvedAppCodexBinary,
       CODEX_SQLITE_HOME: codexSqliteHome,
       HOME: homePath,
+      WORKSPACE_ROOT: join(homePath, '.wegent', 'workspace'),
       WEGENT_STANDALONE_WORKSPACE_ROOT: join(homePath, 'Documents', 'Codex'),
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -1330,6 +1397,13 @@ async function main() {
       'WEGENT_RUNTIME_AUTH_TOKEN',
       'WEGENT_TASK_ID',
       'WEGENT_TASK_WORKSPACE',
+      'WEGENT_WORKSPACE_ROOT',
+      'LOCAL_WORKSPACE_ROOT',
+      'WEGENT_EXECUTOR_PROJECTS_DIR',
+      'WEGENT_WORKBENCH_HOME',
+      'WEGENT_CAPABILITIES_HOME',
+      'WEGENT_CLAUDE_HOME',
+      'CLAUDE_CONFIG_DIR',
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
@@ -1352,8 +1426,14 @@ async function main() {
       delete appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS
     }
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     const electronLaunchArguments = resolveElectronLaunchArguments({
-      extraArguments: desktopScenario?.electronLaunchArguments ?? [],
+      extraArguments: [
+        ...(process.platform === 'win32'
+          ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
+          : []),
+        ...(desktopScenario?.electronLaunchArguments ?? []),
+      ],
     })
     const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
     if (desktopScenario?.launchWorkingDirectory) {
@@ -1366,6 +1446,15 @@ async function main() {
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
+      })
+      const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
+      applicationProcessHistory.push(processState)
+      child.once('error', error => {
+        processState.error = error.message
+        control.fail(error)
+      })
+      child.once('exit', (code, signal) => {
+        Object.assign(processState, { code, signal, exitedAt: new Date().toISOString() })
       })
       await markDesktopE2EResultActive(resultDir, {
         applicationProcessId: child.pid,
@@ -1503,14 +1592,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
+        bundledMarketplacePath: join(
+          executorHome,
+          'capabilities',
+          'bundled-marketplaces',
+          'wework-personal'
+        ),
+        codexHome,
         configureCodex,
         control,
         restartDesktopApp,
       })
-      await waitForBundledMarketplaceRegistration(
-        codexHome,
-        join(executorHome, 'capabilities', 'bundled-marketplaces', 'wework-personal')
-      )
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -1522,6 +1614,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
+      if (DESKTOP_SEGMENT === 'local-harness') {
+        await writeLocalHarnessDiagnostics(control, resultDir)
+      }
       await writeFile(
         join(resultDir, 'model-requests.json'),
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -1578,22 +1673,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (DESKTOP_SEGMENT === 'project-event-sources') {
-      phase = 'project-event-sources-scenario'
-      assert.ok(
-        desktopScenario,
-        'The project-event-sources checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
-      )
-      await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework desktop project-event-sources checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -1694,6 +1773,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await triggerModelReloadUntilCloudFailure(control)
     control.restoreCloudModels()
     await control.command('dispatchLocalModelSettingsChanged', '')
+    // The composer mounts before native Codex initialization finishes. Establish
+    // the configured local catalog prerequisite before inspecting model options.
+    await control.command(
+      'waitFor',
+      '[data-testid="model-selector-button"][data-model-provider-id]:not([data-model-provider-id=""])',
+      { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
     const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
     const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
     const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
@@ -1819,6 +1905,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           ACTIVE_COMPOSER_SELECTOR,
           `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
         )
+        await control.awaitScenarioRequestCount(
+          'turn_navigation',
+          turnNumber,
+          Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+        )
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -1857,6 +1948,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
       await verifyAttachmentOnlySidebarLifecycle({
         app,
         appBundlePath,
@@ -1945,9 +2044,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1973,6 +2075,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
           userDataDirectory: electronUserDataDirectory,
+        })
+      }
+      if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
+        phase = 'plugin-composer-network-isolation'
+        await verifyComposerPluginNetworkIsolation({
+          blockingNetworkProxy,
+          codexHome,
+          control,
+          marketplacePath: marketplacePluginPath,
+          restartDesktopApp,
+          workspacePath,
         })
       }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
@@ -2164,7 +2277,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'workspace-issue-creation'
       await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control)
+      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
         console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2174,6 +2287,18 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'request-user-input-async'
+      await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
+      phase = 'async-question-waiting-indicator'
+      await verifyAsyncQuestionWaitingIndicator({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       phase = 'runtime-task-order-unread'
       await verifyRuntimeTaskOrderAndUnreadVisibility({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
@@ -2215,7 +2340,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
-      if (!GUIDANCE_SCROLL_ONLY) {
+      if (!GUIDANCE_SCROLL_ONLY && !GUIDANCE_BACKGROUND_ONLY && !SIDE_CHAT_ONLY) {
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
 
@@ -2292,9 +2417,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyWorktreeCreationStatus({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
     }
 
     phase = 'secondary-project-create'
@@ -2320,6 +2448,23 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
     const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
     await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+
+    phase = 'codex-directory-project-reload'
+    const readyCountBeforeProjectReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeProjectReload),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The workbench did not reconnect after reloading the Codex-directory project'
+    )
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
@@ -2658,11 +2803,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       )
       phase = 'initial-task'
-      await sendPrompt(control, composerSelector, TASK_PROMPT)
-      const initialTaskRequest = await withTimeout(
-        control.awaitScenarioRequest('initial'),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The model service did not receive the initial task request'
+      const initialTaskRequest = await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        TASK_PROMPT,
+        'initial'
       )
       const runningTaskSnapshot = await waitForSnapshot(
         control,
@@ -2952,11 +3097,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
-      await control.command('waitFor', '[data-testid="final-processing-toggle"]', {
+      await control.command('waitFor', '[data-testid="processing-duration-label"]')
+      await control.command('scrollIntoViewAsUser', '[data-testid="processing-duration-label"]')
+      await control.command('waitFor', '[data-testid="processing-duration-label"]', {
         visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('click', '[data-testid="final-processing-toggle"]')
+      await control.command('expandProcessingSummaries', 'body')
       await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3015,6 +3162,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
 
       phase = 'file-changes-revert-confirmation'
+      await control.command('waitFor', '[data-testid="revert-file-changes-button"]')
+      await control.command('scrollIntoViewAsUser', '[data-testid="revert-file-changes-button"]')
       await control.command('clickWhenEnabled', '[data-testid="revert-file-changes-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3511,6 +3660,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       control.setScenario('turn_navigation')
       const environmentPanelTurnCount = E2E_TRANSCRIPT_PAGE_SIZE + 4
+      const modelResponseTimeoutMs = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
       for (let index = 0; index < environmentPanelTurnCount; index += 1) {
         const turnNumber = index + 1
         await sendPrompt(
@@ -3518,12 +3668,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           ACTIVE_COMPOSER_SELECTOR,
           `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
         )
+        await control.awaitScenarioRequestCount(
+          'turn_navigation',
+          turnNumber,
+          Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+        )
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           {
             text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
-            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+            timeoutMs: modelResponseTimeoutMs,
           }
         )
       }
@@ -4294,6 +4449,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'attachment-only-sidebar'
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector,
+        control,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
       await verifyAttachmentOnlySidebarLifecycle({
@@ -4358,6 +4517,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         desktopScenarioVerified = true
         await desktopScenario.verify(control)
       }
+      await writeLocalHarnessDiagnostics(control, resultDir)
       if (shouldStopAfterDesktopCheckpoint('local-harness')) {
         console.log(`Wework desktop local-harness checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -4388,6 +4548,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
+    const networkDiagnostics = collectWindowsNetworkDiagnostics()
+    await writeFile(
+      join(resultDir, 'codex-sqlite-diagnostics.json'),
+      `${JSON.stringify(await collectCodexSqliteDiagnostics(codexSqliteHome), null, 2)}\n`,
+      'utf8'
+    )
+    if (networkDiagnostics) {
+      await writeFile(
+        join(resultDir, 'windows-network-diagnostics.json'),
+        `${JSON.stringify(networkDiagnostics, null, 2)}\n`,
+        'utf8'
+      )
+    }
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4398,6 +4571,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       `${JSON.stringify(
         {
           phase,
+          applicationProcessHistory,
           scenario: control.scenario,
           modelStage: control.modelStage,
           localProtocolStates: Object.fromEntries(
@@ -4411,6 +4585,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
           matrixStage: control.matrixState?.stage ?? null,
           matrixRequestCount: control.matrixState?.requests.length ?? 0,
+          matrixExecutionDiagnostics: control.matrixState?.executionDiagnostics ?? null,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
@@ -4432,17 +4607,36 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       'utf8'
     )
     try {
-      const [snapshot, composerDiagnostics, composerFocus, workbenchDebug] = await Promise.all([
+      const [
+        snapshot,
+        composerDiagnostics,
+        composerFocus,
+        workbenchDebug,
+        conversationDiagnostics,
+        localHarnessDiagnostics,
+      ] = await Promise.all([
         control.command('snapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getComposerFocusSnapshot', 'body', { timeoutMs: 5000 }),
         control.command('getWorkbenchDebugSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getConversationDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getLocalHarnessDiagnostics', 'body', { timeoutMs: 5000 }),
       ])
       await Promise.all([
         writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-diagnostics.json'), `${composerDiagnostics}\n`, 'utf8'),
         writeFile(join(resultDir, 'composer-focus.json'), `${composerFocus}\n`, 'utf8'),
         writeFile(join(resultDir, 'workbench-debug.json'), `${workbenchDebug}\n`, 'utf8'),
+        writeFile(
+          join(resultDir, 'local-harness-diagnostics.json'),
+          `${localHarnessDiagnostics}\n`,
+          'utf8'
+        ),
+        writeFile(
+          join(resultDir, 'conversation-diagnostics.json'),
+          `${conversationDiagnostics}\n`,
+          'utf8'
+        ),
       ])
     } catch {
       // Preserve the original test failure when the WebView can no longer answer diagnostics.
@@ -4462,11 +4656,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         teardownFailures.push({ error, label })
       }
     }
-    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
-    await runTeardownStep('desktop controller', async () => control.close())
+    // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,
@@ -4496,10 +4691,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cleanupError ??= error
       }
     }
+    for (const failure of teardownFailures) {
+      console.error(`[desktop-e2e] ${failure.label} teardown failed:`, failure.error)
+    }
     if (testFailed) {
-      for (const failure of teardownFailures) {
-        console.error(`[desktop-e2e] ${failure.label} teardown failed: ${String(failure.error)}`)
-      }
       if (cleanupError) {
         console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
       }
@@ -4648,6 +4843,17 @@ async function verifyMcpElicitationInFullAccess(control) {
     MCP_ELICITATION_PROMPT,
     'mcp_elicitation'
   )
+  await control.command('waitFor', '[data-testid="mcp-url-authorization-card"]', {
+    text: 'example.com',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'The URL elicitation was acknowledged without user consent'
+  )
+  await control.command('click', '[data-testid="mcp-url-authorization-cancel"]')
   await control.command('waitFor', '[data-testid="request-user-input-card"]', {
     text: '访问范围',
     visible: true,
@@ -4664,10 +4870,14 @@ async function verifyMcpElicitationInFullAccess(control) {
     false,
     'The MCP tool call displayed an execution approval card instead of the business form'
   )
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'Codex resolved the MCP elicitation before the user answered the visible form'
+  const urlRecords = (await readFile(evidencePath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line))
+  assert.deepEqual(
+    urlRecords,
+    [{ event: 'url_elicitation_result', result: { action: 'cancel' } }],
+    'The real MCP server must receive only cancellation before the business form is answered'
   )
   await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
 

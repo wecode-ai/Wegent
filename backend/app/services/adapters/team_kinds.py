@@ -9,7 +9,6 @@ Uses the unified ResourceMember model for team sharing.
 """
 
 import copy
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -38,17 +37,15 @@ from app.models.user import User
 from app.schemas.base_role import has_permission
 from app.schemas.kind import (
     Bot,
-    Ghost,
     Model,
     ModeSpec,
     Shell,
-    Task,
     Team,
     TeamInputPlaceholder,
 )
 from app.schemas.namespace import GroupRole
 from app.schemas.quick_launch import normalize_quick_phrases
-from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
+from app.schemas.team import BotInfo, TeamCreate, TeamUpdate
 from app.schemas.user import UserInDB
 from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.public_model import is_public_model_allowed_for_user_id
@@ -57,9 +54,13 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
-from app.services.team_access_policy import TEAM_USE_ROLE, team_usage_summary
+from app.services.team_access_policy import (
+    TEAM_USE_ROLE,
+    can_edit_team,
+    team_usage_summary,
+)
 from app.stores.tasks import task_store
-from shared.models.db.kind import utc_now_naive
+from app.stores.tasks.interfaces import RecentTeamMode
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
@@ -589,12 +590,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
         is_code: bool = False,
         limit: int = 5,
+        include_fallback: bool = True,
+        mode: RecentTeamMode | None = None,
     ) -> List[Dict[str, Any]]:
-        """Return recent accessible Teams for code or non-code tasks."""
+        """Return recent Teams with optional fallback; exact mode overrides is_code."""
         if limit <= 0:
             return []
 
-        recent_refs = self._get_recent_team_refs(db, user_id, is_code=is_code)
+        recent_refs = self._get_recent_team_refs(
+            db, user_id, is_code=is_code, mode=mode
+        )
 
         selected_teams, selected_identities = self._query_recent_team_kinds(
             db,
@@ -604,7 +609,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         )
 
         fallback_rows = []
-        if len(selected_teams) < limit:
+        if include_fallback and len(selected_teams) < limit:
             accessible_query = self._build_accessible_teams_query(
                 db,
                 user_id=user_id,
@@ -630,16 +635,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
         *,
         is_code: bool,
+        mode: RecentTeamMode | None = None,
     ) -> list[tuple[str, str, int | None]]:
         recent_tasks = task_store.list_recent_task_team_refs(
             db,
             user_id=user_id,
             limit=self.RECENT_TEAM_TASK_SCAN_LIMIT,
+            mode=mode,
         )
         recent_refs: list[tuple[str, str, int | None]] = []
         for task in recent_tasks:
             task_type = str(task.task_type or "chat")
-            if (task_type == "code") != is_code:
+            if mode is not None and task_type != mode:
+                continue
+            if mode is None and (task_type == "code") != is_code:
                 continue
             team_ref = task.team_ref
             if not isinstance(team_ref, dict):
@@ -1256,6 +1265,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not team:
             # Fallback: check group namespace permission for group teams
             team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+            logger.warning(
+                "[TeamDetail] Configuration access unresolved: "
+                "team_id=%s viewer_user_id=%s resource_exists=%s",
+                team_id,
+                user_id,
+                team is not None,
+            )
             if not team:
                 raise HTTPException(status_code=404, detail="Team not found")
             if team.namespace != "default":
@@ -1348,19 +1364,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             raise HTTPException(status_code=404, detail="Team not found")
 
         # Check permissions
-        if team.namespace != "default":
-            # Group team - check permission
-            if not check_group_permission(
-                db, user_id, team.namespace, GroupRole.Developer
-            ):
+        if not can_edit_team(db, team, user_id):
+            if team.namespace != "default":
                 raise HTTPException(
                     status_code=403,
                     detail=f"You need at least Developer role in group '{team.namespace}' to update this team",
                 )
-        else:
-            # Personal team - check ownership
-            if team.user_id != user_id:
-                raise HTTPException(status_code=403, detail="Access denied")
+            raise HTTPException(status_code=403, detail="Access denied")
 
         update_data = obj_in.model_dump(exclude_unset=True)
         old_name = team.name
@@ -1525,7 +1535,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
-        team.updated_at = utc_now_naive()
         flag_modified(team, "json")
 
         db.commit()
@@ -2418,82 +2427,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {"has_parameters": True, "parameters": []}
-
-    def get_team_skills(
-        self, db: Session, *, team_id: int, user_id: int
-    ) -> Dict[str, Any]:
-        """Get all skills associated with a team.
-
-        Follows the chain: team → bots → ghosts → skills
-
-        Args:
-            db: Database session
-            team_id: Team ID
-            user_id: User ID (for authorization)
-
-        Returns:
-            Dictionary with:
-            - team_id: The team ID
-            - team_namespace: The team namespace
-            - skills: List of skill names (deduplicated)
-            - preload_skills: List of skills to preload
-
-        Raises:
-            HTTPException: If team not found or access denied
-        """
-        from app.services.share.team_share_service import team_share_service
-
-        team = team_share_service.get_resource_for_use(db, team_id, user_id)
-        if not team:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        team_crd = Team.model_validate(team.json)
-        all_skills = set()
-        all_preload_skills = set()
-
-        # Use team owner's user_id for querying related resources
-        team_owner_id = team.user_id
-
-        # Iterate through team members to get bot → ghost → skills
-        for member in team_crd.spec.members or []:
-            bot = kindReader.get_by_name_and_namespace(
-                db,
-                team_owner_id,
-                KindType.BOT,
-                member.botRef.namespace,
-                member.botRef.name,
-            )
-            if not bot:
-                continue
-
-            bot_crd = Bot.model_validate(bot.json)
-
-            # Get ghost (stores skills)
-            ghost = kindReader.get_by_name_and_namespace(
-                db,
-                team_owner_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
-            if ghost and ghost.json:
-                ghost_crd = Ghost.model_validate(ghost.json)
-                if ghost_crd.spec.skills:
-                    all_skills.update(ghost_crd.spec.skills)
-                if ghost_crd.spec.preload_skills:
-                    all_preload_skills.update(ghost_crd.spec.preload_skills)
-
-        logger.info(
-            f"[get_team_skills] team_id={team_id}, "
-            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
-        )
-
-        return {
-            "team_id": team_id,
-            "team_namespace": team.namespace or "default",
-            "skills": sorted(all_skills),
-            "preload_skills": sorted(all_preload_skills),
-        }
 
     def copy_team(
         self,

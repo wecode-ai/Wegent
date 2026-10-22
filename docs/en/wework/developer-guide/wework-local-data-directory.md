@@ -24,6 +24,15 @@ The default Executor Home is `~/.wework` and contains:
 The `WEGENT_EXECUTOR_HOME` environment variable overrides the default Executor
 Home. This is useful for isolated sessions, tests, and custom deployments.
 
+## Directory Scanning During Home Migration
+
+When moving a legacy Codex Home into the workbench directory, relative symlink
+scanning uses the entry types supplied by directory enumeration. It recurses
+into directories and validates symlinks without separately reading regular-file
+metadata. A background Git operation removing a temporary lock file after
+enumeration therefore does not block startup. Unresolvable relative symlinks
+still block migration.
+
 ## Automatic Cleanup and Retention
 
 Wework runs storage maintenance in the background immediately after launch and

@@ -11,6 +11,7 @@ execution table and never creates a local task row.
 import logging
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime
 from threading import Event
 from unittest.mock import patch
 
@@ -18,11 +19,13 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemResponse, LoopItemUpdate
 from app.schemas.project_chat import (
@@ -44,6 +47,11 @@ from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 from tests.utils.agent_resources import create_runnable_wegent_team
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +74,7 @@ def _make_gitlab_project(db: Session, user: User) -> CloudProject:
             "provider_config": {"repository": "group/project"},
         },
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -109,7 +118,18 @@ def _make_bot(
             "visibility": "public",
         },
     )
+    authorize_project_agent(db, bot)
     db.add(bot)
+    db.flush()
+    authorize_resource(
+        db,
+        project,
+        db.query(Kind)
+        .filter_by(kind="Device", name=device_id, namespace="default", user_id=user.id)
+        .one(),
+    )
+    if wegent_team_id:
+        authorize_resource(db, project, db.get(Kind, wegent_team_id))
     db.commit()
     db.refresh(bot)
     return bot
@@ -368,6 +388,52 @@ def test_external_issue_page_cache_reuses_provider_response(
     assert calls == 2
 
 
+@pytest.mark.parametrize(
+    ("cache_seconds", "within_ttl_issue", "expired_issue"),
+    [(0, 2, 3), (5, 1, 2), (60, 1, 2)],
+)
+def test_external_issue_page_cache_uses_configured_expiration(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    cache_seconds: int,
+    within_ttl_issue: int,
+    expired_issue: int,
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    calls = 0
+    now = 100.0
+
+    def request(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return [_issue(calls)]
+
+    external_loop_item_provider._invalidate_issue_page_cache(project.id)
+    monkeypatch.setattr(settings, "ISSUE_PAGE_CACHE_SECONDS", cache_seconds)
+    monkeypatch.setattr(external_provider_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(
+        external_loop_item_provider, "_repository", lambda _project: "repo"
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_request", request)
+
+    first = external_loop_item_provider._list_issue_page(
+        project, "pending", None, 1, 10
+    )
+    now = 100.0 + cache_seconds / 2
+    within_ttl = external_loop_item_provider._list_issue_page(
+        project, "pending", None, 1, 10
+    )
+    now = 100.0 + cache_seconds
+    expired = external_loop_item_provider._list_issue_page(
+        project, "pending", None, 1, 10
+    )
+
+    assert first[0]["iid"] == 1
+    assert within_ttl[0]["iid"] == within_ttl_issue
+    assert expired[0]["iid"] == expired_issue
+
+
 def test_gitlab_child_page_filters_by_existing_parent_marker(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -454,6 +520,10 @@ def test_external_parent_remains_stored_in_description(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "default_issue_security": "related",
+    }
     parent_id = f"{project.project_key}-7"
     captured: dict[str, object] = {}
 
@@ -485,8 +555,10 @@ def test_external_parent_remains_stored_in_description(
 
     assert captured["description"] == f"Child details\n\n{PARENT_MARKER} {parent_id}"
     assert "wegent:status:inbox" in captured["labels"]
+    assert "wegent:security:related" in captured["labels"]
     assert "wegent:status:None" not in captured["labels"]
     assert created["status"] == "inbox"
+    assert created["security_level"] == "related"
     assert created["parent_id"] == parent_id
     assert created["description"] == "Child details"
 
@@ -500,6 +572,9 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
 
     monkeypatch.setattr(
         external_loop_item_provider, "_get_issue", lambda _project, _number: issue
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider, "_list_issues", lambda _project: [issue]
     )
 
     def update_issue(_project, _number, payload):
@@ -523,6 +598,51 @@ def test_completed_external_issue_stays_open_and_archive_closes_it(
     assert writes[0]["state"] == "opened"
     assert "wegent:status:completed" in writes[0]["labels"]
     assert writes[1] == {"state": "closed"}
+
+
+def test_external_restore_compensates_reopened_issues_on_failure(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    parent = {
+        **_issue(1),
+        "state": "closed",
+        "labels": ["wegent:status:completed"],
+    }
+    child = {
+        **_issue(2),
+        "description": f"Child details\n\n{PARENT_MARKER} {_item_id(project)}",
+        "state": "closed",
+        "labels": ["wegent:status:completed"],
+    }
+    writes: list[tuple[int, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_issues_state",
+        lambda _project, _state: [parent, child],
+    )
+
+    def update_issue(_project, number, payload):
+        writes.append((number, dict(payload)))
+        if number == 2:
+            raise RuntimeError("provider restore failed")
+        return {**parent, "state": payload["state"]}
+
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    with pytest.raises(RuntimeError, match="provider restore failed"):
+        external_loop_item_provider.restore(
+            test_db,
+            _item_id(project),
+            test_user.id,
+        )
+
+    assert writes == [
+        (1, {"state": "opened"}),
+        (2, {"state": "opened"}),
+        (1, {"state": "closed"}),
+    ]
 
 
 def test_assign_robot_on_gitlab_creates_index_row_and_execution(
@@ -635,6 +755,152 @@ def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
     assert execution.executor_type == "project_robot"
 
 
+def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    _mock_issue(monkeypatch)
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "instructions": "Coordinate delivery.",
+        "leader": {
+            "kind": "human",
+            "id": str(test_user.id),
+            "name": test_user.user_name,
+        },
+        "members": [
+            {
+                "kind": "human",
+                "id": str(test_user.id),
+                "name": test_user.user_name,
+            }
+        ],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+    monkeypatch.setattr(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        lambda _db, _project_id, _user_id: [group],
+    )
+
+    created = loop_item_provider_router.create(
+        test_db,
+        project,
+        test_user,
+        LoopItemCreate(
+            title="Created for collaboration group",
+            assignee_group_id="group-1",
+        ),
+    )
+
+    assert created.values["assignee_group_id"] == "group-1"
+    assert created.values["assignee_group_name"] == "Delivery team"
+    assert created.internal_item is not None
+    assert created.internal_item.assignee_user_id in {None, 0}
+    assert created.internal_item.assignee_agent_id == ""
+    assert created.internal_item.assignee_team_id is None
+    stored_group = created.internal_item.metadata_json["collaboration_group"]
+    assert stored_group["id"] == "group-1"
+    assert stored_group["name"] == "Delivery team"
+    assert stored_group["leader"]["kind"] == "human"
+    assert _active_execution(test_db, str(created.values["id"])) is None
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == test_user.id)
+        .one()
+    )
+    assert notification.payload["action"] == "coordinate_collaboration_group"
+    assert notification.payload["itemId"] == created.values["id"]
+
+
+def test_reassigning_same_external_collaboration_group_dispatches_once(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    manager = _make_bot(test_db, project, test_user)
+    _mock_issue(monkeypatch)
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "instructions": "Coordinate delivery.",
+        "leader": {
+            "kind": "agent",
+            "id": manager.id,
+            "name": manager.title,
+        },
+        "members": [
+            {
+                "kind": "agent",
+                "id": manager.id,
+                "name": manager.title,
+            }
+        ],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+    from app.models.resource_member import ResourceMember
+
+    record = Kind(
+        kind="CollaborationGroup",
+        name="External group",
+        namespace=f"projects/{project.id}",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                key: group[key]
+                for key in ("leader", "members", "stages", "instructions")
+            }
+        },
+    )
+    test_db.add(record)
+    test_db.flush()
+    group["id"] = str(record.id)
+    test_db.add(
+        ResourceMember.create(
+            resource_type="CollaborationGroup",
+            resource_id=record.id,
+            entity_type="project",
+            entity_id=str(project.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        lambda _db, _project_id, _user_id: [group],
+    )
+    assignment = LoopItemAssign(
+        version=1,
+        assignee_type="group",
+        assignee_id=str(group["id"]),
+    )
+
+    external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        assignment,
+    )
+    external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        assignment,
+    )
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == _item_id(project))
+        .all()
+    )
+    assert len(executions) == 1
+    assert executions[0].executor_type == "collaboration_group_dispatch"
+    assert executions[0].status == "queued"
+
+
 def test_assign_user_on_gitlab_creates_index_row_without_execution(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -665,7 +931,7 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
     _mock_issue(monkeypatch)
 
     with patch(
-        "app.services.loop_items.external_provider.notify_project_task_assignee"
+        "app.services.collaboration_human_assignments." "notify_direct_human_assignment"
     ) as notify:
         response = external_loop_item_provider.assign(
             test_db,
@@ -679,18 +945,17 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
         )
 
     assert response["assignee_user_id"] == member.id
-    notify.assert_called_once_with(
-        test_db,
-        actor_user_id=test_user.id,
-        user_id=member.id,
-        project_id=str(project.id),
-        project_name=project.name,
-        item_id=_item_id(project),
-        item_title="External task 1",
-        assigner_name=test_user.user_name,
-    )
+    notify.assert_called_once()
+    assert notify.call_args.args == (test_db,)
+    assert notify.call_args.kwargs["project"] == project
+    assert notify.call_args.kwargs["human"] == member
+    assert notify.call_args.kwargs["actor_user_id"] == test_user.id
+    assert notify.call_args.kwargs["task_title"] == "External task 1"
+    assert notify.call_args.kwargs["instructions"] == "Do the thing"
+    assert notify.call_args.kwargs["assignment_id"]
     row = test_db.get(LoopItem, _item_id(project))
     assert row is not None
+    assert notify.call_args.kwargs["issue"] == row
     assert row.assignee_user_id == member.id
     assert row.assignee_agent_id == ""
     assert _active_execution(test_db, _item_id(project)) is None
@@ -832,6 +1097,36 @@ def test_assign_response_roundtrip(
 
     assert parsed.assignee_agent_id == bot.id
     assert parsed.execution_state == "queued"
+
+
+def test_external_assignment_preserves_issue_security_label(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    _mock_issue(monkeypatch)
+    current = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
+    restricted = external_loop_item_provider.update(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemUpdate(version=current["version"], security_level="related"),
+    )
+    assert restricted["security_level"] == "related"
+
+    assigned = external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemAssign(
+            version=restricted["version"], assignee_type="agent", assignee_id=bot.id
+        ),
+    )
+
+    assert assigned["security_level"] == "related"
+    assert "wegent:security:related" in external_loop_item_provider._labels(
+        external_loop_item_provider._get_issue(project, 1)
+    )
 
 
 def test_unassign_on_gitlab_cancels_robot_run(

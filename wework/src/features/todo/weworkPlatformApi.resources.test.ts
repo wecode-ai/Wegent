@@ -31,6 +31,7 @@ describe('mergeExecutionEnvironmentResources', () => {
       id: 'device:APB22015038',
       device_id: 0,
       device_key: 'APB22015038',
+      app_device_id: 'electron-installation-1',
       name: 'APB22015038',
       owner_type: 'workspace',
       owner_id: 'wework-local-workspace',
@@ -38,7 +39,8 @@ describe('mergeExecutionEnvironmentResources', () => {
     const registered = environment({
       id: '42',
       device_id: 42,
-      device_key: 'APB22015038',
+      device_key: 'app-record-42',
+      app_device_id: 'electron-installation-1',
       name: 'APB22015038',
     })
     const cloudHost = environment({

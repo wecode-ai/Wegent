@@ -21,7 +21,6 @@ Architecture:
 
 import base64
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
@@ -34,6 +33,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     KnowledgeDocument,
 )
+from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -69,10 +69,24 @@ from app.services.knowledge.external_refresh_snapshot import (
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
-    get_profile,
-    merge_profile_defaults,
+    load_profile,
+)
+from app.services.knowledge.retrieval_resource_resolver import (
+    resolve_embedding_model_resource,
+    resolve_retriever_resource,
 )
 from app.stores.tasks import task_store
+from shared.knowledge_module import (
+    EMBEDDING_RESOURCE_CATEGORY,
+    MODEL_RESOURCE_KIND,
+    RETRIEVER_RESOURCE_KIND,
+    RetrievalProfileRecord,
+    RetrievalResource,
+    evaluate_profile,
+    normalize_document_extension,
+    prepare_knowledge_config,
+    validate_retrieval_config_update,
+)
 from shared.models import SearchHints
 from shared.telemetry.decorators import trace_async
 
@@ -138,6 +152,72 @@ def _validate_document_read_result_payload(result: Dict[str, Any]) -> None:
     if missing_keys:
         raise ValueError(
             "Incomplete document read payload: missing " + ", ".join(missing_keys)
+        )
+
+
+class _WegentRetrievalConfigAdapter:
+    """Supplies Wegent's authorized records to the pure knowledge module.
+
+    The module decides how to compose and validate the configuration; this only
+    reports the stored profile and the candidates Wegent has authorized for this
+    user and namespace.
+    """
+
+    def __init__(
+        self, orchestrator: "KnowledgeOrchestrator", db: Session, user: User
+    ) -> None:
+        self._orchestrator = orchestrator
+        self._db = db
+        self._user = user
+
+    def retrieval_profile(self) -> RetrievalProfileRecord:
+        profile, _version, record = load_profile(self._db)
+        health = evaluate_profile(record)
+        if profile and health["status"] != "valid":
+            logger.warning(
+                "[Orchestrator] Retrieval profile is unavailable; using automatic "
+                "defaults: %s",
+                health["fallback_reason"],
+            )
+        return record
+
+    def default_retriever(self, namespace: str) -> Optional[RetrievalResource]:
+        record = self._orchestrator.get_default_retriever(
+            self._db, self._user.id, namespace
+        )
+        if not record:
+            return None
+        return RetrievalResource(
+            name=record["retriever_name"],
+            namespace=record.get("retriever_namespace") or "default",
+            kind=RETRIEVER_RESOURCE_KIND,
+        )
+
+    def default_embedding_model(self, namespace: str) -> Optional[RetrievalResource]:
+        record = self._orchestrator.get_default_embedding_model(
+            self._db, self._user.id, namespace
+        )
+        if not record:
+            return None
+        return RetrievalResource(
+            name=record["model_name"],
+            namespace=record.get("model_namespace") or "default",
+            kind=MODEL_RESOURCE_KIND,
+            category=EMBEDDING_RESOURCE_CATEGORY,
+        )
+
+    def resolve_retriever(
+        self, name: str, namespace: str
+    ) -> Optional[RetrievalResource]:
+        return resolve_retriever_resource(
+            self._db, user_id=self._user.id, name=name, namespace=namespace
+        )
+
+    def resolve_embedding_model(
+        self, name: str, namespace: str
+    ) -> Optional[RetrievalResource]:
+        return resolve_embedding_model_resource(
+            self._db, user_id=self._user.id, name=name, namespace=namespace
         )
 
 
@@ -318,54 +398,24 @@ class KnowledgeOrchestrator:
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Build a complete retrieval config, auto-filling missing core fields."""
-        if rag_config_mode == "disabled":
-            return None
+        """Compose the retrieval config through the shared knowledge module.
 
-        caller_overrides: Dict[str, Any] = {}
-        if retriever_name:
-            caller_overrides["retriever_name"] = retriever_name
-        if retriever_namespace:
-            caller_overrides["retriever_namespace"] = retriever_namespace
-        embedding_overrides: Dict[str, str] = {}
-        if embedding_model_name:
-            embedding_overrides["model_name"] = embedding_model_name
-        if embedding_model_namespace:
-            embedding_overrides["model_namespace"] = embedding_model_namespace
-        if embedding_overrides:
-            caller_overrides["embedding_config"] = embedding_overrides
-
-        profile, _, profile_health = get_profile(db)
-        if profile_health["status"] == "valid" and profile:
-            resolved_config = merge_profile_defaults(profile, caller_overrides)
-        else:
-            resolved_config = caller_overrides
-            if profile_health["status"] == "invalid":
-                logger.warning(
-                    "[Orchestrator] Retrieval profile is unavailable; using automatic defaults: %s",
-                    profile_health["fallback_reason"],
-                )
-        resolved_config = merge_profile_defaults(resolved_config, retrieval_config)
-        embedding_config = dict(resolved_config.get("embedding_config") or {})
-
-        retriever_name = resolved_config.get("retriever_name")
-        retriever_namespace = resolved_config.get("retriever_namespace")
-        embedding_model_name = embedding_config.get("model_name")
-        embedding_model_namespace = embedding_config.get("model_namespace")
-
-        if not retriever_name:
-            default_retriever = self.get_default_retriever(db, user.id, namespace)
-            if default_retriever:
-                retriever_name = default_retriever["retriever_name"]
-                retriever_namespace = default_retriever["retriever_namespace"]
-
-        if not embedding_model_name:
-            default_embedding = self.get_default_embedding_model(db, user.id, namespace)
-            if default_embedding:
-                embedding_model_name = default_embedding["model_name"]
-                embedding_model_namespace = default_embedding["model_namespace"]
-
-        if not retriever_name or not embedding_model_name:
+        The module owns the composition priority (explicit input, valid system
+        profile, authorized candidates) and the validation rules, so Wegent and a
+        second service resolve one configuration the same way. This method only
+        supplies the records Wegent has authorized.
+        """
+        resolved_config = prepare_knowledge_config(
+            _WegentRetrievalConfigAdapter(self, db, user),
+            namespace=namespace,
+            retrieval_config=retrieval_config,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+            rag_config_mode=rag_config_mode,
+        )
+        if resolved_config is None:
             logger.warning(
                 "[Orchestrator] Could not build retrieval_config: "
                 "retriever=%s, embedding=%s",
@@ -374,40 +424,12 @@ class KnowledgeOrchestrator:
             )
             return None
 
+        embedding_config = resolved_config.get("embedding_config") or {}
         logger.info(
             "[Orchestrator] Built retrieval_config: retriever=%s, embedding=%s",
-            retriever_name,
-            embedding_model_name,
+            resolved_config.get("retriever_name"),
+            embedding_config.get("model_name"),
         )
-        return self._build_complete_retrieval_config(
-            base_config=resolved_config,
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            embedding_model_name=embedding_model_name,
-            embedding_model_namespace=embedding_model_namespace,
-        )
-
-    def _build_complete_retrieval_config(
-        self,
-        *,
-        base_config: Dict[str, Any],
-        retriever_name: str,
-        retriever_namespace: Optional[str],
-        embedding_model_name: str,
-        embedding_model_namespace: Optional[str],
-    ) -> Dict[str, Any]:
-        """Build the only retrieval_config shape allowed to be persisted."""
-        resolved_config = dict(base_config)
-        resolved_config["retriever_name"] = retriever_name
-        resolved_config["retriever_namespace"] = retriever_namespace or "default"
-        resolved_config["embedding_config"] = {
-            "model_name": embedding_model_name,
-            "model_namespace": embedding_model_namespace or "default",
-        }
-        if not resolved_config.get("retrieval_mode"):
-            resolved_config["retrieval_mode"] = "vector"
-        resolved_config.setdefault("top_k", 5)
-        resolved_config.setdefault("score_threshold", 0.5)
         return resolved_config
 
     def get_task_model_as_summary_model(
@@ -937,6 +959,7 @@ class KnowledgeOrchestrator:
             offset=offset,
             limit=limit,
             knowledge_base_ids=[document.kind_id],
+            searchable_only=False,
         )
         result = results[0] if results else None
 
@@ -1117,7 +1140,12 @@ class KnowledgeOrchestrator:
         if allow_document_download is not None:
             update_fields["allow_document_download"] = allow_document_download
         if retrieval_config is not None:
-            update_fields["retrieval_config"] = retrieval_config
+            # An edit only writes the fields the caller sent, so only those are
+            # validated; a stored configuration that predates the current limits
+            # keeps its values until the caller changes them.
+            update_fields["retrieval_config"] = validate_retrieval_config_update(
+                retrieval_config
+            )
         if dingtalk_auto_sync_enabled is not None:
             update_fields["dingtalk_auto_sync_enabled"] = dingtalk_auto_sync_enabled
         if summary_enabled is not None:
@@ -1600,68 +1628,24 @@ class KnowledgeOrchestrator:
                     "attachment_id is required for source_type='attachment'"
                 )
 
-            # Import context type enum (context_service already imported at function start)
-            from app.models.subtask_context import ContextType
+            source_context = self._get_import_attachment(db, user, attachment_id)
 
-            # 1. Verify attachment exists and user has access (ownership check)
-            source_context = context_service.get_context_optional(
-                db=db,
-                context_id=attachment_id,
-                user_id=user.id,
-            )
-            if not source_context:
-                raise ValueError(
-                    f"Attachment {attachment_id} not found or access denied"
-                )
-
-            if source_context.context_type != ContextType.ATTACHMENT.value:
-                raise ValueError(f"Context {attachment_id} is not an attachment")
-
-            # 2. Get binary data from source attachment (auto-decrypts if needed)
-            binary_data = context_service.get_attachment_binary_data(
-                db=db,
-                context=source_context,
-            )
-            if binary_data is None:
-                raise ValueError(
-                    f"Failed to retrieve content from attachment {attachment_id}"
-                )
-
-            # 3. Extract file info from source attachment
-            filename = source_context.name or f"document_{attachment_id}"
-            normalized_ext = (
-                source_context.file_extension or DEFAULT_TEXT_FILE_EXTENSION
-            )
-
-            # 4. Create a copy as a new attachment for the document
-            # This ensures the knowledge base document is independent of the original
-            attachment, _ = context_service.upload_attachment(
-                db=db,
-                user_id=user.id,
-                filename=filename,
-                binary_data=binary_data,
-                subtask_id=0,  # Unlinked attachment for knowledge base
-            )
-
-            # Create document using shared helper
             doc_data = KnowledgeDocumentCreate(
-                name=name or filename,
-                source_type="file",  # Store as file type in the document
-                attachment_id=attachment.id,
-                file_extension=normalized_ext,
-                file_size=len(binary_data),
+                name=name or source_context.original_filename,
+                source_type="file",
+                attachment_id=attachment_id,
+                file_extension=source_context.file_extension,
+                file_size=source_context.file_size,
                 folder_id=folder_id,
+                splitter_config=splitter_config,
             )
-
-            return self._create_and_index_document(
+            return self.create_document_from_attachment(
                 db=db,
                 user=user,
-                knowledge_base=kb,
                 knowledge_base_id=knowledge_base_id,
                 data=doc_data,
                 trigger_indexing=trigger_indexing,
                 trigger_summary=trigger_summary,
-                splitter_config=splitter_config,
             )
 
         else:
@@ -1713,7 +1697,7 @@ class KnowledgeOrchestrator:
         This method is used by REST API where attachment is uploaded separately
         via /api/attachments/upload endpoint.
 
-        Flow: Verify access → Create document → Schedule indexing via Celery
+        Flow: Verify source access → Copy attachment → Create document → Schedule indexing
 
         Args:
             db: Database session
@@ -1746,6 +1730,20 @@ class KnowledgeOrchestrator:
                 "You do not have permission to add documents to this knowledge base"
             )
 
+        from app.services.context import context_service
+
+        source = self._get_import_attachment(db, user, data.attachment_id)
+        attachment = context_service.copy_attachment_for_user(db, source, user.id)
+        data = data.model_copy(
+            update={
+                "attachment_id": attachment.id,
+                "file_extension": normalize_document_extension(
+                    attachment.file_extension
+                ),
+                "file_size": attachment.file_size,
+            }
+        )
+
         # Get splitter config from data if provided
         splitter_config_dict = None
         if data.splitter_config:
@@ -1761,6 +1759,25 @@ class KnowledgeOrchestrator:
             trigger_summary=trigger_summary,
             splitter_config=splitter_config_dict,
         )
+
+    @staticmethod
+    def _get_import_attachment(
+        db: Session, user: User, attachment_id: Optional[int]
+    ) -> SubtaskContext:
+        """Authorize the caller's source before reading any attachment content."""
+        from app.models.subtask_context import ContextStatus, ContextType
+        from app.services.context import context_service
+
+        source = context_service.get_context_optional(
+            db=db, context_id=attachment_id, user_id=user.id
+        )
+        if source is None:
+            raise ValueError(f"Attachment {attachment_id} not found or access denied")
+        if source.context_type != ContextType.ATTACHMENT.value:
+            raise ValueError(f"Context {attachment_id} is not an attachment")
+        if source.status != ContextStatus.READY.value:
+            raise ValueError(f"Attachment {attachment_id} is not ready")
+        return source
 
     def attach_external_document_content(
         self,
@@ -1930,7 +1947,6 @@ class KnowledgeOrchestrator:
 
         """
         document_id = document.id
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         existing_external = document.external_source_config
         incoming_external = dict(content.metadata or {})
@@ -1965,7 +1981,6 @@ class KnowledgeOrchestrator:
             KnowledgeDocument.file_extension: content.file_extension,
             KnowledgeDocument.file_size: len(content.content),
             KnowledgeDocument.source_config: merged_source_config,
-            KnowledgeDocument.updated_at: now,
         }
         sync_config = merged_external.get("sync")
         follows_source_title = document.external_provider == "dingtalk" or (
@@ -2034,29 +2049,45 @@ class KnowledgeOrchestrator:
             resolve_dispatch_or_none,
         )
 
-        # Multimodal pre-flight gate: resolves dispatch ctx for video/image files
-        # (model/api_key/download path) BEFORE document creation so a failure
-        # leaves no orphan. No-op for non-multimodal files (normal path proceeds).
-        # Skip when indexing is disabled — callers may store a video/image
-        # document without analyzing it immediately; the gate runs on reindex.
-        multimodal_dispatch_ctx = None
-        if trigger_indexing:
-            multimodal_dispatch_ctx = resolve_dispatch_or_none(
-                db,
-                knowledge_base,
-                settings,
-                file_extension=data.file_extension,
-                attachment_id=data.attachment_id,
-                uploader=user,
-            )
+        attachment_id = data.attachment_id
+        attachment_owner_id = user.id
+        try:
+            # Multimodal pre-flight gate: resolves dispatch ctx for video/image files
+            # (model/api_key/download path) BEFORE document creation so a failure
+            # leaves no orphan. No-op for non-multimodal files (normal path proceeds).
+            # Skip when indexing is disabled — callers may store a video/image
+            # document without analyzing it immediately; the gate runs on reindex.
+            multimodal_dispatch_ctx = None
+            if trigger_indexing:
+                multimodal_dispatch_ctx = resolve_dispatch_or_none(
+                    db,
+                    knowledge_base,
+                    settings,
+                    file_extension=data.file_extension,
+                    attachment_id=data.attachment_id,
+                    uploader=user,
+                )
 
-        # Create document
-        document = KnowledgeService.create_document(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=user.id,
-            data=data,
-        )
+            # Create document
+            document = KnowledgeService.create_document(
+                db=db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=user.id,
+                data=data,
+            )
+        except Exception:
+            # Creation may commit before refresh fails. Only remove an unlinked
+            # body after rollback and a fresh reference check; dispatch is outside
+            # this cleanup boundary because the document already owns its body.
+            db.rollback()
+            referenced = (
+                db.query(KnowledgeDocument.id)
+                .filter(KnowledgeDocument.attachment_id == attachment_id)
+                .first()
+            )
+            if attachment_id and referenced is None:
+                delete_attachment_best_effort(db, attachment_owner_id, attachment_id)
+            raise
 
         logger.info(
             f"[Orchestrator] Created document {document.id} in KB {knowledge_base_id}"
@@ -2073,6 +2104,7 @@ class KnowledgeOrchestrator:
                 knowledge_base=knowledge_base,
                 document=document,
                 user=user,
+                caller_user_id=user.id,
                 trigger_summary=trigger_summary,
                 splitter_config=splitter_config,
                 multimodal_dispatch_ctx=multimodal_dispatch_ctx,
@@ -2186,6 +2218,7 @@ class KnowledgeOrchestrator:
                 knowledge_base=kb,
                 document=document,
                 user=user,
+                caller_user_id=user.id,
                 trigger_summary=False,  # Don't re-generate summary on update
                 allow_if_success=True,
                 replace_active=True,
@@ -2246,6 +2279,7 @@ class KnowledgeOrchestrator:
         expected_generation: Optional[int] = None,
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
+        caller_user_id: int | None = None,
     ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
@@ -2257,7 +2291,8 @@ class KnowledgeOrchestrator:
             db: Database session
             knowledge_base: Knowledge base Kind
             document: Document model
-            user: Current user
+            user: Dispatch metadata user; not necessarily the manual caller
+            caller_user_id: Explicit manual caller; automatic dispatches omit it
             trigger_summary: Whether to trigger summary after indexing
             splitter_config: Optional splitter configuration dict
             allow_if_success: Whether to re-queue a document that already succeeded
@@ -2388,6 +2423,7 @@ class KnowledgeOrchestrator:
                     embedding_model_name=embedding_model_name,
                     embedding_model_namespace=embedding_model_namespace,
                     user_id=index_owner_user_id,
+                    caller_user_id=caller_user_id,
                     user_name=user.user_name,
                     document_id=document.id,
                     index_generation=generation,
@@ -2413,6 +2449,7 @@ class KnowledgeOrchestrator:
                     "embedding_model_name": embedding_model_name,
                     "embedding_model_namespace": embedding_model_namespace,
                     "user_id": index_owner_user_id,
+                    "caller_user_id": caller_user_id,
                     "user_name": user.user_name,
                     "document_id": document.id,
                     "index_generation": generation,
@@ -2440,7 +2477,6 @@ class KnowledgeOrchestrator:
                 # Override QUEUED -> PENDING_CONVERSION: document is waiting
                 # for a conversion worker, not for direct indexing
                 document.index_status = DocumentIndexStatus.PENDING_CONVERSION
-                document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
 
                 from app.core.celery_app import celery_app
@@ -2480,6 +2516,7 @@ class KnowledgeOrchestrator:
                             "embedding_model_name": embedding_model_name,
                             "embedding_model_namespace": embedding_model_namespace,
                             "user_id": index_owner_user_id,
+                            "caller_user_id": caller_user_id,
                             "user_name": user.user_name,
                             "document_id": document.id,
                             "index_generation": generation,
@@ -2505,6 +2542,7 @@ class KnowledgeOrchestrator:
                     embedding_model_name=embedding_model_name,
                     embedding_model_namespace=embedding_model_namespace,
                     user_id=index_owner_user_id,
+                    caller_user_id=caller_user_id,
                     user_name=user.user_name,
                     document_id=document.id,
                     index_generation=generation,
@@ -2673,6 +2711,7 @@ class KnowledgeOrchestrator:
             knowledge_base=knowledge_base,
             document=document,
             user=user,
+            caller_user_id=user.id,
             # A multimodal re-analyze (force_reconvert) regenerates the document
             # content via Gemini, so the summary must be regenerated too — the old
             # summary no longer matches the new Markdown. The indexing task still
@@ -2848,6 +2887,7 @@ class KnowledgeOrchestrator:
                     knowledge_base=knowledge_base,
                     document=document,
                     user=user,
+                    caller_user_id=user.id,
                     trigger_summary=trigger_summary,
                     allow_if_success=True,
                     replace_active=True,
@@ -3063,6 +3103,7 @@ class KnowledgeOrchestrator:
                         knowledge_base=knowledge_base,
                         document=document,
                         user=user,
+                        caller_user_id=user.id,
                         trigger_summary=trigger_summary,
                         allow_if_success=True,
                         replace_active=True,
@@ -3107,8 +3148,8 @@ class KnowledgeOrchestrator:
     ) -> Dict[str, Any]:
         """Retrieve knowledge with automatic routing and gateway support.
 
-        Unified entry point for MCP tools and Open API. Supports both local and
-        remote RAG gateways with automatic fallback.
+        Unified entry point for MCP tools and Open API. Direct injection is
+        resolved in the Backend; every other retrieval runs in knowledge_runtime.
 
         Args:
             user_id: Current user ID for access control.

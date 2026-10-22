@@ -18,6 +18,16 @@ export interface CollaborationIssueCardItem {
   assignee_agent_name?: string | null
   assignee_team_id?: number | null
   assignee_team_name?: string | null
+  execution_state?: string | null
+}
+
+/**
+ * A robot-owned Issue whose latest Run is blocked on missing model or
+ * workspace configuration. The board card shows the reason so the owner is not
+ * left guessing why an in-progress Issue is not running.
+ */
+export function issueNeedsExecutionConfiguration(item: CollaborationIssueCardItem): boolean {
+  return item.execution_state === 'waiting_runtime'
 }
 
 export interface CollaborationIssueCardDisplay {

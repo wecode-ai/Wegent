@@ -9,7 +9,7 @@ from shared.utils.mcp_names import SkillMcpNames, resolve_skill_mcp_name
 
 
 def test_interactive_form_tool_name_fits_model_limit() -> None:
-    identity = ("prompts-to-movie-stepped", "wegent-interactive-form-question")
+    identity = ("a" * 24, "wegent-interactive-form-question")
     compact_name = resolve_skill_mcp_name(*identity)
 
     assert len(f"mcp__{compact_name}__interactive_form_question") == 64
@@ -20,7 +20,7 @@ def test_interactive_form_tool_name_fits_model_limit() -> None:
 
 
 def test_names_differ_when_only_truncated_parts_differ() -> None:
-    prefix = "prompts-to-movie-stepped"
+    prefix = "a" * 24
     identities = [
         (prefix, "wegent-interactive-form-question"),
         (prefix, "wegent-interactive-form-question-v2"),
@@ -33,19 +33,47 @@ def test_names_differ_when_only_truncated_parts_differ() -> None:
     assert all(len(name) <= 32 for name in compact_names)
 
 
-def test_skill_code_is_shared_across_servers_and_preserves_short_server_names() -> None:
+def test_short_names_remain_readable() -> None:
     docs = resolve_skill_mcp_name("demo-skill", "docs")
-    boundary = resolve_skill_mcp_name("demo-skill", "s" * 24)
 
-    assert docs == "92d551f_docs"
-    assert boundary == docs[:8] + "s" * 24
-    assert len(resolve_skill_mcp_name("demo-skill", "s" * 25)) == 32
+    assert docs == "demo-skill_docs"
+    assert len(docs) <= 32
+
+
+def test_long_names_use_a_stable_compact_code() -> None:
+    compact_name = resolve_skill_mcp_name(
+        "a" * 24,
+        "wegent-interactive-form-question",
+    )
+
+    assert len(compact_name) == 32
+    assert compact_name[0].isalpha()
+    assert (
+        resolve_skill_mcp_name(
+            "a" * 24,
+            "wegent-interactive-form-question",
+        )
+        == compact_name
+    )
 
 
 def test_provider_skill_keeps_its_unprefixed_name() -> None:
     assert resolve_skill_mcp_name("wegent-knowledge", "wegent-knowledge") == (
         "wegent-knowledge"
     )
+
+
+def test_names_are_valid_model_function_name_components() -> None:
+    names = [
+        resolve_skill_mcp_name("demo-skill", "docs"),
+        resolve_skill_mcp_name("demo-skill", "123.docs"),
+        resolve_skill_mcp_name("123.skill", "docs"),
+        resolve_skill_mcp_name("123.skill", "123.skill"),
+    ]
+
+    for name in names:
+        assert name[0].isalpha()
+        assert all(character.isalnum() or character in "_-" for character in name)
 
 
 def test_collision_is_resolved_without_overwriting_existing_identity(
@@ -59,14 +87,14 @@ def test_collision_is_resolved_without_overwriting_existing_identity(
         lambda name: short_code(name) if "\0" in name else "abcdefg",
     )
     names = SkillMcpNames()
-    first = names.register("skill-one", "docs")
-    second = names.register("skill-two", "docs")
+    first = names.register("skill-one-" + "x" * 30, "docs")
+    second = names.register("skill-two-" + "x" * 30, "docs")
 
     assert second != first
     assert len(second.split("_", 1)[0]) == 7
     assert second.endswith("_docs")
-    assert names.register("skill-one", "docs") == first
-    assert names.register("skill-two", "docs") == second
+    assert names.register("skill-one-" + "x" * 30, "docs") == first
+    assert names.register("skill-two-" + "x" * 30, "docs") == second
     assert len(caplog.records) == 1
     assert caplog.records[0].levelname == "WARNING"
     assert "Skill MCP name collision" in caplog.text
@@ -95,8 +123,12 @@ def test_rehash_continues_when_first_alternative_also_collides(monkeypatch) -> N
         lambda name: short_code(name) if name.endswith("\0" + "2") else "abcdefg",
     )
     names = SkillMcpNames()
-    first = names.register("skill-one", "docs")
-    second = names.register("skill-two", "docs")
+    first = names.register("skill-one-" + "x" * 30, "docs")
+    second = names.register("skill-two-" + "x" * 30, "docs")
 
     assert second != first
-    assert second == resolve_skill_mcp_name("skill-two", "docs", attempt=2)
+    assert second == resolve_skill_mcp_name(
+        "skill-two-" + "x" * 30,
+        "docs",
+        attempt=2,
+    )

@@ -85,8 +85,8 @@
   cursor: pointer;
 }
 .composer-mention-link {
-  color: rgb(46 95 158);
-  background: rgb(237 243 255);
+  color: rgb(var(--color-focus));
+  background: rgb(var(--color-focus) / 0.1);
   border-radius: 6px;
   padding: 2px 6px 2px 4px;
   cursor: pointer;

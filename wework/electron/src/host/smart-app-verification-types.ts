@@ -17,6 +17,13 @@ export interface SmartAppVerificationIssue {
   hint: string | null
 }
 
+export class SmartAppVerificationError extends Error {
+  constructor(readonly report: SmartAppVerificationReport) {
+    super(report.issues[0]?.code ?? 'Smart App verification failed')
+    this.name = 'SmartAppVerificationError'
+  }
+}
+
 export interface SmartAppVerificationScripts {
   typecheck: string
   test: string

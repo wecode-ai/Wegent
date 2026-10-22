@@ -2,6 +2,10 @@ import { useMemo } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@wegent/chat-core/runtime-composer-catalog'
 import {
+  composerAppNeedsAuthorization,
+  isComposerAppSelectable,
+} from '@wegent/chat-core/composer-plugin-metadata'
+import {
   appReference,
   dedupeLocalSkills,
   displayAppName,
@@ -36,9 +40,14 @@ export function useComposerMentionCandidates<Project = unknown, Conversation = u
         key: `app:${app.id}`,
         title: displayAppName(app),
         description: app.description ?? undefined,
-        metaLabel: pluginNames[0] ?? t('workbench.skill_scope_personal', 'Personal'),
+        metaLabel: composerAppNeedsAuthorization(app)
+          ? t('workbench.composer_plugin_authorization_required', 'Authorization required')
+          : (pluginNames[0] ?? t('workbench.skill_scope_personal', 'Personal')),
         testId: localSkillTestId(app.id),
-        enabled: app.isEnabled !== false && app.isAccessible !== false,
+        enabled: isComposerAppSelectable(app),
+        statusLabel: composerAppNeedsAuthorization(app)
+          ? t('workbench.composer_plugin_authorization_required', 'Authorization required')
+          : undefined,
         reference: appReference(app),
         searchAliases: [app.id, app.name, app.description ?? '', ...pluginNames],
         app,
@@ -84,5 +93,10 @@ export function useComposerMentionCandidates<Project = unknown, Conversation = u
     [mentionCandidates, query]
   )
 
-  return { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates }
+  return {
+    appCandidates,
+    skillCandidates,
+    mentionCandidates,
+    filteredMentionCandidates,
+  }
 }

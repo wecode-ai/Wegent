@@ -31,6 +31,33 @@ const originalSpec: ModelSpecConfig = {
 }
 
 describe('model spec configuration', () => {
+  it.each(['Updated capabilities', undefined])(
+    'preserves publication metadata while updating the model description to %p',
+    description => {
+      const publication = {
+        description: 'Original capabilities',
+        publishStatus: 'published',
+        visibility: 'public',
+        version: '1.0.0',
+        allowPersonalInstall: true,
+        marketplace: { recommendationScore: 3 },
+      }
+      const merged = mergeFormManagedSpec(
+        { ...originalSpec, capability: publication },
+        { modelConfig: originalSpec.modelConfig, capability: description }
+      )
+
+      expect(merged.capability).toEqual({
+        publishStatus: 'published',
+        visibility: 'public',
+        version: '1.0.0',
+        allowPersonalInstall: true,
+        marketplace: { recommendationScore: 3 },
+        ...(description && { description }),
+      })
+    }
+  )
+
   it('formats and validates a complete model spec', () => {
     expect(validateModelSpecJson(formatModelSpec(originalSpec))).toEqual({
       value: originalSpec,

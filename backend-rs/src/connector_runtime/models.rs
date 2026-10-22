@@ -2,18 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Response models for `GET /api/connector-runtime/tools`.
+//! Response models for the connector-runtime API.
 //!
-//! Mirrors `ConnectorTool` and `ConnectorToolListResponse` in
-//! `app/schemas/connector.py`. Pydantic serializes these models without
-//! aliases, so the wire names are the snake_case field names, and fields
-//! without `exclude_none` (here `title` and `annotations`) serialize an absent
-//! value as JSON `null`.
+//! Mirrors the connector models in `app/schemas/connector.py`. Pydantic
+//! serializes these models without aliases, so the wire names are the
+//! snake_case field names, and fields without `exclude_none` (here `title` and
+//! `annotations`) serialize an absent value as JSON `null`.
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// The `annotations` object of one upstream MCP tool
 /// (`mcp.types.ToolAnnotations`).
@@ -84,14 +83,9 @@ impl ToolAnnotations {
 
 /// Python truthiness (`bool(value)`) of one opaque JSON value.
 fn is_truthy(value: &OpaqueJson) -> bool {
-    match value.to_value() {
-        serde_json::Value::Null => false,
-        serde_json::Value::Bool(value) => value,
-        serde_json::Value::Number(number) => number.as_f64() != Some(0.0),
-        serde_json::Value::String(value) => !value.is_empty(),
-        serde_json::Value::Array(values) => !values.is_empty(),
-        serde_json::Value::Object(object) => !object.is_empty(),
-    }
+    value
+        .project::<brz_json::adapters::PythonTruthiness>()
+        .is_some_and(|value| value.0)
 }
 
 /// `ConnectorTool.risk_hints`.
@@ -131,6 +125,18 @@ pub struct ConnectorTool {
 #[derive(Debug, Serialize)]
 pub struct ConnectorToolListResponse {
     pub tools: Vec<ConnectorTool>,
+}
+
+/// `ConnectorTokenResponse` (`app/schemas/connector.py`).
+///
+/// Pydantic serializes the declared field order with the default
+/// `token_type="bearer"` always present, so the wire body is
+/// `{"access_token": ..., "token_type": "bearer", "expires_in": 900}`.
+#[derive(Debug, Serialize)]
+pub struct ConnectorTokenResponse {
+    pub access_token: String,
+    pub token_type: &'static str,
+    pub expires_in: i64,
 }
 
 /// `_tool_from_upstream` fallback for a tool without an `inputSchema`:

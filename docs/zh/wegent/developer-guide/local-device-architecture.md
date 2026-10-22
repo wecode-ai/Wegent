@@ -36,6 +36,8 @@ flowchart LR
 
 ### Wework 打包 App 本地优先通道
 
+本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。
+
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
 本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
@@ -78,6 +80,12 @@ Electron 层不保存事件日志、不生成序号，也不实现重放或合�
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### Codex 原始模型 Catalog
+
+Wework 的模型路由、Catalog 编辑和保存校验共用同一份原始 Catalog 基线。配置了可读取的自定义上游时使用上游 `/models`；没有上游或上游目录不可用时，通过当前 Codex 二进制的 `debug models --bundled` 导出完整内置 Catalog，并在 executor 进程内缓存成功结果。上游目录失败会记录原因，不阻塞仅支持推理接口的服务商。Wework 的额外模型只按 slug 补入缺失条目，不覆盖 Codex 原始字段。
+
+用户修改以字段差异保存在设备本地的 `capabilities/model-catalog-overrides.json`，恢复默认会删除对应差异。路由在原始基线上应用差异后再生成视觉委托条目。导出失败会明确报错，不会用不完整的 Wework 模型清单替代原始 Catalog。
+
 ### 跨组件请求日志关联
 
 Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在同一次请求的后续日志中复用它。该字段只用于诊断单次请求，不替代任务 ID、设备 ID、线程 ID 或 OpenTelemetry trace ID，也不能用于推断业务状态。
@@ -91,6 +99,12 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 排查一条请求时，先从用户可见失败附近的 Wework frontend、DSH 或 Backend 日志取得 `request_id`，再在同一诊断目录或集中式日志系统中按精确值搜索。开始和结束日志还会记录方法名、结果与耗时，因此缺失的边界可以直接定位请求停留在哪个组件，而不需要按相近时间或任务名称猜测。
 
 ### Executor 启动环境与 Codex Home 初始化
+
+共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
+
+续聊保留任务 ID，但每轮使用新的子任务 ID，以刷新 MCP 上下文并区分消息。会话读取和续聊使用首次执行所属的原生 Home；不同 Home 的 Codex 查询进程互相隔离，历史刷新只读且不恢复会话，以免占用下一轮执行所需的写锁；续轮保存用户及 Team 身份但不保存凭据。后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
+
+同名 Home 的复用不再要求后端 URL、Team ID、Bot ID 或 Shell 类型与旧标记一致；任务绑定和会话仍保留。任务技能查询要求认证用户 ID 和已记录的任务绑定匹配，但不使用后端 URL 作为身份。因此，共享工作台根目录不会隔离用户和任务 ID 重叠的独立后端；支持这种隔离需要由认证协议提供稳定后端身份。
 
 Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的非交互登录 shell 读取登录环境，避免执行仅供终端交互使用的提示符、补全和插件初始化。需要传递给 Agent 的环境变量应配置在登录 shell 会读取的启动文件中。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
 
@@ -120,6 +134,12 @@ Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup
 
 为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
 
+恢复后的 Goal turn 使用新的原生 turn 身份，不得复用已持久化请求中的 `clientUserMessageId`、用户消息展示绑定或生成用户消息标记。原用户消息与原 turn 的映射保持不变；该规则同样适用于需要用户操作后的原生 Goal 恢复。
+
+executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `item/plan/delta`，按原生 item ID 更新条目。历史加载必须能读取尚未收到 `item/completed` 的部分文本；用户停止执行时，这些文本以中断状态持久化，后续追问或重新打开任务不能将其丢弃。最终 item 快照替换已累计文本，避免重复拼接。
+
+仍在流式累计且尚未标注 phase 的文本条目与实时流一样按过程文本展示，完成后再按终态投影；历史加载不能提前把它改成最终回答。Goal 恢复在原生 turn 建立前失败或取消时，终态事件也必须移除旧用户消息身份，且不能修改用于后端上报的原请求。
+
 Goal 的单个物理 turn 完成后，executor 会等待 Codex 自动创建下一轮。若等待超时，它会通过 `thread/goal/get` 和 `thread/read` 对账 provider 的权威状态：已有活跃 turn 时重新绑定并继续监听；目标仍为 active 且线程空闲时只尝试一次原生 `thread/resume`；仍无法继续时停止静默等待并向 Wework 暴露 `needsAttention`。Wework 使用 `running`、`recovering` 和 `needsAttention` 三种 Goal 执行状态分别显示正常运行、重启恢复和需要用户恢复，用户点击恢复时复用已保留的 Goal 请求，而不是发送一条普通聊天消息。
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
@@ -129,6 +149,8 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 普通持久线程续聊在调用 `turn/start` 前必须通过 `thread/read` 确认当前没有活跃 turn。ephemeral 临时线程不支持 `thread/read(includeTurns)`，因此必须在按任务串行化的发送临界区内检查 executor 本地活跃执行；新 turn 必须先登记为本地运行中，后一个并发发送才能离开临界区。若 provider 拒绝重叠发送，Wework 将任务状态立即恢复为运行中、刷新任务列表，并把用户输入保留在队列；provider 收敛为空闲后复用同一个客户端消息 ID 自动发送，避免丢消息或重复消息。完成或中断事件会清除活跃 turn 并使界面恢复为空闲。“打断并发送”只有在旧 turn 已确认中断后才创建新 turn；持久线程还要确认 provider turn 已停止，ephemeral 临时线程则以本地执行中断为准。
 
 ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保持已加载状态。成功回合结束后，executor 不得对这类线程发送 `thread/unsubscribe`，否则后续直接调用 `turn/start` 可能停留在已经卸载的线程上。临时线程也不支持分页 transcript RPC，因此 transcript 查询必须读取 executor 的本地运行时缓存，不能调用 `thread/turns/list`。持久线程仍在每个终态回合后取消订阅，并继续使用 provider transcript 作为历史记录来源。
+
+任务创建期间可能已经分配 provider thread ID，但首个 turn 尚未物化。若 runtime handle 只有不带 turn ID 的本地用户消息 presentation，且没有完成消息、transcript 快照、`lastTurnId` 或 subtask turn ID，executor 必须把该任务视为未物化会话：transcript 返回本地 presentation，导航返回空列表，不调用 provider 的分页历史接口。项目看板只在对应 workspace tab 处于激活状态时预加载绑定任务的 transcript，并且同一挂载周期内每个任务地址最多尝试一次；失败不会因任务时间戳或状态刷新而自动重试，重新挂载后才允许再次加载。
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
@@ -156,13 +178,15 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
 
-手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前记录最新 turn，随后轮询近期 transcript；只有发现新 turn 中的压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`，超时或读取失败则返回明确错误。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
+Wework 发起压缩前先解析目标会话保存的模型选择，并用当前凭据、模型请求头和执行设备的代理设置重新生成模型配置，再通过 App-IPC 交给 executor。持久化的执行配置已移除密钥和请求头，只能用于恢复身份，不能直接用于模型请求；没有 Wework 模型覆盖的会话继续使用原生 Codex 配置。
 
-压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；Codex transcript 持久化完成边界由 executor 回归测试覆盖。
+手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前按任务模型配置注册并绑定本地模型路由（与发起一轮对话使用同一套判断和注册逻辑），因此空闲会话、executor 重启后或路由空闲回收后点击压缩同样能触达模型，而不是在 Codex app-server 内以“no local model proxy route is bound to the Codex thread”失败。随后记录最新 turn 并轮询近期 transcript；只有最新 turn 出现压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`。轮询按 wall-clock 预算停止（读取 RPC 的耗时也计入该预算），App-IPC 对 `runtime.tasks.compact` 的超时高于 executor 自身预算；若压缩轮已经结束却没有产生压缩条目（例如 provider 拒绝该轮），立即返回带原因的失败，而不是等满预算后回报超时。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
+
+压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；同一 checkpoint 还会让 mock 端点拒绝一次压缩请求，断言失败在 App-IPC 截止之前自行暴露且不是超时文案。Codex transcript 持久化完成边界由 executor 回归测试覆盖，空闲线程的模型路由绑定由 executor 单测覆盖。
 
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
 
-助手文本在流式阶段始终先作为过程文本进入 Wework。`item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具后以 commentary 完成同一 item。executor 因此必须等待 item 完成和回合成功结束后才提交 final content，避免界面把已经可见的最终内容降级回过程块。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
+助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
 
 Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示，只用于反馈当前正在生效的思考进度；回合完成、失败或取消后，Wework 会移除该思考块，不在消息历史中保留摘要占位或详情。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
@@ -238,7 +262,7 @@ sequenceDiagram
 | `cloud`  | Wegent 云设备服务              | WebSocket | 云设备创建、重启、释放流程          |
 | `remote` | 用户自管 Docker 容器或远端主机 | WebSocket | Wework 连接设置中的远程 Docker 命令 |
 
-`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl、publicBaseUrl 和 createdAt 等非敏感元数据。
+`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl 和 createdAt 等非敏感元数据。
 
 远程 Docker 设备启动后会发送 `device:register`，payload 中的 `device_type=remote` 会更新同名 Device CRD。在线状态仍存储在 Redis 的设备在线键中，因此任务调度、slot 统计、terminal/code-server session RPC 与本地设备保持同一套协议。前端不会对 `remote` 设备展示云设备生命周期操作；停止、重启、删除容器由用户在 Docker 主机上完成。
 
@@ -434,6 +458,8 @@ Claude Code 子进程启动前，executor 会完成以下准备：
 - 如果配置了 `WEGENT_FILE_EDIT_HOOK_COMMAND`，在 Claude `settings.json` 中写入 `Write|Edit|MultiEdit|NotebookEdit` 的 `PreToolUse` 和 `PostToolUse` hook，使文件变更记录能进入本轮 artifact。Wework macapp 启动本地 sidecar 时会默认生成该命令；可以用 `WEGENT_FILE_EDIT_HOOK_COMMAND` 覆盖完整命令，或用 `WEWORK_FILE_EDIT_LOG_ENDPOINT` 调整默认上报地址。
 
 本地 executor 对 Claude stdout 的 NDJSON 输出会即时转换为 Responses API 事件：可见文本产生 `response.output_text.delta`，reasoning 摘要产生 `response.reasoning_summary_text.delta`，进程结束后仍发送最终 `response.completed` 或错误事件。Backend 和前端不能假设 `response.created` 之后紧跟终态事件。
+
+Backend 处理设备回调时，同一 subtask 的队列写回、文本存储、前端广播和完成结果收集都在同一把消息锁内执行。数据库写回的等待不能让完成事件越过最后一段文本，否则完成结果中的文本块会截断。
 
 ---
 

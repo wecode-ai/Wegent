@@ -1,4 +1,5 @@
 import { createSocketClient, type AuthenticatedSocketClient } from "./socket";
+import { readRuntimeTranscript } from "./runtime-transcript-transport";
 
 export interface RuntimeEvent {
   event: string;
@@ -70,6 +71,20 @@ export function createCloudRuntimeIpcClient(
       deviceId?: string,
       timeoutMs = ACK_TIMEOUT_MS,
     ): Promise<T> {
+      if (
+        method === "runtime.tasks.transcript" &&
+        params.transcriptProtocolVersion === undefined
+      ) {
+        return readRuntimeTranscript<T>(params, (query) =>
+          emitRuntimeRequest<unknown>(
+            client,
+            method,
+            query,
+            deviceId,
+            timeoutMs,
+          ),
+        );
+      }
       return emitRuntimeRequest<T>(client, method, params, deviceId, timeoutMs);
     },
     async subscribe(

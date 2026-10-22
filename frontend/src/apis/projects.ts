@@ -8,6 +8,7 @@ import {
   ProjectConfig,
   ProjectListResponse,
   ProjectTask,
+  ProjectTaskListResponse,
   ProjectWithTasks,
   SuccessMessage,
 } from '../types/api'
@@ -72,6 +73,19 @@ export const projectApis = {
    */
   getProject: async (projectId: number): Promise<ProjectWithTasks> => {
     return apiClient.get(`/projects/${projectId}`)
+  },
+
+  /** Get one page of tasks without loading the rest of the project. */
+  getProjectTasks: async (
+    projectId: number,
+    limit: number = 50,
+    cursor?: string,
+    title?: string
+  ): Promise<ProjectTaskListResponse> => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (cursor) query.set('cursor', cursor)
+    if (title) query.set('title', title)
+    return apiClient.get(`/projects/${projectId}/tasks?${query}`)
   },
 
   /**

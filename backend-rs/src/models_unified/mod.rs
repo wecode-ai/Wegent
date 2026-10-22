@@ -10,6 +10,7 @@ pub mod config;
 pub mod generation_config;
 pub mod models;
 pub mod mysql;
+mod shell_lookup;
 pub mod state;
 
 mod handler;

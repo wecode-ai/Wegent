@@ -15,9 +15,10 @@ use super::super::group_membership::{
     ErpContext, accessible_authorization_namespaces, effective_roles, user_group_memberships,
 };
 use super::super::http_error::HttpError;
+use super::super::teams_repository::{AccessibleTeamsQuery, latest_distinct_team_rows};
 use super::repository as repo;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 /// Default result size (`limit: int = 5`).
 const LIMIT: usize = 5;
@@ -32,7 +33,7 @@ struct RecentTeam {
     display_name: Option<String>,
     is_system: bool,
     recommended_mode: &'static str,
-    agent_type: Option<Box<serde_json::value::RawValue>>,
+    agent_type: Option<brz_json::RawJson>,
 }
 
 fn quick_access_team(id: i64, user_id: i64, name: &str, team_json: &OpaqueJson) -> RecentTeam {
@@ -43,12 +44,12 @@ fn quick_access_team(id: i64, user_id: i64, name: &str, team_json: &OpaqueJson) 
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.display_name.as_ref())
-        .and_then(crate::json_compat::OpaqueJson::project::<String>);
+        .and_then(brz_json::OpaqueJson::project::<String>);
     let modes = team
         .spec
         .as_ref()
         .and_then(|spec| spec.bind_mode.as_ref())
-        .and_then(crate::json_compat::OpaqueJson::project::<Vec<Option<String>>>)
+        .and_then(brz_json::OpaqueJson::project::<Vec<Option<String>>>)
         .unwrap_or_default();
     let has_chat = modes.iter().any(|mode| mode.as_deref() == Some("chat"));
     let has_code = modes.iter().any(|mode| mode.as_deref() == Some("code"));
@@ -100,28 +101,38 @@ async fn recent_accessible_teams(
 ) -> Result<Vec<RecentTeam>, HttpError> {
     let internal = |error: brz_mysql::MysqlError| HttpError::internal(error.to_string());
 
-    // `_get_recent_team_refs`: recent owner-only tasks, filtered by taskType
-    // label against `is_code`, extracting `(name, namespace, user_id)` team
-    // refs in first-seen order.
-    let recent_tasks = repo::list_recent_owner_only_tasks(&state.mysql, user_id, SCAN_LIMIT)
+    // `_get_recent_team_refs`: recent owner-only tasks projected to their
+    // `taskType` label and `spec.teamRef`, filtered by taskType against
+    // `is_code`, extracting `(name, namespace, user_id)` team refs in
+    // first-seen order.
+    let recent_refs = state
+        .task_store
+        .list_recent_task_team_refs(user_id, SCAN_LIMIT)
         .await
+        .map_err(internal)?
+        .iter()
+        .map(repo::decode_recent_task_team_ref)
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()
         .map_err(internal)?;
     let mut refs: Vec<repo::TeamRef> = Vec::new();
     let mut seen_refs: HashSet<repo::TeamRef> = HashSet::new();
-    for payload in &recent_tasks {
-        let task = payload
-            .project::<crate::crd::CrdDocument>()
-            .unwrap_or_default();
-        let task_type = task
-            .metadata
+    for row in &recent_refs {
+        // `str(task.task_type or "chat")`: an absent or empty label is "chat".
+        let task_type = row
+            .task_type
             .as_ref()
-            .and_then(|metadata| metadata.labels.as_ref())
-            .and_then(|labels| labels.task_type.as_deref())
-            .unwrap_or("chat");
+            .and_then(|value| value.project::<String>())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "chat".to_owned());
         if (task_type == "code") != is_code {
             continue;
         }
-        let Some(team_ref) = task.spec.as_ref().and_then(|spec| spec.team_ref.as_ref()) else {
+        // `isinstance(team_ref, dict)`: a non-object extract is skipped.
+        let Some(team_ref) = row
+            .team_ref
+            .as_ref()
+            .and_then(|value| value.project::<crate::crd::ResourceReference>())
+        else {
             continue;
         };
         let name = team_ref.name();
@@ -253,22 +264,41 @@ async fn recent_accessible_teams(
         )
         .await
         .map_err(internal)?;
-        let fallback = repo::query_latest_distinct_team_rows(
-            &state.mysql,
+        // `restricted_group_namespaces`: the group namespaces whose effective
+        // role is exactly `RestrictedAnalyst`. Empty in the recorded flow, so
+        // the union's `restricted_guest_access` label renders its
+        // always-false `IN (NULL) AND (1 != 1)` form.
+        let mut restricted_namespaces: Vec<String> = effective
+            .iter()
+            .filter(|(_, role)| role.as_str() == "RestrictedAnalyst")
+            .map(|(name, _)| name.clone())
+            .collect();
+        restricted_namespaces.sort();
+        // The fallback reuses the shared accessible-team union renderer
+        // (`_build_accessible_teams_query(scope="all")` +
+        // `_query_latest_distinct_team_rows`).
+        let fallback_query = AccessibleTeamsQuery {
             user_id,
-            &group_namespaces,
-            &authorized_namespace_ids,
-            &selected_identities,
-            (LIMIT - selected.len()) as i64,
-        )
-        .await
-        .map_err(internal)?;
+            scope: "all",
+            group_namespaces: &group_namespaces,
+            authorized_namespace_ids: &authorized_namespace_ids,
+            restricted_namespaces: &restricted_namespaces,
+            filters: &[],
+            shared_only: false,
+            skip: 0,
+            limit: (LIMIT - selected.len()) as i64,
+        };
+        let fallback =
+            latest_distinct_team_rows(&state.mysql, fallback_query, &selected_identities)
+                .await
+                .map_err(internal)?
+                .unwrap_or_default();
         for row in fallback {
             teams.push(quick_access_team(
                 row.team_id,
                 row.team_user_id,
                 &row.team_name,
-                &row.team_json,
+                &row.team_json.0,
             ));
         }
     }

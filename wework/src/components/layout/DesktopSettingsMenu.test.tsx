@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import type { AppUpdateError } from '@/features/app-update/app-update-error'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 const mockCheckNow = vi.fn()
@@ -90,13 +92,15 @@ function renderMenu({
   onLogout = vi.fn(),
   onLogin,
   onOpenAbout = vi.fn(),
+  localCodexSubscriptionEnabled,
 }: {
   showLogout?: boolean
   onLogout?: () => void
   onLogin?: () => void
   onOpenAbout?: () => void
+  localCodexSubscriptionEnabled?: boolean
 } = {}) {
-  render(
+  const menu = (
     <DesktopSettingsMenu
       user={{ id: 1, email: 'user@example.com', user_name: 'User' }}
       onOpenSettings={vi.fn()}
@@ -105,6 +109,20 @@ function renderMenu({
       onLogin={onLogin}
       showLogout={showLogout}
     />
+  )
+  render(
+    localCodexSubscriptionEnabled === undefined ? (
+      menu
+    ) : (
+      <AppPreferencesContext.Provider
+        value={{
+          loaded: true,
+          preferences: { ...defaultAppPreferences, localCodexSubscriptionEnabled },
+        }}
+      >
+        {menu}
+      </AppPreferencesContext.Provider>
+    )
   )
 }
 
@@ -176,6 +194,14 @@ describe('DesktopSettingsMenu', () => {
     expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
     expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
     expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
+    expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
+  })
+
+  test('hides the Codex quota item when the local Codex subscription is off', async () => {
+    renderMenu({ localCodexSubscriptionEnabled: false })
+
+    expect(screen.queryByTestId('usage-menu-button')).not.toBeInTheDocument()
+    expect(screen.queryByText('Codex 剩余额度')).not.toBeInTheDocument()
     expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
   })
 

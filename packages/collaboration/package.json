@@ -134,6 +134,10 @@
       "types": "./src/conversation/index.ts",
       "import": "./src/conversation/index.ts"
     },
+    "./conversation/conversationDiagnostics": {
+      "types": "./src/conversation/conversationDiagnostics.ts",
+      "import": "./src/conversation/conversationDiagnostics.ts"
+    },
     "./conversation/bottomOriginScroll": {
       "types": "./src/conversation/bottomOriginScroll.ts",
       "import": "./src/conversation/bottomOriginScroll.ts"
@@ -474,6 +478,8 @@
     "prosemirror-state": "^1.4.4",
     "prosemirror-tables": "^1.8.5",
     "prosemirror-view": "^1.42.0",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "6.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5"

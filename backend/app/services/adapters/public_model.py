@@ -19,6 +19,8 @@ from app.services.model_capabilities import normalize_model_capabilities
 from app.services.model_embedding_dimension import (
     validate_embedding_dimension_declaration,
 )
+from app.services.wework_model_config import wework_model_catalog_config
+from app.utils.model_capability import get_model_capability_description
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 
@@ -166,6 +168,7 @@ class ModelAdapter:
         context_window = None
         max_output_tokens = None
         cost_index = None
+        capability = None
         model_capabilities = None
         allowed_users = get_public_model_allowed_users(kind.json)
         if isinstance(kind.json, dict):
@@ -197,6 +200,9 @@ class ModelAdapter:
                     context_window = model_crd.spec.context_window
                     max_output_tokens = model_crd.spec.max_output_tokens
                     cost_index = model_crd.spec.costIndex
+                    capability = get_model_capability_description(
+                        model_crd.spec.capability
+                    )
                     if model_crd.spec.protocol:
                         config = {**config, "protocol": model_crd.spec.protocol}
                     if model_crd.spec.apiFormat:
@@ -241,6 +247,9 @@ class ModelAdapter:
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
                     cost_index = spec.get("costIndex")
+                    capability = get_model_capability_description(
+                        spec.get("capability")
+                    )
                     model_config = spec.get("modelConfig")
                     if isinstance(model_config, dict):
                         context_window = ModelSpec._model_config_token_limit(
@@ -265,6 +274,9 @@ class ModelAdapter:
         provider = env.get("model") if isinstance(env, dict) else None
         model_id_value = env.get("model_id") if isinstance(env, dict) else None
         codex_catalog_model_id = codex_catalog_model_id_from_config(env)
+
+        if isinstance(config, dict):
+            config = wework_model_catalog_config(config)
 
         # Strip sensitive env from public model config
         if isinstance(config, dict) and "env" in config:
@@ -291,6 +303,7 @@ class ModelAdapter:
             "contextWindow": context_window,
             "maxOutputTokens": max_output_tokens,
             "costIndex": cost_index,
+            "capability": capability,
             "modelCapabilities": model_capabilities,
             "allowedUsers": allowed_users,
             "allowedUsersEnabled": is_public_model_whitelist_enabled(kind.json),

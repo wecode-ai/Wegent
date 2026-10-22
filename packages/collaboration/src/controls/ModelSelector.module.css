@@ -1,6 +1,64 @@
 .mainMenu {
   transform-origin: right bottom;
-  animation: model-selector-main-enter 180ms cubic-bezier(0.2, 0, 0, 1) both;
+  border: 0.5px solid var(--color-border, rgb(0 0 0 / 10%));
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 10%),
+    0 8px 16px -4px rgb(0 0 0 / 12%);
+  animation: model-selector-main-enter 320ms cubic-bezier(0.23, 1, 0.32, 1) 30ms
+    both;
+}
+
+.viewContainer {
+  position: relative;
+  height: 80px;
+  transition: height 320ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.viewContainer[data-model-picker-view="advanced"] {
+  height: min(316px, var(--model-selector-available-height, 316px));
+}
+
+.viewTrack,
+.advancedViewTrack {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: clip;
+}
+
+.advancedViewTrack {
+  position: absolute;
+  inset: 0;
+}
+
+.viewTrack,
+.advancedViewTrack > div {
+  visibility: visible;
+  opacity: 1;
+  translate: 0;
+  will-change: opacity, translate;
+  transition:
+    opacity 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    translate 320ms cubic-bezier(0.19, 1, 0.22, 1),
+    visibility 0s linear;
+}
+
+.viewTrack[data-active="false"],
+.advancedViewTrack[data-active="false"] > div {
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 0s linear,
+    translate 0s linear,
+    visibility 0s linear;
+}
+
+.viewTrack[data-active="false"] {
+  translate: 0 -10px;
+}
+
+.advancedViewTrack[data-active="false"] > div {
+  translate: 0 14px;
 }
 
 .submenu {
@@ -15,19 +73,88 @@
 }
 
 .advancedPanel {
-  transform-origin: center top;
-  animation: model-selector-advanced-enter 180ms cubic-bezier(0.2, 0, 0, 1) both;
+  max-height: 316px;
+  margin-bottom: -4px;
+  padding: 4px 8px 8px;
+  overflow-y: auto;
+}
+
+.sectionLabel,
+.groupLabel,
+.subgroupLabel {
+  padding: 4px 8px;
+  color: rgb(var(--color-text-muted));
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.groupLabel {
+  padding-top: 12px;
+  color: rgb(var(--color-text-muted));
+}
+
+.subgroupLabel {
+  padding-top: 8px;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.fastModeToggle {
+  color: rgb(var(--color-text-muted));
+  transition:
+    color 180ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.fastModeToggle[data-enabled="true"] {
+  color: rgb(var(--color-reasoning-standard));
+}
+
+.defaultItem,
+.modelItem {
+  display: flex;
+  width: 100%;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  min-height: 28px;
+  padding: 4px 8px;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  outline: none;
+}
+
+.defaultItem {
+  color: var(--color-text-primary);
+}
+
+.defaultTitle {
+  display: block;
+  font-weight: 500;
+}
+
+.defaultDescription {
+  display: block;
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+  line-height: 16px;
 }
 
 @keyframes model-selector-main-enter {
   from {
     opacity: 0;
-    transform: translate3d(0, 6px, 0) scale(0.98);
+    transform: scale(0.98);
   }
 
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: scale(1);
   }
 }
 
@@ -44,22 +171,13 @@
   }
 }
 
-@keyframes model-selector-advanced-enter {
-  from {
-    opacity: 0;
-    transform: translate3d(0, -4px, 0) scaleY(0.96);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scaleY(1);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .mainMenu,
-  .submenu,
-  .advancedPanel {
+  .viewContainer,
+  .viewTrack,
+  .advancedViewTrack > div,
+  .submenu {
     animation: none;
+    transition: none;
   }
 }

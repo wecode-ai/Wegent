@@ -48,6 +48,8 @@ export interface RuntimeConfig {
   feedbackUrl: string
   /** Documentation URL */
   docsUrl: string
+  /** Optional URL explaining how to choose a model */
+  modelSelectionGuideUrl: string
   /** Enable OpenTelemetry tracing */
   otelEnabled: boolean
   /** OpenTelemetry service name */
@@ -141,6 +143,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
         appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
         weworkCodeUrl: '',
+        modelSelectionGuideUrl: '',
       }
       runtimeConfigCache = fallback
       return fallback
@@ -186,6 +189,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
     appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
     weworkCodeUrl: '',
+    modelSelectionGuideUrl: '',
   }
 }
 

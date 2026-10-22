@@ -6,6 +6,14 @@ import { describe, expect, test } from 'vitest'
 const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), 'dev-windows-app.ps1')
 
 describe('dev-windows-app', () => {
+  test('rejects release data sharing and keeps isolated development data after exit', async () => {
+    const source = await readFile(scriptPath, 'utf8')
+    expect(source).toContain("development apps cannot share the release app's Executor Home")
+    expect(source).toContain('persistent worktree-isolated data (always enabled)')
+    expect(source).not.toContain('Remove-Item -LiteralPath $ISOLATED_EXECUTOR_HOME')
+    expect(source).not.toContain('<release app default>')
+  })
+
   test('mirrors the macOS development instance and component startup behavior', async () => {
     const source = await readFile(scriptPath, 'utf8')
 
@@ -15,7 +23,12 @@ describe('dev-windows-app', () => {
     expect(source).toContain('Get-DevIdentityFields')
     expect(source).toContain('Remove-Item Env:WEWORK_DEV_APP_IDENTIFIER')
     expect(source).toContain('Remove-Item Env:WEWORK_DEV_USER_DATA_DIR')
+    expect(source).toContain('$env:WEWORK_EXECUTOR_PATH = $env:WEGENT_EXECUTOR_BINARY')
     expect(source).toContain('node_modules\\.cache\\wework-executor-dev\\wegent-executor.exe')
+    expect(source).toContain('$PREBUILD_SOURCE_EXECUTOR = $true')
+    expect(source).toContain(
+      "cargo build --manifest-path (Join-Path $PROJECT_DIR 'executor\\Cargo.toml') --bin wegent-executor"
+    )
     expect(source).toContain('$env:WEGENT_EXECUTOR_DEV_BUILD_ID = $env:WEWORK_DEV_INSTANCE_ID')
     expect(source).toContain('node_modules\\.cache\\harness-runtime-dev')
     expect(source).toContain('node_modules\\.cache\\wework-electron-dev-resources')
@@ -34,6 +47,8 @@ describe('dev-windows-app', () => {
     )
     expect(source).toContain('dev-wework-app-watch.mjs')
     expect(source).toContain('WEWORK_APP_WATCH_READY_FILE')
+    expect(source).not.toContain('$watchDeadline')
+    expect(source).not.toContain('Wework application build watcher did not become ready')
   })
 
   test('materializes the dev harness runtime in the worktree and shares only the asset cache', async () => {

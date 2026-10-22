@@ -58,7 +58,7 @@ Run from this skill directory (use absolute script paths from another directory)
 uv run --no-project --with pyyaml python scripts/validate_wework_plugin.py <plugin-root>
 ```
 
-The validator reuses the installed upstream validator for standard manifest
+The validator reuses the bundled Codex validator snapshot for standard manifest
 fields, assets, and skills, and separately validates Wework Connectors. It does
 not alter the plugin manifest. Do not run the upstream validator directly on a
 Wework manifest containing `connectors`, or remove that declaration to make it

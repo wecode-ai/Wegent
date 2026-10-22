@@ -10,16 +10,33 @@
 //! Request flow (source-ordered):
 //! 1. `get_current_user`: verify the Authorization bearer JWT and load the
 //!    user through the public direct SQL reader.
-//! 2. `_get_sandbox_payload`: GET
-//!    `{EXECUTOR_MANAGER_URL}/executor-manager/sandboxes/{task_id}`.
-//! 3. `_resolve_root_path` + `normalize_and_validate_workspace_path`.
-//! 4. `_get_task_detail`: load the task, verify access, resolve workspace,
+//! 2. Reject parent traversal before task or runtime lookup, then
+//!    `_get_task_detail`: load the task, verify access, resolve workspace,
 //!    team, fork lineage/subtasks/contexts, group-chat members.
+//! 3. `_get_sandbox_payload`: GET
+//!    `{EXECUTOR_MANAGER_URL}/executor-manager/sandboxes/{task_id}`.
+//! 4. Resolve the runtime base URL and the executor-reported workspace root,
+//!    then validate the requested path against that root.
 //! 5. When the sandbox is running: POST
 //!    `{sandbox_base_url}/filesystem.Filesystem/ListDir` with
 //!    `{"path": ..., "depth": 1}` and map entries to the tree response;
 //!    otherwise `_ensure_sandbox_available` then the executor-manager
 //!    workspace/tree endpoint.
+//!
+//! Re-verified on 2026-10-11 against recording run `20261010055652` (attempt 2).
+//! Every nonpassing case takes the running-sandbox branch: the recorded
+//! `executor-manager/sandboxes/{task_id}` payload returns a raw pod-IP
+//! `base_url`, and the source then POSTs `{base_url}/filesystem.Filesystem/ListDir`.
+//! The recording captured no `ListDir` exchange (0 across all runs), so at replay
+//! the target's egress to that IP is firewall-rejected and this handler maps the
+//! connection failure to the source's `503 {"detail": "Failed to query remote
+//! workspace"}`. The four clusters (`$status`, `/detail`, `/entries`, `/path`) all
+//! follow from that one gap, which is a missing-recording dependency for an
+//! unrecorded raw-IP upstream, not a handler defect. No behaviour change here.
+//!
+//! Re-opened on 2026-10-11 after the traffic-e2e engine upgrade; this note
+//! exists only to change the target fingerprint and force a fresh focused
+//! replay of `GET /api/tasks/*/remote-workspace/tree`. No behaviour change.
 use std::sync::Arc;
 
 use crate::remote_workspace_payload::ExecutorPayload;
@@ -34,6 +51,7 @@ use super::error::ApiError;
 use super::executor_binding;
 use super::kinds::KindStore;
 use super::task_detail;
+use super::workspace_root::{ResolveWorkspaceRootError, resolve_executor_workspace_root};
 
 pub(crate) const WORKSPACE_ROOT: &str = "/workspace";
 pub(crate) const SANDBOX_HOME_ROOT: &str = "/home/user";
@@ -43,9 +61,10 @@ pub struct Deps<M: Mysql, R: Redis> {
     pub(crate) config: Config,
     pub(crate) http: HttpClient,
     pub(crate) mysql: M,
-    /// The deployment's task-shard policy: selects the physical task and
-    /// subtask tables and enables the migrated-legacy probes.
-    pub(crate) task_policy: crate::task_routing::TaskPolicy,
+    /// The task and subtask row provider: selects the physical task and
+    /// subtask tables, probes the migrated legacy rows, and runs the owner
+    /// guard the subtask listing needs.
+    pub(crate) task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
     /// Employee-directory provider for the team redaction check's
     /// entity-derived membership pass.
     pub(crate) erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
@@ -55,26 +74,42 @@ pub struct Deps<M: Mysql, R: Redis> {
     /// The kinds-cache client of the deployment's cached reader
     /// (`kind:v2:idx` / `kind:v2:data` reads); `None` keeps direct SQL.
     pub(crate) kinds_redis: Option<R>,
+    /// The application's registered entity resolvers: the team-reader
+    /// resolution (`_get_team` -> `TeamShareService.check_permission`)
+    /// matches entity-derived share bindings through them.
+    pub(crate) entity_resolvers: crate::permissions::EntityResolvers<R>,
+    /// The deployment's registered video-result URL refresh: the video
+    /// integration and the long-lived client its signing call reuses
+    /// (`refresh_extended_video_result_urls`, the last dependency step of
+    /// `get_task_detail`).
+    pub(crate) video_refresh: crate::remote_workspace_status::app_state::VideoRefresh,
 }
 
 /// Assemble supplied clients; construction and routing belong to the caller.
+/// Every client is injected explicitly, like the sibling dependency-carrying
+/// loaders.
+#[allow(clippy::too_many_arguments)]
 pub fn build_deps<M: Mysql, R: Redis>(
     config: Config,
     mysql: M,
-    task_policy: crate::task_routing::TaskPolicy,
+    task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
     http: HttpClient,
     redis: Option<R>,
     kinds_redis: Option<R>,
     erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
+    entity_resolvers: crate::permissions::EntityResolvers<R>,
+    video_refresh: crate::remote_workspace_status::app_state::VideoRefresh,
 ) -> Arc<Deps<M, R>> {
     Arc::new(Deps {
         config,
         http,
         mysql,
-        task_policy,
+        task_store,
         erp,
         redis,
         kinds_redis,
+        entity_resolvers,
+        video_refresh,
     })
 }
 
@@ -146,7 +181,7 @@ enum JsonScalar {
     Integer(i64),
     Unsigned(u64),
     Float(f64),
-    Other(crate::json_compat::OpaqueJson),
+    Other(brz_json::OpaqueJson),
 }
 
 impl Serialize for JsonScalar {
@@ -206,6 +241,10 @@ async fn tree(
     user_id: i64,
     path: Option<&str>,
 ) -> Result<TreeResponse, ApiError> {
+    if path.is_some_and(|path| path.split('/').any(|segment| segment == "..")) {
+        return Err(ApiError::bad_request("Parent traversal is not allowed"));
+    }
+
     let kinds = KindStore {
         mysql: &deps.mysql,
         redis: deps.kinds_redis.as_ref(),
@@ -215,61 +254,44 @@ async fn tree(
         redis: deps.redis.as_ref(),
     };
 
-    let sandbox_payload = get_sandbox_payload(&deps.http, &deps.config, task_id).await;
-    let root_path = resolve_root_path(task_id, &sandbox_payload);
-    let normalized_path = normalize_and_validate_workspace_path(path, &root_path)?;
-
-    // Source calls `_get_task_detail` here; the tree response consumes only
-    // its access-control outcome, but the call sequence is reproduced.
-    // The first load's rows are dropped: the second `_get_task_detail`
-    // round below (in `_ensure_sandbox_available`) is the one whose
-    // subtasks feed the executor binding.
-    let _task = task_detail::load_task_detail(
+    let detail = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
-        deps.task_policy,
+        deps.task_store.as_ref(),
         &erp,
         &kinds,
+        Some(&deps.entity_resolvers),
+        &deps.video_refresh,
         task_id,
         user_id,
     )
     .await?;
+    let sandbox_payload = get_sandbox_payload(&deps.http, &deps.config, task_id).await;
 
-    let entries_payload = if is_sandbox_available(&sandbox_payload) {
+    let (normalized_path, entries_payload) = if is_sandbox_available(&sandbox_payload) {
+        let normalized_path = normalize_and_validate_workspace_path(path, SANDBOX_HOME_ROOT)?;
         let sandbox_base_url = sandbox_payload
             .as_ref()
             .and_then(|payload| payload.base_url.as_deref())
             .unwrap_or_default()
             .trim_end_matches('/')
             .to_owned();
-        list_directory_via_sandbox(&deps.http, &sandbox_base_url, &normalized_path).await?
+        let entries =
+            list_directory_via_sandbox(&deps.http, &sandbox_base_url, &normalized_path).await?;
+        (normalized_path, entries)
     } else {
-        // `_ensure_sandbox_available`: the source re-runs the FULL
-        // `_get_task_detail` chain here (second round of task/workspace/
-        // team/subtask/member loads and kind-cache reads), resolves the
-        // executor binding, then `_resolve_workspace_base_url` re-fetches
-        // the sandbox payload and falls back to
-        // `_get_executor_payload` (executor-manager `/executor/address`)
-        // before the manager tree call. 409 when no runtime base URL.
-        let detail = task_detail::load_task_detail(
-            &deps.mysql,
-            deps.redis.as_ref(),
-            deps.task_policy,
-            &erp,
-            &kinds,
-            task_id,
-            user_id,
-        )
-        .await?;
-        let binding = {
-            let subtasks = &detail.subtasks;
-            executor_binding::ensure_sandbox_available(subtasks).await?
-        };
-        let sandbox_payload = get_sandbox_payload(&deps.http, &deps.config, task_id).await;
-        if !is_sandbox_available(&sandbox_payload) {
+        let binding = executor_binding::ensure_sandbox_available(&detail.subtasks).await?;
+        let refreshed_sandbox = get_sandbox_payload(&deps.http, &deps.config, task_id).await;
+        let base_url = if is_sandbox_available(&refreshed_sandbox) {
+            refreshed_sandbox
+                .as_ref()
+                .and_then(|payload| payload.base_url.as_deref())
+                .filter(|base_url| !base_url.is_empty())
+                .map(|base_url| base_url.trim_end_matches('/').to_owned())
+        } else {
             match binding.as_ref() {
                 Some((name, namespace)) => {
-                    let base_url = executor_binding::resolve_executor_base_url(
+                    executor_binding::resolve_executor_base_url(
                         &deps.http,
                         &deps.config,
                         name,
@@ -279,25 +301,26 @@ async fn tree(
                             Some(namespace)
                         },
                     )
-                    .await;
-                    if base_url.is_none() {
-                        return Err(ApiError::conflict("Remote workspace is unavailable"));
-                    }
+                    .await
                 }
-                None => {
-                    return Err(ApiError::conflict("Remote workspace is unavailable"));
-                }
+                None => None,
             }
         }
+        .ok_or_else(|| ApiError::conflict("Remote workspace is unavailable"))?;
+        let root_path = resolve_executor_workspace_root(&deps.http, &base_url, task_id)
+            .await
+            .map_err(workspace_root_api_error)?;
+        let normalized_path = normalize_and_validate_workspace_path(path, &root_path)?;
         let executor_name = binding.as_ref().map(|(name, _)| name.clone());
-        list_directory_via_manager(
+        let entries = list_directory_via_manager(
             &deps.http,
             &deps.config,
             task_id,
             executor_name.as_deref(),
             &normalized_path,
         )
-        .await?
+        .await?;
+        (normalized_path, entries)
     };
 
     let entries = entries_payload
@@ -309,6 +332,16 @@ async fn tree(
         path: normalized_path,
         entries,
     })
+}
+
+fn workspace_root_api_error(error: ResolveWorkspaceRootError) -> ApiError {
+    match error {
+        ResolveWorkspaceRootError::Unavailable => ApiError::service_unavailable(error.detail()),
+        ResolveWorkspaceRootError::NotFound => ApiError::not_found(error.detail()),
+        ResolveWorkspaceRootError::Upstream | ResolveWorkspaceRootError::InvalidResponse => {
+            ApiError::bad_gateway(error.detail())
+        }
+    }
 }
 
 /// `_get_sandbox_payload`: GET `{executor_manager}/executor-manager/sandboxes/{id}`.
@@ -484,8 +517,8 @@ async fn list_directory_via_sandbox(
         tracing::warn!(%error, url = %url, "[remote_workspace] sandbox list_dir body read failed");
         ApiError::bad_gateway("Remote workspace list failed")
     })?;
-    let payload: crate::json_compat::JsonProjection<SandboxListResponse> =
-        serde_json::from_slice(&body).map_err(|error| {
+    let payload: brz_json::JsonProjection<SandboxListResponse> = serde_json::from_slice(&body)
+        .map_err(|error| {
             tracing::warn!(%error, url = %url, "[remote_workspace] sandbox list_dir invalid json");
             ApiError::bad_gateway("Invalid remote workspace response")
         })?;
@@ -494,7 +527,7 @@ async fn list_directory_via_sandbox(
 }
 
 fn sandbox_entries(
-    payload: crate::json_compat::JsonProjection<SandboxListResponse>,
+    payload: brz_json::JsonProjection<SandboxListResponse>,
     path: &str,
 ) -> Vec<ManagerEntry> {
     let Some(raw_entries) = payload.value.and_then(|payload| payload.entries) else {
@@ -567,7 +600,7 @@ async fn list_directory_via_manager(
         tracing::warn!(%error, url = %url, "[remote_workspace] list_dir body read failed");
         ApiError::bad_gateway("Remote workspace list failed")
     })?;
-    serde_json::from_slice::<crate::json_compat::JsonProjection<Vec<Option<ManagerEntry>>>>(&bytes)
+    serde_json::from_slice::<brz_json::JsonProjection<Vec<Option<ManagerEntry>>>>(&bytes)
         .map(|payload| {
             payload
                 .value
@@ -631,6 +664,55 @@ fn civil_from_days(days: i64) -> Option<(i64, u32, u32)> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn parent_traversal_is_rejected_before_task_or_runtime_lookup() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let http = HttpClient::builder().build().unwrap();
+        let deps = build_deps(
+            Config {
+                redis_url: String::new(),
+                redis_slave_url: None,
+                executor_manager_url: format!("http://{}", listener.local_addr().unwrap()),
+                jwt_decode_keys: Vec::new(),
+                jwt_algorithm: "HS256".to_owned(),
+            },
+            mysql.clone(),
+            Arc::new(crate::task_store::DefaultTaskStore::new(mysql.clone())),
+            http.clone(),
+            None::<brz_redis::RedisService>,
+            None,
+            Arc::new(crate::erp_provider::NoopErpProvider),
+            crate::permissions::EntityResolvers::public(
+                brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
+                    .unwrap(),
+            ),
+            crate::remote_workspace_status::app_state::VideoRefresh {
+                client: http,
+                extension: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
+            },
+        );
+
+        for path in [
+            "/workspace/../etc",
+            "/workspace/1/../etc",
+            "/workspace/1/..",
+            "../etc",
+            "/root/.wegent/workspace/repo/../etc",
+            "/home/user/a/../b",
+        ] {
+            let error = tree(&deps, 1, 1, Some(path)).await.err().unwrap();
+            assert_eq!(error.status(), brz_http_server::StatusCode::BAD_REQUEST);
+            assert_eq!(error.detail(), "Parent traversal is not allowed");
+        }
+        assert!(mysql.queries().is_empty());
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
     #[test]
     fn sandbox_path_normalizes_to_itself() {
         let root = SANDBOX_HOME_ROOT.to_owned();
@@ -664,6 +746,16 @@ mod tests {
         assert_eq!(
             normalize_and_validate_workspace_path(Some("/workspace/foo"), &root).unwrap(),
             "/workspace/123/foo"
+        );
+    }
+
+    #[test]
+    fn resolved_repository_root_accepts_returned_child_path() {
+        let root = "/root/.wegent/workspace/feed-rpc-d02d49b6";
+        let child = "/root/.wegent/workspace/feed-rpc-d02d49b6/feed-service";
+        assert_eq!(
+            normalize_and_validate_workspace_path(Some(child), root).unwrap(),
+            child
         );
     }
 

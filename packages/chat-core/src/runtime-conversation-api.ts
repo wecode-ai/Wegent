@@ -42,6 +42,8 @@ export function createRuntimeConversationApi(client: ConversationHttpClient) {
     listRuntimeWork(options?: {
       signal?: AbortSignal
       preferCached?: boolean
+      deviceId?: string
+      requireExplicitProjectRoots?: boolean
     }): Promise<RuntimeWorkListResponse> {
       return options?.signal
         ? client.get('/runtime-work', { signal: options.signal })

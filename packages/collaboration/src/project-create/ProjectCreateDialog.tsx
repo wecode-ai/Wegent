@@ -43,6 +43,7 @@ import {
 import { ModelSelector } from "../controls/ModelSelector";
 import { createCollaborationTranslator } from "../i18n";
 import { CollaborationGroupRoster } from "../platform/CollaborationGroupRoster";
+import { changeCollaborationGroupLeader } from "./collaborationGroupDraft";
 import { useCollaborationPortalTheme } from "../theme";
 import type {
   ProjectCreateCollaborationGroupDraft,
@@ -731,16 +732,23 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         );
         enqueueGenerationAgent(agent.id, participant?.responsibility);
       });
+      const selectedAgentIds = selectedAgents.map((agent) => agent.id);
+      while (
+        groupGenerationRunRef.current === runId &&
+        selectedAgentIds.some(
+          (agentId) => !groupGenerationRevealedAgentIdsRef.current.has(agentId),
+        )
+      ) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+      }
+      if (groupGenerationRunRef.current !== runId) return;
       if (groupGenerationAgentTimerRef.current !== null) {
         window.clearTimeout(groupGenerationAgentTimerRef.current);
         groupGenerationAgentTimerRef.current = null;
       }
       groupGenerationAgentQueueRef.current = [];
       groupGenerationQueuedAgentIdsRef.current.clear();
-      groupGenerationRevealedAgentIdsRef.current = new Set(
-        selectedAgents.map((agent) => agent.id),
-      );
-      setRevealedGenerationAgentIds(selectedAgents.map((agent) => agent.id));
+      groupGenerationAgentSettlingRef.current = false;
       setGroupEditorDraft(draft);
     } catch (cause) {
       if (groupGenerationRunRef.current !== runId) return;
@@ -789,31 +797,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   }) => {
     setGroupEditorDraft((current) => {
       if (!current) return current;
-      const selected = [current.leader, ...current.members].find(
-        (candidate) =>
-          candidate.kind === participant.kind &&
-          candidate.id === participant.id,
-      );
-      if (!selected) return current;
-      const previousLeader = current.leader;
-      return {
-        ...current,
-        leader: selected,
-        members: [
-          previousLeader,
-          ...current.members.filter(
-            (candidate) =>
-              candidate.kind !== participant.kind ||
-              candidate.id !== participant.id,
-          ),
-        ].filter(
-          (candidate, index, candidates) =>
-            candidates.findIndex(
-              (item) =>
-                item.kind === candidate.kind && item.id === candidate.id,
-            ) === index,
-        ),
-      };
+      return changeCollaborationGroupLeader(current, participant);
     });
   };
   const groupedParticipants = state.collaborationGroupDraft
@@ -994,11 +978,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           {state.location === "cloud" && (
             <section>
               <h3>{labels.visibility}</h3>
-              <div
-                className={`collaboration-project-create-grid ${
-                  state.taskProvider === "local" ? "columns-3" : "columns-2"
-                }`}
-              >
+              <div className="collaboration-project-create-grid columns-2">
                 <ChoiceButton
                   testId="cloud-project-visibility-private"
                   selected={state.visibility === "private"}
@@ -1007,16 +987,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   description={labels.privateVisibilityDescription}
                   onClick={() => commands.setVisibility("private")}
                 />
-                {state.taskProvider === "local" ? (
-                  <ChoiceButton
-                    testId="cloud-project-visibility-public-restricted"
-                    selected={state.visibility === "public_restricted"}
-                    icon={<ListTodo aria-hidden="true" />}
-                    label={labels.restrictedVisibility}
-                    description={labels.restrictedVisibilityDescription}
-                    onClick={() => commands.setVisibility("public_restricted")}
-                  />
-                ) : null}
                 <ChoiceButton
                   testId="cloud-project-visibility-public"
                   selected={state.visibility === "public"}
@@ -1026,12 +996,50 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   onClick={() => commands.setVisibility("public")}
                 />
               </div>
-              {state.visibility !== "private" && (
+              {state.visibility === "public" && (
                 <p className="collaboration-project-create-hint">
-                  {state.visibility === "public_restricted"
-                    ? labels.restrictedVisibilityDescription
-                    : labels.publicVisibilityNotice}
+                  {labels.publicVisibilityNotice}
                 </p>
+              )}
+              {state.visibility === "public" && (
+                <div>
+                  <h3>{labels.publicAccessRole}</h3>
+                  <div className="collaboration-project-create-grid columns-2">
+                    <ChoiceButton
+                      testId="cloud-project-public-access-viewer"
+                      selected={state.publicAccessRole === "Viewer"}
+                      icon={<LockKeyhole aria-hidden="true" />}
+                      label={labels.viewerRole}
+                      description={labels.viewerRoleDescription}
+                      onClick={() => commands.setPublicAccessRole("Viewer")}
+                    />
+                  </div>
+                </div>
+              )}
+              {!state.isAITableProvider && (
+                <div>
+                  <h3>{labels.defaultIssueSecurity}</h3>
+                  <div className="collaboration-project-create-grid columns-2">
+                    <ChoiceButton
+                      testId="cloud-project-default-issue-security-open"
+                      selected={state.defaultIssueSecurity === "open"}
+                      icon={<Cloud aria-hidden="true" />}
+                      label={labels.openIssueSecurity}
+                      description={labels.openIssueSecurityDescription}
+                      onClick={() => commands.setDefaultIssueSecurity("open")}
+                    />
+                    <ChoiceButton
+                      testId="cloud-project-default-issue-security-related"
+                      selected={state.defaultIssueSecurity === "related"}
+                      icon={<LockKeyhole aria-hidden="true" />}
+                      label={labels.relatedIssueSecurity}
+                      description={labels.relatedIssueSecurityDescription}
+                      onClick={() =>
+                        commands.setDefaultIssueSecurity("related")
+                      }
+                    />
+                  </div>
+                </div>
               )}
             </section>
           )}
@@ -1095,9 +1103,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                             </strong>
                             <small>
                               {isLeader
-                                ? participant.responsibility
-                                  ? `${labels.leaderWorks} · ${participant.responsibility}`
-                                  : labels.leaderWorks
+                                ? labels.leaderWorks
                                 : participant.responsibility ||
                                   labels.specialistWorks}
                             </small>
@@ -1607,8 +1613,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                                 ) : null
                               }
                               renderResponsibility={(participant) =>
-                                participant.draftParticipant ||
-                                participant.responsibility ? (
+                                !participant.leader &&
+                                (participant.draftParticipant ||
+                                  participant.responsibility) ? (
                                   <span
                                     className="collaboration-project-create-duty-bubble"
                                     role="status"

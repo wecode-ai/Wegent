@@ -1,10 +1,11 @@
 import { parseWeworkScheme } from '@/features/notifications/scheme'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useCreateBlockNote } from '@blocknote/react'
+import { BlockNoteSchema, type Block } from '@blocknote/core'
+import { createReactBlockSpec, useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { zh } from '@blocknote/core/locales'
-import { Maximize2, Minus, Plus, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import '@blocknote/core/style.css'
 import '@blocknote/react/style.css'
 import '@blocknote/mantine/style.css'
@@ -21,8 +22,9 @@ import { normalizeTaskDescription } from './taskDescription'
 interface TaskDescriptionEditorProps {
   value: string
   onChange: (markdown: string) => void
-  onPasteFiles?: (files: File[]) => void
+  onPasteFiles?: (files: File[]) => void | Promise<string | null>
   readAttachment?: (attachmentId: string) => Promise<Blob>
+  onInlineAttachmentIdsChange?: (attachmentIds: string[]) => void
   testId?: string
   ariaLabel?: string
   placeholder?: string
@@ -33,21 +35,228 @@ interface TaskDescriptionEditorProps {
 const DEFAULT_LINK_SCHEMES = /^(https?|ftps?|mailto|tel|callto|sms|cid|xmpp):/i
 const ATTACHMENT_LINK_PREFIX = 'wegent://attachments/'
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i
-const MIN_ZOOM = 0.5
-const MAX_ZOOM = 4
-const ZOOM_STEP = 0.25
-// Pointer grace while crossing the gap between the attachment link and the
-// floating preview; entering the preview cancels the timer.
-const PREVIEW_HIDE_GRACE_MS = 400
 
-function clampZoom(value: number): number {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value))
+interface AttachmentImageServices {
+  readAttachment?: (attachmentId: string) => Promise<Blob>
 }
 
-interface AttachmentPreviewState {
+const AttachmentImageServicesContext = createContext<AttachmentImageServices>({})
+
+function AttachmentImageBlockView({
+  attachmentId,
+  filename,
+}: {
   attachmentId: string
-  label: string
-  rect: { left: number; top: number; right: number; bottom: number }
+  filename: string
+}) {
+  const { readAttachment } = useContext(AttachmentImageServicesContext)
+  const [loadState, setLoadState] = useState<{
+    attachmentId: string
+    src: string | null
+    failed: boolean
+  }>({ attachmentId, src: null, failed: false })
+  const [previewOpen, setPreviewOpen] = useState(false)
+
+  useEffect(() => {
+    if (!readAttachment || !attachmentId) return
+    let active = true
+    let objectUrl: string | null = null
+    void readAttachment(attachmentId)
+      .then(blob => {
+        if (!active) return
+        objectUrl = URL.createObjectURL(blob)
+        setLoadState({ attachmentId, src: objectUrl, failed: false })
+      })
+      .catch(() => {
+        if (active) setLoadState({ attachmentId, src: null, failed: true })
+      })
+    return () => {
+      active = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [attachmentId, readAttachment])
+
+  useEffect(() => {
+    if (!previewOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [previewOpen])
+
+  const currentState =
+    loadState.attachmentId === attachmentId ? loadState : { attachmentId, src: null, failed: false }
+
+  return (
+    <figure
+      className="task-description-attachment-image-block"
+      data-testid={`task-description-attachment-image-${attachmentId}`}
+      contentEditable={false}
+    >
+      {currentState.src ? (
+        <button
+          type="button"
+          className="task-description-attachment-image-trigger"
+          aria-label={`预览 ${filename}`}
+          onClick={() => setPreviewOpen(true)}
+        >
+          <img src={currentState.src} alt={filename} />
+        </button>
+      ) : (
+        <div className="task-description-attachment-image-placeholder">
+          {!readAttachment || currentState.failed ? '图片加载失败' : '加载图片…'}
+        </div>
+      )}
+      {previewOpen && currentState.src
+        ? createPortal(
+            <div
+              className="task-description-attachment-image-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`预览 ${filename}`}
+              onClick={() => setPreviewOpen(false)}
+            >
+              <button
+                type="button"
+                className="task-description-attachment-image-lightbox-close"
+                aria-label="关闭预览"
+                onClick={() => setPreviewOpen(false)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+              <img
+                src={currentState.src}
+                alt={filename}
+                onClick={event => event.stopPropagation()}
+              />
+            </div>,
+            document.body
+          )
+        : null}
+    </figure>
+  )
+}
+
+const attachmentImageBlock = createReactBlockSpec(
+  {
+    type: 'attachmentImage',
+    propSchema: {
+      attachmentId: { default: '' },
+      filename: { default: '' },
+    },
+    content: 'none',
+  },
+  {
+    render: ({ block }) => (
+      <AttachmentImageBlockView
+        attachmentId={block.props.attachmentId}
+        filename={block.props.filename}
+      />
+    ),
+    toExternalHTML: ({ block }) => (
+      <div
+        data-wegent-attachment-image=""
+        data-attachment-id={block.props.attachmentId}
+        data-filename={block.props.filename}
+      />
+    ),
+    parse: element => {
+      if (!element.hasAttribute('data-wegent-attachment-image')) return undefined
+      return {
+        attachmentId: element.getAttribute('data-attachment-id') ?? '',
+        filename: element.getAttribute('data-filename') ?? '',
+      }
+    },
+  }
+)()
+
+const taskDescriptionSchema = BlockNoteSchema.create().extend({
+  blockSpecs: {
+    attachmentImage: attachmentImageBlock,
+  },
+})
+
+type TaskDescriptionBlock = typeof taskDescriptionSchema.Block
+type TaskDescriptionEditorInstance = typeof taskDescriptionSchema.BlockNoteEditor
+
+function attachmentLinkFromBlock(block: TaskDescriptionBlock): {
+  attachmentId: string
+  filename: string
+} | null {
+  if (block.type !== 'paragraph' || !Array.isArray(block.content)) return null
+  if (block.content.length !== 1) return null
+  const content = block.content[0]
+  if (content.type !== 'link' || !content.href.startsWith(ATTACHMENT_LINK_PREFIX)) return null
+  const filename = content.content
+    .map(item => ('text' in item ? item.text : ''))
+    .join('')
+    .trim()
+  if (!IMAGE_EXTENSION.test(filename)) return null
+  return {
+    attachmentId: content.href.slice(ATTACHMENT_LINK_PREFIX.length),
+    filename,
+  }
+}
+
+function parseTaskDescriptionBlocks(
+  editor: TaskDescriptionEditorInstance,
+  markdown: string
+): TaskDescriptionBlock[] {
+  return editor.tryParseMarkdownToBlocks(markdown).map(block => {
+    const attachment = attachmentLinkFromBlock(block)
+    if (!attachment) return block
+    return {
+      id: block.id,
+      type: 'attachmentImage',
+      props: attachment,
+      content: undefined,
+      children: block.children,
+    }
+  })
+}
+
+function taskDescriptionMarkdown(editor: TaskDescriptionEditorInstance): string {
+  const documentBlocks = [...editor.document]
+  const finalBlock = documentBlocks.at(-1)
+  const previousBlock = documentBlocks.at(-2)
+  if (
+    previousBlock?.type === 'attachmentImage' &&
+    finalBlock?.type === 'paragraph' &&
+    Array.isArray(finalBlock.content) &&
+    finalBlock.content.length === 0
+  ) {
+    documentBlocks.pop()
+  }
+  const serializableBlocks = documentBlocks.map(block => {
+    if (block.type !== 'attachmentImage') return block
+    return {
+      id: block.id,
+      type: 'paragraph' as const,
+      props: {},
+      content: [
+        {
+          type: 'link' as const,
+          href: `${ATTACHMENT_LINK_PREFIX}${block.props.attachmentId}`,
+          content: [
+            {
+              type: 'text' as const,
+              text: block.props.filename,
+              styles: {},
+            },
+          ],
+        },
+      ],
+      children: block.children,
+    }
+  })
+  return editor.blocksToMarkdownLossy(serializableBlocks).trimEnd()
+}
+
+function inlineAttachmentIds(editor: TaskDescriptionEditorInstance): string[] {
+  return editor.document.flatMap(block =>
+    block.type === 'attachmentImage' && block.props.attachmentId ? [block.props.attachmentId] : []
+  )
 }
 
 function isAllowedLinkHref(href: string): boolean {
@@ -63,6 +272,7 @@ export function TaskDescriptionEditor({
   onChange,
   onPasteFiles,
   readAttachment,
+  onInlineAttachmentIdsChange,
   testId = 'cloud-todo-detail-description',
   ariaLabel = '任务描述',
   placeholder = '添加任务描述，输入 / 使用 Markdown…',
@@ -72,7 +282,7 @@ export function TaskDescriptionEditor({
   const appearance = useOptionalAppearance()
   const onChangeRef = useRef(onChange)
   const onPasteFilesRef = useRef(onPasteFiles)
-  const readAttachmentRef = useRef(readAttachment)
+  const onInlineAttachmentIdsChangeRef = useRef(onInlineAttachmentIdsChange)
   const composingRef = useRef(false)
   const pendingCompositionChangeRef = useRef(false)
   const compositionSnapshotRef = useRef<ImeCompositionSnapshot | null>(null)
@@ -88,10 +298,11 @@ export function TaskDescriptionEditor({
   useEffect(() => {
     onChangeRef.current = onChange
     onPasteFilesRef.current = onPasteFiles
-    readAttachmentRef.current = readAttachment
-  }, [onChange, onPasteFiles, readAttachment])
+    onInlineAttachmentIdsChangeRef.current = onInlineAttachmentIdsChange
+  }, [onChange, onInlineAttachmentIdsChange, onPasteFiles])
 
   const editor = useCreateBlockNote({
+    schema: taskDescriptionSchema,
     tabBehavior: 'prefer-indent',
     dictionary: {
       ...zh,
@@ -130,13 +341,19 @@ export function TaskDescriptionEditor({
     const next = normalizeTaskDescription(value)
     if (next === lastEmittedMarkdownRef.current) return
     applyingExternalRef.current = true
-    editor.replaceBlocks(editor.document, editor.tryParseMarkdownToBlocks(next))
+    editor.replaceBlocks(editor.document, parseTaskDescriptionBlocks(editor, next))
+    const finalBlock = editor.document.at(-1)
+    if (finalBlock?.type === 'attachmentImage') {
+      editor.insertBlocks([{ type: 'paragraph' }], finalBlock.id, 'after')
+    }
     applyingExternalRef.current = false
     lastEmittedMarkdownRef.current = next
+    onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
   }, [editor, value])
 
   const emitEditorChange = useCallback(() => {
-    const markdown = editor.blocksToMarkdownLossy()
+    const markdown = taskDescriptionMarkdown(editor)
+    onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
     if (applyingExternalRef.current) return
     if (markdown === lastEmittedMarkdownRef.current) return
     lastEmittedMarkdownRef.current = markdown
@@ -152,15 +369,59 @@ export function TaskDescriptionEditor({
     emitEditorChange()
   }, [emitEditorChange])
 
+  const handleKeyDownCapture = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (disabled) return
+      if (
+        event.key !== 'Enter' ||
+        event.shiftKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return
+      }
+      const selection = editor.getSelection()
+      const selectedBlock =
+        selection?.blocks.length === 1 && selection.blocks[0]?.type === 'attachmentImage'
+          ? selection.blocks[0]
+          : null
+      if (!selectedBlock) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      const [paragraph] = editor.insertBlocks([{ type: 'paragraph' }], selectedBlock.id, 'after')
+      editor.setTextCursorPosition(paragraph.id, 'start')
+      emitEditorChange()
+    },
+    [disabled, editor, emitEditorChange]
+  )
+
   // File pastes are routed to the shared attachment flow before ProseMirror
   // sees them, keeping image/file blocks out of the markdown description.
-  const handlePasteCapture = useCallback((event: React.ClipboardEvent) => {
-    const files = Array.from(event.clipboardData?.files ?? [])
-    if (!files.length || !onPasteFilesRef.current) return
-    event.preventDefault()
-    event.stopPropagation()
-    onPasteFilesRef.current(files)
-  }, [])
+  const handlePasteCapture = useCallback(
+    (event: React.ClipboardEvent) => {
+      const files = Array.from(event.clipboardData?.files ?? [])
+      const pasteFiles = onPasteFilesRef.current
+      if (!files.length || !pasteFiles) return
+      const referenceBlockId = editor.getTextCursorPosition().block.id
+      event.preventDefault()
+      event.stopPropagation()
+      void Promise.resolve(pasteFiles(files)).then(markdown => {
+        if (!markdown) return
+        const blocks = parseTaskDescriptionBlocks(editor, markdown)
+        if (!blocks.length) return
+        const inserted = editor.insertBlocks(blocks, referenceBlockId, 'after')
+        let lastInserted = inserted.at(-1)
+        if (lastInserted?.type === 'attachmentImage') {
+          ;[lastInserted] = editor.insertBlocks([{ type: 'paragraph' }], lastInserted.id, 'after')
+        }
+        if (lastInserted) editor.setTextCursorPosition(lastInserted.id, 'end')
+        emitEditorChange()
+      })
+    },
+    [editor, emitEditorChange]
+  )
 
   const handleCompositionStartCapture = useCallback(() => {
     composingRef.current = true
@@ -194,12 +455,17 @@ export function TaskDescriptionEditor({
           const repair =
             detectInitialImeDuplicate(
               snapshot,
-              originalBlock,
-              nextBlock,
+              originalBlock as unknown as Block | undefined,
+              nextBlock as unknown as Block | undefined,
               nextBlock ? editor.getParentBlock(nextBlock.id)?.id : undefined,
               committedText
             ) ??
-            detectInitialImeCodeBlockDuplicate(snapshot, originalBlock, nextBlock, committedText)
+            detectInitialImeCodeBlockDuplicate(
+              snapshot,
+              originalBlock as unknown as Block | undefined,
+              nextBlock as unknown as Block | undefined,
+              committedText
+            )
           if (repair) {
             repairingImeRef.current = true
             try {
@@ -223,248 +489,22 @@ export function TaskDescriptionEditor({
     [editor, emitEditorChange]
   )
 
-  const [preview, setPreview] = useState<AttachmentPreviewState | null>(null)
-  const [previewSrc, setPreviewSrc] = useState<string | null>(null)
-  const [lightbox, setLightbox] = useState<{ src: string; label: string } | null>(null)
-  const [zoom, setZoom] = useState(1)
-  const previewRef = useRef<HTMLDivElement | null>(null)
-  const previewUrlsRef = useRef(new Map<string, string>())
-  const hidePreviewTimerRef = useRef<number | null>(null)
-
-  // Fetches attachment bytes only while the image link is hovered, so opening
-  // a task never downloads every embedded image.
-  useEffect(() => {
-    if (!preview) return
-    if (previewUrlsRef.current.has(preview.attachmentId)) return
-    let cancelled = false
-    const reader = readAttachmentRef.current
-    if (!reader) return
-    reader(preview.attachmentId)
-      .then(blob => {
-        if (cancelled) return
-        const url = URL.createObjectURL(blob)
-        previewUrlsRef.current.set(preview.attachmentId, url)
-        setPreviewSrc(url)
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to load attachment preview', error)
-        if (!cancelled) setPreviewSrc(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [preview])
-
-  useEffect(() => {
-    const urls = previewUrlsRef.current
-    return () => {
-      urls.forEach(url => URL.revokeObjectURL(url))
-      urls.clear()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!lightbox) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setLightbox(null)
-      if (event.key === '=' || event.key === '+') setZoom(current => clampZoom(current + ZOOM_STEP))
-      if (event.key === '-') setZoom(current => clampZoom(current - ZOOM_STEP))
-      if (event.key === '0') setZoom(1)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [lightbox])
-
-  const attachmentAnchorFrom = useCallback((target: EventTarget | null) => {
-    if (!(target instanceof Element)) return null
-    return target.closest<HTMLAnchorElement>(`a[href^='${ATTACHMENT_LINK_PREFIX}']`)
-  }, [])
-
-  const showPreviewFor = useCallback((anchor: HTMLAnchorElement) => {
-    if (hidePreviewTimerRef.current !== null) {
-      window.clearTimeout(hidePreviewTimerRef.current)
-      hidePreviewTimerRef.current = null
-    }
-    const href = anchor.getAttribute('href') ?? ''
-    const attachmentId = href.slice(ATTACHMENT_LINK_PREFIX.length)
-    const label = anchor.textContent?.trim() || attachmentId
-    if (!IMAGE_EXTENSION.test(label) || !readAttachmentRef.current) return
-    setPreviewSrc(previewUrlsRef.current.get(attachmentId) ?? null)
-    const rect = anchor.getBoundingClientRect()
-    setPreview({
-      attachmentId,
-      label,
-      rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
-    })
-  }, [])
-
-  const hidePreviewSoon = useCallback(() => {
-    if (hidePreviewTimerRef.current !== null) return
-    hidePreviewTimerRef.current = window.setTimeout(() => {
-      hidePreviewTimerRef.current = null
-      setPreview(null)
-      setPreviewSrc(null)
-    }, PREVIEW_HIDE_GRACE_MS)
-  }, [])
-
-  const handleMouseOver = useCallback(
-    (event: React.MouseEvent) => {
-      const anchor = attachmentAnchorFrom(event.target)
-      if (anchor) {
-        showPreviewFor(anchor)
-        return
-      }
-      // Moving onto the preview keeps it open and cancels any pending hide
-      // timer started while crossing the gap between the link and the preview.
-      if (previewRef.current?.contains(event.target as Node)) {
-        if (hidePreviewTimerRef.current !== null) {
-          window.clearTimeout(hidePreviewTimerRef.current)
-          hidePreviewTimerRef.current = null
-        }
-      }
-    },
-    [attachmentAnchorFrom, showPreviewFor]
-  )
-
-  const handleMouseOut = useCallback(
-    (event: React.MouseEvent) => {
-      const related = event.relatedTarget as Node | null
-      if (related instanceof Element) {
-        if (attachmentAnchorFrom(related)) return
-        if (previewRef.current?.contains(related)) return
-        if (event.currentTarget.contains(related)) {
-          // Still inside the editor: give the pointer time to reach the
-          // preview before hiding it.
-          hidePreviewSoon()
-          return
-        }
-      }
-      // Pointer left the editor: hide immediately.
-      if (hidePreviewTimerRef.current !== null) {
-        window.clearTimeout(hidePreviewTimerRef.current)
-        hidePreviewTimerRef.current = null
-      }
-      setPreview(null)
-      setPreviewSrc(null)
-    },
-    [attachmentAnchorFrom, hidePreviewSoon]
-  )
-
-  const openLightbox = useCallback(() => {
-    if (!previewSrc) return
-    setZoom(1)
-    setLightbox({ src: previewSrc, label: preview?.label ?? '' })
-  }, [preview?.label, previewSrc])
-
   return (
     <div
       className={cn('task-description-editor', className)}
-      onMouseOver={handleMouseOver}
-      onMouseOut={handleMouseOut}
       onPasteCapture={handlePasteCapture}
+      onKeyDownCapture={handleKeyDownCapture}
       onCompositionStartCapture={handleCompositionStartCapture}
       onCompositionEndCapture={handleCompositionEndCapture}
     >
-      <BlockNoteView
-        editor={editor}
-        onChange={handleEditorChange}
-        editable={!disabled}
-        theme={appearance?.resolvedMode === 'dark' ? 'dark' : 'light'}
-      />
-      {preview ? (
-        <div
-          ref={previewRef}
-          className="task-description-attachment-preview"
-          data-testid="cloud-todo-preview"
-          style={{
-            position: 'fixed',
-            left: Math.min(preview.rect.right + 8, window.innerWidth - 320),
-            top: Math.max(preview.rect.top, 8),
-          }}
-          onMouseOver={handleMouseOver}
-          onMouseOut={handleMouseOut}
-        >
-          {previewSrc ? (
-            <div className="task-description-attachment-preview-figure">
-              <img
-                className="task-description-attachment-preview-image"
-                src={previewSrc}
-                alt={preview.label}
-                onClick={openLightbox}
-              />
-              <button
-                type="button"
-                data-testid="cloud-todo-preview-view"
-                className="task-description-attachment-preview-view"
-                aria-label="查看大图"
-                title="查看大图"
-                onClick={openLightbox}
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-                查看大图
-              </button>
-            </div>
-          ) : (
-            <span className="task-description-attachment-preview-label">{preview.label}</span>
-          )}
-        </div>
-      ) : null}
-      {lightbox
-        ? createPortal(
-            <div
-              className="task-description-image-lightbox"
-              role="dialog"
-              aria-label={lightbox.label}
-              data-testid="cloud-todo-preview-lightbox"
-              onClick={() => setLightbox(null)}
-            >
-              <div
-                className="task-description-image-lightbox-toolbar"
-                onClick={event => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  data-testid="cloud-todo-preview-zoom-out"
-                  aria-label="缩小"
-                  title="缩小"
-                  onClick={() => setZoom(current => clampZoom(current - ZOOM_STEP))}
-                >
-                  <Minus className="h-4 w-4" />
-                </button>
-                <span>{Math.round(zoom * 100)}%</span>
-                <button
-                  type="button"
-                  data-testid="cloud-todo-preview-zoom-in"
-                  aria-label="放大"
-                  title="放大"
-                  onClick={() => setZoom(current => clampZoom(current + ZOOM_STEP))}
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  data-testid="cloud-todo-preview-close"
-                  aria-label="关闭"
-                  title="关闭"
-                  onClick={() => setLightbox(null)}
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div
-                className="task-description-image-lightbox-stage"
-                onClick={event => event.stopPropagation()}
-              >
-                <img
-                  src={lightbox.src}
-                  alt={lightbox.label}
-                  style={{ transform: `scale(${zoom})` }}
-                />
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <AttachmentImageServicesContext.Provider value={{ readAttachment }}>
+        <BlockNoteView
+          editor={editor}
+          onChange={handleEditorChange}
+          editable={!disabled}
+          theme={appearance?.resolvedMode === 'dark' ? 'dark' : 'light'}
+        />
+      </AttachmentImageServicesContext.Provider>
     </div>
   )
 }

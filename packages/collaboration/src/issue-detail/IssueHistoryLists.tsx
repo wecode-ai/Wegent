@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ArrowRight } from "lucide-react";
+import { formatIssueTimestamp } from "./issueTimestamp";
 
 export interface IssueAssignmentHistoryEntry {
   by_user_id: number;
-  to_type: "user" | "agent" | "team" | null;
+  to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
   to_name?: string | null;
   action: "assign" | "reassign" | "unassign";
@@ -33,28 +34,39 @@ export function IssueAssignmentHistoryList({
   labels: {
     team: string;
     agent: string;
+    group: string;
     unassigned: string;
     actions: Record<IssueAssignmentHistoryEntry["action"], string>;
   };
 }) {
   return entries.map((entry, index) => {
     const byName = memberName(entry.by_user_id);
-    const toName =
-      entry.to_type === "agent" || entry.to_type === "team"
+    const isUnassign = entry.action === "unassign";
+    const toName = isUnassign
+      ? labels.unassigned
+      : entry.to_type === "agent" ||
+          entry.to_type === "team" ||
+          entry.to_type === "group"
         ? (entry.to_name ??
-          (entry.to_type === "team" ? labels.team : labels.agent))
+          (entry.to_type === "team"
+            ? labels.team
+            : entry.to_type === "group"
+              ? labels.group
+              : labels.agent))
         : (entry.to_name ?? memberName(Number(entry.to_id)));
     return (
       <div key={`${entry.at}-${index}`} className="rounded-md px-1.5 py-1.5">
-        <div className="flex items-center gap-1.5 text-xs text-text-primary">
+        <div className="issue-assignment-history-route flex items-center gap-1.5 text-xs text-text-primary">
           <span className="truncate font-medium">
             {byName ?? `#${entry.by_user_id}`}
           </span>
-          <ArrowRight className="h-3 w-3 shrink-0 text-text-muted" />
+          {!isUnassign && (
+            <ArrowRight className="h-3 w-3 shrink-0 text-text-muted" />
+          )}
           <span className="truncate">{toName ?? labels.unassigned}</span>
         </div>
         <p className="mt-0.5 text-xs text-text-muted">
-          {labels.actions[entry.action]} · {new Date(entry.at).toLocaleString()}
+          {labels.actions[entry.action]} · {formatIssueTimestamp(entry.at)}
         </p>
       </div>
     );
@@ -65,9 +77,11 @@ export function IssueStatusHistoryList({
   entries,
   memberName,
   labels,
+  startIndex = 0,
 }: {
   entries: IssueStatusHistoryEntry[];
   memberName(userId: number | null): string | null;
+  startIndex?: number;
   labels: {
     system: string;
     unset: string;
@@ -88,7 +102,7 @@ export function IssueStatusHistoryList({
       <div
         key={`${entry.at}-${index}`}
         className="rounded-md px-1.5 py-1.5"
-        data-testid={`cloud-todo-status-history-entry-${index}`}
+        data-testid={`cloud-todo-status-history-entry-${startIndex + index}`}
       >
         <div className="flex items-center gap-1.5 text-xs text-text-primary">
           <span className="shrink-0 font-medium">{actor}</span>
@@ -109,7 +123,7 @@ export function IssueStatusHistoryList({
         </div>
         <p className="mt-0.5 text-xs text-text-muted">
           {isAccept ? labels.accept : labels.action(entry.trigger)} ·{" "}
-          {new Date(entry.at).toLocaleString()}
+          {formatIssueTimestamp(entry.at)}
         </p>
       </div>
     );

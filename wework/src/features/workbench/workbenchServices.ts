@@ -1,3 +1,5 @@
+import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
+import type { LocalRuntimeSidebarIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { createDeviceApi } from '@/api/devices'
 import type { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
 import type { createLocalProjectAutomationApi } from '@/api/local/localProjectAutomations'
@@ -17,13 +19,14 @@ import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { createCloudProjectSpaceApi } from '@/api/hybrid/cloudProjectSpaceApi'
 import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
-import { createModelApi } from '@/api/models'
+import type { ModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import type {
   createLocalLoopItemExecutionApi,
   createLocalProjectChatAgentApi,
 } from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import type { RuntimeBackgroundTerminalsApi } from '@/api/runtimeBackgroundTerminals'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -36,7 +39,9 @@ import { createChatStream } from '@/stream/chatStream'
 import type {
   Attachment,
   ModelOptions,
+  ModelSelectionConfig,
   ModelType,
+  RuntimeTaskAddress,
   ProjectDeviceSessionResponse,
   RuntimeProjectPluginRef,
   User,
@@ -133,10 +138,30 @@ export interface AutomationApi {
   listAutomationRuns: (automationId?: string) => Promise<AutomationRunListResponse>
 }
 
+/**
+ * Launch descriptor for the Wework built-in decision router.
+ *
+ * The renderer only forwards this to the Smart App host; it never inspects or
+ * assembles the decision upstream, and it never reads the upstream credential.
+ */
+export interface LocalDecisionRouterLaunch {
+  token: string
+  baseUrl: string
+  protocolVersion: 1
+}
+
+export interface LocalDecisionRouterApi {
+  resolveLaunch(scope?: string): Promise<LocalDecisionRouterLaunch>
+  unregister(token: string): Promise<void>
+}
+
 export interface WorkbenchServices {
+  standInApi?: import('@/api/standIn').StandInExecutorApi
+  /** Read the current healthy local IPC identity, independently of the device catalog. */
+  getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>
   agentResourceApi?: ReturnType<typeof createAgentResourceApi>
   teamApi: ReturnType<typeof createTeamApi>
-  modelApi: ReturnType<typeof createModelApi>
+  modelApi: ModelApi
   skillApi: ReturnType<typeof createSkillApi>
   projectApi: Omit<ReturnType<typeof createProjectApi>, 'createGitWorkspaceProject'> & {
     createGitWorkspaceProject?: ReturnType<typeof createProjectApi>['createGitWorkspaceProject']
@@ -177,11 +202,12 @@ export interface WorkbenchServices {
   projectSpaceApis?: ProjectSpaceApis
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
-  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> & Partial<RuntimeBackgroundTerminalsApi>
   /** Backend-free execution ports for locally owned projects in a connected workbench. */
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
   pluginApi?: ProjectPluginCatalogApi
+  projectDevicePluginApi?: (deviceId: string) => ProjectDevicePluginApi
   automationApi?: AutomationApi
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
@@ -210,6 +236,12 @@ export interface WorkbenchServices {
     unregisterProxy: (token: string) => Promise<void>
     unregisterContext: (token: string) => Promise<void>
   }
+  /**
+   * Wework built-in decision router. Kept separate from
+   * `localHarnessModelApi`: it speaks the decision protocol and does not depend
+   * on a `LocalHarnessModelOption`.
+   */
+  localDecisionRouterApi?: LocalDecisionRouterApi
   workspaceSessionApi?: WorkspaceSessionApi
   branchNameApi?: {
     generateBranchName: (data: {
@@ -220,6 +252,14 @@ export interface WorkbenchServices {
       modelOptions?: ModelOptions
     }) => Promise<string>
   }
+  replyPredictionApi?: {
+    predict: (data: {
+      address: RuntimeTaskAddress
+      modelSelection?: ModelSelectionConfig | null
+      latestTurnId?: string | null
+      signal?: AbortSignal
+    }) => Promise<{ suggestion: string | null }>
+  }
   textGenerationApi?: {
     generateText: (data: {
       prompt: string
@@ -229,6 +269,8 @@ export interface WorkbenchServices {
       modelType?: ModelType | null
       modelOptions?: ModelOptions
       outputSchema?: Record<string, unknown>
+      signal?: AbortSignal
+      timeoutMs?: number
       onProgress?: (phase: 'preparing' | 'generating') => void
       onDelta?: (delta: string) => void
     }) => Promise<string>

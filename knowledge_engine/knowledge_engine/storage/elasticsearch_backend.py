@@ -38,8 +38,9 @@ from knowledge_engine.retrieval.search_hints import (
     resolve_search_queries,
 )
 from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from shared.models import RetrievalScope
+from shared.knowledge_contracts import RetrievalScope
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,9 @@ class ElasticsearchBackend(BaseStorageBackend):
     """
 
     # Class-level constant defining supported retrieval methods
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = list(
+        STORAGE_BACKEND_SPECS["elasticsearch"].retrieval_methods
+    )
     TEXT_FIELD: ClassVar[str] = "content"
     PHRASE_HINT_BOOST: ClassVar[float] = 3.0
     KEYWORD_HINT_BOOST: ClassVar[float] = 1.0
@@ -542,6 +545,21 @@ class ElasticsearchBackend(BaseStorageBackend):
             Deletion result dict
         """
         index_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # A knowledge base that was never written has no index yet, and a
+        # repeated delete finds nothing left. Both mean "no chunks to remove",
+        # so report the idempotent result instead of a missing-index error.
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        if not es_client.indices.exists(index=index_name):
+            return {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "index_name": index_name,
+                "deleted_chunks": 0,
+                "deleted_parent_nodes": 0,
+                "status": "deleted",
+            }
+
         vector_store = self.create_vector_store(index_name)
 
         # Build filters to match the document

@@ -29,8 +29,8 @@ const mergedDefaultPreferences = {
   telemetryEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
+  projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -45,6 +45,7 @@ const mergedDefaultPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
+  replyPredictionsEnabled: false,
   changeRequestStatusEnabled: true,
   quickPhrases: [
     {
@@ -189,6 +190,21 @@ describe('appPreferences', () => {
       fixedWorkspaceTabs: [
         { id: 'smart-1', kind: 'smart_app', installationId: 'app-1', title: 'Research' },
         { id: 'invalid-smart', kind: 'smart_app' },
+        {
+          id: 'plugins',
+          kind: 'auxiliary',
+          title: 'Plugins',
+          contentRoute: ' /plugins ',
+          windowLabel: ' workspace-plugins ',
+        },
+        { id: 'invalid-auxiliary', kind: 'auxiliary' },
+        {
+          id: 'invalid-window',
+          kind: 'auxiliary',
+          title: 'Invalid window',
+          contentRoute: '/invalid-window',
+          windowLabel: '../invalid',
+        },
       ],
       startupWorkspaceTabId: 'missing',
     })
@@ -199,8 +215,36 @@ describe('appPreferences', () => {
       ...mergedDefaultPreferences,
       fixedWorkspaceTabs: [
         { id: 'smart-1', kind: 'smart_app', installationId: 'app-1', title: 'Research' },
+        {
+          id: 'plugins',
+          kind: 'auxiliary',
+          title: 'Plugins',
+          contentRoute: '/plugins',
+          windowLabel: 'workspace-plugins',
+        },
+        {
+          id: 'invalid-window',
+          kind: 'auxiliary',
+          title: 'Invalid window',
+          contentRoute: '/invalid-window',
+        },
       ],
       startupWorkspaceTabId: 'smart-1',
+    })
+  })
+
+  test('preserves an explicitly empty fixed-tab list', async () => {
+    invokeMock.mockResolvedValue({
+      fixedWorkspaceTabs: [],
+      startupWorkspaceTabId: '',
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      fixedWorkspaceTabs: [],
+      startupWorkspaceTabId: '',
     })
   })
 
@@ -243,6 +287,32 @@ describe('appPreferences', () => {
         modelType: 'public',
         options: {
           weworkCloudModelNamespace: 'default',
+        },
+      },
+    })
+  })
+
+  test('normalizes the last selected project AI model', async () => {
+    invokeMock.mockResolvedValue({
+      projectAiModelSelection: {
+        modelName: '  project-manager-model  ',
+        modelType: 'public',
+        options: {
+          reasoning: 'high',
+          invalid: 1,
+        },
+      },
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      projectAiModelSelection: {
+        modelName: 'project-manager-model',
+        modelType: 'public',
+        options: {
+          reasoning: 'high',
         },
       },
     })

@@ -19,6 +19,7 @@ const stopInstalled = vi.fn()
 const updateInstalled = vi.fn()
 const exportToDownloads = vi.fn()
 const exportPackage = vi.fn()
+const verifyInstallation = vi.fn()
 const uploadPackage = vi.fn()
 const addPlugin = vi.fn()
 const createDirectory = vi.fn()
@@ -82,6 +83,7 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   registerHarnessAppTab: vi.fn(),
   takeHarnessAppContextToken: vi.fn().mockResolvedValue(null),
   takeHarnessAppProxyToken: vi.fn().mockResolvedValue(null),
+  takeHarnessAppDecisionToken: vi.fn().mockResolvedValue(null),
   unregisterHarnessAppTab: vi.fn(),
 }))
 vi.mock('@/api/local/harnessApps', () => ({
@@ -95,6 +97,7 @@ vi.mock('@/api/local/harnessApps', () => ({
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
     exportToDownloads: (id: string) => exportToDownloads(id),
     export: (id: string) => exportPackage(id),
+    verify: (id: string) => verifyInstallation(id),
     upload: (path: string, url: string) => uploadPackage(path, url),
     addPlugin: (id: string, spec: string) => addPlugin(id, spec),
     createDirectory: (input: unknown) => createDirectory(input),
@@ -193,6 +196,7 @@ describe('SmartAppsMarketplacePage', () => {
     queueSmartAppDevelopmentPreview.mockReset()
     ensureBundledPluginInstalled.mockReset().mockResolvedValue(undefined)
     listInstalled.mockReset().mockResolvedValue([])
+    verifyInstallation.mockReset().mockResolvedValue({ status: 'passed', issues: [] })
     deleteInstalled.mockReset().mockResolvedValue(undefined)
     stopInstalled.mockReset().mockResolvedValue(undefined)
     updateInstalled.mockReset()
@@ -276,8 +280,9 @@ describe('SmartAppsMarketplacePage', () => {
     expect(
       screen.queryByText('发现官方工作台，以及成员定向分享给你的工作台。')
     ).not.toBeInTheDocument()
-    expect(screen.queryByTestId('smart-apps-created-create')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('smart-apps-import-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-created-create')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-link-directory')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-import-button')).toBeInTheDocument()
     expect(screen.getByTestId('applications-context-toolbar')).toHaveClass('md:h-9')
     expect(screen.getByTestId('smart-app-marketplace-item-7')).toHaveClass('min-h-52')
   })
@@ -477,6 +482,19 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.getByTestId('smart-app-export-success')).toHaveTextContent(
       '发布包已导出到下载目录。'
     )
+  })
+
+  test('offers formal verification for linked projects before export', async () => {
+    const linked = { ...importedInstallation, source: 'linked' as const }
+    listInstalled.mockResolvedValue([linked])
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+    fireEvent.click(await screen.findByTestId(`smart-app-actions-${linked.id}`))
+    fireEvent.pointerDown(screen.getByTestId(`smart-app-verify-${linked.id}`))
+    await waitFor(() => expect(verifyInstallation).toHaveBeenCalledWith(linked.id))
+    expect(await screen.findByTestId('smart-app-export-success')).toHaveTextContent(
+      '工作台验证通过'
+    )
+    expect(exportToDownloads).not.toHaveBeenCalled()
   })
 
   test('keeps the card available when installation package export fails', async () => {
@@ -906,9 +924,33 @@ describe('SmartAppsMarketplacePage', () => {
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    const advancedToggle = screen.getByTestId('smart-app-development-advanced-toggle')
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('smart-app-development-name')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-development-template-web')).not.toBeInTheDocument()
+    const fields = [
+      'smart-app-development-display-name',
+      'smart-app-development-description',
+      'smart-app-development-parent-path',
+      'smart-app-development-advanced-toggle',
+    ].map(testId => screen.getByTestId(testId))
+    expect(
+      fields.every((field, index) =>
+        index === 0
+          ? true
+          : Boolean(
+              fields[index - 1].compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING
+            )
+      )
+    ).toBe(true)
     fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
       target: { value: '空白工作台' },
     })
+    fireEvent.change(screen.getByTestId('smart-app-development-description'), {
+      target: { value: '持续开发' },
+    })
+    fireEvent.click(advancedToggle)
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'true')
     fireEvent.change(screen.getByTestId('smart-app-development-name'), {
       target: { value: 'blank-workbench' },
     })
@@ -920,6 +962,9 @@ describe('SmartAppsMarketplacePage', () => {
       'true'
     )
     fireEvent.click(screen.getByTestId('smart-app-development-template-web-host-remote'))
+    fireEvent.click(advancedToggle)
+    expect(advancedToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('smart-app-development-name')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
 
     await waitFor(() =>
@@ -938,9 +983,90 @@ describe('SmartAppsMarketplacePage', () => {
       })
     )
     expect(createDirectory).toHaveBeenCalledWith(
-      expect.objectContaining({ template: 'web-host-remote' })
+      expect.objectContaining({ description: '持续开发', template: 'web-host-remote' })
     )
     expect(navigateTo).toHaveBeenCalledWith('/')
+  })
+
+  test('creates a Chinese-named workbench with only the name filled', async () => {
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    expect(screen.getByText('用途说明（可选）')).toBeInTheDocument()
+    expect(screen.getByText('保存位置（可选）')).toBeInTheDocument()
+    expect(screen.getByText(/WeworkSmartApps 文件夹/)).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
+      target: { value: '空白工作台' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-advanced-toggle'))
+    fireEvent.change(screen.getByTestId('smart-app-development-name'), {
+      target: { value: '' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-advanced-toggle'))
+    expect(screen.getByTestId('smart-app-development-confirm')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    await waitFor(() => expect(createDirectory).toHaveBeenCalledOnce())
+    expect(createDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: '空白工作台',
+        name: expect.stringMatching(/^workbench-[a-f0-9]{8}$/),
+        description: '',
+        parentPath: '',
+        template: 'web',
+      })
+    )
+  })
+
+  test('explains an outdated desktop host rejection and exposes its error details', async () => {
+    createDirectory.mockRejectedValueOnce(
+      Object.assign(new Error('parentPath is required'), { code: 'invalid_params' })
+    )
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
+      target: { value: '测试' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    expect(
+      await screen.findByText(
+        '桌面程序尚未更新到支持留空保存位置和用途说明的版本，请退出并重新启动后重试。'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-development-choose-other-directory')).toBeNull()
+    fireEvent.click(screen.getByTestId('smart-app-development-error-details'))
+    expect(screen.getByText('invalid_params: parentPath is required')).toBeInTheDocument()
+  })
+
+  test('offers a folder picker when the default save location cannot be used', async () => {
+    createDirectory.mockRejectedValueOnce(
+      new Error('Smart app default save location is unavailable')
+    )
+    invokeDesktopHost.mockResolvedValueOnce({ canceled: false, filePaths: ['/tmp/writable'] })
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
+      target: { value: '空白工作台' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    expect(
+      await screen.findByText('无法在系统“文档”中创建工作台，请选择其他保存位置。')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-development-dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('smart-app-development-choose-other-directory'))
+    await waitFor(() =>
+      expect(screen.getByTestId('smart-app-development-parent-path')).toHaveValue('/tmp/writable')
+    )
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    await waitFor(() => expect(createDirectory).toHaveBeenCalledTimes(2))
+    expect(createDirectory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ parentPath: '/tmp/writable' })
+    )
   })
 
   test('does not create a workbench directory without a local project device', async () => {
@@ -951,6 +1077,7 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
       target: { value: '空白工作台' },
     })
+    fireEvent.click(screen.getByTestId('smart-app-development-advanced-toggle'))
     fireEvent.change(screen.getByTestId('smart-app-development-name'), {
       target: { value: 'blank-workbench' },
     })
@@ -971,6 +1098,7 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
       target: { value: '空白工作台' },
     })
+    fireEvent.click(screen.getByTestId('smart-app-development-advanced-toggle'))
     fireEvent.change(screen.getByTestId('smart-app-development-name'), {
       target: { value: 'blank-workbench' },
     })

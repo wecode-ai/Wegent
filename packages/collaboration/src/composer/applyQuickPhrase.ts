@@ -6,9 +6,9 @@ export function applyQuickPhrase(
   composer: { getValue(): string; setValue(value: string, cursor?: number): void; focus(): void },
   modes: { clearPlan?(): void; cancelGoal?(): void; setPlan?(): void; setGoal?(): void }
 ) {
-  modes.clearPlan?.()
   modes.cancelGoal?.()
   if (phrase.mode === 'plan') modes.setPlan?.()
+  else modes.clearPlan?.()
   if (phrase.mode === 'goal') modes.setGoal?.()
   const value = composer.getValue()
   const next = value ? `${value}\n${phrase.content}` : phrase.content

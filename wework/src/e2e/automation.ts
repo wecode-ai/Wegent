@@ -27,7 +27,13 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import {
+  getConversationDiagnosticsSnapshot,
+  setConversationFrameProbeEnabled,
+  startConversationDiagnosticCapture,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessagesForLogicalAddress,
@@ -36,6 +42,9 @@ import {
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   failNextLocalExecutorRequestForE2E,
+  ensureBundledPluginInstalled,
+  getInitializedBundledPluginMarketplace,
+  getBundledPluginUpdateState,
   getLocalExecutorStatus,
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
@@ -58,10 +67,14 @@ import type {
   WeworkConversationSnapshot,
 } from '../../dsh/app-wework/client'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
+import {
+  collectLocalHarnessDiagnostics,
+  installLocalHarnessDiagnostics,
+} from './local-harness-diagnostics'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
-import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
@@ -403,14 +416,17 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const config = normalizeCloudBackendUrl(backendUrl)
+  const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
+  const response = await fetch(`${config.apiBaseUrl}/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  const user = await response.json()
   saveStoredCloudConnection({
     ...config,
     webUrl: config.backendUrl,
-    user: {
-      id: 9001,
-      user_name: 'wework-desktop-e2e-cloud-user',
-      email: 'desktop-e2e@wework.local',
-    },
+    user,
     connectedAt: new Date().toISOString(),
   })
   const localModels =
@@ -502,6 +518,7 @@ export async function installWeworkAutomationBridge(
 
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
+    installLocalHarnessDiagnostics()
   }
   installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
@@ -589,6 +606,156 @@ function desktopControlContentScrollTop(element: HTMLElement): number {
 function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
   if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
   return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
+}
+
+async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Promise<string> {
+  const scroller = findDesktopControlElements(command.selector)[0]
+  if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+  const options = JSON.parse(command.value ?? '{}') as {
+    contentSelector?: string
+    framesPerRatio?: number
+    ratios?: number[]
+  }
+  const contentSelector = options.contentSelector?.trim()
+  if (!contentSelector) {
+    throw new Error('sampleRapidMarkdownWindowing requires contentSelector')
+  }
+  const ratios = options.ratios ?? []
+  if (
+    ratios.length === 0 ||
+    ratios.some(ratio => !Number.isFinite(ratio) || ratio < 0 || ratio > 1)
+  ) {
+    throw new Error('sampleRapidMarkdownWindowing requires ratios between 0 and 1')
+  }
+  const framesPerRatio = options.framesPerRatio ?? 4
+  if (!Number.isInteger(framesPerRatio) || framesPerRatio < 1 || framesPerRatio > 60) {
+    throw new Error('sampleRapidMarkdownWindowing requires framesPerRatio between 1 and 60')
+  }
+
+  const nextFrame = () =>
+    new Promise<number>(resolve => window.requestAnimationFrame(time => resolve(time)))
+  const previousLayouts = new WeakMap<HTMLElement, { height: number; visible: boolean }>()
+  let maxChunkHeightDelta = 0
+  let maxVisibleChunkHeightDelta = 0
+  let startedAt = 0
+  const capture = (time: number, ratio: number, frame: number) => {
+    const viewport = scroller.getBoundingClientRect()
+    const chunks = Array.from(scroller.querySelectorAll<HTMLElement>(contentSelector))
+    let chunkCount = 0
+    let placeholderChunkCount = 0
+    let visibleChunkCount = 0
+    let visiblePlaceholderCount = 0
+    let visibleRichChunkCount = 0
+    let hasVisibleText = false
+    let frameHeightDelta = 0
+    let frameVisibleHeightDelta = 0
+    for (const chunk of chunks) {
+      const bounds = chunk.getBoundingClientRect()
+      if (bounds.height <= 0 || bounds.width <= 0) {
+        previousLayouts.delete(chunk)
+        continue
+      }
+      chunkCount += 1
+      const visible =
+        bounds.bottom > viewport.top &&
+        bounds.top < viewport.bottom &&
+        bounds.right > viewport.left &&
+        bounds.left < viewport.right
+      const placeholder = Boolean(chunk.querySelector('[data-markdown-window-placeholder]'))
+      if (placeholder) placeholderChunkCount += 1
+      const previous = previousLayouts.get(chunk)
+      if (previous) {
+        const delta = Math.abs(bounds.height - previous.height)
+        frameHeightDelta = Math.max(frameHeightDelta, delta)
+        if (visible && previous.visible) {
+          frameVisibleHeightDelta = Math.max(frameVisibleHeightDelta, delta)
+        }
+      }
+      previousLayouts.set(chunk, { height: bounds.height, visible })
+      if (!visible) continue
+      visibleChunkCount += 1
+      if (placeholder) visiblePlaceholderCount += 1
+      else if (chunk.childElementCount > 0) visibleRichChunkCount += 1
+      if (hasVisibleText) continue
+      // A chunk's textContent can be nonempty while its visible portion is blank.
+      // Sample actual text rectangles without returning any transcript text.
+      const walker = document.createTreeWalker(chunk, NodeFilter.SHOW_TEXT)
+      const range = document.createRange()
+      let textNode = walker.nextNode()
+      while (textNode) {
+        if (
+          textNode.textContent?.trim() &&
+          textNode.parentElement &&
+          window.getComputedStyle(textNode.parentElement).visibility === 'visible'
+        ) {
+          range.selectNodeContents(textNode)
+          hasVisibleText = Array.from(range.getClientRects()).some(
+            rect =>
+              rect.bottom > Math.max(viewport.top, bounds.top) &&
+              rect.top < Math.min(viewport.bottom, bounds.bottom) &&
+              rect.right > Math.max(viewport.left, bounds.left) &&
+              rect.left < Math.min(viewport.right, bounds.right) &&
+              rect.height > 0 &&
+              rect.width > 0
+          )
+          if (hasVisibleText) break
+        }
+        textNode = walker.nextNode()
+      }
+    }
+    maxChunkHeightDelta = Math.max(maxChunkHeightDelta, frameHeightDelta)
+    maxVisibleChunkHeightDelta = Math.max(maxVisibleChunkHeightDelta, frameVisibleHeightDelta)
+    return {
+      ratio,
+      frame,
+      time: time - startedAt,
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+      viewportTop: viewport.top,
+      viewportHeight: viewport.height,
+      chunkCount,
+      placeholderChunkCount,
+      richChunkCount: chunkCount - placeholderChunkCount,
+      visibleChunkCount,
+      visiblePlaceholderCount,
+      visibleRichChunkCount,
+      hasVisibleText,
+      maxChunkHeightDelta: frameHeightDelta,
+      maxVisibleChunkHeightDelta: frameVisibleHeightDelta,
+    }
+  }
+
+  startedAt = await nextFrame()
+  const initial = capture(startedAt, 1, 0)
+  const samples: ReturnType<typeof capture>[] = []
+  for (const ratio of ratios) {
+    await nextFrame()
+    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    const nextScrollTop = maximum * ratio
+    const currentScrollTop = desktopControlContentScrollTop(scroller)
+    scroller.dispatchEvent(
+      new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
+      })
+    )
+    scroller.scrollTop = desktopControlDomScrollTop(scroller, nextScrollTop)
+    scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+    // Do not accept synchronous placeholder content in the turn that scrolls.
+    for (let frame = 1; frame <= framesPerRatio; frame += 1) {
+      samples.push(capture(await nextFrame(), ratio, frame))
+    }
+  }
+  return JSON.stringify({
+    initial,
+    samples,
+    frameCount: samples.length,
+    maxChunkHeightDelta,
+    maxVisibleChunkHeightDelta,
+  })
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -903,7 +1070,12 @@ async function pressNativeDesktopControlKey(
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase })
+    await invokeDesktopHost('e2e.pressKey', {
+      windowLabel,
+      key,
+      phase,
+      focus: false,
+    })
     await waitForDesktopControlTick()
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
@@ -1013,11 +1185,13 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
     dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
     await waitForDesktopControlTick()
+    const pointerUpStartedAt = performance.now()
     dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
     dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointerup', {
       ...endOptions,
       buttons: 0,
     })
+    const pointerUpDispatchedAt = performance.now()
     if (command.waitForSelector) {
       await waitForDesktopControlElement({
         ...command,
@@ -1027,6 +1201,9 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       })
       return JSON.stringify({
         durationMs: Math.round(performance.now() - startedAt),
+        pointerMoveMs: Math.round(pointerUpStartedAt - startedAt),
+        pointerUpDispatchMs: Math.round(pointerUpDispatchedAt - pointerUpStartedAt),
+        splitReadyMs: Math.round(performance.now() - pointerUpDispatchedAt),
         sourceText: activeDrag.sourceText,
       })
     }
@@ -1185,7 +1362,10 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
-async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+async function waitForDesktopControlElement(
+  command: DesktopControlCommand,
+  onMatch?: (element: HTMLElement) => string
+): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
   let matchedAt: number | null = null
@@ -1209,11 +1389,13 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
       : elements
     const text = matchingElements.map(element => element.textContent?.trim() ?? '').join('\n')
     const hasExpectedText = !command.text || text.includes(command.text)
-    const isEnabled = !command.enabled || matchingElements.some(desktopControlElementEnabled)
-    if (matchingElements.length > 0 && hasExpectedText && isEnabled) {
+    const matchedElement = matchingElements.find(
+      element => !command.enabled || desktopControlElementEnabled(element)
+    )
+    if (matchedElement && hasExpectedText) {
       matchedAt ??= Date.now()
       if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
-        return text
+        return onMatch ? onMatch(matchedElement) : text
       }
     } else {
       matchedAt = null
@@ -1349,6 +1531,18 @@ function desktopControlComposerDisplayValue(element: HTMLElement, value: string)
   return displayValue
 }
 
+function applyDesktopControlTextSelection(range: Range, target: Element): void {
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && !activeElement.contains(range.commonAncestorContainer)) {
+    activeElement.blur()
+  }
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  document.dispatchEvent(new Event('selectionchange'))
+  target.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+}
+
 function selectDesktopControlText(selector: string, value: string): string {
   const elements = findDesktopControlElements(selector)
   const wholeElement = value
@@ -1357,11 +1551,7 @@ function selectDesktopControlText(selector: string, value: string): string {
   if (wholeElement) {
     const range = document.createRange()
     range.selectNodeContents(wholeElement)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    document.dispatchEvent(new Event('selectionchange'))
-    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    applyDesktopControlTextSelection(range, wholeElement)
     return value
   }
   let selectedNode: Node | null = null
@@ -1399,11 +1589,7 @@ function selectDesktopControlText(selector: string, value: string): string {
   const range = document.createRange()
   range.setStart(selectedNode, start)
   range.setEnd(selectedNode, start + selectedValue.length)
-  const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-  document.dispatchEvent(new Event('selectionchange'))
-  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  applyDesktopControlTextSelection(range, selectedNode.parentElement!)
   return selectedValue
 }
 
@@ -1552,7 +1738,7 @@ function pasteDesktopControlText(command: DesktopControlCommand): string {
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const text = command.value ?? ''
   const transfer = new DataTransfer()
-  transfer.setData('text/plain', text)
+  transfer.setData(command.mimeType ?? 'text/plain', text)
   const event = new ClipboardEvent('paste', {
     bubbles: true,
     cancelable: true,
@@ -1631,10 +1817,43 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return stripAppBasePath(window.location.pathname)
     case 'getNativeWindowState':
       return JSON.stringify(await invokeDesktopHost('window.getState'))
+    case 'setReducedMotion':
+      await invokeDesktopHost('e2e.setReducedMotion', { preference: command.value })
+      return ''
     case 'getStartupSplashSnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getStartupSplashSnapshot'))
     case 'getTraySnapshot':
       return JSON.stringify(await invokeDesktopHost('e2e.getTraySnapshot'))
+    case 'getApplicationMenuSnapshot':
+      return JSON.stringify(await invokeDesktopHost('e2e.getApplicationMenuSnapshot'))
+    case 'openProcessExplorer':
+      await invokeDesktopHost('developer.openProcessExplorer')
+      return ''
+    case 'getProcessExplorerWindowSnapshot':
+      return JSON.stringify(await invokeDesktopHost('e2e.getProcessExplorerWindowSnapshot'))
+    case 'setProcessExplorerWindowSize': {
+      const request = JSON.parse(command.value ?? '{}') as {
+        width?: number
+        height?: number
+      }
+      await invokeDesktopHost('e2e.setProcessExplorerWindowSize', {
+        width: request.width,
+        height: request.height,
+      })
+      return ''
+    }
+    case 'closeProcessExplorerWindow':
+      await invokeDesktopHost('e2e.closeProcessExplorerWindow')
+      return ''
+    case 'activateApplicationMenu': {
+      const request = JSON.parse(command.value ?? '{}') as { id?: string; windowLabel?: string }
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.activateApplicationMenu', {
+          id: request.id,
+          windowLabel: request.windowLabel,
+        })
+      )
+    }
     case 'activateTray':
       return JSON.stringify(
         await invokeDesktopHost('e2e.activateTray', {
@@ -1665,6 +1884,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'getEmbeddedBrowserDocumentState':
+      return JSON.stringify(
+        await evalEmbeddedBrowserJson<{
+          href: string
+          readyState: DocumentReadyState
+          bodyText: string
+        }>(
+          `({
+            href: window.location.href,
+            readyState: document.readyState,
+            bodyText: (document.body?.innerText ?? '').trim().slice(0, 4096)
+          })`,
+          command.value
+        )
+      )
     case 'setEmbeddedBrowserAgentControlPaused': {
       const input = JSON.parse(command.value ?? '{}') as {
         label?: string
@@ -1689,6 +1923,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'requestMainWindowClose':
       return ''
+    case 'requestStartupSplashClose':
+      return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
       const storageInput = reloadMainWindowLocalStorageInput(command)
@@ -1709,6 +1945,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'restartLocalCodexAppServerIfIdle':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
+      )
     case 'setLocalRuntimeMaxConcurrentTasks':
       return JSON.stringify(
         await requestLocalExecutor('runtime.settings.update', {
@@ -1776,11 +2016,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'activateRuntimeTaskCompletionNotification': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
-      await invokeDesktopHost('e2e.activateRuntimeTaskNotification', {
-        taskAddressId: createTrayTaskMenuId(address),
+      await invokeDesktopHost('e2e.activateNotification', {
+        url: weworkTaskScheme(address),
       })
       return ''
     }
+    case 'activateSystemNotification':
+      await invokeDesktopHost('e2e.activateNotification', { url: command.value ?? '' })
+      return ''
     case 'openWeworkScheme':
       await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
       return ''
@@ -1793,6 +2036,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
                 title: string
                 body: string
                 address?: RuntimeTaskAddress
+                url?: string
               }>
             }
           }
@@ -1805,6 +2049,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             title: string
             body: string
             address?: RuntimeTaskAddress
+            url?: string
           }>
         }
       }
@@ -1932,8 +2177,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
-    case 'storeLocalProxyUrl':
-      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'storeLocalProxyUrl': {
+      const config = saveLocalProxyUrl(command.value?.trim() ?? '')
+      await flushDesktopLocalStoragePersistence()
+      return JSON.stringify(config)
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
@@ -1949,7 +2197,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return window.location.origin
     case 'restartCoreDsh':
       await flushDesktopLocalStoragePersistence()
-      await invokeDesktopHost('runtime.restartCoreDsh')
       return ''
     case 'setEmbeddedBrowserLocalStorageItem':
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
@@ -2030,6 +2277,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             0
           ),
           markdownChunkCount: document.querySelectorAll('[data-markdown-window-chunk]').length,
+          markdownChunks: Array.from(
+            document.querySelectorAll<HTMLElement>('[data-markdown-window-chunk]')
+          ).map(element => ({
+            descendantCount: element.getElementsByTagName('*').length,
+            placeholder: Boolean(element.querySelector('[data-markdown-window-placeholder]')),
+            top: element.getBoundingClientRect().top,
+            height: element.getBoundingClientRect().height,
+          })),
         },
         activeRuntimeAssistant: activeAssistantMessage
           ? {
@@ -2046,6 +2301,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
               ).length,
             }
           : null,
+        runtimeAssistantDisplayItemCount: runtimeMessages
+          .filter(message => message.role === 'assistant')
+          .reduce((count, message) => count + (message.runtimeDisplayItems?.length ?? 0), 0),
         runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
         rendererHeap,
@@ -2053,6 +2311,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
+      return ''
+    case 'pressWindowKey':
+      await invokeDesktopHost('e2e.pressKey', {
+        windowLabel: getDesktopWindowLabel(),
+        key: command.key,
+        phase: 'press',
+      })
       return ''
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
@@ -2096,6 +2361,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'showPopoutWindow':
       await invokeDesktopHost('window.showPopout')
       return ''
+    case 'setPopoutWindowMode':
+      await invokeDesktopHost('window.setPopoutMode', { mode: command.value })
+      return getWindowFocusSnapshot()
     case 'drag':
       return dragDesktopControlElement(command)
     case 'dragBy':
@@ -2218,9 +2486,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'stopElementMetricsSampling':
     case 'getElementMetricsSample': {
       const sample = activeElementMetricsSample
       if (!sample) throw new Error('Element metrics sampling has not started')
+      if (command.action === 'stopElementMetricsSampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
@@ -2390,6 +2660,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await checkForWeworkUpdate('stable'))
     case 'getAppUpdateProgress':
       return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
+    // Starts the host download without following it to completion, so a
+    // scenario can observe that accepting the download does not wait for the
+    // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
+    case 'startAppUpdateDownload':
+      await invokeDesktopHost<void>('appUpdate.download')
+      return 'started'
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()
       return 'downloaded'
@@ -2535,6 +2811,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(samples)
     }
+    case 'sampleRapidMarkdownWindowing':
+      return sampleRapidMarkdownWindowing(command)
     case 'click': {
       const elements = findDesktopControlElementsWithin(command.selector, command.target)
       const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
@@ -2588,15 +2866,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return element.textContent?.trim() ?? ''
     }
     case 'clickWhenEnabled': {
-      await waitForDesktopControlElement({ ...command, enabled: true })
-      const element = findDesktopControlElements(command.selector).find(
-        desktopControlElementEnabled
-      )
-      if (!element) {
-        throw new Error(`Selector "${command.selector}" became disabled before click`)
+      startConversationDiagnosticCapture()
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        element.click()
+        return element.textContent?.trim() ?? ''
+      })
+    }
+    case 'setExpanded': {
+      const expected = command.value
+      if (expected !== 'true' && expected !== 'false') {
+        throw new Error('setExpanded requires a true or false value')
       }
-      element.click()
-      return element.textContent?.trim() ?? ''
+      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        const expanded = element.getAttribute('aria-expanded')
+        if (expanded !== 'true' && expanded !== 'false') {
+          throw new Error(`Selector "${command.selector}" has no valid aria-expanded state`)
+        }
+        if (expanded !== expected) element.click()
+        return element.textContent?.trim() ?? ''
+      })
     }
     case 'clickDescendantInElementWithText': {
       const text = command.text ?? ''
@@ -2703,9 +2991,75 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
-      return JSON.stringify(getWorkbenchDebugSnapshot())
+      return JSON.stringify({
+        ...getWorkbenchDebugSnapshot(),
+        network: performance.getEntriesByType('resource').map(entry => {
+          const timing = entry as PerformanceResourceTiming
+          return {
+            path: new URL(timing.name, location.href).pathname,
+            initiatorType: timing.initiatorType,
+            startTime: timing.startTime,
+            duration: timing.duration,
+            fetchStart: timing.fetchStart,
+            connectStart: timing.connectStart,
+            connectEnd: timing.connectEnd,
+            requestStart: timing.requestStart,
+            responseStart: timing.responseStart,
+            responseEnd: timing.responseEnd,
+            nextHopProtocol: timing.nextHopProtocol,
+          }
+        }),
+      })
+    case 'getLocalHarnessDiagnostics':
+      return JSON.stringify(await collectLocalHarnessDiagnostics())
+    case 'getConversationDiagnosticsSnapshot':
+      return JSON.stringify(getConversationDiagnosticsSnapshot())
+    case 'setConversationFrameProbeEnabled': {
+      if (command.value !== 'true' && command.value !== 'false') {
+        throw new Error('Conversation frame probe value must be true or false')
+      }
+      const enabled = command.value === 'true'
+      setConversationFrameProbeEnabled(enabled)
+      return JSON.stringify({ enabled })
+    }
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerPluginInventoryDiagnostics': {
+      const { getPluginInventoryDiagnostics } =
+        await import('@/features/plugins/pluginMarketplaceCache')
+      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
+      const installed =
+        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
+        peekLocalCodexPluginsReadState()
+      return JSON.stringify({
+        sharedInventory: getPluginInventoryDiagnostics(),
+        composerApps: getComposerApps().map(app => ({
+          id: app.id,
+          isAccessible: app.isAccessible,
+          isEnabled: app.isEnabled,
+          name: app.name,
+          pluginKey: app.pluginKey ?? null,
+          source: app.source,
+        })),
+        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+          enabled: plugin.spec.enabled,
+          installState: plugin.spec.installState,
+          marketplace: plugin.spec.source.marketplace,
+          name: plugin.metadata.name,
+          pluginKey: plugin.spec.source.pluginKey,
+          skillCount: plugin.spec.components.skills.length,
+        })),
+      })
+    }
+    case 'reconcileLocalPluginCatalog': {
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      const state = await createLocalCodexPluginApi().readState({
+        mergeAllMarketplaces: true,
+        marketplaceKinds: ['local'],
+        refresh: true,
+      })
+      return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
@@ -2732,6 +3086,33 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await getLocalExecutorStatus())
+    case 'getBundledPluginUpdates': {
+      const marketplace = getInitializedBundledPluginMarketplace()
+      return JSON.stringify({
+        marketplace,
+        states: Object.fromEntries(
+          (marketplace?.defaultPluginNames ?? []).map(name => [
+            name,
+            getBundledPluginUpdateState(name),
+          ])
+        ),
+      })
+    }
+    case 'ensureBundledPluginUpdated': {
+      const name = command.value ?? ''
+      await ensureBundledPluginInstalled(name)
+      return JSON.stringify({
+        marketplace: getInitializedBundledPluginMarketplace(),
+        state: getBundledPluginUpdateState(name),
+      })
+    }
+    case 'uninstallInstalledPlugin': {
+      const pluginId = command.value ?? ''
+      if (!pluginId) throw new Error('uninstallInstalledPlugin requires a plugin id')
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      await createLocalCodexPluginApi().uninstallInstalledPlugin(pluginId)
+      return ''
+    }
     case 'getLocalExecutorLog':
       return JSON.stringify(await readLocalExecutorLog())
     case 'previewPluginImport': {
@@ -2878,7 +3259,7 @@ async function postDesktopControlStarted(
   }
 }
 
-async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -2908,26 +3289,48 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
       }
       const command = (await response.json()) as DesktopControlCommand
       await postDesktopControlStarted(url, command, clientId)
-      commandRequest = pollForCommand()
+      let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
-        await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
-        if (command.action === 'closeMainWindowToTray') {
-          await invokeDesktopHost('e2e.hideMainWindow')
-        } else if (command.action === 'requestMainWindowClose') {
-          await invokeDesktopHost('e2e.closeMainWindow')
-        } else if (command.action === 'reloadMainWindow') {
-          window.location.reload()
-          return
-        }
+        result = { id: command.id, clientId, ok: true, value }
       } catch (error) {
-        await postDesktopControlResult(url, {
+        result = {
           id: command.id,
           clientId,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
-        })
+        }
       }
+      try {
+        await postDesktopControlResult(url, result)
+      } catch (error) {
+        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
+          commandId: command.id,
+          action: command.action,
+          actionSucceeded: result.ok,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        throw error
+      }
+      if (result.ok) {
+        if (command.action === 'closeMainWindowToTray') {
+          await invokeDesktopHost('e2e.hideMainWindow')
+        } else if (command.action === 'requestMainWindowClose') {
+          await invokeDesktopHost('e2e.closeMainWindow')
+        } else if (command.action === 'requestStartupSplashClose') {
+          await invokeDesktopHost('e2e.closeStartupSplash')
+        } else if (command.action === 'restartCoreDsh') {
+          // A Core DSH restart replaces this renderer, so acknowledge the
+          // command before starting it. The scenario verifies the replacement
+          // through the next control-client ready event.
+          await invokeDesktopHost('runtime.restartCoreDsh')
+          return
+        } else if (command.action === 'reloadMainWindow') {
+          window.location.reload()
+          return
+        }
+      }
+      commandRequest = pollForCommand()
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
       await waitForDesktopControlTick()
@@ -2943,6 +3346,8 @@ function installDesktopControlClient() {
   if (
     !url ||
     (windowLabel !== 'main' &&
+      windowLabel !== 'popout-window' &&
+      windowLabel !== 'process-explorer' &&
       !windowLabel.startsWith('workspace-') &&
       !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')

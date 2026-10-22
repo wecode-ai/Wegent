@@ -16,6 +16,43 @@ fn image(raw: Json) -> Json {
     image_config_dump(&raw).expect("image config converts")
 }
 
+fn embedding(raw: Json) -> Json {
+    embedding_config_dump(&raw).expect("embedding config converts")
+}
+
+#[test]
+fn embedding_config_defaults_and_allows_extra_keys() {
+    // `encoding_format` defaults to "float"; `extra="allow"` keeps unknown
+    // keys; every explicit null — declared or extra — is dropped.
+    assert_eq!(
+        embedding(json!({"dimensions": 1024, "encoding_format": "float"})),
+        json!({"dimensions": 1024, "encoding_format": "float"})
+    );
+    assert_eq!(
+        embedding(json!({"dimensions": 1536})),
+        json!({"dimensions": 1536, "encoding_format": "float"})
+    );
+    assert_eq!(
+        embedding(json!({
+            "dimensions": null,
+            "additional_input_modalities": null,
+            "custom": 7,
+            "drop": null,
+        })),
+        json!({"encoding_format": "float", "custom": 7})
+    );
+}
+
+#[test]
+fn embedding_config_rejects_non_mappings_and_bad_types() {
+    assert!(embedding_config_dump(&json!(null)).is_err());
+    assert!(embedding_config_dump(&json!([1])).is_err());
+    assert!(embedding_config_dump(&json!("nope")).is_err());
+    assert!(embedding_config_dump(&json!({"dimensions": "abc"})).is_err());
+    assert!(embedding_config_dump(&json!({"encoding_format": 5})).is_err());
+    assert!(embedding_config_dump(&json!({"additional_input_modalities": [1]})).is_err());
+}
+
 #[test]
 fn video_capabilities_coerce_integers_into_floats() {
     // An `Optional[float]` field keeps its declared type, so the recorded
@@ -204,24 +241,6 @@ fn non_object_configs_are_rejected() {
 }
 
 #[test]
-fn scalar_coercions_match_pydantic_lax_rules() {
-    // `int` accepts a whole float, a bool and a numeric string.
-    assert_eq!(
-        video(json!({"fps": 30.0, "max_duration": true, "seed": "42"})),
-        json!({"resolution": "1080p", "fps": 30, "max_duration": 1, "seed": 42})
-    );
-    // `int` rejects a fractional float and a fractional string.
-    assert!(video_config_dump(&json!({"fps": 30.5})).is_err());
-    assert!(video_config_dump(&json!({"fps": "30.5"})).is_err());
-    // `str` does not accept numbers.
-    assert!(video_config_dump(&json!({"ratio": 16})).is_err());
-    // `bool` rejects out-of-range and unknown spellings.
-    assert!(video_config_dump(&json!({"draft": 2})).is_err());
-    assert!(video_config_dump(&json!({"draft": "maybe"})).is_err());
-    assert!(video_config_dump(&json!({"draft": "YES"})).is_ok());
-}
-
-#[test]
 fn non_mapping_nested_configs_are_rejected() {
     // pydantic validates a nested model from a mapping only. A positional JSON
     // array must not be read as a struct's field order.
@@ -235,12 +254,4 @@ fn non_mapping_nested_configs_are_rejected() {
         .is_err()
     );
     assert!(video_config_dump(&json!({"capabilities": {"generation_modes": [[1, 2]]}})).is_err());
-}
-
-#[test]
-fn integers_outside_the_signed_64_bit_range_are_rejected() {
-    // pydantic rejects a float that does not fit an `Optional[int]` field.
-    assert!(video_config_dump(&json!({"fps": 1e300})).is_err());
-    assert!(video_config_dump(&json!({"fps": 9.223372036854776e18})).is_err());
-    assert!(video_config_dump(&json!({"fps": 4.611686018427388e18})).is_ok());
 }

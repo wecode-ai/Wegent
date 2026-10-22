@@ -5,6 +5,7 @@ import {
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
+import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -31,11 +32,23 @@ import {
   isLocalConnector,
   localConnectorAuthHealth,
   localConnectorAuthLogout,
+  LocalConnectorAuthLogoutError,
   localQrManageActionFromHealth,
+  pluginLocalConnectorAuthTarget,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
+import { GithubCliAuthDialog } from './GithubCliAuthDialog'
+import { isGithubCliTarget } from '@/api/local/githubCli'
+import {
+  codexAppAuthorizationUrl,
+  codexAuthorizationErrorKey,
+  readCodexAuthorizationApps,
+  resolveCodexConnectorApp,
+} from '@/features/plugins/codexConnectorAuthorization'
+import type { LocalDeviceApp } from '@/types/api'
+import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { ensurePython } from '@/desktop/executionEnvironments'
@@ -65,7 +78,15 @@ import {
   sameInstalledPlugins,
   sameMarketplaceItems,
   setPluginMarketplaceCache,
+  subscribePluginMarketplaceCache,
+  removePluginMarketplaceInstallation,
 } from '@/features/plugins/pluginMarketplaceCache'
+import {
+  updatePluginInventoryInstallation,
+  writePluginInventory,
+  pluginInventoryReadIsCurrent,
+  commitPluginInventoryInstallation,
+} from '@/features/plugins/pluginInventory'
 import { useMarketplaceFilters } from './hooks/useMarketplaceFilters'
 import { usePluginMarketplaceCatalog } from './hooks/usePluginMarketplaceCatalog'
 import {
@@ -110,6 +131,7 @@ import type {
 } from '@/types/api'
 import { connectorDisplayName } from './connectorDisplayName'
 import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketplaceInstalls'
+import { hasLocalCodexMaterialization } from './installedPluginMerge'
 import { retainMarketplaceInstalledState } from './retainMarketplaceInstallHints'
 import { type InstalledPluginItem } from './PluginManagementRows'
 import { PluginCreateMenu } from './PluginCreateMenu'
@@ -157,7 +179,11 @@ import {
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
-import { marketplaceItemMarketplaceId, marketplacePluginDistribution } from './pluginDistribution'
+import {
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+  marketplacePluginDistribution,
+} from './pluginDistribution'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 
 import {
@@ -167,7 +193,6 @@ import {
   createDefaultPluginApi,
   currentDeviceInstallation,
   findInstalledPluginForMarketplaceItem,
-  hasOpenAiOfficialCatalog,
   isCodexCatalogItem,
   isMarketplaceSourceValid,
   isUserAddedMarketplace,
@@ -176,7 +201,7 @@ import {
   localMarketplaceKey,
   marketplaceComponentCount,
   marketplacePluginDetailSelectionKey,
-  mergeWarmInstalledPlugins,
+  marketplacePluginDetailSource,
   mergeWarmMarketplaceItems,
   mergeWarmMarketplaceOptions,
   nonCodexCatalogItems,
@@ -329,6 +354,15 @@ export function PluginsWorkspace({
     pluginId: string | number
     message: string
   } | null>(null)
+  const [marketplaceDetailLoadError, setMarketplaceDetailLoadError] = useState<string | null>(null)
+  const [marketplaceDetailRevision, setMarketplaceDetailRevision] = useState(0)
+  const connectorActionInFlight = useRef(false)
+  const [connectorActionSlug, setConnectorActionSlug] = useState<string | null>(null)
+  const [pendingCodexAuthorization, setPendingCodexAuthorization] = useState<{
+    app: LocalDeviceApp
+    error?: string
+  } | null>(null)
+  const [checkingCodexAuthorization, setCheckingCodexAuthorization] = useState(false)
   const [selectedRequiredConnectionNames, setSelectedRequiredConnectionNames] = useState<
     string[] | null
   >(null)
@@ -365,9 +399,8 @@ export function PluginsWorkspace({
   // catalogs. Always read both so a cloud-only snapshot cannot hide OpenAI/local
   // rows until the slow plugin/list request finishes.
   const initialDurablePeek = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
-  const initialInstalledPlugins = mergeWarmInstalledPlugins(
-    initialMarketplaceCache,
-    initialDurablePeek
+  const initialInstalledPlugins = (initialMarketplaceCache?.installedPlugins ?? []).map(
+    toInstalledPluginItem
   )
   const initialMarketplaceItems = mergeWarmMarketplaceItems(
     initialMarketplaceCache,
@@ -397,9 +430,6 @@ export function PluginsWorkspace({
   const [reconciliationScope, setReconciliationScope] = useState({ accountKey: '', deviceId: '' })
   const [reconciliationRequest, setReconciliationRequest] = useState(0)
   const [reconciliationRevision, setReconciliationRevision] = useState(0)
-  const [isOpenAiOfficialCatalogLoading, setIsOpenAiOfficialCatalogLoading] = useState(
-    () => !hasOpenAiOfficialCatalog(initialMarketplaceItems)
-  )
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>(() => {
     return mergeWarmMarketplaceOptions(
       initialMarketplaceCache,
@@ -479,6 +509,15 @@ export function PluginsWorkspace({
       findMarketplaceItemForPluginReference(initialMarketplaceItemsWithInstalls, pluginReference)
         ?.id ?? null
   )
+  const activeConnectorDetailRef = useRef<string | number | null>(null)
+  const connectorAuthRevisionRef = useRef(0)
+  activeConnectorDetailRef.current = selectedMarketplacePluginId ?? selectedPluginId
+  useEffect(
+    () => () => {
+      activeConnectorDetailRef.current = null
+    },
+    []
+  )
   const [deviceAutoSyncSettled, setDeviceAutoSyncSettled] = useState(() =>
     hasSettledPluginDeviceAutoSync(currentDeviceId)
   )
@@ -490,6 +529,20 @@ export function PluginsWorkspace({
   const marketplaceStateCacheKeyRef = useRef(marketplaceCacheKeyValue)
   const installedPluginsRef = useRef(installedPlugins)
   installedPluginsRef.current = installedPlugins
+  useEffect(
+    () =>
+      subscribePluginMarketplaceCache(snapshot => {
+        if (!snapshot || snapshot.cacheKey !== marketplaceCacheKeyValue) return
+        const next = snapshot.installedPlugins.map(toInstalledPluginItem)
+        const items = snapshot.marketplaceItems
+        installedPluginsRef.current = next
+        setInstalledPlugins(previous => (sameInstalledPlugins(previous, next) ? previous : next))
+        setPluginMarketplaceState(previous =>
+          sameMarketplaceItems(previous.items, items) ? previous : { ...previous, items }
+        )
+      }),
+    [marketplaceCacheKeyValue]
+  )
   const marketplacesRef = useRef(marketplaces)
   marketplacesRef.current = marketplaces
   const pluginMarketplaceStateRef = useRef(pluginMarketplaceState)
@@ -499,8 +552,7 @@ export function PluginsWorkspace({
   const currentDeviceIdRef = useRef(currentDeviceId)
   currentDeviceIdRef.current = currentDeviceId
   const deferredCodexCatalogRequestRef = useRef('')
-  const reconcileGithubCatalogRef = useRef(false)
-  const skipGithubCatalogReconcileRef = useRef(false)
+  const skipLocalCatalogReconcileRef = useRef(false)
   useEffect(() => {
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
@@ -510,7 +562,7 @@ export function PluginsWorkspace({
   useEffect(() => {
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     const durablePeek = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
-    const nextInstalled = mergeWarmInstalledPlugins(cached, durablePeek)
+    const nextInstalled = (cached?.installedPlugins ?? []).map(toInstalledPluginItem)
     const warmItems = mergeWarmMarketplaceItems(cached, durablePeek)
     const items = mergeMarketplaceCatalog(
       warmItems.filter(item => !isCodexCatalogItem(item)),
@@ -542,10 +594,8 @@ export function PluginsWorkspace({
     setLocalInstalledStateReadyKey(null)
     setPersonalDiskSettledKey(null)
     deferredCodexCatalogRequestRef.current = ''
-    reconcileGithubCatalogRef.current = false
     setCurrentDeviceId(cached?.deviceId || durablePeek?.deviceId || '')
     setIsMarketplaceRefreshing(false)
-    setIsOpenAiOfficialCatalogLoading(!hasOpenAiOfficialCatalog(items))
     setPluginMarketplaceState(nextMarketplaceState)
     setSelectedPluginId(null)
     setSelectedMarketplacePluginId(
@@ -559,15 +609,18 @@ export function PluginsWorkspace({
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, t])
   const lastMarketplaceRefreshTickRef = useRef(0)
+  const deviceSyncLifetimeRef = useRef<symbol | null>(null)
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    deviceSyncLifetimeRef.current = Symbol('plugin-device-sync-lifetime')
+    return () => {
+      deviceSyncLifetimeRef.current = null
       if (deviceStatusReportRetryTimerRef.current !== null) {
         window.clearTimeout(deviceStatusReportRetryTimerRef.current)
+        deviceStatusReportRetryTimerRef.current = null
       }
-    },
-    []
-  )
+    }
+  }, [])
   usePluginMarketplaceCatalog({
     installedPlugins,
     setPluginMarketplaceState,
@@ -592,7 +645,6 @@ export function PluginsWorkspace({
     items: pluginMarketplaceState.items,
     installedPlugins,
     marketplaces,
-    isOpenAiOfficialCatalogLoading,
     hasMarketplace,
     t,
   })
@@ -611,7 +663,6 @@ export function PluginsWorkspace({
     visibleSearchResultLimit,
     visibleMarketplaceItems,
     marketplaceCategorySections,
-    isOpenAiOfficialViewLoading,
     browsingCategorySection,
     installedStripPlugins,
     hiddenInstalledPlugins,
@@ -620,6 +671,17 @@ export function PluginsWorkspace({
     selectLocalMarketplaceTab,
     clearMarketplaceFilters,
   } = filters
+  const openAiCatalog = useOpenAiPluginCatalog({
+    cacheKey: marketplaceCacheKeyValue,
+    enabled: selectedDistributionTab === 'official' && !marketplaceSourceFilterKey,
+    readCatalog: localPluginApi.readRemoteCatalog,
+  })
+  const isOpenAiOfficialViewLoading =
+    selectedDistributionTab === 'official' &&
+    !marketplaceSourceFilterKey &&
+    !normalizedQuery &&
+    visibleMarketplaceItems.length === 0 &&
+    openAiCatalog.loading
   const isMarketplaceSearchUpdating = Boolean(normalizedQuery) && isMarketplaceRefreshing
 
   const marketplaceRowLabels = useMemo<PluginMarketplaceRowLabels>(
@@ -690,7 +752,6 @@ export function PluginsWorkspace({
           previousCloudItems.some(marketplaceItemNeedsDeviceSync)
         ) {
           if (localState.deviceId) setCurrentDeviceId(localState.deviceId)
-          setIsOpenAiOfficialCatalogLoading(false)
           setIsMarketplaceRefreshing(false)
           return
         }
@@ -790,7 +851,7 @@ export function PluginsWorkspace({
               {
                 ...cachedSnapshot,
                 marketplaceItems: items,
-                installedPlugins: nextInstalled,
+                installedPlugins: nextInstalled.map(plugin => plugin.raw),
                 marketplaces: toMarketplaceOptions(
                   localState.marketplaces,
                   cloudMarketplaceAvailable,
@@ -802,9 +863,12 @@ export function PluginsWorkspace({
               { persistImmediately: true }
             )
           }
-          return { items, isLoading: false, error: null }
+          return {
+            items: getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? items,
+            isLoading: false,
+            error: null,
+          }
         })
-        setIsOpenAiOfficialCatalogLoading(false)
         setIsMarketplaceRefreshing(false)
       })
     },
@@ -1274,10 +1338,11 @@ export function PluginsWorkspace({
       const installed = await localPluginApi.importMarketplaceCopy(descriptor)
       attempt.succeed()
       const installedItem = toInstalledPluginItem(installed)
-      setInstalledPlugins(previous => [
-        installedItem,
-        ...previous.filter(item => String(item.id) !== String(installedItem.id)),
-      ])
+      commitPluginInventoryInstallation(
+        marketplaceCacheKeyValue,
+        currentDeviceIdRef.current,
+        installed
+      )
       notifyLocalPluginSkillsChanged()
       setSelectedMarketplacePluginId(null)
       setSelectedPluginId(installedItem.id)
@@ -1337,8 +1402,9 @@ export function PluginsWorkspace({
           )
     updateApi
       .then(updated => {
-        const nextItem = toInstalledPluginItem(updated)
-        setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+        updatePluginInventoryInstallation(marketplaceCacheKeyValue, id, updated, {
+          componentStates: { [componentKey]: enabled },
+        })
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
@@ -1380,11 +1446,10 @@ export function PluginsWorkspace({
     pluginApi
       .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
       .then(updated => {
+        updatePluginInventoryInstallation(marketplaceCacheKeyValue, pluginId, updated, {
+          updatePolicy,
+        })
         attempt.succeed()
-        const nextItem = toInstalledPluginItem(updated)
-        setInstalledPlugins(previous =>
-          previous.map(item => (String(item.id) === String(pluginId) ? nextItem : item))
-        )
       })
       .catch(error => {
         attempt.fail('request')
@@ -1423,57 +1488,24 @@ export function PluginsWorkspace({
         String(item.id) === String(id) ||
         String(linkedCloudInstalledPluginId(item.raw)) === String(id)
     )
-    const clearMarketplaceInstall = (
-      previous: typeof pluginMarketplaceState
-    ): typeof pluginMarketplaceState => ({
-      ...previous,
-      error: null,
-      items: previous.items.map(item => {
-        const sameInstallId =
-          String(item.installedPluginId ?? '') === String(id) ||
-          String(item.id) === String(id) ||
-          String(item.remotePluginId ?? '') === String(id)
-        const samePluginName =
-          item.installed &&
-          (item.name === pluginName ||
-            item.displayName === pluginName ||
-            item.name.toLowerCase() === String(pluginName).trim().toLowerCase())
-        if (!sameInstallId && !samePluginName) return item
-        return {
-          ...item,
-          installed: false,
-          installedLocally: false,
-          installedPluginId: null,
-          enabled: false,
-          updateAvailable: false,
-          currentDeviceInstallation: null,
-        }
-      }),
-    })
+    setUninstallingPluginIds(previous => new Set(previous).add(id))
     const markUninstalledLocally = () => {
-      const nextInstalled = installedPluginsRef.current.filter(
-        item => String(item.id) !== String(id) && String(item.id) !== String(plugin?.id)
+      const catalogItem = pluginMarketplaceStateRef.current.items.find(
+        item => String(item.id) === String(id) || String(item.installedPluginId) === String(id)
       )
-      const nextMarketplaceItems = clearMarketplaceInstall(pluginMarketplaceStateRef.current).items
-      setInstalledPlugins(nextInstalled)
+      const marketplaceId = plugin
+        ? installedPluginMarketplaceId(plugin.raw)
+        : catalogItem && marketplaceItemMarketplaceId(catalogItem)
+      removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
+        installedIds: [id, plugin?.id, plugin && linkedCloudInstalledPluginId(plugin.raw)],
+        marketplaceItemIds: [id],
+        marketplaceId,
+        // Without a marketplace, only exact IDs are safe removal identities.
+        pluginKeys: marketplaceId ? [pluginName, plugin?.raw.spec.source.pluginKey] : [],
+      })
       setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-      setPluginMarketplaceState(clearMarketplaceInstall)
-      const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-      if (cached) {
-        setPluginMarketplaceCache({
-          ...cached,
-          marketplaceItems: nextMarketplaceItems,
-          installedPlugins: nextInstalled,
-          fetchedAt: Date.now(),
-        })
-      }
       setLocalConnectorAuthBySlug({})
-      notifyLocalPluginSkillsChanged([
-        String(id),
-        pluginName,
-        plugin?.raw.spec.source.pluginKey ?? '',
-      ])
-      setMarketplaceRefreshTick(previous => previous + 1)
+      notifyLocalPluginSkillsChanged()
       track('plugin_uninstalled', {
         source: plugin && isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
         ...(plugin
@@ -1648,23 +1680,32 @@ export function PluginsWorkspace({
       }),
   })
 
+  const isOfficialCatalogView =
+    selectedDistributionTab === 'official' && !marketplaceSourceFilterKey
+  const isCatalogRefreshBusy = isOfficialCatalogView
+    ? openAiCatalog.loading
+    : pluginMarketplaceState.isLoading || isMarketplaceRefreshing || isReconcilingPlugins
+
   const refreshMarketplace = () => {
+    if (isOfficialCatalogView) {
+      if (!openAiCatalog.loading) openAiCatalog.refresh()
+      return
+    }
     if (isReconcilingPlugins) return
+    openAiCatalog.refresh()
     manualReconciliationTickRef.current = {
       tick: marketplaceRefreshTick + 1,
       accountKey: marketplaceCacheKeyValue,
       deviceId: currentDeviceId,
     }
     setBrowsingCategoryKey(null)
-    skipGithubCatalogReconcileRef.current = false
-    reconcileGithubCatalogRef.current = true
+    skipLocalCatalogReconcileRef.current = false
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
   const refreshLocalMarketplace = () => {
     setBrowsingCategoryKey(null)
-    skipGithubCatalogReconcileRef.current = true
-    reconcileGithubCatalogRef.current = false
+    skipLocalCatalogReconcileRef.current = true
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
@@ -1738,7 +1779,10 @@ export function PluginsWorkspace({
     const marketplaceId = localMarketplaceIdFromItem(item)
     if (!marketplaceId) return detailedItem
     try {
-      const detail = await localPluginApi.readMarketplacePluginDetail(marketplaceId, item.name)
+      const detail = await localPluginApi.readMarketplacePluginDetail(
+        marketplacePluginDetailSource(item, marketplacesRef.current),
+        item.name
+      )
       return withMarketplaceDetailComponents(item, toInstalledPluginItem(detail))
     } catch {
       return detailedItem
@@ -1934,13 +1978,8 @@ export function PluginsWorkspace({
         pluginApi
           .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
           .then(plugin => {
-            const next = toInstalledPluginItem(plugin)
             const device = currentDeviceInstallation(plugin, targetDeviceId)
-            setInstalledPlugins(previous =>
-              previous.map(candidate =>
-                String(candidate.id) === String(next.id) ? next : candidate
-              )
-            )
+            commitPluginInventoryInstallation(marketplaceCacheKeyValue, targetDeviceId, plugin)
             setPluginMarketplaceState(previous => ({
               ...previous,
               items: previous.items.map(candidate =>
@@ -2090,10 +2129,7 @@ export function PluginsWorkspace({
           properties: marketplacePluginTelemetryIdentity(preparedItem),
         })
         if (installFromLocal) {
-          const plugin = await localPluginApi.installAvailablePlugin(
-            preparedItem.id,
-            localMarketplaceId!
-          )
+          const plugin = await localPluginApi.installAvailablePlugin(preparedItem)
           return {
             plugin,
             preparedItem,
@@ -2152,7 +2188,19 @@ export function PluginsWorkspace({
             deviceState === 'installing' ||
             deviceState === 'failed' ||
             !deviceInstallation)
-        const nextMarketplaceItems = pluginMarketplaceStateRef.current.items.map(candidate =>
+        // Installation can finish after navigation. Merge into the latest shared
+        // inventory, not the catalog captured by the initiating mounted view.
+        const cachedInventory = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+        // Cloud catalog may paint before the first device identity resolves.
+        // Bind that unscoped snapshot to the confirmed install device, but never
+        // overwrite an inventory already owned by a different device.
+        const currentInventory =
+          !cachedInventory?.deviceId || cachedInventory.deviceId === targetDeviceId
+            ? cachedInventory
+            : null
+        const currentItems =
+          currentInventory?.marketplaceItems ?? pluginMarketplaceStateRef.current.items
+        const nextMarketplaceItems = currentItems.map(candidate =>
           candidate.id === item.id
             ? {
                 ...candidate,
@@ -2182,38 +2230,18 @@ export function PluginsWorkspace({
               }
             : candidate
         )
-        const nextInstalledPlugins = [
-          installed,
-          ...installedPluginsRef.current.filter(candidate => candidate.id !== installed.id),
-        ]
-        const nextMarketplaceState = {
-          ...pluginMarketplaceStateRef.current,
-          items: nextMarketplaceItems,
-          error: null,
-        }
-        // Keep refs in sync before the post-install refresh paints — effects can
-        // read them before React commits the matching useState updates.
-        installedPluginsRef.current = nextInstalledPlugins
-        pluginMarketplaceStateRef.current = nextMarketplaceState
+        // Clear the operation marker before the shared inventory notifies views.
         const nextInstallingIds = new Set(installingMarketplacePluginIdsRef.current)
         nextInstallingIds.delete(item.id)
         installingMarketplacePluginIdsRef.current = nextInstallingIds
-        setInstalledPlugins(nextInstalledPlugins)
-        notifyLocalPluginSkillsChanged()
-        setPluginMarketplaceState(nextMarketplaceState)
-        // Drop the in-flight marker before refresh so hold-back does not clear the
-        // optimistic installed row while the background catalog catch-up runs.
         setInstallingMarketplacePluginIds(nextInstallingIds)
-        setPluginMarketplaceCache({
-          cacheKey: marketplaceCacheKeyValue,
-          marketplaceItems: nextMarketplaceItems,
-          installedPlugins: nextInstalledPlugins,
-          marketplaces: marketplacesRef.current,
-          selectedMarketplaceKey: selectedMarketplaceKeyRef.current,
-          deviceId: currentDeviceIdRef.current || '',
-          fetchedAt: Date.now(),
-        })
-        setMarketplaceRefreshTick(previous => previous + 1)
+        commitPluginInventoryInstallation(
+          marketplaceCacheKeyValue,
+          targetDeviceId,
+          plugin,
+          nextMarketplaceItems
+        )
+        notifyLocalPluginSkillsChanged()
         setPluginOperationNotice({
           id: `installed-${item.id}`,
           kind: deviceState === 'failed' ? 'error' : 'success',
@@ -2327,7 +2355,6 @@ export function PluginsWorkspace({
     if (!pendingPluginUninstall) return
     const { id, name } = pendingPluginUninstall
     setPendingPluginUninstall(null)
-    setUninstallingPluginIds(previous => new Set(previous).add(id))
     uninstallInstalledPlugin(id, name)
   }
 
@@ -2430,21 +2457,19 @@ export function PluginsWorkspace({
         (pending.cloudPluginId !== null && String(item.id) === String(pending.cloudPluginId)) ||
         (isPersonalMarketplaceId(marketplaceItemMarketplaceId(item) || '') &&
           item.name.trim().toLowerCase() === normalizedName)
-      const nextInstalled = installedPluginsRef.current.filter(plugin => !matchesInstalled(plugin))
-      setInstalledPlugins(nextInstalled)
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        items: previous.items.filter(item => !matchesMarketplace(item)),
-        error: null,
-      }))
       const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       if (cached) {
-        setPluginMarketplaceCache({
-          ...cached,
-          marketplaceItems: cached.marketplaceItems.filter(item => !matchesMarketplace(item)),
-          installedPlugins: cached.installedPlugins.filter(plugin => !matchesInstalled(plugin)),
-          fetchedAt: Date.now(),
-        })
+        setPluginMarketplaceCache(
+          {
+            ...cached,
+            marketplaceItems: cached.marketplaceItems.filter(item => !matchesMarketplace(item)),
+            installedPlugins: cached.installedPlugins.filter(
+              plugin => !matchesInstalled(toInstalledPluginItem(plugin))
+            ),
+            fetchedAt: Date.now(),
+          },
+          { mutation: true, persistImmediately: true }
+        )
       }
       setSelectedPluginId(null)
       setSelectedMarketplacePluginId(null)
@@ -2526,7 +2551,7 @@ export function PluginsWorkspace({
       // install just because Wegent cloud OAuth is unavailable for those rows.
       if (isLocalMarketplaceItem(item)) return
       throw new Error(
-        t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权 GitHub')
+        t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权此应用')
       )
     }
     const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
@@ -2630,16 +2655,18 @@ export function PluginsWorkspace({
     }
   }
 
-  const managePluginConnector = async (
+  const performManagePluginConnector = async (
     slug: string,
     plugin?: InstalledPluginItem | PluginMarketplaceItem | null
   ) => {
+    const detailId = selectedMarketplacePluginId ?? selectedPluginId
+    const detailIsCurrent = () => activeConnectorDetailRef.current === detailId
     const reportDetailError = (message: string) => {
       const pluginId =
         selectedMarketplacePluginId ??
         selectedPluginId ??
         (plugin && 'id' in plugin ? plugin.id : null)
-      if (pluginId == null) return
+      if (pluginId == null || !detailIsCurrent()) return
       setPluginDetailActionError({ pluginId, message })
     }
     const connectors =
@@ -2648,16 +2675,20 @@ export function PluginsWorkspace({
         : plugin && 'components' in plugin
           ? (plugin.components.connectors ?? [])
           : []
-    const localConnector = connectors.find(
-      connector => connector.slug === slug && isLocalConnector(connector)
-    )
-    if (localConnector) {
-      const pluginKey =
-        plugin && 'raw' in plugin
-          ? plugin.raw.spec.source.pluginKey
-          : plugin && 'name' in plugin
-            ? String(plugin.name)
-            : slug
+    const pluginKey =
+      plugin && 'raw' in plugin ? plugin.raw.spec.source.pluginKey : String(plugin?.name ?? slug)
+    const marketplaceId =
+      plugin && 'raw' in plugin
+        ? plugin.raw.spec.source.marketplace || String(plugin.raw.metadata.namespace ?? '')
+        : plugin
+          ? marketplaceItemMarketplaceId(plugin) || ''
+          : ''
+    const localConnector = connectors.find(connector => connector.slug === slug)
+    const target = localConnector
+      ? pluginLocalConnectorAuthTarget(pluginKey, marketplaceId, localConnector)
+      : null
+    if (localConnector && target) {
+      const githubCli = isGithubCliTarget(target)
       const pluginDisplayName =
         plugin && 'raw' in plugin
           ? plugin.raw.spec.displayName || pluginKey
@@ -2667,36 +2698,72 @@ export function PluginsWorkspace({
       const displayName = localConnector.displayName
         ? `${pluginDisplayName} · ${localConnector.displayName}`
         : pluginDisplayName
-      const target: LocalConnectorAuthTarget = {
-        pluginKey,
-        connectorSlug: slug,
-        localAuth: localConnector.localAuth ?? null,
-      }
-
-      let action: 'logout' | 'login' = 'login'
-      try {
-        const health = await localConnectorAuthHealth(target)
-        action = localQrManageActionFromHealth(health)
-      } catch {
-        // Keep login when the health probe fails.
+      let action: 'logout' | 'login' =
+        localConnectorAuthBySlug[slug] === 'connected' ? 'logout' : 'login'
+      setPluginDetailActionError(null)
+      // A displayed logout action must not depend on a remote health probe.
+      if (action !== 'logout') {
+        try {
+          const health = await localConnectorAuthHealth(target, { bypassCache: true })
+          if (!detailIsCurrent()) return
+          if (githubCli && !['ok', 'need_login'].includes(health.status)) {
+            reportDetailError(
+              t(`workbench.${health.errorCode || 'gh_health_failed'}`, {
+                defaultValue: t('workbench.gh_health_failed'),
+              })
+            )
+            return
+          }
+          action = localQrManageActionFromHealth(health)
+          setLocalConnectorAuthBySlug(previous => ({
+            ...previous,
+            [slug]: action === 'logout' ? 'connected' : 'disconnected',
+          }))
+        } catch (error) {
+          if (!detailIsCurrent()) return
+          if (githubCli) {
+            reportDetailError(getErrorMessage(error, t('workbench.gh_health_failed')))
+            return
+          }
+          // Keep login when the health probe fails.
+        }
       }
 
       if (action === 'logout') {
         const confirmed = window.confirm(
-          t('workbench.plugins_local_auth_logout_confirm', {
-            defaultValue: `确定退出「${displayName}」登录？退出后需要重新授权。`,
-            name: displayName,
-          })
+          t(
+            githubCli
+              ? 'workbench.github_cli_logout_confirm'
+              : 'workbench.plugins_local_auth_logout_confirm',
+            {
+              defaultValue: `确定退出「${displayName}」登录？退出后需要重新授权。`,
+              name: displayName,
+            }
+          )
         )
         if (!confirmed) return
+        setPluginDetailActionError(null)
         try {
-          await localConnectorAuthLogout(target)
-          setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'disconnected' }))
+          const result = await localConnectorAuthLogout(target)
+          if (!detailIsCurrent()) return
+          setLocalConnectorAuthBySlug(previous => ({
+            ...previous,
+            [slug]: result.connected === true ? 'connected' : 'disconnected',
+          }))
+          if (githubCli) notifyLocalPluginSkillsChanged()
         } catch (error) {
           reportDetailError(
-            error instanceof Error
-              ? error.message
-              : t('workbench.plugins_local_auth_logout_failed', '退出登录失败')
+            githubCli && error instanceof LocalConnectorAuthLogoutError && error.errorCode
+              ? t(`workbench.${error.errorCode}`, { defaultValue: t('workbench.gh_logout_failed') })
+              : error instanceof LocalConnectorAuthLogoutError
+                ? t(
+                    error.accountRevoked
+                      ? 'workbench.plugins_local_auth_logout_cleanup_failed'
+                      : 'workbench.plugins_local_auth_logout_failed'
+                  )
+                : error instanceof Error
+                  ? error.message
+                  : t('workbench.plugins_local_auth_logout_failed', '退出登录失败')
           )
         }
         return
@@ -2706,17 +2773,21 @@ export function PluginsWorkspace({
         await promptLocalConnectorAuth({
           target,
           description: localConnector.description || undefined,
-          title: isLocalBrowserConnector(localConnector)
-            ? t('workbench.plugins_local_browser_login_title', {
-                defaultValue: `授权 ${displayName}`,
-                name: displayName,
-              })
-            : t('workbench.plugins_local_qr_login_title', {
-                defaultValue: `扫码登录 ${displayName}`,
-                name: displayName,
-              }),
+          title: githubCli
+            ? t('workbench.github_cli_login_title')
+            : isLocalBrowserConnector(localConnector)
+              ? t('workbench.plugins_local_browser_login_title', {
+                  defaultValue: `授权 ${displayName}`,
+                  name: displayName,
+                })
+              : t('workbench.plugins_local_qr_login_title', {
+                  defaultValue: `扫码登录 ${displayName}`,
+                  name: displayName,
+                }),
         })
+        if (!detailIsCurrent()) return
         setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'connected' }))
+        if (githubCli) notifyLocalPluginSkillsChanged()
       } catch (error) {
         reportDetailError(
           error instanceof Error
@@ -2733,18 +2804,43 @@ export function PluginsWorkspace({
     }
 
     if (!pluginUsesWegentConnectorOAuth(plugin)) {
-      reportDetailError(
-        t(
-          'workbench.plugins_connector_chat_auth',
-          '此插件通过对话授权 GitHub，请在聊天中按提示完成登录。'
-        )
-      )
+      setPluginDetailActionError(null)
+      try {
+        const connector = connectors.find(item => item.slug === slug)
+        const components =
+          plugin && 'raw' in plugin ? plugin.raw.spec.components : plugin?.components
+        const apps = await readCodexAuthorizationApps(localPluginApi.listApps)
+        if (!detailIsCurrent()) return
+        const app = connector
+          ? resolveCodexConnectorApp(apps, connector, components?.apps ?? [])
+          : null
+        const url = app && codexAppAuthorizationUrl(app)
+        if (!app || !url) {
+          reportDetailError(
+            t('workbench.plugins_connector_auth_unavailable', { name: connectorDisplayName(slug) })
+          )
+          return
+        }
+        try {
+          if (!(await openExternalUrl(url, { target: 'system' }))) {
+            reportDetailError(t('workbench.plugins_connector_auth_open_failed', { name: app.name }))
+            return
+          }
+        } catch {
+          reportDetailError(t('workbench.plugins_connector_auth_open_failed', { name: app.name }))
+          return
+        }
+        if (detailIsCurrent()) setPendingCodexAuthorization({ app })
+      } catch (error) {
+        if (!detailIsCurrent()) return
+        reportDetailError(t(codexAuthorizationErrorKey(error)))
+      }
       return
     }
 
     if (!cloudApiBaseUrl || !cloudToken) {
       reportDetailError(
-        t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权 GitHub')
+        t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权此应用')
       )
       return
     }
@@ -2772,9 +2868,53 @@ export function PluginsWorkspace({
     }
   }
 
+  const managePluginConnector = async (
+    slug: string,
+    plugin?: InstalledPluginItem | PluginMarketplaceItem | null
+  ) => {
+    if (connectorActionInFlight.current || pendingCodexAuthorization) return
+    connectorActionInFlight.current = true
+    connectorAuthRevisionRef.current += 1
+    setConnectorActionSlug(slug)
+    try {
+      await performManagePluginConnector(slug, plugin)
+    } finally {
+      connectorActionInFlight.current = false
+      connectorAuthRevisionRef.current += 1
+      setConnectorActionSlug(null)
+    }
+  }
+
+  const verifyCodexAuthorization = async () => {
+    const pending = pendingCodexAuthorization
+    if (!pending || checkingCodexAuthorization) return
+    setCheckingCodexAuthorization(true)
+    try {
+      const apps = await readCodexAuthorizationApps(localPluginApi.listApps, true)
+      if (apps.find(app => app.id === pending.app.id)?.isAccessible !== true) {
+        setPendingCodexAuthorization({
+          ...pending,
+          error: t('workbench.plugins_connector_auth_not_complete', { name: pending.app.name }),
+        })
+        return
+      }
+      setPendingCodexAuthorization(null)
+      notifyLocalPluginSkillsChanged()
+    } catch (error) {
+      setPendingCodexAuthorization({
+        ...pending,
+        error: t(codexAuthorizationErrorKey(error)),
+      })
+    } finally {
+      setCheckingCodexAuthorization(false)
+    }
+  }
+
   useEffect(() => {
     let isCurrent = true
     const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+    const inventoryReadIsCurrent = () =>
+      isCurrent && pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, cached)
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
     const authoritativeInventoryRefresh =
@@ -2790,11 +2930,6 @@ export function PluginsWorkspace({
       ? peekLocalCodexPluginsReadState(localReadParams)
       : null
     const hasDurablePeek = Boolean(peekedLocalState?.marketplaceItems.length)
-    const hasWarmOpenAiCatalog = hasOpenAiOfficialCatalog(
-      mergeWarmMarketplaceItems(cached, peekedLocalState)
-    )
-
-    setIsOpenAiOfficialCatalogLoading(!hasWarmOpenAiCatalog)
 
     if (!hasCachedCatalog && !hasDurablePeek) {
       setPluginMarketplaceState(previous => ({
@@ -2826,11 +2961,9 @@ export function PluginsWorkspace({
             }
           : {}),
       }))
-      const warmInstalled = mergeWarmInstalledPlugins(cached, peekedLocalState)
+      const warmInstalled = (cached?.installedPlugins ?? []).map(toInstalledPluginItem)
       if (cached || warmInstalled.length > 0) {
-        // Account cache owns cloud rows; durable peek still owns OpenAI/local
-        // installs. Cache-only replacement hid GitHub on OpenAI官方 when the
-        // account snapshot had cloud plugins but an empty official strip.
+        // All installed rows come from the shared domain inventory.
         setInstalledPlugins(previous =>
           sameInstalledPlugins(previous, warmInstalled) ? previous : warmInstalled
         )
@@ -2861,7 +2994,10 @@ export function PluginsWorkspace({
     // Reconcile Wework official, enterprise, and personal-created first. GitHub
     // plugin/list is last because it shares the Codex app-server lock with
     // plugin/install.
-    const membershipPromise = localPluginApi.listInstalledPlugins({ refresh: true })
+    const membershipPromise = localPluginApi.listInstalledPlugins({
+      refresh: true,
+      shareInflight: !isExplicitRefresh,
+    })
     const localPromise = Promise.resolve(peekedLocalState)
     // Use a known device id when available (cache / prior load). Otherwise start cloud
     // immediately for progressive first paint; a device-scoped pass follows once local
@@ -2882,9 +3018,8 @@ export function PluginsWorkspace({
     // Live plugin/installed membership. Peek / plugin/list must not satisfy this.
     let liveLocalInstalledForMerge: InstalledPlugin[] | null = null
 
-    // Only the applied live catalog may open GitHub plugin/list. Membership /
-    // peek / warm-cache paints must not: they can look like "no device gap"
-    // while the cloud row with pending is still in flight.
+    // Only the applied live catalog may schedule local reconciliation. Cache
+    // paints can look device-ready while a pending cloud row is still in flight.
     const markAutoSyncInventoryReady = () => {
       if (!isCurrent) return
       setLocalInstalledStateReadyKey(marketplaceCacheKeyValue)
@@ -2900,6 +3035,7 @@ export function PluginsWorkspace({
         deferInventoryReady?: boolean
       }
     ) => {
+      if (!inventoryReadIsCurrent()) return
       const preferredLocal =
         localState && (peekedLocalState == null || localState !== peekedLocalState)
           ? localState.installedPlugins
@@ -2909,7 +3045,8 @@ export function PluginsWorkspace({
       const nextInstalledRaw = mergeInstalledPlugins(
         cloudInstalled,
         preferredLocal,
-        localState?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
+        localState?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
+        cloudMarketplaceAvailable && !installedReadFailed
       ).map(toInstalledPluginItem)
 
       const cachedMarketplaceItems =
@@ -2944,8 +3081,7 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
-        authoritativeInstalledState:
-          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
+        authoritativeInstalledState: liveLocalInstalledForMerge !== null && !installedReadFailed,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3005,7 +3141,7 @@ export function PluginsWorkspace({
         {
           cacheKey: marketplaceCacheKeyValue,
           marketplaceItems: mergedItems,
-          installedPlugins: nextInstalled,
+          installedPlugins: nextInstalled.map(plugin => plugin.raw),
           marketplaces: nextMarketplaces,
           selectedMarketplaceKey: selectedMarketplaceKeyRef.current,
           deviceId: localState?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
@@ -3033,7 +3169,7 @@ export function PluginsWorkspace({
       keepRefreshing: boolean
       ignoreSettled?: boolean
     }) => {
-      if (!isCurrent || (catalogSettled && !options.ignoreSettled)) return
+      if (!inventoryReadIsCurrent() || (catalogSettled && !options.ignoreSettled)) return
       const localState = options.localState ?? null
       if (options.liveLocalInstalled) {
         liveLocalInstalledForMerge = options.liveLocalInstalled
@@ -3116,7 +3252,7 @@ export function PluginsWorkspace({
       const hasCachedSnapshot = cachedSnapshot != null
       const cachedMarketplaceItems = cachedSnapshot?.marketplaceItems ?? []
       const cachedCloudItems = cachedMarketplaceItems.filter(item => !isCodexCatalogItem(item))
-      const cachedInstalledRaw = (cachedSnapshot?.installedPlugins ?? []).map(plugin => plugin.raw)
+      const cachedInstalledRaw = cachedSnapshot?.installedPlugins ?? []
       const cachedLocalItems = cachedMarketplaceItems.filter(isCodexCatalogItem)
       const previousItems =
         pluginMarketplaceStateRef.current.items.length > 0
@@ -3157,7 +3293,8 @@ export function PluginsWorkspace({
       const nextInstalledRaw = mergeInstalledPlugins(
         cloudInstalled,
         localInstalledForMerge,
-        localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
+        localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
+        cloudMarketplaceAvailable && cloudInstalledForMerge !== null && !installedReadFailed
       ).map(toInstalledPluginItem)
       // Prefer in-flight cloud rows, then this key's durable cache — never stale
       // previous-account React state after a cache miss / account switch.
@@ -3175,8 +3312,7 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
-        authoritativeInstalledState:
-          authoritativeInventoryRefresh && liveLocalInstalledForMerge !== null,
+        authoritativeInstalledState: liveLocalInstalledForMerge !== null && !installedReadFailed,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3197,6 +3333,13 @@ export function PluginsWorkspace({
       // Never persist that over a warm catalog — it made every background return
       // look like a first marketplace sync.
       if (mergedItems.length === 0) {
+        if (liveLocalInstalledForMerge !== null || cloudInstalledForMerge !== null) {
+          writePluginInventory(
+            marketplaceCacheKeyValue,
+            localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
+            { installedPlugins: nextInstalled.map(plugin => plugin.raw) }
+          )
+        }
         if (localStateForMerge || cloudInstalledForMerge) {
           setIsMarketplaceRefreshing(options.keepRefreshing)
         }
@@ -3216,17 +3359,19 @@ export function PluginsWorkspace({
       setPluginMarketplaceCache({
         cacheKey: marketplaceCacheKeyValue,
         marketplaceItems: mergedItems,
-        installedPlugins: nextInstalled,
+        installedPlugins: nextInstalled.map(plugin => plugin.raw),
         marketplaces: progressiveMarketplaces,
         selectedMarketplaceKey: selectedMarketplaceKeyRef.current,
         deviceId: localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
         fetchedAt: Date.now(),
       })
       setPluginMarketplaceState(previous => {
-        if (sameMarketplaceItems(previous.items, mergedItems) && !previous.error) {
+        const items =
+          getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? mergedItems
+        if (sameMarketplaceItems(previous.items, items) && !previous.error) {
           return { ...previous, isLoading: false, error: null }
         }
-        return { items: mergedItems, isLoading: false, error: null }
+        return { items, isLoading: false, error: null }
       })
       setMarketplaceLoadingMessage('')
       setIsMarketplaceRefreshing(options.keepRefreshing)
@@ -3249,7 +3394,7 @@ export function PluginsWorkspace({
     })
     void personalDiskPromise
       .then(diskPersonalItems => {
-        if (!isCurrent) return
+        if (!inventoryReadIsCurrent()) return
         if (diskPersonalItems.length === 0) return
         diskPersonalItemsForMerge = diskPersonalItems
         if (catalogSettled) {
@@ -3263,7 +3408,7 @@ export function PluginsWorkspace({
               (cached?.marketplaceItems ?? []).filter(isCodexCatalogItem),
             diskPersonalItems
           )
-          const cachedInstalledRaw = (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
+          const cachedInstalledRaw = cached?.installedPlugins ?? []
           const localInstalledForMerge = resolveProgressiveLocalInstalledRaw({
             hasCachedSnapshot: cached != null,
             cachedInstalledRaw,
@@ -3281,7 +3426,8 @@ export function PluginsWorkspace({
                 ? cachedInstalledRaw.filter(plugin => typeof plugin.spec.pluginId === 'number')
                 : []),
             localInstalledForMerge,
-            localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
+            localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
+            cloudMarketplaceAvailable && cloudInstalledForMerge !== null && !installedReadFailed
           ).map(toInstalledPluginItem)
           const retained = retainMarketplaceInstalledState({
             previousItems: pluginMarketplaceStateRef.current.items,
@@ -3305,13 +3451,13 @@ export function PluginsWorkspace({
           })
           const nextInstalled = heldBack.installed
           const mergedItems = heldBack.items
-          setInstalledPlugins(previous =>
-            sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
-          )
-          setPluginMarketplaceState(previous =>
-            sameMarketplaceItems(previous.items, mergedItems)
-              ? previous
-              : { items: mergedItems, isLoading: false, error: null }
+          writePluginInventory(
+            marketplaceCacheKeyValue,
+            localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
+            {
+              installedPlugins: nextInstalled.map(plugin => plugin.raw),
+              marketplaceItems: mergedItems,
+            }
           )
           return
         }
@@ -3343,11 +3489,6 @@ export function PluginsWorkspace({
         })
       })
       .catch(() => undefined)
-      .finally(() => {
-        // Live plugin/list is deferred. Only clear official loading when peek already
-        // has that catalog; otherwise the official tab would flash empty.
-        if (isCurrent && hasWarmOpenAiCatalog) setIsOpenAiOfficialCatalogLoading(false)
-      })
 
     // Paint the installed strip as soon as account installs arrive — do not wait on
     // marketplace catalog or Codex plugin/list. That is what made Wework/official
@@ -3494,9 +3635,8 @@ export function PluginsWorkspace({
         cloudMarketplaceAvailable &&
         Boolean(resolvedDeviceId) &&
         resolvedDeviceId !== initialCloudDeviceId
-      // Unscoped marketplace lists report account installs as installed:true with
-      // no device row. Opening GitHub plugin/list from that snapshot blocks
-      // wegent ZIP/install on the shared Codex lock.
+      // Unscoped cloud lists describe account membership, not device readiness.
+      // Wait for the device-scoped pass before scheduling local reconciliation.
       applyCatalogSnapshot(cloudItems, cloudInstalled, localState, {
         // When durable storage had to drop data-URL logos, always take the network
         // catalog so official plugins do not stay stuck on name initials.
@@ -3704,6 +3844,16 @@ export function PluginsWorkspace({
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const deviceId = currentDeviceId
+    const lifetime = deviceSyncLifetimeRef.current
+    const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+    const syncScopeIsCurrent = () =>
+      lifetime !== null &&
+      deviceSyncLifetimeRef.current === lifetime &&
+      marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue &&
+      currentDeviceIdRef.current === deviceId
+    const syncIsCurrent = () =>
+      syncScopeIsCurrent() &&
+      pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)
     const reports = collectPluginDeviceStatusReports(
       installedPlugins.map(plugin => plugin.raw),
       pluginMarketplaceState.items,
@@ -3723,43 +3873,35 @@ export function PluginsWorkspace({
     }
 
     const refreshCatalog = async () => {
-      if (currentDeviceIdRef.current !== deviceId) return
+      if (!syncIsCurrent()) return
       const [cloud, installed] = await Promise.all([
         pluginApi.listMarketplacePlugins({
           deviceId,
         }),
-        pluginApi.listInstalledPlugins(deviceId).catch(() => ({ items: [] as InstalledPlugin[] })),
+        pluginApi.listInstalledPlugins(deviceId),
       ])
-      if (currentDeviceIdRef.current !== deviceId) return
+      if (!syncIsCurrent()) return
       const nextInstalled = mergeInstalledPlugins(
         installed.items,
-        installedPluginsRef.current.map(plugin => plugin.raw),
-        deviceId
+        installedPluginsRef.current.map(plugin => plugin.raw).filter(hasLocalCodexMaterialization),
+        deviceId,
+        true
       ).map(toInstalledPluginItem)
-      setInstalledPlugins(previous =>
-        sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
+      const nextItems = mergeMarketplaceCatalog(
+        cloud.items,
+        pluginMarketplaceStateRef.current.items.filter(isCodexCatalogItem),
+        nextInstalled.map(plugin => plugin.raw)
       )
-      setPluginMarketplaceState(previous => {
-        const nextItems = mergeMarketplaceCatalog(
-          cloud.items,
-          previous.items.filter(isCodexCatalogItem),
-          nextInstalled.map(plugin => plugin.raw)
-        )
-        if (sameMarketplaceItems(previous.items, nextItems) && !previous.error) {
-          return previous
-        }
-        const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-        if (cached) {
-          setPluginMarketplaceCache({
-            ...cached,
-            marketplaceItems: nextItems,
-            installedPlugins: nextInstalled,
-            deviceId,
-            fetchedAt: Date.now(),
-          })
-        }
-        return { ...previous, items: nextItems, error: null }
-      })
+      const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+      if (cached) {
+        setPluginMarketplaceCache({
+          ...cached,
+          marketplaceItems: nextItems,
+          installedPlugins: nextInstalled.map(plugin => plugin.raw),
+          deviceId,
+          fetchedAt: Date.now(),
+        })
+      }
     }
 
     if (reports.length > 0 && !hasAttemptedPluginDeviceStatusReport(deviceId, reports)) {
@@ -3768,7 +3910,7 @@ export function PluginsWorkspace({
       void pluginApi
         .reportInstalledPluginsOnDevice(deviceId, reports)
         .then(response => {
-          if (currentDeviceIdRef.current !== deviceId) return
+          if (!syncIsCurrent()) return
           markPluginDeviceStatusReportAttempted(deviceId, reports)
           deviceStatusReportFailureCountsRef.current.delete(deviceId)
           if (deviceStatusReportRetryTimerRef.current !== null) {
@@ -3776,28 +3918,26 @@ export function PluginsWorkspace({
             deviceStatusReportRetryTimerRef.current = null
           }
           const acknowledgedIds = response.acknowledgedInstalledPluginIds
-          if (acknowledgedIds.length > 0) {
-            setInstalledPlugins(previous => {
-              const next = withAcknowledgedDeviceInstallations(
-                previous.map(plugin => plugin.raw),
-                deviceId,
-                acknowledgedIds
-              ).map(toInstalledPluginItem)
-              return sameInstalledPlugins(previous, next) ? previous : next
-            })
-            setPluginMarketplaceState(previous => ({
-              ...previous,
-              items: withAcknowledgedMarketplaceDeviceState(
-                previous.items,
+          const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+          if (acknowledgedIds.length > 0 && cached) {
+            setPluginMarketplaceCache({
+              ...cached,
+              installedPlugins: withAcknowledgedDeviceInstallations(
+                cached.installedPlugins,
                 deviceId,
                 acknowledgedIds
               ),
-            }))
+              marketplaceItems: withAcknowledgedMarketplaceDeviceState(
+                cached.marketplaceItems,
+                deviceId,
+                acknowledgedIds
+              ),
+            })
           }
           return refreshCatalog().catch(() => undefined)
         })
         .catch(() => {
-          if (currentDeviceIdRef.current !== deviceId) return
+          if (!syncScopeIsCurrent()) return
           const failureCount = (deviceStatusReportFailureCountsRef.current.get(deviceId) ?? 0) + 1
           deviceStatusReportFailureCountsRef.current.set(deviceId, failureCount)
           if (
@@ -3807,7 +3947,7 @@ export function PluginsWorkspace({
             const delay = DEVICE_STATUS_REPORT_RETRY_BASE_MS * 2 ** (failureCount - 1)
             deviceStatusReportRetryTimerRef.current = window.setTimeout(() => {
               deviceStatusReportRetryTimerRef.current = null
-              if (currentDeviceIdRef.current === deviceId) {
+              if (syncScopeIsCurrent()) {
                 setMarketplaceRefreshTick(previous => previous + 1)
               }
             }, delay)
@@ -3837,19 +3977,19 @@ export function PluginsWorkspace({
     }))
 
     // Do not cancel on items/deps churn (optimistic pending updates re-enter this
-    // effect). Only ignore the result if the active device changed.
+    // effect). Ignore results after unmount or an account/device scope change.
     void pluginApi
       .syncInstalledPluginsToDevice(deviceId)
       .catch(() => undefined)
       .then(refreshCatalog)
       .then(() => {
-        if (currentDeviceIdRef.current === deviceId) {
+        if (syncScopeIsCurrent()) {
           markPluginDeviceAutoSyncSettled(deviceId)
           setDeviceAutoSyncSettled(true)
         }
       })
       .catch(() => {
-        if (currentDeviceIdRef.current === deviceId) {
+        if (syncScopeIsCurrent()) {
           markPluginDeviceAutoSyncSettled(deviceId)
           setDeviceAutoSyncSettled(true)
         }
@@ -3876,41 +4016,48 @@ export function PluginsWorkspace({
     marketplaceNeedsDeviceSync(pluginMarketplaceState.items) &&
     !deviceAutoSyncSettled
 
-  // GitHub plugin/list shares the Codex app-server lock with other local Codex
-  // requests. Never start it while opening the page: offline GitHub requests can
-  // hold that lock for about a minute. Cached OpenAI rows paint immediately, and
-  // the user can explicitly refresh when they want to reconcile the remote catalog.
+  // Reconcile local catalogs after membership and personal discovery settle.
+  // Remote discovery is owned by the on-demand OpenAI catalog hook, not this flow.
   useEffect(() => {
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (personalDiskSettledKey !== marketplaceCacheKeyValue) return
     if (pendingDevicePackageSync) return
 
-    const shouldReconcileGithubCatalog = reconcileGithubCatalogRef.current
-    const skipGithubCatalogReconcile = skipGithubCatalogReconcileRef.current
-    skipGithubCatalogReconcileRef.current = false
-    if (skipGithubCatalogReconcile) {
-      setIsOpenAiOfficialCatalogLoading(false)
+    const skipLocalCatalogReconcile = skipLocalCatalogReconcileRef.current
+    skipLocalCatalogReconcileRef.current = false
+    if (skipLocalCatalogReconcile) {
+      setIsMarketplaceRefreshing(false)
       return
     }
 
     const requestKey = `${marketplaceCacheKeyValue}:${marketplaceRefreshTick}`
     if (deferredCodexCatalogRequestRef.current === requestKey) return
-    reconcileGithubCatalogRef.current = false
 
     deferredCodexCatalogRequestRef.current = requestKey
+    const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     let cancelled = false
     void localPluginApi
       .readState({
         mergeAllMarketplaces: true,
-        marketplaceKinds: shouldReconcileGithubCatalog ? undefined : ['local'],
+        marketplaceKinds: ['local'],
         refresh: true,
       })
       .then(localState => {
         if (cancelled) return
+        if (!pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
         if (deferredCodexCatalogRequestRef.current !== requestKey) return
         applyLiveCodexCatalog(localState)
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!cancelled)
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            error: t('workbench.plugins_load_failed', '加载插件失败'),
+          }))
+      })
+      .finally(() => {
+        if (!cancelled) setIsMarketplaceRefreshing(false)
+      })
 
     return () => {
       cancelled = true
@@ -3926,6 +4073,7 @@ export function PluginsWorkspace({
     marketplaceRefreshTick,
     pendingDevicePackageSync,
     personalDiskSettledKey,
+    t,
   ])
 
   useEffect(() => {
@@ -3933,31 +4081,32 @@ export function PluginsWorkspace({
 
     let disposed = false
     const revalidateCloudMarketplace = () => {
+      const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       void pluginApi
         .listMarketplacePlugins({
           deviceId: currentDeviceId || undefined,
         })
         .then(response => {
           if (disposed) return
-          setPluginMarketplaceState(previous => {
-            const nextItems = mergeMarketplaceCatalog(
-              response.items,
-              previous.items.filter(isCodexCatalogItem),
-              installedPluginsRef.current.map(plugin => plugin.raw)
-            )
-            if (sameMarketplaceItems(previous.items, nextItems)) {
-              return previous
-            }
-            const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-            if (cached) {
-              setPluginMarketplaceCache({
-                ...cached,
-                marketplaceItems: nextItems,
-                fetchedAt: Date.now(),
-              })
-            }
-            return { ...previous, items: nextItems, error: null }
-          })
+          if (!pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
+          const nextItems = mergeMarketplaceCatalog(
+            response.items,
+            pluginMarketplaceStateRef.current.items.filter(isCodexCatalogItem),
+            installedPluginsRef.current.map(plugin => plugin.raw)
+          )
+          const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+          if (cached) {
+            setPluginMarketplaceCache({
+              ...cached,
+              marketplaceItems: nextItems,
+              fetchedAt: Date.now(),
+            })
+          }
+          setPluginMarketplaceState(previous =>
+            sameMarketplaceItems(previous.items, nextItems)
+              ? previous
+              : { ...previous, items: nextItems, error: null }
+          )
         })
         .catch(() => undefined)
     }
@@ -4074,63 +4223,65 @@ export function PluginsWorkspace({
     const detailPlugin = selectedPlugin
       ? selectedPlugin
       : selectedMarketplacePlugin
-        ? (() => {
-            const installedDetail =
-              selectedMarketplacePlugin.installedPluginId === null ||
-              selectedMarketplacePlugin.installedPluginId === undefined
-                ? null
-                : (installedPlugins.find(
-                    plugin =>
-                      String(plugin.id) === String(selectedMarketplacePlugin.installedPluginId)
-                  ) ?? null)
-            return installedDetail
-          })()
+        ? (selectedMarketplacePluginDetail ??
+          findInstalledPluginForMarketplaceItem(selectedMarketplacePlugin, installedPlugins) ??
+          toMarketplaceInstalledPluginItem(selectedMarketplacePlugin))
         : null
 
     const connectors = detailPlugin?.raw.spec.components.connectors ?? []
-    const localConnectors = connectors.filter(connector => isLocalConnector(connector))
+    const pluginKey = detailPlugin?.raw.spec.source.pluginKey ?? ''
+    const marketplaceId =
+      detailPlugin?.raw.spec.source.marketplace ||
+      String(detailPlugin?.raw.metadata.namespace ?? '')
+    const localConnectors = connectors.flatMap(connector => {
+      const target = pluginLocalConnectorAuthTarget(pluginKey, marketplaceId, connector)
+      return target ? [{ connector, target }] : []
+    })
     if (!detailPlugin || localConnectors.length === 0) {
       setLocalConnectorAuthBySlug({})
       return
     }
 
     let cancelled = false
-    const pluginKey = detailPlugin.raw.spec.source.pluginKey
+    const revision = connectorAuthRevisionRef.current
     void Promise.all(
-      localConnectors.map(async connector => {
+      localConnectors.map(async ({ connector, target }) => {
         try {
-          const health = await localConnectorAuthHealth({
-            pluginKey,
-            connectorSlug: connector.slug,
-            localAuth: connector.localAuth ?? null,
-          })
+          const health = await localConnectorAuthHealth(target)
+          if (health.status === 'error') return null
           return [
             connector.slug,
             localQrManageActionFromHealth(health) === 'logout' ? 'connected' : 'disconnected',
           ] as const
         } catch {
-          return [connector.slug, 'disconnected'] as const
+          return null
         }
       })
     ).then(entries => {
-      if (cancelled) return
-      setLocalConnectorAuthBySlug(Object.fromEntries(entries))
+      if (cancelled || revision !== connectorAuthRevisionRef.current) return
+      setLocalConnectorAuthBySlug(Object.fromEntries(entries.filter(entry => entry !== null)))
     })
 
     return () => {
       cancelled = true
     }
-  }, [installedPlugins, selectedMarketplacePlugin, selectedPlugin])
+  }, [installedPlugins, selectedMarketplacePlugin, selectedMarketplacePluginDetail, selectedPlugin])
 
   const selectedMarketplacePluginRef = useRef(selectedMarketplacePlugin)
   selectedMarketplacePluginRef.current = selectedMarketplacePlugin
   const installedPluginsForDetailRef = useRef(installedPlugins)
   installedPluginsForDetailRef.current = installedPlugins
   const selectedMarketplaceDetailKey = selectedMarketplacePlugin
-    ? marketplacePluginDetailSelectionKey(selectedMarketplacePlugin)
+    ? JSON.stringify([
+        marketplacePluginDetailSelectionKey(selectedMarketplacePlugin),
+        marketplaces.find(
+          entry => entry.id === localMarketplaceIdFromItem(selectedMarketplacePlugin)
+        )?.path,
+      ])
     : ''
 
   useEffect(() => {
+    setMarketplaceDetailLoadError(null)
     if (!selectedMarketplaceDetailKey) {
       setSelectedMarketplacePluginDetail(null)
       return
@@ -4160,8 +4311,14 @@ export function PluginsWorkspace({
 
     let disposed = false
     setSelectedMarketplacePluginDetail(baseDetail)
-    void localPluginApi
-      .readMarketplacePluginDetail(marketplaceId!, selected.name)
+    const readDetail = async () =>
+      installedDetail
+        ? localPluginApi.readInstalledPluginDetail(installedDetail.raw)
+        : localPluginApi.readMarketplacePluginDetail(
+            marketplacePluginDetailSource(selected, marketplacesRef.current),
+            selected.name
+          )
+    void readDetail()
       .then(detail => {
         if (disposed) return
         setSelectedMarketplacePluginDetail(previous =>
@@ -4171,12 +4328,18 @@ export function PluginsWorkspace({
           )
         )
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!disposed) {
+          setMarketplaceDetailLoadError(
+            t('workbench.plugins_detail_load_failed', '插件详情加载失败，请重试。')
+          )
+        }
+      })
 
     return () => {
       disposed = true
     }
-  }, [localPluginApi, selectedMarketplaceDetailKey])
+  }, [localPluginApi, selectedMarketplaceDetailKey, marketplaceDetailRevision, t])
 
   useEffect(() => {
     if (!selectedMarketplacePlugin) {
@@ -4481,7 +4644,20 @@ export function PluginsWorkspace({
           onConfirm={() => void confirmDeletePersonalPlugin()}
         />
       )}
-      {pendingLocalConnectorAuth ? (
+      {pendingLocalConnectorAuth && isGithubCliTarget(pendingLocalConnectorAuth.target) ? (
+        <GithubCliAuthDialog
+          onSuccess={() => {
+            const pending = pendingLocalConnectorAuth
+            setPendingLocalConnectorAuth(null)
+            pending.resolve()
+          }}
+          onCancel={() => {
+            const pending = pendingLocalConnectorAuth
+            setPendingLocalConnectorAuth(null)
+            pending.reject(new Error(t('workbench.plugins_local_auth_cancelled')))
+          }}
+        />
+      ) : pendingLocalConnectorAuth ? (
         <LocalConnectorAuthDialog
           open
           target={pendingLocalConnectorAuth.target}
@@ -4501,6 +4677,26 @@ export function PluginsWorkspace({
           }}
         />
       ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingCodexAuthorization)}
+        title={t('workbench.plugins_connector_auth_title', {
+          name: pendingCodexAuthorization?.app.name,
+        })}
+        description={
+          pendingCodexAuthorization?.error ||
+          t('workbench.plugins_connector_auth_browser', {
+            name: pendingCodexAuthorization?.app.name,
+          })
+        }
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.plugins_connector_auth_verify')}
+        confirmTestId="plugin-connector-auth-verify"
+        cancelTestId="plugin-connector-auth-cancel"
+        dialogTestId="plugin-connector-auth-dialog"
+        pending={checkingCodexAuthorization}
+        onClose={() => setPendingCodexAuthorization(null)}
+        onConfirm={() => void verifyCodexAuthorization()}
+      />
       {showPluginImportDialog ? (
         <PluginImportDialog
           pluginApi={localPluginApi}
@@ -4796,6 +4992,7 @@ export function PluginsWorkspace({
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
           onManageConnector={slug => void managePluginConnector(slug, selectedPlugin)}
           connectorAuthBySlug={localConnectorAuthBySlug}
+          connectorAuthBusySlug={connectorActionSlug}
         />
         {pluginShareDialog}
         {pluginPublishDialog}
@@ -5013,8 +5210,14 @@ export function PluginsWorkspace({
             marketplacePluginDistribution(selectedMarketplacePlugin) === 'public'
           }
           actionError={
+            marketplaceDetailLoadError ||
             (isFailed && selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
             pluginDetailActionErrorMessage(pluginDetailActionError, selectedMarketplacePlugin.id)
+          }
+          onRetryAction={
+            marketplaceDetailLoadError
+              ? () => setMarketplaceDetailRevision(revision => revision + 1)
+              : undefined
           }
           primaryActionLabel={
             isActionPending
@@ -5101,6 +5304,7 @@ export function PluginsWorkspace({
           }}
           onManageConnector={slug => void managePluginConnector(slug, detailPlugin)}
           connectorAuthBySlug={localConnectorAuthBySlug}
+          connectorAuthBusySlug={connectorActionSlug}
         />
         {pluginShareDialog}
         {pluginPublishDialog}
@@ -5177,23 +5381,12 @@ export function PluginsWorkspace({
                 data-reconciling={isReconcilingPlugins}
                 data-reconciliation-revision={reconciliationRevision}
                 aria-label={t('workbench.plugins_refresh_marketplace', '刷新插件市场')}
-                disabled={
-                  pluginMarketplaceState.isLoading ||
-                  isMarketplaceRefreshing ||
-                  isReconcilingPlugins
-                }
+                disabled={isCatalogRefreshBusy}
                 className="plugin-market-icon-button hidden disabled:opacity-50 md:inline-flex"
                 onClick={refreshMarketplace}
               >
                 <RefreshCw
-                  className={[
-                    'h-4 w-4',
-                    pluginMarketplaceState.isLoading ||
-                    isMarketplaceRefreshing ||
-                    isReconcilingPlugins
-                      ? 'animate-spin'
-                      : '',
-                  ].join(' ')}
+                  className={['h-4 w-4', isCatalogRefreshBusy ? 'animate-spin' : ''].join(' ')}
                 />
               </button>
               {isReconcilingPlugins && (
@@ -5259,6 +5452,8 @@ export function PluginsWorkspace({
           isMarketplaceRefreshing={isMarketplaceRefreshing}
           isMarketplaceSearchUpdating={isMarketplaceSearchUpdating}
           isOpenAiOfficialViewLoading={isOpenAiOfficialViewLoading}
+          openAiCatalogError={openAiCatalog.error}
+          isOpenAiCatalogRefreshing={openAiCatalog.loading}
           normalizedQuery={normalizedQuery}
           visibleMarketplaceItems={visibleMarketplaceItems}
           marketplaceCategorySections={marketplaceCategorySections}

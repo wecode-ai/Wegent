@@ -1,8 +1,16 @@
 diff --git a/dist/diagram.js b/dist/diagram.js
-index 77129a44f6ed8c667ffcc6984cb9c485822bd58a..b3a78eae0 100644
+index 77129a44f..489aef02f 100644
 --- a/dist/diagram.js
 +++ b/dist/diagram.js
-@@ -29,23 +29,56 @@ const normalizePlantumlServer = (documentRef, value) => {
+@@ -1,5 +1,6 @@
+-import { createFileViewerTranslator } from '@file-viewer/core';
++import { createFileViewerTranslator, waitForFileViewerNextPaint } from '@file-viewer/core';
+ import Panzoom, {} from '@panzoom/panzoom';
++import { renderCachedMermaid } from './mermaid-cache.js';
+ const getOwnerWindow = (documentRef) => {
+     return documentRef.defaultView || (typeof window !== 'undefined' ? window : undefined);
+ };
+@@ -29,34 +30,82 @@ const normalizePlantumlServer = (documentRef, value) => {
          return normalized;
      }
  };
@@ -66,18 +74,44 @@ index 77129a44f6ed8c667ffcc6984cb9c485822bd58a..b3a78eae0 100644
 +    return sanitizeSvgNode(documentRef, svgNode);
 +};
  const renderMermaidSvg = async (documentRef, text, theme, t) => {
-     const mermaidModule = await import('mermaid');
-     const mermaid = mermaidModule.default;
-@@ -56,7 +89,7 @@ const renderMermaidSvg = async (documentRef, text, theme, t) => {
-         theme: isDarkTheme(documentRef, theme) ? 'dark' : 'default'
+-    const mermaidModule = await import('mermaid');
+-    const mermaid = mermaidModule.default;
+-    const id = `file-viewer-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+-    mermaid.initialize({
+-        startOnLoad: false,
+-        securityLevel: 'strict',
+-        theme: isDarkTheme(documentRef, theme) ? 'dark' : 'default'
++    const resolvedTheme = isDarkTheme(documentRef, theme) ? 'dark' : 'default';
++    return renderCachedMermaid(documentRef, text, resolvedTheme, async () => {
++        const mermaidModule = await import('mermaid');
++        const mermaid = mermaidModule.default;
++        const id = `file-viewer-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
++        mermaid.initialize({
++            startOnLoad: false,
++            securityLevel: 'strict',
++            theme: resolvedTheme
++        });
++        const renderContainer = documentRef.createElement('div');
++        renderContainer.inert = true;
++        renderContainer.setAttribute('aria-hidden', 'true');
++        renderContainer.setAttribute('data-file-viewer-mermaid-isolate', '');
++        renderContainer.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none';
++        documentRef.body.appendChild(renderContainer);
++        try {
++            await waitForFileViewerNextPaint(getOwnerWindow(documentRef));
++            const rendered = await mermaid.render(id, text, renderContainer);
++            return sanitizeMermaidSvg(documentRef, rendered.svg, t);
++        }
++        finally {
++            renderContainer.remove();
++        }
      });
-     const rendered = await mermaid.render(id, text);
+-    const rendered = await mermaid.render(id, text);
 -    return sanitizeSvg(documentRef, rendered.svg, t);
-+    return sanitizeMermaidSvg(documentRef, rendered.svg, t);
  };
  const appendSvgText = (documentRef, parent, text, x, dy, weight = '500') => {
      const line = documentRef.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-@@ -138,7 +171,7 @@ const renderPlantumlSvg = async (documentRef, text, options, t) => {
+@@ -138,7 +187,7 @@ const renderPlantumlSvg = async (documentRef, text, options, t) => {
          if (!response.ok) {
              throw new Error(t('drawing.error.plantumlRenderFailed', { status: response.status }));
          }
@@ -86,3 +120,141 @@ index 77129a44f6ed8c667ffcc6984cb9c485822bd58a..b3a78eae0 100644
      }
      catch (error) {
          if (error instanceof DOMException && error.name === 'AbortError') {
+diff --git a/dist/drawing.js b/dist/drawing.js
+index 9e54c00c5..42642d051 100644
+--- a/dist/drawing.js
++++ b/dist/drawing.js
+@@ -881,6 +881,8 @@ export default async function renderDrawing(buffer, target, type = 'drawio', con
+                 await renderDrawio(documentRef, text, canvas, context?.options?.drawing, t);
+             }
+             if (disposed) {
++                diagramController?.destroy();
++                diagramController = null;
+                 return;
+             }
+             status = 'ready';
+diff --git a/dist/mermaid-cache.js b/dist/mermaid-cache.js
+new file mode 100644
+index 000000000..50a3f088f
+--- /dev/null
++++ b/dist/mermaid-cache.js
+@@ -0,0 +1,119 @@
++const MAX_ENTRIES = 32
++const MAX_CHARACTERS = 2_097_152
++const documentCaches = new WeakMap()
++let renderQueue = Promise.resolve()
++let nextCopyId = 1
++
++const removeEntry = (cache, key) => {
++  cache.characters -= cache.entries.get(key).characters
++  cache.entries.delete(key)
++}
++
++const trimCache = cache => {
++  while (cache.entries.size > MAX_ENTRIES || cache.characters > MAX_CHARACTERS) {
++    removeEntry(cache, cache.entries.keys().next().value)
++  }
++}
++
++const escapePattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
++
++const escapeSelectorId = value =>
++  Array.from(value, (character, index) => {
++    const code = character.codePointAt(0)
++    if (code === 0) return '\uFFFD'
++    if (
++      code < 32 || code === 127 ||
++      (/[0-9]/.test(character) && (index === 0 || (index === 1 && value[0] === '-')))
++    ) return `\\${code.toString(16)} `
++    if (index === 0 && character === '-' && value.length === 1) return '\\-'
++    return code >= 128 || /[a-zA-Z0-9_-]/.test(character) ? character : `\\${character}`
++  }).join('')
++
++const cloneSvg = (documentRef, template, cacheHit) => {
++  const svg = documentRef.importNode(template, true)
++  const prefix = `file-viewer-mermaid-copy-${Date.now()}-${nextCopyId++}`
++  const ids = new Map()
++  const elements = [svg, ...svg.querySelectorAll('*')]
++  for (const element of elements) {
++    if (!element.id) continue
++    const nextId = `${prefix}-${ids.size}`
++    ids.set(element.id, nextId)
++    element.id = nextId
++  }
++  const replaceUrls = value =>
++    value.replace(/url\(\s*(['"]?)#([^\s'"\)]+)\1\s*\)/g, (match, quote, id) =>
++      ids.has(id) ? `url(${quote}#${ids.get(id)}${quote})` : match
++    )
++  // Mermaid scopes CSS to its root and also emits independently named node IDs.
++  const selectorIds = new Map()
++  for (const [id, nextId] of ids) {
++    const escaped = escapeSelectorId(id)
++    selectorIds.set(escaped, nextId)
++  }
++  const selectorPattern = new RegExp(
++    ids.size
++      ? `#(${[...selectorIds.keys()].sort((a, b) => b.length - a.length).map(escapePattern).join('|')})(?![\\w-])`
++      : '(?!)',
++    'g'
++  )
++  for (const element of elements) {
++    for (const attribute of [...element.attributes]) {
++      if (attribute.name === 'id') continue
++      let value = replaceUrls(attribute.value)
++      if (attribute.localName === 'href' && value.startsWith('#')) {
++        value = ids.has(value.slice(1)) ? `#${ids.get(value.slice(1))}` : value
++      }
++      if (attribute.name === 'aria-labelledby' || attribute.name === 'aria-describedby') {
++        value = value.replace(/\S+/g, id => ids.get(id) || id)
++      }
++      if (value !== attribute.value) element.setAttribute(attribute.name, value)
++    }
++    if (element.localName !== 'style') continue
++    // Restrict ID selector changes to rule preludes; color values stay intact.
++    element.textContent = replaceUrls(element.textContent || '').replace(
++      /([^{}]+)\{/g,
++      (match, selector) =>
++        `${selector.replace(selectorPattern, (_, id) => `#${selectorIds.get(id)}`)}{`
++    )
++  }
++  svg.dataset.diagramCacheHit = String(cacheHit)
++  return svg
++}
++
++// Keep sanitized templates only in memory; each viewer owns its SVG and Panzoom.
++export const renderCachedMermaid = async (documentRef, text, theme, renderTemplate) => {
++  let cache = documentCaches.get(documentRef)
++  if (!cache) {
++    cache = { entries: new Map(), characters: 0 }
++    documentCaches.set(documentRef, cache)
++  }
++  const key = `${theme}\0${text}`
++  const existing = cache.entries.get(key)
++  if (existing) {
++    cache.entries.delete(key)
++    cache.entries.set(key, existing)
++    return cloneSvg(documentRef, await existing.promise, true)
++  }
++  // Mermaid's own queue excludes initialize(), so serialize the whole operation.
++  const promise = renderQueue.then(renderTemplate)
++  renderQueue = promise.then(() => undefined, () => undefined)
++  const entry = { promise, characters: key.length }
++  if (entry.characters <= MAX_CHARACTERS) {
++    cache.entries.set(key, entry)
++    cache.characters += entry.characters
++    trimCache(cache)
++  }
++  try {
++    const template = await promise
++    if (cache.entries.get(key) === entry) {
++      const svgCharacters = template.outerHTML.length
++      entry.characters += svgCharacters
++      cache.characters += svgCharacters
++      trimCache(cache)
++    }
++    return cloneSvg(documentRef, template, false)
++  } catch (error) {
++    if (cache.entries.get(key) === entry) removeEntry(cache, key)
++    throw error
++  }
++}

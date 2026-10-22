@@ -31,6 +31,7 @@ function defaultLocalAgentInput(locale: 'zh-CN' | 'en'): LocalProjectChatAgentCr
     model: null,
     modelType: null,
     modelNamespace: 'default',
+    allowedModels: [],
     capabilityDescription:
       locale === 'zh-CN'
         ? '使用当前设备的模型、技能和工具。'

@@ -4,7 +4,68 @@ import {
   type SmartAppVerificationViewHandle,
 } from './smart-app-verification-view.js'
 
+const electron = vi.hoisted(() => ({
+  cookies: { get: vi.fn(), set: vi.fn() },
+  clearCache: vi.fn(),
+  clearStorageData: vi.fn(),
+  loadURL: vi.fn(),
+  destroy: vi.fn(),
+}))
+vi.mock('electron', () => ({
+  session: {
+    defaultSession: { cookies: { get: electron.cookies.get } },
+    fromPartition: () => ({
+      cookies: { set: electron.cookies.set },
+      clearCache: electron.clearCache,
+      clearStorageData: electron.clearStorageData,
+    }),
+  },
+  BrowserWindow: class {
+    webContents = {
+      loadURL: electron.loadURL,
+      executeJavaScript: async () => true,
+      isDestroyed: () => false,
+    }
+    isDestroyed() {
+      return false
+    }
+    destroy() {
+      electron.destroy()
+    }
+  },
+}))
+
 describe('verifySmartAppPage', () => {
+  test('authenticates the disposable session with only the runtime authority cookie', async () => {
+    electron.cookies.get.mockResolvedValue([
+      {
+        name: 'dsh-auth-fixture',
+        value: 'private-fixture',
+        path: '/',
+        httpOnly: true,
+        secure: false,
+        sameSite: 'strict',
+        expirationDate: 123456789,
+      },
+    ])
+    await expect(verifySmartAppPage(input())).resolves.toEqual({ issues: [] })
+    expect(electron.cookies.get).toHaveBeenCalledWith({
+      url: input().baseUrl,
+      name: expect.stringMatching(/^dsh-auth-[a-zA-Z0-9_-]{43}$/),
+    })
+    expect(electron.cookies.set).toHaveBeenCalledWith({
+      url: input().baseUrl,
+      name: 'dsh-auth-fixture',
+      value: 'private-fixture',
+      path: '/',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'strict',
+      expirationDate: 123456789,
+    })
+    expect(electron.clearStorageData).toHaveBeenCalledOnce()
+  })
+
   test('loads the declared same-origin path and waits for its selector', async () => {
     const executeJavaScript = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     const fixture = view({ executeJavaScript })

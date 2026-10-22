@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader};
 
 use futures_util::{stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::time::{sleep, Duration};
 
 use crate::agents::CodexAppServerClient;
 
@@ -16,10 +17,11 @@ use super::util::string_field;
 const CODEX_ITEM_PAGE_SIZE: usize = 100;
 const CODEX_ITEM_LOAD_CONCURRENCY: usize = 5;
 const CODEX_INITIAL_ITEM_BUDGET_TURN_CAP: usize = 5;
-const CODEX_FULL_TRANSCRIPT_MAX_TURNS: usize = 500;
 const CODEX_INCREMENTAL_CURSOR_PREFIX: &str = "wework-codex-items:";
 const CODEX_NAVIGATION_CURSOR_PREFIX: &str = "wework-codex-navigation:";
 const CODEX_NAVIGATION_MAX_PAGES: usize = 10;
+const CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS: usize = 50;
+const CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum CodexTranscriptDirection {
@@ -90,12 +92,7 @@ pub(crate) async fn load_codex_transcript(
     client: &CodexAppServerClient,
     request: CodexTranscriptRequest<'_>,
 ) -> Result<CodexTranscriptPage, String> {
-    let metadata_response = client
-        .request(
-            "thread/read",
-            json!({"threadId": request.thread_id, "includeTurns": false}),
-        )
-        .await?;
+    let metadata_response = read_codex_thread_metadata(client, request.thread_id).await?;
     let mut thread = metadata_response
         .get("thread")
         .cloned()
@@ -182,17 +179,7 @@ pub(crate) async fn load_codex_transcript(
         turns.extend(page_turns);
 
         let next_cursor = string_field(&page, "nextCursor");
-        let reached_full_content_limit =
-            request.full_content && turns.len() >= CODEX_FULL_TRANSCRIPT_MAX_TURNS;
-        if !request.full_content || next_cursor.is_none() || reached_full_content_limit {
-            if reached_full_content_limit && next_cursor.is_some() {
-                turns.truncate(CODEX_FULL_TRANSCRIPT_MAX_TURNS);
-                eprintln!(
-                    "Codex transcript {thread_id} truncated at {max_turns} turns",
-                    thread_id = request.thread_id,
-                    max_turns = CODEX_FULL_TRANSCRIPT_MAX_TURNS,
-                );
-            }
+        if !request.full_content || next_cursor.is_none() {
             if request.direction == CodexTranscriptDirection::Descending {
                 turns.reverse();
             }
@@ -223,6 +210,51 @@ pub(crate) async fn load_codex_transcript(
     }
 }
 
+pub(crate) async fn read_codex_thread_metadata(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+) -> Result<Value, String> {
+    for attempt in 0..CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS {
+        match client
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": false}),
+            )
+            .await
+        {
+            Ok(response) => {
+                if attempt > 0 {
+                    eprintln!(
+                        "Codex rollout metadata recovered after transcript startup retry: \
+                         thread_id={thread_id} attempts={attempt}"
+                    );
+                }
+                return Ok(response);
+            }
+            Err(error)
+                if codex_thread_metadata_is_pending(&error)
+                    && attempt + 1 < CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS =>
+            {
+                eprintln!(
+                    "Codex rollout metadata is not ready; retrying transcript startup: \
+                     thread_id={thread_id} attempt={}",
+                    attempt + 1
+                );
+                sleep(CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("Codex thread metadata retry loop always returns")
+}
+
+fn codex_thread_metadata_is_pending(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("failed to read session metadata")
+        && normalized.contains("rollout")
+        && normalized.contains("is empty")
+}
+
 pub(crate) async fn load_codex_transcript_navigation(
     client: &CodexAppServerClient,
     thread: &Value,
@@ -231,31 +263,21 @@ pub(crate) async fn load_codex_transcript_navigation(
 ) -> Result<CodexTranscriptNavigation, String> {
     if prefer_rollout_history {
         if let Some(path) = string_field(thread, "path") {
-            match tokio::fs::read_to_string(Path::new(&path)).await {
-                Ok(text) => {
-                    let turns = rollout_turns(&text)?;
-                    let mut navigation_turns = Vec::with_capacity(turns.len());
-                    for (index, turn) in turns.into_iter().enumerate() {
-                        let turn_id = string_field(&turn, "id").ok_or_else(|| {
-                            "canonical Codex rollout returned a turn without id".to_owned()
-                        })?;
-                        navigation_turns.push(CodexTranscriptNavigationTurn {
-                            turn_id,
-                            cursor: Some(rollout_cursor(index + 1)),
-                        });
-                    }
-                    return Ok(CodexTranscriptNavigation {
-                        turns: navigation_turns,
-                        complete: true,
+            if let Some(turns) = read_rollout_turns(path).await? {
+                let mut navigation_turns = Vec::with_capacity(turns.len());
+                for (index, turn) in turns.into_iter().enumerate() {
+                    let turn_id = string_field(&turn, "id").ok_or_else(|| {
+                        "canonical Codex rollout returned a turn without id".to_owned()
+                    })?;
+                    navigation_turns.push(CodexTranscriptNavigationTurn {
+                        turn_id,
+                        cursor: Some(rollout_cursor(index + 1)),
                     });
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!(
-                        "failed to read canonical Codex rollout {}: {error}",
-                        Path::new(&path).display()
-                    ));
-                }
+                return Ok(CodexTranscriptNavigation {
+                    turns: navigation_turns,
+                    complete: true,
+                });
             }
         }
     }
@@ -264,18 +286,17 @@ pub(crate) async fn load_codex_transcript_navigation(
     let mut turns = Vec::new();
     let mut seen_cursors = HashSet::new();
     for _ in 0..CODEX_NAVIGATION_MAX_PAGES {
-        let page = client
-            .request(
-                "thread/turns/list",
-                json!({
-                    "threadId": thread_id,
-                    "cursor": cursor,
-                    "limit": CODEX_ITEM_PAGE_SIZE,
-                    "sortDirection": "desc",
-                    "itemsView": "notLoaded",
-                }),
-            )
-            .await?;
+        let page = request_codex_turn_page(
+            client,
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor,
+                "limit": CODEX_ITEM_PAGE_SIZE,
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            }),
+        )
+        .await?;
         let page_backwards_cursor = string_field(&page, "backwardsCursor");
         let page_turns = page
             .get("data")
@@ -337,18 +358,17 @@ async fn resolve_navigation_cursor(
     if cursor.descending_offset == 0 {
         return Ok(cursor.page_backwards_cursor.clone());
     }
-    let page = client
-        .request(
-            "thread/turns/list",
-            json!({
-                "threadId": thread_id,
-                "cursor": cursor.page_backwards_cursor,
-                "limit": cursor.descending_offset,
-                "sortDirection": "desc",
-                "itemsView": "notLoaded",
-            }),
-        )
-        .await?;
+    let page = request_codex_turn_page(
+        client,
+        json!({
+            "threadId": thread_id,
+            "cursor": cursor.page_backwards_cursor,
+            "limit": cursor.descending_offset,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded",
+        }),
+    )
+    .await?;
     string_field(&page, "nextCursor")
         .ok_or_else(|| "Codex navigation cursor did not resolve to the requested turn".to_owned())
 }
@@ -368,21 +388,10 @@ async fn load_rollout_transcript_page(
     let Some(path) = string_field(metadata, "path") else {
         return Ok(None);
     };
-    let text = match tokio::fs::read_to_string(Path::new(&path)).await {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(format!(
-                "failed to read canonical Codex rollout {}: {error}",
-                Path::new(&path).display()
-            ));
-        }
+    let Some(mut turns) = read_rollout_turns(path).await? else {
+        return Ok(None);
     };
-    let mut turns = rollout_turns(&text)?;
     if request.full_content {
-        if turns.len() > CODEX_FULL_TRANSCRIPT_MAX_TURNS {
-            turns.drain(..turns.len() - CODEX_FULL_TRANSCRIPT_MAX_TURNS);
-        }
         let mut thread = metadata.clone();
         thread["turns"] = Value::Array(turns);
         return Ok(Some(CodexTranscriptPage {
@@ -422,18 +431,48 @@ async fn load_rollout_transcript_page(
     }))
 }
 
+async fn read_rollout_turns(path: String) -> Result<Option<Vec<Value>>, String> {
+    tokio::task::spawn_blocking(move || {
+        let file = match std::fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(format!(
+                    "failed to read canonical Codex rollout {path}: {error}"
+                ))
+            }
+        };
+        rollout_turns_reader(BufReader::new(file)).map(Some)
+    })
+    .await
+    .map_err(|error| format!("Codex rollout reader failed: {error}"))?
+}
+
+#[cfg(test)]
 fn rollout_turns(text: &str) -> Result<Vec<Value>, String> {
+    rollout_turns_reader(std::io::Cursor::new(text))
+}
+
+fn rollout_turns_reader(mut reader: impl BufRead) -> Result<Vec<Value>, String> {
     let mut turns = Vec::<Value>::new();
-    let lines = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>();
-    for (index, line) in lines.iter().enumerate() {
-        let value: Value = match serde_json::from_str(line) {
+    let mut turn_indexes = HashMap::<String, usize>::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader
+            .read_line(&mut line)
+            .map_err(|error| format!("failed to read Codex rollout: {error}"))?
+            == 0
+        {
+            break;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut value: Value = match serde_json::from_str(&line) {
             Ok(value) => value,
             Err(error)
-                if index + 1 == lines.len()
-                    && !text.ends_with('\n')
+                if !line.ends_with('\n')
                     && error.classify() == serde_json::error::Category::Eof =>
             {
                 break;
@@ -445,7 +484,7 @@ fn rollout_turns(text: &str) -> Result<Vec<Value>, String> {
         if string_field(&value, "type").as_deref() != Some("event_msg") {
             continue;
         }
-        let Some(payload) = value.get("payload") else {
+        let Some(payload) = value.get_mut("payload") else {
             continue;
         };
         let event_type = string_field(payload, "type").unwrap_or_default();
@@ -454,18 +493,15 @@ fn rollout_turns(text: &str) -> Result<Vec<Value>, String> {
         else {
             continue;
         };
-        let turn_index = turns
-            .iter()
-            .position(|turn| string_field(turn, "id").as_deref() == Some(turn_id.as_str()))
-            .unwrap_or_else(|| {
-                turns.push(json!({
-                    "id": turn_id,
-                    "items": [],
-                    "itemsView": "full",
-                    "status": "inProgress",
-                }));
-                turns.len() - 1
-            });
+        let turn_index = *turn_indexes.entry(turn_id.clone()).or_insert_with(|| {
+            turns.push(json!({
+                "id": turn_id,
+                "items": [],
+                "itemsView": "full",
+                "status": "inProgress",
+            }));
+            turns.len() - 1
+        });
         let turn = &mut turns[turn_index];
         match event_type.as_str() {
             "task_started" | "turn_started" => {
@@ -474,7 +510,7 @@ fn rollout_turns(text: &str) -> Result<Vec<Value>, String> {
                 }
             }
             "item_completed" => {
-                if let Some(item) = payload.get("item").cloned() {
+                if let Some(item) = payload.get_mut("item").map(Value::take) {
                     turn["items"]
                         .as_array_mut()
                         .expect("rollout turn items must be an array")
@@ -523,18 +559,42 @@ async fn load_turn_page(
     direction: CodexTranscriptDirection,
     paginated_history: bool,
 ) -> Result<Value, String> {
-    client
-        .request(
-            "thread/turns/list",
-            json!({
-                "threadId": thread_id,
-                "cursor": cursor,
-                "limit": limit,
-                "sortDirection": direction.as_str(),
-                "itemsView": turn_items_view(paginated_history),
-            }),
-        )
-        .await
+    request_codex_turn_page(
+        client,
+        json!({
+            "threadId": thread_id,
+            "cursor": cursor,
+            "limit": limit,
+            "sortDirection": direction.as_str(),
+            "itemsView": turn_items_view(paginated_history),
+        }),
+    )
+    .await
+}
+
+async fn request_codex_turn_page(
+    client: &CodexAppServerClient,
+    params: Value,
+) -> Result<Value, String> {
+    for attempt in 0..CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS {
+        match client.request("thread/turns/list", params.clone()).await {
+            Ok(response) => return Ok(response),
+            Err(error)
+                if codex_turn_history_is_pending(&error)
+                    && attempt + 1 < CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS =>
+            {
+                sleep(CODEX_TRANSCRIPT_STARTUP_RETRY_DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("Codex turn history retry loop always returns")
+}
+
+fn codex_turn_history_is_pending(error: &str) -> bool {
+    error
+        .to_ascii_lowercase()
+        .contains("list_turns is not supported yet")
 }
 
 fn thread_uses_paginated_history(thread: &Value) -> bool {
@@ -846,7 +906,78 @@ async fn load_turn_items(
 mod tests {
     use serde_json::json;
 
-    use super::{rollout_turns, thread_uses_paginated_history, turn_items_view};
+    use super::{
+        codex_thread_metadata_is_pending, codex_turn_history_is_pending, rollout_turns,
+        thread_uses_paginated_history, turn_items_view,
+    };
+
+    #[test]
+    fn retries_only_transient_codex_transcript_startup_errors() {
+        assert!(codex_thread_metadata_is_pending(
+            "failed to read thread: thread-store internal error: failed to read session metadata \
+             /tmp/rollout.jsonl: rollout at /tmp/rollout.jsonl is empty"
+        ));
+        assert!(!codex_thread_metadata_is_pending(
+            "failed to read thread: thread not found"
+        ));
+        assert!(!codex_thread_metadata_is_pending(
+            "failed to read session metadata /tmp/rollout.jsonl: permission denied"
+        ));
+        assert!(codex_turn_history_is_pending(
+            "list_turns is not supported yet"
+        ));
+        assert!(!codex_turn_history_is_pending(
+            "thread/turns/list returned a repeated cursor"
+        ));
+    }
+
+    #[tokio::test]
+    async fn full_rollout_export_includes_more_than_five_hundred_turns() {
+        use super::*;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("history.jsonl");
+        let lines = (0..503)
+            .map(|index| {
+                json!({
+            "type":"event_msg", "payload": {
+                "type":"item_completed", "turn_id":format!("turn-{index}"),
+                "item":{"id":format!("item-{index}"), "type":"agentMessage", "text":"complete"}
+            }
+        }).to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, lines).unwrap();
+        let metadata = json!({"path":path.to_string_lossy()});
+        let mut request = CodexTranscriptRequest {
+            thread_id: "thread",
+            cursor: None,
+            limit: 5,
+            direction: CodexTranscriptDirection::Descending,
+            full_content: true,
+            prefer_rollout_history: true,
+        };
+        let full = load_rollout_transcript_page(&metadata, &request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(full.thread["turns"].as_array().unwrap().len(), 503);
+        assert_eq!(full.thread["turns"][0]["id"], "turn-0");
+        request.full_content = false;
+        let tail = load_rollout_transcript_page(&metadata, &request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tail.thread["turns"].as_array().unwrap().len(), 5);
+        assert_eq!(tail.thread["turns"][0]["id"], "turn-498");
+        assert_eq!(tail.before_cursor.as_deref(), Some("wework-rollout:498"));
+        request.cursor = tail.before_cursor.as_deref();
+        let older = load_rollout_transcript_page(&metadata, &request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(older.thread["turns"][4]["id"], "turn-497");
+    }
 
     #[test]
     fn detects_paginated_thread_history() {

@@ -29,18 +29,17 @@
 //! Every `executor:latest_version` read goes through
 //! [`crate::executor_version`], which also owns the process-local refresh the
 //! source starts when that key is missing.
+use brz_json::RawJson;
 #[cfg(test)]
-use crate::json_compat::raw_json;
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::raw_json;
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_redis::Redis;
 use serde::de::DeserializeOwned;
-#[cfg(test)]
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
-use serde_json::value::RawValue;
 
-use crate::auth::{SessionUser, UserRow};
+use crate::auth::SessionUser;
 use crate::device_running_tasks::{RunningTask, list_running_tasks};
 use crate::executor_version::latest_executor_version;
 use crate::http_compat::FastApiError;
@@ -88,13 +87,27 @@ pub enum DeviceType {
 }
 
 impl DeviceType {
-    fn from_spec(spec: &DeviceSpecInput) -> Self {
+    pub(crate) fn from_spec(spec: &DeviceSpecInput) -> Self {
         match spec.device_type.as_deref() {
             Some("cloud") => Self::Cloud,
             Some("app") => Self::App,
             Some("remote") => Self::Remote,
             _ => Self::Local,
         }
+    }
+}
+
+impl DeviceSpecInput {
+    /// `spec.deviceType` as persisted, before the `DeviceType` normalization
+    /// the identity helpers apply.
+    pub(crate) fn device_type_value(&self) -> Option<&str> {
+        self.device_type.as_deref()
+    }
+
+    /// `spec.runtimeInstanceId` as the raw JSON the identity checks compare
+    /// against the online-state document's `runtime_instance_id`.
+    pub(crate) fn runtime_instance_id_value(&self) -> Option<serde_json::Value> {
+        self.runtime_instance_id.as_ref().map(OpaqueJson::to_value)
     }
 }
 
@@ -119,7 +132,7 @@ pub fn online_key(user_id: i64, device_id: &str) -> String {
 /// Source `record_route_id`: App devices use `app-record-<id>` as the transport
 /// identity (Redis key, execution_target_id, socket_device_id); all other device
 /// types use the Kind `name` (the logical device_id).
-fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
+pub(crate) fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
     match device_type {
         DeviceType::App => format!("app-record-{}", row.id),
         _ => row.name.clone(),
@@ -131,31 +144,31 @@ fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
 /// Field order follows the source model; missing keys use the same defaults
 /// pydantic applies.
 #[derive(serde::Serialize)]
-struct DeviceItem {
+pub(crate) struct DeviceItem {
     id: i64,
     execution_target_id: Option<String>,
     device_id: String,
     name: String,
     status: String,
     is_default: bool,
-    last_heartbeat: Option<Box<RawValue>>,
+    last_heartbeat: Option<RawJson>,
     device_type: DeviceType,
     connection_mode: String,
-    capabilities: Option<Box<RawValue>>,
+    capabilities: Option<RawJson>,
     slot_used: i64,
     slot_max: i64,
     running_tasks: Vec<RunningTask>,
     executor_version: Option<String>,
     latest_version: Option<String>,
     update_available: bool,
-    client_ip: Option<Box<RawValue>>,
-    runtime_transfer_host: Option<Box<RawValue>>,
-    runtime_instance_id: Option<Box<RawValue>>,
-    app_device_id: Option<Box<RawValue>>,
+    client_ip: Option<RawJson>,
+    runtime_transfer_host: Option<RawJson>,
+    runtime_instance_id: Option<RawJson>,
+    app_device_id: Option<RawJson>,
     socket_device_id: Option<String>,
     runtime_features: Option<RuntimeFeatures>,
-    cloud_config: Option<Box<RawValue>>,
-    remote_config: Option<Box<RawValue>>,
+    cloud_config: Option<RawJson>,
+    remote_config: Option<RawJson>,
     bind_shell: String,
 }
 
@@ -170,7 +183,8 @@ struct DeviceListResponse {
 ///
 /// The source model emits every known member, so `runtimeTaskCreate`,
 /// `interactiveSessions`, and `worktrees` are JSON null when the stored
-/// document omits them. `extensions` carries the members a distribution
+/// document omits them. `projectEditing` is omitted when unadvertised so verified
+/// legacy runtimes retain their version contract. `extensions` carries the members a distribution
 /// registers through `register_runtime_feature_normalizer` (the source
 /// extension schema registers `desktop`); any other stored member is
 /// dropped, exactly like the model's registered-extension filter.
@@ -178,11 +192,22 @@ struct DeviceListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeFeatures {
     pub schema_version: i64,
-    pub runtime_task_create: Option<Box<RawValue>>,
-    pub interactive_sessions: Option<Box<RawValue>>,
-    pub worktrees: Option<Box<RawValue>>,
+    pub runtime_task_create: Option<RawJson>,
+    pub interactive_sessions: Option<RawJson>,
+    pub worktrees: Option<RawJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_editing: Option<RuntimeProjectEditingFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeProjectEditingFeatures {
+    pub multi_roots: Option<bool>,
+    pub ai_settings: Option<bool>,
+    pub default_project_space: Option<bool>,
+    pub plugins: Option<bool>,
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -259,16 +284,35 @@ pub struct OnlineStateInput {
     pub runtime_features: Option<OpaqueJson>,
     runtime_capacity: Option<RuntimeCapacityInput>,
 }
+
+impl OnlineStateInput {
+    /// The raw `status` reported by the online-state document.
+    pub(crate) fn status_value(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+}
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
 struct RuntimeFeatureInput {
     #[serde(rename = "schemaVersion")]
-    schema_version: Option<i64>,
+    schema_version: Option<OpaqueJson>,
     #[serde(rename = "runtimeTaskCreate")]
     runtime_task_create: Option<OpaqueJson>,
     #[serde(rename = "interactiveSessions")]
     interactive_sessions: Option<OpaqueJson>,
     worktrees: Option<OpaqueJson>,
+    #[serde(
+        rename = "projectEditing",
+        deserialize_with = "present_project_editing"
+    )]
+    project_editing: Option<OpaqueJson>,
+}
+
+fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <OpaqueJson as serde::Deserialize>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -351,7 +395,7 @@ pub async fn cache_manager_get<T: DeserializeOwned>(state: &AppState, key: &str)
 /// Source `cache_manager.mget`: read a batch of keys over the shared pooled
 /// connection; errors degrade to an all-missing map, which yields offline
 /// devices exactly like the source's error swallow.
-async fn cache_manager_mget<T: DeserializeOwned>(
+pub(crate) async fn cache_manager_mget<T: DeserializeOwned>(
     state: &AppState,
     keys: Vec<String>,
 ) -> Vec<Option<T>> {
@@ -388,6 +432,7 @@ async fn list_cloud_devices(
     state: &AppState,
     user_id: i64,
     kinds: &[DeviceKindRow],
+    request_id: Option<&str>,
 ) -> Result<Vec<DeviceItem>, FastApiError> {
     let cloud: Vec<&DeviceKindRow> = kinds
         .iter()
@@ -404,15 +449,17 @@ async fn list_cloud_devices(
         let slot_online = get_online_info(state, user_id, &device_id).await;
         let slot_used = slot_online.as_ref().map_or(0, online_running_count);
         let running_tasks = match slot_online.as_ref() {
-            Some(info) => list_running_tasks(&state.mysql, user_id, online_running_task_ids(info))
-                .await
-                .map_err(running_tasks_error)?,
+            Some(info) => {
+                list_running_tasks(&*state.task_store, user_id, online_running_task_ids(info))
+                    .await
+                    .map_err(running_tasks_error)?
+            }
             None => Vec::new(),
         };
         let executor_version = online_state
             .as_ref()
             .and_then(|info| info.executor_version.clone());
-        let latest_version = latest_executor_version(state).await;
+        let latest_version = latest_executor_version(state, request_id).await;
         let update_available =
             is_update_available(executor_version.as_deref(), latest_version.as_deref());
         let status = online_status(online.as_ref());
@@ -513,6 +560,7 @@ async fn list_mget_devices(
     user_id: i64,
     kinds: &[DeviceKindRow],
     device_type: DeviceType,
+    request_id: Option<&str>,
 ) -> Vec<DeviceItem> {
     let group: Vec<&DeviceKindRow> = kinds
         .iter()
@@ -533,7 +581,7 @@ async fn list_mget_devices(
         .collect();
     let online_map: Vec<Option<JsonProjection<OnlineStateInput>>> =
         cache_manager_mget(state, keys.clone()).await;
-    let latest_version = latest_executor_version(state).await;
+    let latest_version = latest_executor_version(state, request_id).await;
     let mut result = Vec::new();
     for (row, online) in group.iter().zip(online_map.iter()) {
         let spec = spec(row);
@@ -622,7 +670,7 @@ async fn list_mget_devices(
 }
 
 /// Extract the `spec` object from a Kind row's JSON column.
-fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
+pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
     row.json
         .0
         .value
@@ -636,14 +684,16 @@ fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
 ///
 /// The stored dict is `RuntimeFeatures.model_dump(by_alias=True,
 /// exclude_none=True)`, so it may carry `schemaVersion`, `runtimeTaskCreate`,
-/// `interactiveSessions`, and `worktrees`. The endpoint's `DeviceInfo` model
+/// `interactiveSessions`, `worktrees`, and `projectEditing`. The endpoint's `DeviceInfo` model
 /// re-validates through `RuntimeFeatures` and FastAPI serializes the response
 /// with `by_alias=True` (the framework default):
-/// - `schemaVersion` is required (ge=1); an empty or invalid dict normalizes
-///   to absent (None).
+/// - `schemaVersion` is required (ge=1); invalid envelopes stay absent unless
+///   explicit project editing metadata must retain conservative write denials.
 /// - `runtimeTaskCreate`, `interactiveSessions`, and `worktrees` are always
 ///   emitted: the stored value round-trips, or null when absent (the model's
 ///   Optional defaults).
+/// - `projectEditing` is omitted when absent. Explicit malformed advertisements
+///   retain a conservative object; only actual booleans authorize writes.
 /// - Any other stored key is dropped unless the distribution registers it as
 ///   an extension feature.
 fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> {
@@ -651,20 +701,73 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
         .runtime_features
         .as_ref()?
         .project::<RuntimeFeatureInput>()?;
-    let schema_version = features.schema_version.filter(|version| *version >= 1)?;
+    let valid_schema_version = features
+        .schema_version
+        .as_ref()
+        .and_then(|value| value.to_value().as_i64())
+        .filter(|version| *version >= 1);
+    let valid_header = valid_schema_version.is_some();
+    let schema_version =
+        valid_schema_version.or_else(|| features.project_editing.as_ref().map(|_| 1))?;
     Some(RuntimeFeatures {
         schema_version,
         runtime_task_create: features
             .runtime_task_create
             .as_ref()
+            .filter(|_| valid_header)
             .map(OpaqueJson::to_raw_value),
         interactive_sessions: features
             .interactive_sessions
             .as_ref()
+            .filter(|_| valid_header)
             .map(OpaqueJson::to_raw_value),
-        worktrees: features.worktrees.as_ref().map(OpaqueJson::to_raw_value),
+        worktrees: features
+            .worktrees
+            .as_ref()
+            .filter(|_| valid_header)
+            .map(OpaqueJson::to_raw_value),
+        project_editing: features
+            .project_editing
+            .as_ref()
+            .map(|value| project_editing_features(value, valid_header)),
         extensions: serde_json::Map::new(),
     })
+}
+
+fn project_editing_features(
+    value: &OpaqueJson,
+    valid_header: bool,
+) -> RuntimeProjectEditingFeatures {
+    let editing = value.to_value();
+    let flag = |name| {
+        editing
+            .get(name)
+            .and_then(Value::as_bool)
+            .filter(|enabled| valid_header || !enabled)
+    };
+    RuntimeProjectEditingFeatures {
+        multi_roots: flag("multiRoots"),
+        ai_settings: flag("aiSettings"),
+        default_project_space: flag("defaultProjectSpace"),
+        plugins: flag("plugins"),
+    }
+}
+
+impl DeviceItem {
+    /// The logical `device_id` the source listing dict carries.
+    pub(crate) fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// The `name` the source listing dict carries.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The `device_type` discriminator the source listing dict carries.
+    pub(crate) fn device_type(&self) -> DeviceType {
+        self.device_type
+    }
 }
 
 /// GET /api/devices: the devices free function, injecting the process-lifetime
@@ -672,13 +775,25 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
 #[brz_http_server::get("/api/devices")]
 async fn get_all_devices(
     #[inject(state)] state: &AppState,
+    #[header("x-request-id")] request_id: Option<String>,
     #[auth] user: SessionUser,
 ) -> Result<DeviceListResponse, FastApiError> {
-    devices(state, user.0).await
+    let items = list_all_devices(state, user.id, request_id.as_deref()).await?;
+    Ok(DeviceListResponse {
+        total: items.len(),
+        items,
+    })
 }
 
-/// Handler for `GET /api/devices`.
-async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, FastApiError> {
+/// `device_service.get_all_devices`: every registered provider lists its
+/// devices for the user and the results are concatenated in provider
+/// registration order (cloud, local, app, remote). Shared by `GET /api/devices`
+/// and `GET /api/v1/runtime-profiles`, whose source both call this listing.
+pub(crate) async fn list_all_devices(
+    state: &AppState,
+    user_id: i32,
+    request_id: Option<&str>,
+) -> Result<Vec<DeviceItem>, FastApiError> {
     // Source queries `kinds` once per provider in registration order:
     // cloud, local, app, remote.
     let mut items: Vec<DeviceItem> = Vec::new();
@@ -689,7 +804,7 @@ async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, 
         DeviceType::Remote,
     ] {
         let kinds: Result<Vec<DeviceKindRow>, _> =
-            state.mysql.fetch_all(KINDS_QUERY, (user.id,)).await;
+            state.mysql.fetch_all(KINDS_QUERY, (user_id,)).await;
         let kinds = match kinds {
             Ok(rows) => rows,
             Err(error) => {
@@ -699,20 +814,17 @@ async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, 
         };
         match device_type {
             DeviceType::Cloud => {
-                items.extend(list_cloud_devices(state, user.id.into(), &kinds).await?)
+                items.extend(list_cloud_devices(state, user_id.into(), &kinds, request_id).await?)
             }
-            other => items.extend(list_mget_devices(state, user.id.into(), &kinds, other).await),
+            other => items
+                .extend(list_mget_devices(state, user_id.into(), &kinds, other, request_id).await),
         }
     }
-
-    Ok(DeviceListResponse {
-        total: items.len(),
-        items,
-    })
+    Ok(items)
 }
 
 /// Source `python_exception_handler` 500 response shape.
-fn internal_error() -> FastApiError {
+pub(crate) fn internal_error() -> FastApiError {
     FastApiError::detail(
         brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
         serde_json::json!({"error_code": 500, "detail": "Internal server error"}).to_string(),
@@ -846,6 +958,69 @@ mod tests {
     }
 
     #[test]
+    fn invalid_feature_envelopes_preserve_project_denials_without_granting_writes() {
+        for schema in [Value::Null, json!("invalid"), json!(0)] {
+            let features = runtime_features(&json!({
+                "runtime_features": {
+                "schemaVersion": schema,
+                "projectEditing": {"multiRoots": false, "aiSettings": true, "plugins": false},
+                "worktrees": {"version": "invalid"},
+                }
+            }))
+            .expect("explicit project advertisement must survive malformed headers");
+            let projected = crate::json_contract_tests::serialized(features).unwrap();
+            assert_eq!(projected["schemaVersion"], 1);
+            assert_eq!(projected["projectEditing"]["multiRoots"], false);
+            assert_eq!(projected["projectEditing"]["aiSettings"], Value::Null);
+            assert_eq!(projected["projectEditing"]["plugins"], false);
+            assert_eq!(projected["worktrees"], Value::Null);
+        }
+        assert!(
+            runtime_features(&json!({"runtime_features": {"schemaVersion": "invalid"}})).is_none()
+        );
+    }
+
+    #[test]
+    fn runtime_features_preserves_independent_project_editing_flags() {
+        let info = json!({
+            "runtime_features": {
+                "schemaVersion": 4,
+                "projectEditing": {"multiRoots": true, "aiSettings": false, "defaultProjectSpace": true, "plugins": false},
+            },
+        });
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert_eq!(
+            projected["projectEditing"],
+            info["runtime_features"]["projectEditing"]
+        );
+    }
+
+    #[test]
+    fn absent_project_editing_does_not_mask_legacy_runtime_contracts() {
+        let info = json!({"runtime_features": {"schemaVersion": 4}});
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert!(projected.get("projectEditing").is_none());
+    }
+
+    #[test]
+    fn malformed_explicit_project_editing_is_preserved_conservatively() {
+        for editing in [
+            Value::Null,
+            json!("invalid"),
+            json!({"multiRoots": "true", "plugins": false}),
+        ] {
+            let info = json!({"runtime_features": {"schemaVersion": 4, "projectEditing": editing}});
+            let projected =
+                crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+            assert!(projected["projectEditing"].is_object());
+            assert_eq!(projected["projectEditing"]["multiRoots"], Value::Null);
+            assert_eq!(projected["projectEditing"]["aiSettings"], Value::Null);
+        }
+    }
+
+    #[test]
     fn runtime_features_includes_interactive_sessions() {
         let info = json!({
             "runtime_features": {
@@ -890,6 +1065,7 @@ mod tests {
             runtime_task_create: None,
             interactive_sessions: None,
             worktrees: None,
+            project_editing: None,
             extensions: std::iter::once((
                 "desktop".to_string(),
                 json!({

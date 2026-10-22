@@ -32,6 +32,28 @@ def test_setup_logging_suppresses_websocket_frame_debug_logs(monkeypatch) -> Non
     root_logger = logging.getLogger()
     websocket_logger = logging.getLogger("websockets")
     uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    modified_loggers = [
+        logging.getLogger(name)
+        for name in (
+            "app",
+            "websockets",
+            "uvicorn",
+            "uvicorn.error",
+            "fastapi",
+            "uvicorn.access",
+        )
+    ]
+    original_states = [
+        (
+            logger,
+            logger.level,
+            list(logger.handlers),
+            list(logger.filters),
+            logger.propagate,
+            logger.disabled,
+        )
+        for logger in modified_loggers
+    ]
     original_root_level = root_logger.level
     original_root_handlers = list(root_logger.handlers)
     original_websocket_level = websocket_logger.level
@@ -69,6 +91,15 @@ def test_setup_logging_suppresses_websocket_frame_debug_logs(monkeypatch) -> Non
             == 1
         )
     finally:
+        for handler in root_logger.handlers:
+            if handler not in original_root_handlers:
+                handler.close()
+        for logger, level, handlers, filters, propagate, disabled in original_states:
+            logger.setLevel(level)
+            logger.handlers[:] = handlers
+            logger.filters[:] = filters
+            logger.propagate = propagate
+            logger.disabled = disabled
         root_logger.handlers.clear()
         root_logger.handlers.extend(original_root_handlers)
         root_logger.setLevel(original_root_level)

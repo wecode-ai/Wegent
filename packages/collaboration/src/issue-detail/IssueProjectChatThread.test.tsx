@@ -4,7 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectChatClient, ProjectChatMessage } from "@wegent/chat-core";
 import { createCollaborationTranslator } from "../i18n";
-import { groupIssueActivityThreads } from "./IssueActivityThread";
+import {
+  groupIssueActivityThreads,
+  groupIssueTimelineThreads,
+} from "./IssueActivityThread";
 import { IssueProjectChatThread } from "./IssueProjectChatThread";
 import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
 import { IssueChatMessage } from "./IssueChatMessage";
@@ -37,6 +40,17 @@ describe("shared Issue threads", () => {
   let container: HTMLDivElement;
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(),
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -68,7 +82,78 @@ describe("shared Issue threads", () => {
     ]);
   });
 
-  it("renders Markdown, bot avatar, reply row and separate execution events in the same thread", () => {
+  it("places comment-triggered execution separately and keeps replies with their addressed card", () => {
+    const discussion: ProjectChatMessage = {
+      ...message,
+      messageId: "discussion",
+      sender: { type: "user", id: "user", name: "User" },
+    };
+    const execution: ProjectChatMessage = {
+      ...message,
+      messageId: "execution",
+      rootMessageId: discussion.messageId,
+      replyToMessageId: discussion.messageId,
+      sequenceNumber: 2,
+    };
+    const reply = {
+      ...discussion,
+      messageId: "reply",
+      rootMessageId: discussion.messageId,
+      replyToMessageId: execution.messageId,
+      sequenceNumber: 3,
+    };
+    const continuation = {
+      ...execution,
+      messageId: "continuation",
+      replyToMessageId: reply.messageId,
+      sequenceNumber: 4,
+    };
+    expect(
+      groupIssueTimelineThreads([continuation, reply, execution, discussion]),
+    ).toEqual([
+      {
+        root: discussion,
+        replies: [execution, reply, continuation],
+        displayReplies: [],
+      },
+      { root: execution, replies: [reply, continuation] },
+    ]);
+    expect(groupIssueActivityThreads([discussion, execution])).toEqual([
+      { root: discussion, replies: [execution] },
+    ]);
+    act(() =>
+      root.render(
+        <>
+          {groupIssueTimelineThreads([discussion, execution]).map((thread) => (
+            <IssueProjectChatThread
+              key={thread.root.messageId}
+              thread={thread}
+              canComment={false}
+              send={vi.fn()}
+              translate={translate}
+              executions={[]}
+            />
+          ))}
+        </>,
+      ),
+    );
+    const discussionCard = container.querySelector(
+      '[data-testid="collaboration-chat-card-discussion"]',
+    )!;
+    expect(
+      discussionCard.querySelector(
+        '[data-testid="collaboration-chat-message-execution"]',
+      ),
+    ).toBeNull();
+    expect(discussionCard.querySelector(".task-detail-run-events")).toBeNull();
+    expect(
+      container.querySelectorAll(
+        '[data-testid="collaboration-chat-message-execution"]',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("renders Markdown, bot avatar, reply row and distinct execution event status", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -88,15 +173,196 @@ describe("shared Issue threads", () => {
       card.querySelector(".task-detail-thread-message-header .bg-text-primary"),
     ).not.toBeNull();
     expect(
+      card.querySelector(
+        ".task-detail-thread-message-aside [data-testid='cloud-task-activity-execution-badge-root']",
+      ),
+    ).not.toBeNull();
+    expect(
       card.querySelector(".task-detail-comment-inline-composer"),
     ).not.toBeNull();
     expect(card.querySelector(".task-detail-run-events")).toBeNull();
     expect(
-      container.querySelector(".task-detail-run-events")?.textContent,
-    ).toContain("1 条运行动态");
+      container.querySelectorAll(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      ),
+    ).toHaveLength(1);
     expect(
-      container.querySelector(".task-detail-run-event")?.textContent,
+      container.querySelector(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      )?.textContent,
     ).toContain("已完成");
+    expect(
+      container.querySelector(
+        '[data-testid="task-activity-run-execution-badge-root"]',
+      )?.textContent,
+    ).toContain("已完成");
+  });
+
+  it("keeps execution status and timestamp in the trailing header area", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: { ...message, updatedAt: new Date(2026, 8, 17, 8).toISOString() },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+          taskSummaryForMessage={() => ({
+            title: "检查协作任务的工作树配置",
+            stageName: "实现",
+          })}
+        />,
+      ),
+    );
+
+    const header = container.querySelector(
+      ".task-detail-thread-message-header",
+    );
+    expect(
+      header?.querySelector(".task-detail-thread-message-author")?.textContent,
+    ).toBe("Codex");
+    const aside = header?.querySelector(".task-detail-thread-message-aside");
+    expect(aside?.textContent).toContain("已完成");
+    expect(
+      aside?.querySelector(".task-detail-thread-message-time")?.textContent,
+    ).toBe("09-17 08:00");
+  });
+
+  it("renders a manager assignment as a compact dispatch event", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              content: "",
+              metadata: {
+                dispatch_role: "manager",
+                dispatch_assignments: [
+                  {
+                    task_title: "采集运行证据",
+                    agent_name: "诊断智能体",
+                  },
+                  {
+                    task_title: "独立复核结论",
+                    human_user_name: "复核成员",
+                  },
+                ],
+                run_status: "running",
+              },
+              status: "streaming",
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const event = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(event?.textContent).toContain("Codex 负责人");
+    expect(event?.textContent).toContain("分配任务：");
+    expect(event?.textContent).toContain("采集运行证据 → 诊断智能体");
+    expect(event?.textContent).toContain("独立复核结论 → 复核成员");
+    expect(container.querySelector(".task-detail-ai-run-card")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
+    ).toBeNull();
+  });
+
+  it("renders a manager answer inside the human reply thread", () => {
+    const reply = {
+      ...message,
+      messageId: "human-reply",
+      rootMessageId: message.messageId,
+      replyToMessageId: message.messageId,
+      sender: { type: "user" as const, id: "7", name: "Member" },
+      content: "Please explain the decision",
+      sequenceNumber: 2,
+    };
+    const answer = {
+      ...message,
+      messageId: "manager-answer",
+      rootMessageId: message.messageId,
+      replyToMessageId: reply.messageId,
+      content: "The manager continued the original conversation",
+      metadata: { dispatch_role: "manager", run_status: "completed" },
+      sequenceNumber: 3,
+    };
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_status_comment",
+              },
+            },
+            replies: [reply, answer],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-replies-root"]')
+        ?.textContent,
+    ).toContain(answer.content);
+    expect(
+      container.querySelectorAll(
+        '[data-testid="collaboration-chat-card-root"]',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("renders an optional manager status comment as comment content", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              content: "负责人已综合证据，将 Issue 提交待确认。",
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_status_comment",
+                target_status: "in_review",
+                run_status: "succeeded",
+              },
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const comment = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(comment?.textContent).toContain(
+      "负责人已综合证据，将 Issue 提交待确认。",
+    );
+    expect(comment?.textContent).not.toContain("已完成任务规划");
   });
 
   it("keeps a failed reply draft and submits with the real root id", async () => {
@@ -104,7 +370,7 @@ describe("shared Issue threads", () => {
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(message);
-    act(() =>
+    await act(async () =>
       root.render(
         <IssueProjectChatThread
           thread={{ root: message, replies: [] }}
@@ -115,13 +381,14 @@ describe("shared Issue threads", () => {
         />,
       ),
     );
-    const input = container.querySelector("textarea")!;
+    const input = container.querySelector<HTMLElement>(
+      '[data-testid="collaboration-chat-reply-input-root"]',
+    )!;
     act(() => {
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )!.set!.call(input, "Please check");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      (input as HTMLElement & { value: string }).value = "Please check";
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { key: "k", bubbles: true }),
+      );
     });
     await act(async () => {
       container
@@ -153,7 +420,22 @@ describe("shared Issue threads", () => {
         />,
       ),
     );
-    expect(container.querySelector("textarea")).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-chat-reply-input-root"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      ),
+    ).not.toBeNull();
   });
 
   it("uses the desktop run disclosure and execution action for web messages", () => {

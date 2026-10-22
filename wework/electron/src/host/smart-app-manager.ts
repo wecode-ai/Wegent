@@ -30,6 +30,7 @@ import {
 import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 import { ensureDirectory } from './ensure-directory.js'
+import { decideDecisionModelGrant } from './smart-app-capability-policy.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -45,6 +46,14 @@ export interface SmartAppInstallation {
   smartAppId?: number | null
   releaseId?: number | null
   source: 'managed' | 'linked' | 'market'
+  /**
+   * Capabilities Wework has authorized for this installation. Declaring the
+   * capability in the manifest is the whole contract: install provenance
+   * (managed / linked / market) does not gate it.
+   */
+  grantedCapabilities: {
+    decisionModel: boolean
+  }
 }
 
 export interface SmartAppPreview {
@@ -74,12 +83,12 @@ export interface SmartAppRuntimeHost {
 
 export interface SmartAppManagerOptions {
   dataDirectory: string
+  documentsDirectory: () => string
   downloadsDirectory: () => string
   logDirectory: string
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
   runtimeHost: () => SmartAppRuntimeHost | null
-  ensureWorkbenchRuntime?: () => Promise<void>
   verificationService?: SmartAppVerificationService
 }
 
@@ -89,9 +98,51 @@ export interface SmartAppVerificationService {
   pack(projectRoot: string, archivePath: string): Promise<SmartAppPackResult>
 }
 
+const DECISION_ROUTER_PROTOCOL_VERSION = 1
+const DECISION_ROUTER_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+const DECISION_ROUTE_TOKEN = /^[A-Za-z0-9._~-]{8,200}$/
+
+/**
+ * Accepts only the loopback route Wework itself hands to a Smart app: an
+ * `http:` base URL whose path is exactly `/v1/decision-router/<token>`.
+ *
+ * Credentials, a query, a fragment, another host, or a deeper path are all
+ * rejected so a malformed value cannot aim the app at another service.
+ */
+function validateDecisionRouteUrl(raw: string): string {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('Wework decision router base URL is not a valid URL')
+  }
+  if (
+    url.protocol !== 'http:' ||
+    !DECISION_ROUTER_LOOPBACK_HOSTS.has(url.hostname) ||
+    Boolean(url.username) ||
+    Boolean(url.password) ||
+    Boolean(url.search) ||
+    Boolean(url.hash)
+  ) {
+    throw new Error('Wework decision router base URL must be a loopback address')
+  }
+  const segments = url.pathname.split('/')
+  const token = segments[3] ?? ''
+  if (
+    segments.length !== 4 ||
+    segments[1] !== 'v1' ||
+    segments[2] !== 'decision-router' ||
+    !DECISION_ROUTE_TOKEN.test(token)
+  ) {
+    throw new Error('Wework decision router base URL has an invalid route path')
+  }
+  return raw
+}
+
 export class SmartAppManager {
   private readonly proxyTokens = new Map<string, string>()
   private readonly contextTokens = new Map<string, string>()
+  private readonly decisionTokens = new Map<string, string>()
   private readonly verificationService: SmartAppVerificationService
   private operation = Promise.resolve()
 
@@ -117,6 +168,7 @@ export class SmartAppManager {
         if (installation.source === 'linked') {
           changed = (await refreshLinkedInstallation(installation)) || changed
         }
+        changed = this.syncGrantedCapabilities(installation) || changed
         const active = running.has(tabId(installation.id))
         const state = active ? 'running' : installation.state === 'failed' ? 'failed' : 'installed'
         if (
@@ -175,11 +227,16 @@ export class SmartAppManager {
       const name = validEditableName(input.name)
       const displayName = requiredText(input.displayName)
       const template = validSmartAppTemplate(input.template)
-      const parent = await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
+      const parent = input.parentPath.trim()
+        ? await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
+        : await this.defaultCreationParent()
       const target = join(parent, name)
       await mkdir(target).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
           throw new Error('Smart app destination already exists')
+        }
+        if (isDirectoryPermissionError(error)) {
+          throw new Error('Smart app save location is not writable', { cause: error })
         }
         throw error
       })
@@ -198,6 +255,16 @@ export class SmartAppManager {
         throw error
       }
     })
+  }
+
+  private async defaultCreationParent(): Promise<string> {
+    try {
+      const parent = join(this.options.documentsDirectory(), 'WeworkSmartApps')
+      await mkdir(parent, { recursive: true, mode: 0o700 })
+      return await requiredSmartAppDirectory(parent, 'Smart app default parent')
+    } catch (error) {
+      throw new Error('Smart app default save location is unavailable', { cause: error })
+    }
   }
 
   async linkDirectory(directoryPath: string): Promise<SmartAppInstallation> {
@@ -280,6 +347,7 @@ export class SmartAppManager {
         installation.manifest = refreshed.manifest
         installation.sha256 = refreshed.sha256
         installation.error = null
+        this.syncGrantedCapabilities(installation)
         await this.writeRegistry(installations)
         return installation
       } catch (error) {
@@ -376,7 +444,9 @@ export class SmartAppManager {
         smartAppId: input.smartAppId ?? null,
         releaseId: input.releaseId ?? null,
         source: input.smartAppId == null ? 'managed' : 'market',
+        grantedCapabilities: { decisionModel: false },
       }
+      this.syncGrantedCapabilities(installation)
       await this.writeRegistry([...installations.filter(item => item.id !== id), installation])
       return installation
     })
@@ -387,18 +457,27 @@ export class SmartAppManager {
     modelBaseUrl?: string | null
     contextBaseUrl?: string | null
     contextToken?: string | null
+    decisionBaseUrl?: string | null
+    decisionProtocolVersion?: number | null
   }): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const runtimeHost = this.requiredRuntimeHost()
       const installations = await this.readRegistry()
       const installation = requiredInstallation(installations, input.installationId)
+      // Defense in depth: the renderer only registers a decision route for an
+      // authorized installation, but the host re-validates the address and the
+      // grant, so a compromised renderer cannot smuggle in another service.
+      const decisionRoute = this.authorizeDecisionRoute(
+        installation,
+        input.decisionBaseUrl,
+        input.decisionProtocolVersion
+      )
       const id = tabId(installation.id)
       if (runtimeHost.runningTabIds().has(id)) {
         return installation
       }
       const port = await freePort()
       try {
-        await this.options.ensureWorkbenchRuntime?.()
         const prepared = await prepareWorkbenchDshLaunch({
           runtimeRoot: this.options.runtimeRoot,
           dataDirectory: this.options.dataDirectory,
@@ -410,6 +489,8 @@ export class SmartAppManager {
           modelBaseUrl: input.modelBaseUrl,
           contextBaseUrl: input.contextBaseUrl,
           contextToken: input.contextToken,
+          decisionBaseUrl: decisionRoute?.baseUrl ?? null,
+          decisionProtocolVersion: decisionRoute?.protocolVersion ?? null,
         })
         await runtimeHost.open({
           tabId: id,
@@ -490,6 +571,7 @@ export class SmartAppManager {
       }
       this.proxyTokens.delete(installationId)
       this.contextTokens.delete(installationId)
+      this.decisionTokens.delete(installationId)
     })
   }
 
@@ -588,6 +670,16 @@ export class SmartAppManager {
     return takeToken(this.contextTokens, installationId)
   }
 
+  // The decision route is a distinct registration from the generic model proxy,
+  // so it must be stored separately or stop cannot unregister both.
+  storeDecisionToken(installationId: string, token: string): void {
+    this.decisionTokens.set(requiredText(installationId), requiredText(token))
+  }
+
+  takeDecisionToken(installationId: string): string | null {
+    return takeToken(this.decisionTokens, installationId)
+  }
+
   private root(): string {
     return join(this.options.dataDirectory, 'harness-apps')
   }
@@ -650,9 +742,48 @@ export class SmartAppManager {
       smartAppId: null,
       releaseId: null,
       source: 'linked',
+      grantedCapabilities: { decisionModel: false },
     }
+    this.syncGrantedCapabilities(installation)
     await this.writeRegistry([...installations, installation])
     return installation
+  }
+
+  /**
+   * Recomputes the trusted capability grants for an installation and reports
+   * whether the stored record changed.
+   */
+  private syncGrantedCapabilities(installation: SmartAppInstallation): boolean {
+    const decisionModel = decideDecisionModelGrant(installation.manifest)
+    if (installation.grantedCapabilities?.decisionModel === decisionModel) return false
+    installation.grantedCapabilities = { decisionModel }
+    return true
+  }
+
+  /**
+   * Validates the renderer-supplied decision route.
+   *
+   * Every installation is authorized, so the only precondition is the manifest
+   * declaration the Smart App made; the route description still has to match
+   * the local router's path, token, and protocol shape.
+   */
+  private authorizeDecisionRoute(
+    installation: SmartAppInstallation,
+    decisionBaseUrl: string | null | undefined,
+    decisionProtocolVersion: number | null | undefined
+  ): { baseUrl: string; protocolVersion: 1 } | null {
+    const requested = typeof decisionBaseUrl === 'string' ? decisionBaseUrl.trim() : ''
+    if (!requested) return null
+    if (!decideDecisionModelGrant(installation.manifest)) {
+      throw new Error('Smart app is not authorized to use the Wework decision router')
+    }
+    if (decisionProtocolVersion !== DECISION_ROUTER_PROTOCOL_VERSION) {
+      throw new Error('Wework decision router protocol version is not supported')
+    }
+    return {
+      baseUrl: validateDecisionRouteUrl(requested),
+      protocolVersion: DECISION_ROUTER_PROTOCOL_VERSION,
+    }
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
@@ -742,6 +873,11 @@ async function optionalDirectory(path: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+function isDirectoryPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code
+  return code === 'EACCES' || code === 'EPERM'
 }
 
 function validEditableName(value: string): string {

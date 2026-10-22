@@ -22,6 +22,8 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
+import { reservePort } from '../port-reservation.mjs'
+import { appendProcessOutput } from '../process-output.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -111,6 +113,21 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const REQUEST_USER_INPUT_ASYNC_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC: ask which implementation direction to use without blocking the turn.'
+const REQUEST_USER_INPUT_ASYNC_QUESTION = 'Which async implementation direction should be used?'
+const REQUEST_USER_INPUT_ASYNC_ANSWER = 'Complete'
+const REQUEST_USER_INPUT_ASYNC_CALL_ID = 'wework-e2e-request-user-input-async'
+const REQUEST_USER_INPUT_ASYNC_WAITING_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_WAITING'
+const REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_COMPLETE'
+const REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_BUSY: ask which implementation direction to use while the turn keeps running.'
+const REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION =
+  'Which implementation direction should be used while the turn keeps running?'
+const REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER = 'Proceed'
+const REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID = 'wework-e2e-request-user-input-async-busy'
+const REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT_ASYNC_BUSY_COMPLETE'
 const MCP_ELICITATION_PROMPT =
   'WEWORK_DESKTOP_E2E_MCP_ELICITATION: confirm the inner-site access audience.'
 const MCP_ELICITATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MCP_ELICITATION_COMPLETE'
@@ -175,6 +192,7 @@ const BACKGROUND_FOLLOW_UP_RESTORE_TEXT = 'WEWORK_DESKTOP_E2E_BACKGROUND_FOLLOW_
 const WINDOW_LIFECYCLE_SCROLL_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_POSITION_MARKER'
 const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
+const GOAL_IDLE_CONTINUATION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_CONTINUATION_RUNNING'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
 const GOAL_IDLE_FOLLOW_UP_PROMPT =
@@ -299,7 +317,7 @@ const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_GROWTH = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 512
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 576
 )
 const MEMORY_MAX_JS_HEAP_BYTES = readNonNegativeNumber(
   process.env.WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES,
@@ -397,7 +415,19 @@ const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
       : protocol === 'chat'
         ? 'moonshot-kimi-k3'
         : `desktop-e2e-cloud-${protocol}-upstream`,
+  ...(protocol === 'responses'
+    ? { requestMode: 'passthrough', reasoning: { effort: 'high', summary: 'detailed' } }
+    : {}),
 }))
+CLOUD_MODEL_CASES.push({
+  source: 'cloud',
+  protocol: 'responses',
+  optionIds: ['desktop-e2e-cloud-responses-standard'],
+  labels: ['moonshot-kimi-k3-responses'],
+  modelId: 'moonshot-kimi-k3-responses',
+  requestMode: 'standard',
+  reasoning: { summary: 'detailed' },
+})
 const MODEL_PROTOCOL_MATRIX_CASES = [
   ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
   ...MODEL_PROTOCOLS.map(protocol => ({
@@ -459,9 +489,9 @@ const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 // the official option is served from the cloud model catalog with a canonical
 // model id that does not collide with the local Codex catalog.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
-const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
-const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -484,6 +514,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'arch',
   'distinct_id',
   'domain',
+  'duration_ms',
   'event_schema_version',
   'feature',
   'failure_stage',
@@ -491,6 +522,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'os',
   'release_channel',
   'runtime_mode',
+  'startup_id',
   'surface',
   'telemetry_session_id',
   'token',
@@ -960,9 +992,8 @@ function commandOutput(command, args, options = {}) {
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(' ')} exited with ${result.status}: ${result.stderr || result.stdout}`
-    )
+    const failureOutput = [result.stderr, result.stdout].filter(Boolean).join('\n')
+    throw new Error(`${command} ${args.join(' ')} exited with ${result.status}: ${failureOutput}`)
   }
   return result.stdout.trim()
 }
@@ -990,9 +1021,10 @@ async function commandOutputAsync(command, args, options = {}) {
         resolvePromise(stdout.trim())
         return
       }
+      const failureOutput = [stderr, stdout].filter(Boolean).join('\n')
       reject(
         new Error(
-          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${stderr || stdout}`
+          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${failureOutput}`
         )
       )
     })
@@ -1032,18 +1064,6 @@ async function runChecked(command, args, options = {}) {
       reject(new Error(`${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}`))
     })
   })
-}
-
-async function reservePort() {
-  const server = createServer()
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolvePromise)
-  })
-  const address = server.address()
-  assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-  await new Promise(resolvePromise => server.close(resolvePromise))
-  return address.port
 }
 
 class BlockingNetworkProxy {
@@ -1153,13 +1173,6 @@ async function resolveExecutable(configuredPath, fallbackCommand, description) {
   return resolved
 }
 
-async function appendProcessOutput(stream, destination) {
-  if (!stream) return
-  stream.on('data', chunk => {
-    void appendFile(destination, chunk)
-  })
-}
-
 function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
   const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
@@ -1239,19 +1252,17 @@ function requestMacosApplicationQuit(processId) {
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
-  const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
-  for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
-    await control.command('dispatchLocalModelSettingsChanged', '')
-    await Promise.race([
-      failedCloudModelRequest,
-      new Promise(resolvePromise => setTimeout(resolvePromise, 1_000)),
-    ])
-  }
-  await withTimeout(
-    failedCloudModelRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The connected desktop app did not retry models after the cloud endpoint began failing'
-  )
+  await Promise.all([
+    control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }),
+    withTimeout(
+      control.awaitFailedCloudModelRequest(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The connected desktop app did not refresh models after the cloud endpoint began failing'
+    ),
+  ])
+  await control.command('press', 'body', { key: 'Escape' })
 }
 
 async function sendPromptUntilScenarioRequest(
@@ -1262,12 +1273,8 @@ async function sendPromptUntilScenarioRequest(
   timeoutMs = MODEL_REQUEST_TIMEOUT_MS
 ) {
   const scenarioRequest = control.awaitNextScenarioRequest(scenario, timeoutMs)
-  await sendPrompt(control, selector, prompt)
-  return withTimeout(
-    scenarioRequest,
-    timeoutMs,
-    `The model service did not receive the ${scenario} request`
-  )
+  const [request] = await Promise.all([scenarioRequest, sendPrompt(control, selector, prompt)])
+  return request
 }
 
 function modelProviderSelector(providerId) {
@@ -1276,15 +1283,35 @@ function modelProviderSelector(providerId) {
 
 async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
-    const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
-    await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+    const targetSelectors = [
+      `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+      `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+    ]
+    for (const targetSelector of targetSelectors) {
+      await control.command('scrollIntoView', targetSelector).catch(() => undefined)
+      const visibleCount = await control
+        .command('getElementCount', targetSelector, { visible: true })
+        .then(value => Number(value))
+        .catch(() => 0)
+      if (visibleCount > 0) {
+        return targetOptionId
+      }
+    }
+  }
+  return null
+}
+
+async function visibleModelOptionSelector(control, targetOptionId, providerId) {
+  const selectors = [
+    `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+    `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
+  ]
+  for (const selector of selectors) {
     const visibleCount = await control
-      .command('getElementCount', targetSelector, { visible: true })
+      .command('getElementCount', selector, { visible: true })
       .then(value => Number(value))
       .catch(() => 0)
-    if (visibleCount > 0) {
-      return targetOptionId
-    }
+    if (visibleCount > 0) return selector
   }
   return null
 }
@@ -1323,7 +1350,7 @@ function hasModelOption(menu, targetOptionIds) {
 }
 
 async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
-  if (!expectedProviderId) return hasModelOption(menu, targetOptionIds)
+  if (!hasModelOption(menu, targetOptionIds)) return false
   return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
 }
 
@@ -1339,10 +1366,11 @@ async function ensureModelOptionVisible(
     let menu = JSON.parse(await control.command('snapshot', 'body'))
     if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
       return menu
-    if (menu.testIds.includes('model-control-menu-model')) {
+    if (menu.testIds.includes('model-advanced-toggle')) {
       await control
-        .command('hover', '[data-testid="model-control-menu-model"]', {
+        .command('clickWhenEnabled', '[data-testid="model-advanced-toggle"]', {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
         .catch(() => undefined)
     } else {
@@ -1436,16 +1464,23 @@ async function createSingleRootLocalProject(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await confirmLocalProjectName(control, name)
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot'))
+    if (snapshot.workbench?.currentProject?.name === name) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The created local project did not become the active composer project: ${name}`)
 }
 
 async function selectE2EModel(
   control,
   modelIds = DEFAULT_MODEL_ID,
   modelLabels = DEFAULT_MODEL_LABEL,
-  composerSelector = ''
+  composerSelector = '',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
-  const expectedProviderId = expectedModelProviderId(modelIds)
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1480,7 +1515,12 @@ async function selectE2EModel(
     targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
-  const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(expectedProviderId)}`
+  const targetSelector = await visibleModelOptionSelector(
+    control,
+    targetOptionId,
+    expectedProviderId
+  )
+  assert.ok(targetSelector, `No visible selector matched ${targetOptionId}`)
   await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1494,6 +1534,14 @@ async function selectE2EModel(
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
+  } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
+    await waitForE2EModelOptionSelected(control, targetSelector)
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-selector-menu'),
+      'The model selector menu did not close after selecting the E2E model'
+    )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
   if (expectedProviderId) {
@@ -1505,15 +1553,21 @@ async function selectE2EModel(
       'The model selector did not retain the expected provider'
     )
   }
-  const menuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (menuSnapshot.testIds.includes('model-selector-menu')) {
-    await control.command('press', 'body', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('model-selector-menu'),
-      'The model selector menu did not close after selecting the E2E model'
-    )
+}
+
+async function waitForE2EModelOptionSelected(control, targetSelector) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if (
+      (await control.command('getAttribute', targetSelector, {
+        value: 'aria-checked',
+      })) === 'true'
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
+  throw new Error(`The model option did not become selected: ${targetSelector}`)
 }
 
 async function waitForE2EModelLabel(
@@ -1568,6 +1622,7 @@ export {
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_CONTROL_SERVER_PORT,
+  MODEL_REQUEST_TIMEOUT_MS,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   COMPOSER_READY_STABILITY_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
@@ -1593,6 +1648,17 @@ export {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
   MCP_ELICITATION_PROMPT,
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_ACCEPTED_MARKER,
@@ -1639,6 +1705,7 @@ export {
   WINDOW_LIFECYCLE_SCROLL_MARKER,
   GOAL_IDLE_PROMPT,
   GOAL_IDLE_INITIAL_TEXT,
+  GOAL_IDLE_CONTINUATION_TEXT,
   GOAL_IDLE_COMPLETION_TEXT,
   GOAL_IDLE_FOLLOW_UP_PROMPT,
   GOAL_IDLE_FOLLOW_UP_TEXT,

@@ -16,6 +16,7 @@ use uuid::Uuid;
 use super::{item_type, string_field};
 use crate::agents::runtime_capabilities::workspace_root;
 use crate::logging::log_executor_event;
+use crate::path_compat::strip_windows_verbatim_prefix;
 
 const GENERATED_IMAGE_DIRECTORY: &str = "outputs/generated-images";
 const MAX_GENERATED_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
@@ -137,7 +138,9 @@ fn materialize_generated_image(
     }
 
     Ok(GeneratedImageArtifact {
-        workspace_path: workspace.display().to_string(),
+        workspace_path: strip_windows_verbatim_prefix(&workspace)
+            .display()
+            .to_string(),
         relative_path: format!("{GENERATED_IMAGE_DIRECTORY}/{filename}"),
         mime_type: image_mime_type(extension).to_owned(),
         size,
@@ -308,13 +311,14 @@ mod tests {
         assert_eq!(payload["source"]["deviceId"], "device-1");
         assert_eq!(
             payload["source"]["workspacePath"],
-            workspace
-                .path()
-                .canonicalize()
-                .unwrap()
+            strip_windows_verbatim_prefix(&workspace.path().canonicalize().unwrap())
                 .to_string_lossy()
                 .as_ref()
         );
+        assert!(!payload["source"]["workspacePath"]
+            .as_str()
+            .unwrap()
+            .starts_with(r"\\?\"));
         assert_eq!(payload["width"], 4);
         assert_eq!(payload["height"], 2);
         assert!(payload["source"]["path"]

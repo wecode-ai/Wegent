@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Knowledge Runtime One-Click Startup Script (uv-based)
-# Usage: ./start.sh [--port PORT] [--host HOST] [--backend-url URL]
+# Usage: ./start.sh [--port PORT] [--host HOST]
 
 set -e
 
@@ -35,11 +35,9 @@ NC='\033[0m' # No Color
 # Default configuration
 DEFAULT_PORT=8200
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_BACKEND_URL="http://localhost:8000"
 
 PORT=$DEFAULT_PORT
 HOST=$DEFAULT_HOST
-BACKEND_URL=$DEFAULT_BACKEND_URL
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -56,10 +54,6 @@ while [[ $# -gt 0 ]]; do
             PYTHON_PATH="$2"
             shift 2
             ;;
-        --backend-url)
-            BACKEND_URL="$2"
-            shift 2
-            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -67,13 +61,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --port PORT              Knowledge Runtime server port (default: 8200)"
             echo "  --host HOST              Knowledge Runtime server host (default: 0.0.0.0)"
             echo "  --python PATH            Python executable path (default: auto-detect)"
-            echo "  --backend-url URL        Backend internal API URL (default: http://localhost:8000)"
             echo "  -h, --help               Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                                    # Use default configuration"
             echo "  $0 --port 8300                        # Use custom port"
-            echo "  $0 --backend-url http://backend:8000  # Use remote backend"
             exit 0
             ;;
         *)
@@ -125,7 +117,6 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 echo -e "${GREEN}Configuration:${NC}"
 echo -e "  Knowledge Runtime:  http://$HOST:$PORT"
-echo -e "  Backend API:        $BACKEND_URL"
 echo ""
 
 # Check port
@@ -267,14 +258,6 @@ if [ ! -f ".env" ]; then
     cp .env.example .env
     echo -e "${GREEN}✓ Created .env from .env.example${NC}"
 
-    # Update backend URL in .env
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        sed -i '' "s|BACKEND_INTERNAL_URL=.*|BACKEND_INTERNAL_URL=$BACKEND_URL|g" .env
-    else
-        # Linux
-        sed -i "s|BACKEND_INTERNAL_URL=.*|BACKEND_INTERNAL_URL=$BACKEND_URL|g" .env
-    fi
     echo -e "${YELLOW}Note: Please review and update .env file with your actual configuration${NC}"
 else
     echo -e "${GREEN}✓ .env file already exists${NC}"
@@ -293,4 +276,4 @@ echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo ""
 
 # Start uvicorn
-.venv/bin/python -m uvicorn knowledge_runtime.main:app --host "$HOST" --port "$PORT" --reload
+.venv/bin/python -m uvicorn knowledge_runtime.main:app --env-file .env --host "$HOST" --port "$PORT" --reload

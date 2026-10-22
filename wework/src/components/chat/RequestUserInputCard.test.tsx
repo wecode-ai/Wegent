@@ -4,6 +4,114 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { RequestUserInputCard } from './RequestUserInputCard'
+import { openExternalUrl } from '@/lib/external-links'
+
+vi.mock('@/lib/external-links', () => ({ openExternalUrl: vi.fn().mockResolvedValue(true) }))
+
+const urlPayload = {
+  kind: 'request_user_input',
+  interactionKind: 'mcp_url',
+  requestId: 0,
+  itemId: 'mcp_server_elicitation',
+  serverName: 'codex_apps',
+  message: 'Connect GitHub',
+  url: 'https://chatgpt.com/connect/github?state=secret',
+  elicitationId: 'github-auth-1',
+}
+
+describe('MCP browser authorization', () => {
+  test('shows the host and opens the system browser only after explicit consent', async () => {
+    vi.mocked(openExternalUrl).mockClear()
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    render(<RequestUserInputCard payload={urlPayload} onSubmit={onSubmit} />)
+    expect(screen.getByTestId('mcp-url-authorization-card')).toHaveTextContent('chatgpt.com')
+    expect(screen.getByTestId('mcp-url-authorization-card')).not.toHaveTextContent('state=secret')
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('mcp-url-authorization-open'))
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(urlPayload.url, { target: 'system' })
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      requestId: 0,
+      itemId: urlPayload.itemId,
+      answers: { __mcp_url: { answers: ['accept'] } },
+    })
+  })
+
+  test('cancel responds to the original request without opening the browser', async () => {
+    vi.mocked(openExternalUrl).mockClear()
+    const onSubmit = vi.fn()
+    render(<RequestUserInputCard payload={urlPayload} onSubmit={onSubmit} />)
+    await userEvent.click(screen.getByTestId('mcp-url-authorization-cancel'))
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 0,
+      itemId: urlPayload.itemId,
+      answers: { __mcp_url: { answers: ['cancel'] } },
+    })
+  })
+
+  test('browser failure leaves the card retryable and does not acknowledge consent', async () => {
+    vi.mocked(openExternalUrl).mockRejectedValueOnce(new Error('secret URL must not be displayed'))
+    const onSubmit = vi.fn()
+    render(<RequestUserInputCard payload={urlPayload} onSubmit={onSubmit} />)
+    await userEvent.click(screen.getByTestId('mcp-url-authorization-open'))
+    expect(screen.getByRole('alert')).not.toHaveTextContent('secret URL')
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('mcp-url-authorization-open')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('mcp-url-authorization-open'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('unsafe URLs cannot be opened but can be cancelled', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{ ...urlPayload, url: 'javascript:alert(1)' }}
+        onSubmit={onSubmit}
+      />
+    )
+    expect(screen.getByTestId('mcp-url-authorization-open')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('mcp-url-authorization-cancel'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('rejected responses remain retryable and Escape sends cancellation', async () => {
+    const onSubmit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    render(<RequestUserInputCard payload={urlPayload} onSubmit={onSubmit} />)
+    await userEvent.click(screen.getByTestId('mcp-url-authorization-open'))
+    expect(screen.getByRole('alert')).toBeVisible()
+    expect(screen.getByTestId('mcp-url-authorization-cancel')).toBeEnabled()
+    fireEvent.keyDown(screen.getByTestId('mcp-url-authorization-cancel'), { key: 'Escape' })
+    await act(async () => {})
+    expect(onSubmit).toHaveBeenLastCalledWith({
+      requestId: 0,
+      itemId: urlPayload.itemId,
+      answers: { __mcp_url: { answers: ['cancel'] } },
+    })
+  })
+
+  test('duplicate clicks cannot open two authorization windows', async () => {
+    let finishOpen: (() => void) | undefined
+    vi.mocked(openExternalUrl)
+      .mockClear()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishOpen = () => resolve(true)
+          })
+      )
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    render(<RequestUserInputCard payload={urlPayload} onSubmit={onSubmit} />)
+    const button = screen.getByTestId('mcp-url-authorization-open')
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(openExternalUrl).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    await act(async () => {
+      finishOpen?.()
+    })
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+})
 
 const payload = {
   kind: 'request_user_input',
@@ -360,5 +468,59 @@ describe('RequestUserInputCard', () => {
     await user.keyboard('{Escape}')
 
     expect(onIgnore).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('compact inline questions', () => {
+  test('single-question options send the original answer without an extra submit control', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+    render(
+      <RequestUserInputCard
+        compact
+        payload={{
+          kind: 'request_user_input',
+          requestId: 17,
+          itemId: 'retention-1',
+          questions: [
+            {
+              id: 'retention',
+              question: '删除后是否保留历史会话？',
+              options: [
+                { label: '保留会话', value: 'keep' },
+                { label: '一并删除', value: 'delete' },
+              ],
+            },
+          ],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+    expect(screen.queryByTestId('request-user-input-submit-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('request-user-input-ignore-button')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('request-user-input-option-retention-0'))
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      requestId: 17,
+      itemId: 'retention-1',
+      answers: { retention: { answers: ['keep'] } },
+    })
+  })
+  test('custom inline answers retain their submit action', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+    render(
+      <RequestUserInputCard
+        compact
+        payload={{
+          kind: 'request_user_input',
+          questions: [{ id: 'details', question: '补充要求', is_other: true }],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+    await user.type(screen.getByTestId('request-user-input-custom-details'), '保留历史会话')
+    await user.click(screen.getByTestId('request-user-input-submit-button'))
+    expect(onSubmit).toHaveBeenCalledOnce()
+    expect(onSubmit.mock.calls[0][0].answers).toEqual({ details: { answers: ['保留历史会话'] } })
   })
 })

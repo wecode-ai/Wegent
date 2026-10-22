@@ -5,8 +5,27 @@
 import type {
   CollaborationIssue,
   CollaborationProject,
+  CollaborationRole,
   CollaborationView,
 } from "./types";
+
+type ProjectRoleSource = Pick<
+  CollaborationProject,
+  "access_role" | "project_store"
+>;
+
+/** Resolve the effective role, treating a local project as owner-trusted. */
+function resolveProjectRole(project: ProjectRoleSource): CollaborationRole {
+  return (
+    project.access_role ??
+    (project.project_store === "local" ? "Owner" : "Viewer")
+  );
+}
+
+/** Developer and above may change Issue content. */
+function canModifyIssues(role: CollaborationRole): boolean {
+  return role === "Owner" || role === "Maintainer" || role === "Developer";
+}
 
 export function canEditCollaborationIssue(
   issue: Pick<CollaborationIssue, "can_edit">,
@@ -15,29 +34,31 @@ export function canEditCollaborationIssue(
 }
 
 export function canCommentCollaborationIssue(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
+  project: ProjectRoleSource,
   issue: Pick<CollaborationIssue, "can_view_detail">,
 ): boolean {
   if (issue.can_view_detail === false) return false;
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
-  return role !== "RestrictedAnalyst";
+  return canModifyIssues(resolveProjectRole(project));
 }
 
 export function canAssignCollaborationIssue(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
+  project: ProjectRoleSource,
 ): boolean {
-  const role =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
-  return role === "Owner" || role === "Maintainer";
+  return canModifyIssues(resolveProjectRole(project));
 }
 
 export function canStartWorkOnCollaborationIssue(
   issue: Pick<CollaborationIssue, "can_view_detail">,
 ): boolean {
   return issue.can_view_detail !== false;
+}
+
+/** Only Maintainers and Owners may change an Issue's security level. */
+export function canManageCollaborationIssueSecurity(
+  project: ProjectRoleSource,
+): boolean {
+  const role = resolveProjectRole(project);
+  return role === "Owner" || role === "Maintainer";
 }
 
 export interface CollaborationIssueActionPermissions {
@@ -48,27 +69,34 @@ export interface CollaborationIssueActionPermissions {
 }
 
 export function getCollaborationIssueActionPermissions(
-  project: Pick<CollaborationProject, "access_role" | "project_store">,
-  issue: Pick<CollaborationIssue, "can_edit" | "can_view_detail">,
+  project: ProjectRoleSource & Pick<CollaborationProject, "current_user_id">,
+  issue: Pick<
+    CollaborationIssue,
+    "can_edit" | "can_view_detail" | "created_by_user_id"
+  >,
 ): CollaborationIssueActionPermissions {
-  const canStartWork = canStartWorkOnCollaborationIssue(issue);
+  const canViewDetail = canStartWorkOnCollaborationIssue(issue);
+  const canWork = canViewDetail && canModifyIssues(resolveProjectRole(project));
   return {
     canEdit: canEditCollaborationIssue(issue),
     canComment: canCommentCollaborationIssue(project, issue),
-    canAssign: canStartWork && canAssignCollaborationIssue(project),
-    canStartWork,
+    canAssign: canViewDetail && canAssignCollaborationIssue(project),
+    canStartWork: canWork,
   };
 }
 
 export function canAccessCollaborationProjectView(
-  project: Pick<CollaborationProject, "access_role"> &
-    Partial<Pick<CollaborationProject, "project_store">>,
+  project: ProjectRoleSource,
   view: CollaborationView,
 ): boolean {
-  const accessRole =
-    project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
-  if (view === "board" || view === "table") return true;
-  if (view === "files") return accessRole !== "RestrictedAnalyst";
-  return accessRole === "Owner" || accessRole === "Maintainer";
+  const role = resolveProjectRole(project);
+  if (
+    view === "board" ||
+    view === "calendar" ||
+    view === "gantt" ||
+    view === "table"
+  )
+    return true;
+  if (view === "files") return canModifyIssues(role);
+  return role === "Owner" || role === "Maintainer";
 }

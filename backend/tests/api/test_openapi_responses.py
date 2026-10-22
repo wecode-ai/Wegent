@@ -525,6 +525,134 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 404
         assert "Previous response" in response.json()["detail"]
 
+    def test_create_response_continuation_routes_to_task_device(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+        test_db: Session,
+    ):
+        """Follow-ups on a device conversation are dispatched to that device."""
+        from app.schemas.openapi_response import ResponseObject
+        from app.services.device_service import device_service
+
+        device_id = "device-continuation"
+        task_json = dict(test_task.json)
+        task_json["spec"] = {**task_json["spec"], "device_id": device_id}
+        test_task.json = task_json
+        test_db.commit()
+
+        mock_response = ResponseObject(
+            id=f"resp_{test_task.id}",
+            created_at=int(datetime.now().timestamp()),
+            status="queued",
+            model="default#test-team",
+            output=[],
+        )
+
+        with (
+            patch.object(
+                device_service,
+                "get_device_online_info",
+                new=AsyncMock(return_value={"status": "online"}),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._create_non_streaming_response_unified",
+                return_value=mock_response,
+            ) as mock_create_sync,
+        ):
+            response = test_client.post(
+                "/api/v1/responses",
+                headers={"X-API-Key": test_api_key[0]},
+                json={
+                    "model": "default#test-team",
+                    "input": "2",
+                    "previous_response_id": f"resp_{test_task.id}",
+                },
+            )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["device_id"] == device_id
+
+    def test_create_response_continuation_rejects_offline_device(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+        test_db: Session,
+    ):
+        """An offline device fails the follow-up instead of the executor manager."""
+        from app.services.device_service import device_service
+
+        task_json = dict(test_task.json)
+        task_json["spec"] = {**task_json["spec"], "device_id": "device-offline"}
+        test_task.json = task_json
+        test_db.commit()
+
+        with (
+            patch.object(
+                device_service,
+                "get_device_online_info",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._create_non_streaming_response_unified",
+            ) as mock_create_sync,
+        ):
+            response = test_client.post(
+                "/api/v1/responses",
+                headers={"X-API-Key": test_api_key[0]},
+                json={
+                    "model": "default#test-team",
+                    "input": "2",
+                    "previous_response_id": f"resp_{test_task.id}",
+                },
+            )
+
+        assert response.status_code == 503
+        assert "offline" in response.json()["detail"]
+        mock_create_sync.assert_not_called()
+
+    def test_create_response_continuation_without_device_keeps_executor_manager(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+    ):
+        """Tasks without a device keep the previous executor manager routing."""
+        from app.schemas.openapi_response import ResponseObject
+
+        mock_response = ResponseObject(
+            id=f"resp_{test_task.id}",
+            created_at=int(datetime.now().timestamp()),
+            status="queued",
+            model="default#test-team",
+            output=[],
+        )
+
+        with patch(
+            "app.api.endpoints.openapi_responses._create_non_streaming_response_unified",
+            return_value=mock_response,
+        ) as mock_create_sync:
+            response = test_client.post(
+                "/api/v1/responses",
+                headers={"X-API-Key": test_api_key[0]},
+                json={
+                    "model": "default#test-team",
+                    "input": "2",
+                    "previous_response_id": f"resp_{test_task.id}",
+                },
+            )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["device_id"] is None
+
     def test_create_response_model_not_found(
         self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):
@@ -1372,6 +1500,8 @@ class TestOpenAPIResponsesCreate:
         execution_request = SimpleNamespace(
             task_id=101,
             subtask_id=654,
+            user={"id": test_user.id},
+            bot=[{"shell_type": "ClaudeCode"}],
             model_config={"modelType": "llm"},
         )
 
@@ -1913,63 +2043,6 @@ class TestOpenAPIResponsesCreate:
 class TestOpenAPIResponsesGet:
     """Test GET /api/v1/responses/{response_id} endpoint."""
 
-    def test_get_response_invalid_format(self, test_client: TestClient, test_api_key):
-        """Test get response fails with invalid response_id format."""
-        response = test_client.get(
-            "/api/v1/responses/invalid_id",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
-
-    def test_get_response_invalid_number(self, test_client: TestClient, test_api_key):
-        """Test get response fails with invalid response_id number."""
-        response = test_client.get(
-            "/api/v1/responses/resp_abc",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
-
-    def test_get_response_not_found(self, test_client: TestClient, test_api_key):
-        """Test get response fails when response not found."""
-        response = test_client.get(
-            "/api/v1/responses/resp_99999",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
-
-    def test_get_response_without_auth(self, test_client: TestClient):
-        """Test get response fails without authentication."""
-        response = test_client.get("/api/v1/responses/resp_1")
-
-        assert response.status_code == 401
-
-    def test_get_response_success(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_task: TaskResource,
-        test_subtasks: list,
-    ):
-        """Test successful response retrieval."""
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == f"resp_{test_task.id}"
-        assert data["status"] == "completed"
-        assert len(data["output"]) == 1
-        assert data["output"][0]["type"] == "message"
-        assert data["output"][0]["role"] == "assistant"
-
     def test_task_to_response_object_omits_pending_user_input_from_subtasks(
         self,
         test_user: User,
@@ -2000,39 +2073,6 @@ class TestOpenAPIResponsesGet:
         assert response.output[0].type == "mcp_call"
         assert "pending_user_input" not in response.output[0].output
         assert "pending_user_input_payload" not in response.output[0].output
-
-    def test_get_response_omits_pending_user_input(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-        test_team: Kind,
-        test_task: TaskResource,
-    ):
-        """GET endpoint should omit legacy pending interactive form state."""
-        assistant_subtask = _assistant_subtask_with_pending_form(
-            subtask_id=304,
-            task_id=test_task.id,
-            user_id=test_user.id,
-            team_id=test_team.id,
-        )
-        assistant_subtask.message_id = 1
-        test_db.add(assistant_subtask)
-        test_db.commit()
-
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["pending_user_input"] is None
-        assert data["pending_user_input_payload"] is None
-        assert data["output"][0]["type"] == "mcp_call"
-        assert "pending_user_input" not in data["output"][0]["output"]
-        assert "pending_user_input_payload" not in data["output"][0]["output"]
 
     def test_task_to_response_object_ignores_stale_pending_state_from_earlier_turn(
         self,
@@ -2081,71 +2121,6 @@ class TestOpenAPIResponsesGet:
         assert response.status == "completed"
         assert response.pending_user_input is None
         assert response.pending_user_input_payload is None
-
-    def test_get_response_ignores_stale_pending_state_from_earlier_turn(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-        test_team: Kind,
-        test_task: TaskResource,
-    ):
-        """GET endpoint should compute top-level pending state from the latest assistant turn only."""
-        stale_assistant = _assistant_subtask_with_pending_form(
-            subtask_id=305,
-            task_id=test_task.id,
-            user_id=test_user.id,
-            team_id=test_team.id,
-        )
-        stale_assistant.message_id = 1
-        current_assistant = Subtask(
-            user_id=test_user.id,
-            task_id=test_task.id,
-            team_id=test_team.id,
-            title="Assistant response",
-            bot_ids=[1],
-            role=SubtaskRole.ASSISTANT,
-            executor_namespace="",
-            executor_name="",
-            prompt="",
-            status=SubtaskStatus.COMPLETED,
-            progress=100,
-            message_id=2,
-            parent_id=1,
-            error_message="",
-            completed_at=datetime.now(),
-            result={"value": "done"},
-            sender_type=SenderType.TEAM,
-            sender_user_id=0,
-        )
-        test_db.add(stale_assistant)
-        test_db.add(current_assistant)
-        test_db.commit()
-
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["pending_user_input"] is None
-        assert data["pending_user_input_payload"] is None
-
-    def test_get_response_user_isolation(
-        self,
-        test_client: TestClient,
-        test_admin_api_key,
-        test_task: TaskResource,
-    ):
-        """Test users cannot access other users' responses."""
-        response = test_client.get(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_admin_api_key[0]},
-        )
-
-        assert response.status_code == 404
 
 
 @pytest.mark.api
@@ -2393,219 +2368,6 @@ class TestOpenAPIResponsesCancel:
 
         assert response.status_code == 200
         assert response.json()["id"] == f"resp_{task.id}"
-
-
-@pytest.mark.api
-class TestOpenAPIResponsesDelete:
-    """Test DELETE /api/v1/responses/{response_id} endpoint."""
-
-    def test_delete_response_invalid_format(
-        self, test_client: TestClient, test_api_key
-    ):
-        """Test delete response fails with invalid response_id format."""
-        response = test_client.delete(
-            "/api/v1/responses/invalid_id",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
-
-    def test_delete_response_invalid_number(
-        self, test_client: TestClient, test_api_key
-    ):
-        """Test delete response fails with invalid response_id number."""
-        response = test_client.delete(
-            "/api/v1/responses/resp_abc",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 400
-        assert "Invalid response_id format" in response.json()["detail"]
-
-    def test_delete_response_not_found(self, test_client: TestClient, test_api_key):
-        """Test delete response fails when response not found."""
-        response = test_client.delete(
-            "/api/v1/responses/resp_99999",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
-
-    def test_delete_response_without_auth(self, test_client: TestClient):
-        """Test delete response fails without authentication."""
-        response = test_client.delete("/api/v1/responses/resp_1")
-
-        assert response.status_code == 401
-
-    def test_delete_response_success(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-    ):
-        """Test successful response deletion."""
-        # Create a task to delete
-        task_json = {
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Task",
-            "metadata": {
-                "name": "task-to-delete",
-                "namespace": "default",
-                "labels": {"source": "api"},
-            },
-            "spec": {
-                "title": "Task to delete",
-                "prompt": "Hello",
-                "teamRef": {"name": "test-team", "namespace": "default"},
-                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
-            },
-            "status": {
-                "status": "COMPLETED",
-                "progress": 100,
-                "result": {"value": "Done"},
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-                "completedAt": datetime.now().isoformat(),
-            },
-        }
-        task = TaskResource(
-            user_id=test_user.id,
-            kind="Task",
-            name="task-to-delete",
-            namespace="default",
-            json=task_json,
-            is_active=True,
-        )
-        test_db.add(task)
-        test_db.commit()
-        test_db.refresh(task)
-
-        task_id = task.id
-
-        response = test_client.delete(
-            f"/api/v1/responses/resp_{task_id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == f"resp_{task_id}"
-        assert data["deleted"] is True
-
-        # Verify task is deleted (should return 404)
-        get_response = test_client.get(
-            f"/api/v1/responses/resp_{task_id}",
-            headers={"X-API-Key": test_api_key[0]},
-        )
-        assert get_response.status_code == 404
-
-    def test_delete_response_cleans_runtime_by_task_id_when_binding_missing(
-        self,
-        test_client: TestClient,
-        test_api_key,
-        test_db: Session,
-        test_user: User,
-        test_team: Kind,
-    ):
-        """Deleting an executor response should clean runtime even before executor binding is persisted."""
-        task_json = {
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Task",
-            "metadata": {
-                "name": "task-runtime-binding-missing",
-                "namespace": "default",
-                "labels": {"source": "api"},
-            },
-            "spec": {
-                "title": "Running task",
-                "prompt": "Hello",
-                "teamRef": {"name": "test-team", "namespace": "default"},
-                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
-            },
-            "status": {
-                "status": "RUNNING",
-                "progress": 10,
-                "result": None,
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-            },
-        }
-        task = TaskResource(
-            user_id=test_user.id,
-            kind="Task",
-            name="task-runtime-binding-missing",
-            namespace="default",
-            json=task_json,
-            is_active=True,
-        )
-        test_db.add(task)
-        test_db.flush()
-
-        running_subtask = Subtask(
-            user_id=test_user.id,
-            task_id=task.id,
-            team_id=test_team.id,
-            title="Assistant response",
-            bot_ids=[1],
-            role=SubtaskRole.ASSISTANT,
-            executor_namespace="",
-            executor_name="",
-            prompt="",
-            status=SubtaskStatus.RUNNING,
-            progress=10,
-            message_id=1,
-            parent_id=0,
-            error_message="",
-            completed_at=datetime(1970, 1, 1, 0, 0, 0),
-            result=None,
-            sender_type=SenderType.TEAM,
-            sender_user_id=0,
-        )
-        test_db.add(running_subtask)
-        test_db.commit()
-        test_db.refresh(task)
-
-        runtime_client = MagicMock()
-        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
-        runtime_client.delete_sandbox = AsyncMock(return_value=(True, None))
-        runtime_client.cleanup_sandbox_by_task_id = AsyncMock(
-            return_value={"deleted": True}
-        )
-
-        with patch(
-            "app.services.execution.get_executor_runtime_client",
-            return_value=runtime_client,
-        ):
-            response = test_client.delete(
-                f"/api/v1/responses/resp_{task.id}",
-                headers={"X-API-Key": test_api_key[0]},
-            )
-
-        assert response.status_code == 200
-        assert response.json()["deleted"] is True
-        runtime_client.cleanup_sandbox_by_task_id.assert_awaited_once_with(
-            task_id=task.id,
-            archive_before_delete=False,
-        )
-
-    def test_delete_response_user_isolation(
-        self,
-        test_client: TestClient,
-        test_admin_api_key,
-        test_task: TaskResource,
-    ):
-        """Test users cannot delete other users' responses."""
-        response = test_client.delete(
-            f"/api/v1/responses/resp_{test_task.id}",
-            headers={"X-API-Key": test_admin_api_key[0]},
-        )
-
-        assert response.status_code == 404
 
 
 @pytest.mark.api

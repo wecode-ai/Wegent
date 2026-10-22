@@ -7,7 +7,7 @@ import {
 import type { DeviceCommandApi } from '@/api/environment'
 import type { RuntimeDeviceWorkspace, RuntimeTaskSummary } from '@/types/api'
 
-const CACHE_KEY = 'wework:change-request-snapshots:v1'
+const CACHE_KEY = 'wework:change-request-snapshots:v2'
 const REFRESH_INTERVAL_MS = 30_000
 const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -107,7 +107,7 @@ export class ChangeRequestMonitor {
       references: (current?.references ?? 0) + 1,
     })
     this.startTimer()
-    this.scheduleRefresh()
+    if (!current) this.scheduleRefresh()
     return () => {
       const registered = this.targets.get(key)
       if (!registered) return
@@ -143,7 +143,15 @@ export class ChangeRequestMonitor {
           const key = targetKey(result.target)
           const previous = this.snapshots.get(key)
           if (result.error && previous) {
-            this.snapshots.set(key, { ...previous, stale: true, error: result.error })
+            this.snapshots.set(key, {
+              ...previous,
+              target: result.target,
+              fetchedAt: result.fetchedAt,
+              provider: result.provider,
+              lookupState: result.lookupState,
+              stale: true,
+              error: result.error,
+            })
             changed = true
             continue
           }
@@ -206,10 +214,22 @@ export function useTaskChangeRequest(
   monitor: ChangeRequestMonitor | null,
   target: TaskChangeRequestTarget | null
 ): TaskChangeRequestSnapshot | null {
+  const deviceId = target?.deviceId ?? null
+  const taskId = target?.taskId ?? null
+  const workspacePath = target?.workspacePath ?? null
+  const remoteUrl = target?.remoteUrl ?? null
+  const branch = target?.branch ?? null
+
   useEffect(() => {
-    if (!monitor || !target) return
-    return monitor.register(target)
-  }, [monitor, target])
+    if (!monitor || !deviceId || !taskId || !workspacePath || !remoteUrl || !branch) return
+    return monitor.register({
+      deviceId,
+      taskId,
+      workspacePath,
+      remoteUrl,
+      branch,
+    })
+  }, [branch, deviceId, monitor, remoteUrl, taskId, workspacePath])
 
   return useSyncExternalStore(
     listener => monitor?.subscribe(listener) ?? (() => undefined),

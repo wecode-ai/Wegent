@@ -24,6 +24,8 @@ import {
   registerPluginDevelopmentCapabilities,
   registerRendererStorageCapabilities,
   showElectronNotification,
+  type ElectronDesktopServices,
+  type ElectronE2EHost,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
@@ -33,15 +35,18 @@ import type { RendererStorageStore } from './renderer-storage-store.js'
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
-  clipboardAvailableFormats: vi.fn(() => [] as string[]),
-  clipboardRead: vi.fn(() => ''),
-  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
+  clipboardRead: vi.fn(
+    async () => [] as Array<{ types: string[]; getType: (type: string) => Promise<Blob> }>
+  ),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
   dialogShowMessageBox: vi.fn(),
   dialogShowOpenDialog: vi.fn(),
   dialogShowSaveDialog: vi.fn(),
   powerMonitorGetSystemIdleTime: vi.fn(() => 0),
+  notificationOnce: vi.fn<(event: string, listener: () => void) => void>(),
+  notificationShow: vi.fn(),
+  notificationIsSupported: vi.fn(() => true),
   shellOpenExternal: vi.fn(async () => undefined),
   shellOpenPath: vi.fn(async () => ''),
   shellShowItemInFolder: vi.fn(),
@@ -54,9 +59,7 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class BrowserWindow {},
   clipboard: {
-    availableFormats: electronMocks.clipboardAvailableFormats,
     read: electronMocks.clipboardRead,
-    readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
   },
@@ -66,9 +69,10 @@ vi.mock('electron', () => ({
     showSaveDialog: electronMocks.dialogShowSaveDialog,
   },
   Notification: class Notification {
+    static isSupported = electronMocks.notificationIsSupported
     constructor(readonly options: { title: string; body: string }) {}
-    once = vi.fn()
-    show = vi.fn()
+    once = electronMocks.notificationOnce
+    show = electronMocks.notificationShow
   },
   powerMonitor: {
     getSystemIdleTime: electronMocks.powerMonitorGetSystemIdleTime,
@@ -93,6 +97,23 @@ describe('Smart App verification capabilities', () => {
   test('grants only the named inspect and verify operations', () => {
     expect(HOST_CAPABILITIES).toContain('smartApps.inspectVerification')
     expect(HOST_CAPABILITIES).toContain('smartApps.verify')
+  })
+
+  test('allows an empty parent and purpose when creating a workbench', async () => {
+    const createDirectory = vi.fn(async () => ({ id: 'created-app' }))
+    const { router } = createIsolatedClipboardRouter(true, undefined, { createDirectory })
+    const input = {
+      parentPath: '',
+      name: 'created-app',
+      displayName: 'Created App',
+      description: '',
+      template: 'web',
+    }
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.createDirectory', input)
+    ).resolves.toEqual({ id: 'created-app' })
+    expect(createDirectory).toHaveBeenCalledWith(input)
   })
 })
 
@@ -137,6 +158,52 @@ describe('e2eSaveDialogOverride', () => {
 })
 
 describe('showElectronNotification', () => {
+  beforeEach(() => {
+    electronMocks.notificationOnce.mockClear()
+    electronMocks.notificationShow.mockClear()
+  })
+
+  test('carries the URL through the actual notification capability and click callback', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    const url = 'wework://boards/12/issues/ISSUE-1'
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.show', {
+      title: 'Assigned',
+      body: 'Open the project task.',
+      url,
+    })
+    expect(notificationNavigation.openScheme).not.toHaveBeenCalled()
+    expect(electronMocks.notificationShow).toHaveBeenCalledOnce()
+
+    const click = electronMocks.notificationOnce.mock.calls[0][1]
+    click()
+
+    expect(notificationNavigation.openScheme).toHaveBeenCalledExactlyOnceWith(url)
+    expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('uses the production click action for desktop regression activation', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    const url = 'wework://tasks/device-1/task-1'
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'e2e.activateNotification', { url })
+
+    expect(notificationNavigation.openScheme).toHaveBeenCalledExactlyOnceWith(url)
+    expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('rejects external notification destinations before displaying them', () => {
+    const createNotification = vi.fn()
+    expect(() =>
+      showElectronNotification(
+        { title: 'Ready', body: 'Open.', url: 'https://example.com' },
+        { openScheme: vi.fn(), openRuntimeTask: vi.fn() },
+        createNotification
+      )
+    ).toThrow('Notification links must use wework://')
+    expect(createNotification).not.toHaveBeenCalled()
+  })
+
   test('opens the targeted runtime task when the notification is clicked', () => {
     const openRuntimeTask = vi.fn()
     const listeners = new Map<string, () => void>()
@@ -153,7 +220,7 @@ describe('showElectronNotification', () => {
         body: 'The reply is ready.',
         taskAddressId: 'device-1:task-1',
       },
-      openRuntimeTask,
+      { openRuntimeTask, openScheme: vi.fn() },
       () => notification
     )
     listeners.get('click')?.()
@@ -173,12 +240,39 @@ describe('showElectronNotification', () => {
         title: 'Assigned',
         body: 'A project task was assigned.',
       },
-      vi.fn(),
+      { openRuntimeTask: vi.fn(), openScheme: vi.fn() },
       () => notification
     )
 
-    expect(notification.once).not.toHaveBeenCalled()
+    expect(notification.once).toHaveBeenCalledWith('close', expect.any(Function))
     expect(notification.show).toHaveBeenCalledOnce()
+  })
+
+  test.each([
+    'wework://tasks/device-1/task-1',
+    'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+    'wework://boards/local/local-project-1/issues/OFF-1',
+  ])('queues the same destination as an in-app notification on click: %s', url => {
+    const navigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
+    const listeners = new Map<string, () => void>()
+    const notification = {
+      once: vi.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener)
+      }),
+      show: vi.fn(),
+    }
+    showElectronNotification(
+      { title: 'Ready', body: 'Open the result.', url },
+      navigation,
+      () => notification
+    )
+
+    expect(navigation.openScheme).not.toHaveBeenCalled()
+    expect(notification.once).toHaveBeenCalledWith('click', expect.any(Function))
+    listeners.get('click')!()
+
+    expect(navigation.openScheme).toHaveBeenCalledExactlyOnceWith(url)
+    expect(navigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 })
 
@@ -221,7 +315,14 @@ function createWebContents(input: {
   return { capturePage, contents, debuggerSession }
 }
 
-function createIsolatedClipboardRouter(focused = true) {
+function createIsolatedClipboardRouter(
+  focused = true,
+  popoutHost?: Partial<ElectronE2EHost>,
+  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
+  services?: Partial<ElectronDesktopServices>,
+  storedPreferences: Record<string, unknown> = { workbenchMode: 'developer' }
+) {
+  const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => focused),
@@ -235,18 +336,21 @@ function createIsolatedClipboardRouter(focused = true) {
       state: 'ready',
       updatedAt: '2026-09-12T00:00:00.000Z',
     }),
-    () => null,
-    {} as never,
+    () => (smartApps ?? null) as never,
+    { read: vi.fn().mockResolvedValue(storedPreferences) } as never,
     {} as never,
     {} as never,
     {} as never,
     {
+      executorHome: '/tmp/wework-clipboard-test/executor',
       cleanupStaleTemporaryImages: vi.fn(),
       coreDshPlugins: () => null,
-      events: { read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })) },
+      events: {
+        publish: vi.fn(),
+        read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })),
+      },
       feedback: {} as never,
-      openRuntimeTask: vi.fn(),
-      openScheme: vi.fn(),
+      ...notificationNavigation,
       pendingSchemes: {
         acknowledge: vi.fn(),
         read: vi.fn(() => ({ items: [] })),
@@ -257,10 +361,168 @@ function createIsolatedClipboardRouter(focused = true) {
         get: vi.fn(),
         set: vi.fn(),
       },
-    } as never
+      ...services,
+    } as never,
+    popoutHost as never
   )
-  return { router, targetWindow }
+  return { router, targetWindow, notificationNavigation }
 }
+
+describe('Process explorer capabilities', () => {
+  test('stays read-only', () => {
+    expect(HOST_CAPABILITIES).not.toContain('diagnostics.endProcess')
+  })
+})
+
+describe('Core DSH runtime capabilities', () => {
+  test('commits a mode before scheduling its restart outside the renderer lifetime', async () => {
+    const stored = { workbenchMode: 'developer' }
+    const updatePreferences = vi.fn(async patch => Object.assign(stored, patch))
+    const scheduleCoreDshRestart = vi.fn()
+    const completions: Array<() => void | Promise<void>> = []
+    const { router } = createIsolatedClipboardRouter(
+      true,
+      { scheduleCoreDshRestart },
+      undefined,
+      { updatePreferences },
+      stored
+    )
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.changeWorkbenchMode',
+        { mode: 'focus' },
+        { onResponseSent: completion => completions.push(completion) }
+      )
+    ).resolves.toEqual({ workbenchMode: 'focus' })
+
+    expect(stored.workbenchMode).toBe('focus')
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
+    expect(updatePreferences).toHaveBeenCalledExactlyOnceWith({ workbenchMode: 'focus' })
+    expect(stored.workbenchMode).toBe('focus')
+  })
+
+  test('does not restart an unchanged persisted mode', async () => {
+    const scheduleCoreDshRestart = vi.fn()
+    const updatePreferences = vi.fn().mockResolvedValue({ workbenchMode: 'developer' })
+    const { router } = createIsolatedClipboardRouter(true, { scheduleCoreDshRestart }, undefined, {
+      updatePreferences,
+    })
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'runtime.changeWorkbenchMode', { mode: 'developer' })
+
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+  })
+
+  test('does not schedule a mode restart when persistence fails', async () => {
+    const completions = vi.fn()
+    const updatePreferences = vi.fn().mockRejectedValue(new Error('disk unavailable'))
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.changeWorkbenchMode',
+        { mode: 'focus' },
+        { onResponseSent: completions }
+      )
+    ).rejects.toThrow('disk unavailable')
+
+    expect(completions).not.toHaveBeenCalled()
+  })
+
+  test('rejects unsupported modes before writing preferences', async () => {
+    const updatePreferences = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+    })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'runtime.changeWorkbenchMode', { mode: 'unknown' })
+    ).rejects.toThrow()
+
+    expect(updatePreferences).not.toHaveBeenCalled()
+  })
+
+  test('publishes persisted preferences to every subscribed window', async () => {
+    const updated = { fixedWorkspaceTabs: [{ id: 'task-1', kind: 'task' }] }
+    const publish = vi.fn()
+    const updatePreferences = vi.fn().mockResolvedValue(updated)
+    const { router } = createIsolatedClipboardRouter(true, undefined, undefined, {
+      updatePreferences,
+      events: { publish } as never,
+    })
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'preferences.update', { patch: updated })
+    ).resolves.toEqual(updated)
+    expect(publish).toHaveBeenCalledWith('preferences.changed', updated)
+  })
+  test('schedules a restart only after the host response is sent', async () => {
+    const scheduleCoreDshRestart = vi.fn()
+    const completions: Array<() => void | Promise<void>> = []
+    const { router } = createIsolatedClipboardRouter(true, {
+      openPopoutTaskInMain: vi.fn(),
+      scheduleCoreDshRestart,
+      setPopoutMode: vi.fn(),
+    })
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.restartCoreDsh',
+        {},
+        {
+          onResponseSent: completion => completions.push(completion),
+        }
+      )
+    ).resolves.toEqual({ scheduled: true })
+
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Popout Window sizing capabilities', () => {
+  test('reveals the main workbench through the host', async () => {
+    const showMain = vi.fn().mockResolvedValue(undefined)
+    const { router } = createIsolatedClipboardRouter(true, { showMain })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.showMain', {})
+    expect(showMain).toHaveBeenCalledOnce()
+  })
+
+  test('closes the explicitly named workspace window', async () => {
+    const closeWorkspace = vi.fn()
+    const { router } = createIsolatedClipboardRouter(true, { closeWorkspace })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.closeWorkspace', { label: 'workspace-task' })
+    expect(closeWorkspace).toHaveBeenCalledWith('workspace-task')
+  })
+  test('forwards validated conversation and menu states to the native window', async () => {
+    const popoutHost = {
+      openPopoutTaskInMain: vi.fn(),
+      setPopoutMode: vi.fn(),
+    }
+    const { router } = createIsolatedClipboardRouter(true, popoutHost)
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.setPopoutMode', { mode: 'menu' })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.openPopoutTaskInMain', {
+      taskAddressId: 'local-device:task-1',
+    })
+
+    expect(popoutHost.openPopoutTaskInMain).toHaveBeenCalledWith('local-device:task-1')
+    expect(popoutHost.setPopoutMode).toHaveBeenCalledWith('menu')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'window.setPopoutMode', { mode: 'invalid' })
+    ).rejects.toMatchObject({ code: 'invalid_params' })
+  })
+})
 
 describe('captureWebContentsDataUrl', () => {
   test('uses Electron native capturePage for the visible composed surface', async () => {
@@ -491,6 +753,28 @@ describe('registerAppUpdateCapabilities', () => {
       )
     ).toThrow('App updates are unavailable')
   })
+
+  test('does not hold the host request open for the whole download', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const appUpdates = {
+      download: vi.fn(() => new Promise<void>(() => undefined)),
+    } as unknown as AppUpdateService
+
+    registerAppUpdateCapabilities(router, appUpdates)
+
+    expect(
+      handlers.get('appUpdate.download')?.(
+        {},
+        { principal: 'test', deferUntilResponseSent: vi.fn() }
+      )
+    ).toBeNull()
+    expect(appUpdates.download).toHaveBeenCalledOnce()
+  })
 })
 
 describe('registerRendererStorageCapabilities', () => {
@@ -537,6 +821,55 @@ describe('registerRendererStorageCapabilities', () => {
 })
 
 describe('registerDesktopServiceCapabilities', () => {
+  test.each([
+    {
+      label: 'supplied',
+      diagnostics: {
+        schemaVersion: 1,
+        events: [{ name: 'anchor-lost', details: { scrollerId: 1, rowIndex: 4 } }],
+      },
+    },
+    { label: 'null', diagnostics: null },
+    { label: 'omitted', diagnostics: undefined },
+  ])(
+    'forwards $label conversation diagnostics through feedback request parsing',
+    async ({ diagnostics }) => {
+      const handlers = new Map<HostCapability, HostCapabilityHandler>()
+      const router = {
+        register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+          handlers.set(capability, handler)
+        }),
+      } as unknown as HostCapabilityRouter
+      const preview = vi.fn(async () => ({ stagingId: 'stage-1' }))
+      registerDesktopServiceCapabilities(
+        router,
+        { feedback: { preview } } as unknown as Parameters<
+          typeof registerDesktopServiceCapabilities
+        >[1],
+        { openLogDirectory: vi.fn(), openDevTools: vi.fn() }
+      )
+      const request = {
+        includeRuntimeLogs: true,
+        includeTaskInfo: false,
+        includeScreenshot: false,
+        includeSystemInfo: false,
+        note: 'Conversation flickers during upward scrolling',
+        taskContext: null,
+        screenshotDataUrl: null,
+        composerDiagnostics: null,
+        attachments: [],
+        ...(diagnostics === undefined ? {} : { conversationDiagnostics: diagnostics }),
+      }
+
+      await handlers.get('feedback.previewBundle')?.({ request }, { principal: 'test' })
+
+      expect(preview).toHaveBeenCalledWith({
+        ...request,
+        conversationDiagnostics: diagnostics ?? null,
+      })
+    }
+  )
+
   test('allowlists and forwards all migrated desktop capability contracts', async () => {
     const handlers = new Map<HostCapability, HostCapabilityHandler>()
     const router = {
@@ -616,12 +949,80 @@ describe('registerDesktopServiceCapabilities', () => {
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
   })
+
+  test('forwards the application menu language reported by the renderer', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const updateApplicationMenuCapabilities = vi.fn()
+    const updateApplicationMenuLanguage = vi.fn()
+    registerDesktopServiceCapabilities(
+      router,
+      {
+        applicationMenu: () => null,
+        updateApplicationMenuCapabilities,
+        updateApplicationMenuLanguage,
+      } as unknown as ElectronDesktopServices,
+      { openDevTools: vi.fn(), openLogDirectory: vi.fn() }
+    )
+
+    await handlers.get('applicationMenu.setLanguage')?.(
+      { language: 'zh-CN' },
+      { principal: 'test' }
+    )
+    expect(updateApplicationMenuLanguage).toHaveBeenCalledWith('zh-CN')
+
+    await handlers.get('applicationMenu.setCapabilities')?.(
+      { windowLabel: 'main', capabilities: { taskSurface: true, canCloseTab: false } },
+      { principal: 'test' }
+    )
+    expect(updateApplicationMenuCapabilities).toHaveBeenCalledWith('main', {
+      taskSurface: true,
+      canCloseTab: false,
+    })
+
+    expect(() =>
+      handlers.get('applicationMenu.setCapabilities')?.(
+        { windowLabel: 'main', capabilities: { taskSurface: 'yes' } },
+        { principal: 'test' }
+      )
+    ).toThrow()
+  })
 })
 
 describe('isolated surface clipboard capabilities', () => {
+  test('inspects supplied workspace paths when the native clipboard is unavailable', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.clipboardRead.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {
+        fallbackPaths: [resolve(import.meta.dirname, 'electron-capabilities.test.ts')],
+      })
+    ).resolves.toMatchObject([
+      { path: resolve(import.meta.dirname, 'electron-capabilities.test.ts'), isDirectory: false },
+    ])
+  })
+
   beforeEach(() => {
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
+  })
+
+  test('propagates asynchronous clipboard write failures', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.activate', { leaseId: 'lease-1' })
+    electronMocks.clipboardWriteText.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.writeText', {
+        leaseId: 'lease-1',
+        text: 'pending write',
+      })
+    ).rejects.toThrow('Clipboard unavailable')
   })
 
   test('read and write require a focused window with the active lease', async () => {

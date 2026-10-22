@@ -72,16 +72,17 @@ impl brz_http_server::IntoHttpError for SkillDownloadError {
                 response
             }
             Self::NotModified { etag } => {
-                let empty = crate::http_compat::FastApiError::detail(
-                    StatusCode::NOT_MODIFIED,
-                    String::new(),
-                )
-                .into_http_error(arena);
+                // The source returns `Response(status_code=304,
+                // headers={"ETag": etag})`: a bare Starlette response with no
+                // media type, so it renders no `Content-Type` header (and a
+                // 304 never carries a body). Rendering it through the JSON
+                // error helper would add `content-type: application/json`.
+                let response = brz_http_server::Response::empty(StatusCode::NOT_MODIFIED);
                 let mut block = arena.alloc(format!("etag: {etag}\r\n").len());
                 block.extend_from_slice(format!("etag: {etag}\r\n").as_bytes());
                 match brz_http_server::HeaderBlock::new(block.freeze()) {
-                    Ok(header) => empty.headers(header),
-                    Err(_) => empty,
+                    Ok(header) => response.headers(header),
+                    Err(_) => response,
                 }
             }
         }
@@ -140,6 +141,27 @@ async fn download_skill(
     .await
 }
 
+/// `GET /api/api/v1/kinds/skills/{skill_id}/download`: the doubled-prefix
+/// path clients send when their gateway already prefixes `/api`.
+///
+/// The source mounts the download route at `/api/v1/kinds/skills/...`
+/// (`API_PREFIX` plus the `/v1` and `/kinds/skills` router prefixes in
+/// `app/api/api.py` and `app/api/endpoints/kind/__init__.py`), so the doubled
+/// path matches no route and FastAPI answers its default
+/// `404 {"detail":"Not Found"}` before authentication or validation. The
+/// cutover routes the path to Rust to reproduce that response instead of
+/// proxying to Python, which the replay environment answers with
+/// `502 fallback upstream unavailable`.
+#[brz_http_server::get("/api/api/v1/kinds/skills/:skill_id/download", access = public)]
+async fn doubled_prefix_download_skill(
+    skill_id: &str,
+) -> Result<(), crate::http_compat::FastApiError> {
+    // No source route exists at this path, so the framework rejects the
+    // request before it parses the segment or validates the query string.
+    let _ = skill_id;
+    Err(not_found("Not Found"))
+}
+
 /// Handler body for `GET /api/v1/kinds/skills/{skill_id}/download`.
 #[allow(clippy::too_many_arguments)]
 async fn download(
@@ -151,7 +173,7 @@ async fn download(
     if_none_match: Option<&str>,
 ) -> Result<HttpResponse<Binary>, SkillDownloadError> {
     let mysql = &state.mysql;
-    let repository = SkillDownloadRepository::new(mysql, state.task_policy);
+    let repository = SkillDownloadRepository::new(mysql, &*state.task_store);
     let params = DownloadParams {
         namespace: namespace.unwrap_or_else(default_namespace),
         task_id,
@@ -227,16 +249,13 @@ impl From<brz_mysql::MysqlError> for ResolveError {
 }
 
 /// The five-step search order. Returns `None` when the Skill is not found.
-async fn resolve_skill<M>(
-    repository: &SkillDownloadRepository<'_, M>,
+async fn resolve_skill(
+    repository: &SkillDownloadRepository<'_>,
     current_user: &auth::SkillDownloadUser,
     skill_id: i32,
     params: &DownloadParams,
     state: &Arc<AppState>,
-) -> Result<Option<Resolved>, ResolveError>
-where
-    M: brz_mysql::Mysql,
-{
+) -> Result<Option<Resolved>, ResolveError> {
     // 1. The user's personal Skill.
     if let Some(skill) = repository
         .get_skill_by_id(skill_id, current_user.id)
@@ -255,6 +274,15 @@ where
     };
     let default_ids = repository.list_user_default_skill_ids(&resolution).await?;
     if default_ids.contains(&skill_id)
+        && let Some((skill, binary_data)) = repository.get_skill_archive_by_id(skill_id).await?
+    {
+        return Ok(Some(Resolved { skill, binary_data }));
+    }
+
+    // 2b. A group binding grants access to the source archive in its original
+    // namespace.
+    let group_ids = repository.list_user_group_skill_ids(&resolution).await?;
+    if group_ids.contains(&skill_id)
         && let Some((skill, binary_data)) = repository.get_skill_archive_by_id(skill_id).await?
     {
         return Ok(Some(Resolved { skill, binary_data }));
@@ -289,7 +317,7 @@ where
     // 4. Task-authorized lookups when `task_id` is provided.
     if let Some(task_id) = params.task_id
         && repository.is_task_member(task_id, current_user.id).await?
-        && let Some(task) = repository.get_task_by_states_routed(task_id).await?
+        && let Some(task) = repository.get_task_by_states(task_id).await?
     {
         let team_namespace = task.team_namespace();
         if team_namespace != "default"
@@ -353,6 +381,96 @@ struct Resolved {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpStream;
+
+    // A dedicated test group so the probe route cannot collide with the real
+    // skills routes during the test build.
+    mod probe {
+        brz_http_server::registry!(group = skills_download_probe, dependencies());
+    }
+
+    #[brz_http_server::get(
+        "/probe/skills-download-not-modified",
+        group = probe::skills_download_probe,
+        access = public
+    )]
+    async fn probe_not_modified() -> Result<HttpResponse<Binary>, SkillDownloadError> {
+        Err(SkillDownloadError::NotModified {
+            etag: "\"sha256:abc\"".to_string(),
+        })
+    }
+
+    #[brz_http_server::get(
+        "/probe/api/skills/:skill_id/download",
+        group = probe::skills_download_probe,
+        access = public
+    )]
+    async fn probe_doubled_prefix(skill_id: &str) -> Result<(), crate::http_compat::FastApiError> {
+        let _ = skill_id;
+        doubled_prefix_download_skill(skill_id).await
+    }
+
+    /// Drives the mapped error over a real `http-server` socket so status,
+    /// headers, and body are asserted exactly as the runtime renders them.
+    async fn serve(request: &str) -> String {
+        let handler = brz_http_server::handlers!(; group = probe::skills_download_probe)
+            .expect("probe router");
+        let server = brz_http_server::Server::bind("127.0.0.1:0".parse().unwrap(), handler)
+            .await
+            .expect("bind test server");
+        let address = server.local_addr().expect("local address");
+        let serve = tokio::spawn(async move {
+            let _ = server.serve_until(std::future::pending::<()>()).await;
+        });
+        let mut client = TcpStream::connect(address).await.expect("connect");
+        client.write_all(request.as_bytes()).await.expect("send");
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.expect("read");
+        serve.abort();
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    fn header_of<'a>(raw: &'a str, name: &str) -> &'a str {
+        raw.lines()
+            .find(|line| line.to_ascii_lowercase().starts_with(name))
+            .map_or("", |line| line[name.len()..].trim())
+    }
+
+    fn body_of(raw: &str) -> &str {
+        raw.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+    }
+
+    #[tokio::test]
+    async fn not_modified_renders_etag_without_a_content_type() {
+        let raw = serve(
+            "GET /probe/skills-download-not-modified HTTP/1.1\r\n\
+             Host: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(raw.starts_with("HTTP/1.1 304"), "raw response: {raw}");
+        assert_eq!(header_of(&raw, "etag:"), "\"sha256:abc\"");
+        assert_eq!(
+            header_of(&raw, "content-type:"),
+            "",
+            "the source returns a bare Response(304), which has no media type"
+        );
+    }
+
+    #[tokio::test]
+    async fn doubled_prefix_download_returns_fastapi_not_found() {
+        // The source has no route at the doubled `/api/api/...` path, so it
+        // answers FastAPI's default 404 JSON before parsing the segment.
+        let raw = serve(
+            "GET /probe/api/skills/125063/download?namespace=default&task_id=474439267535385 \
+             HTTP/1.1\r\n\
+             Host: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(raw.starts_with("HTTP/1.1 404"), "raw response: {raw}");
+        assert_eq!(body_of(&raw), r#"{"detail":"Not Found"}"#);
+        assert_eq!(header_of(&raw, "content-type:"), "application/json");
+    }
 
     #[test]
     fn encodes_filenames_with_rfc5987() {

@@ -5,8 +5,6 @@
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc};
-#[cfg(windows)]
-use std::{env, path::PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
@@ -36,7 +34,6 @@ use crate::{
         branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
         workspace_diff, worktree_add, worktree_remove,
     },
-    local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
         PrepareLocalHarnessLaunchRequest,
@@ -60,17 +57,17 @@ use crate::{
     },
     local::turn_file_changes_commands::turn_file_changes as turn_file_changes_command,
     local::workspace_files::{
-        execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
+        execute_workspace_file_command_with_input, is_workspace_file_command,
     },
     logging::{
         format_executor_log, reserve_executor_stdout_for_protocol, write_executor_error_line,
         write_executor_log_line,
     },
-    runtime_work::RuntimeWorkRpcHandler,
+    runtime_work::{RuntimeWorkRpcHandler, CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS},
     task_runtime::{
         BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
-        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
-        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        LocalCommentCreate, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
+        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -87,6 +84,9 @@ fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
         Some("executor.plugin_auth.migrate") => 280,
         Some("executor.plugin_auth.run") => 200,
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
+        // Context compaction waits for the Codex app-server to finish the
+        // compaction turn, so the request deadline must outlive that budget.
+        Some("runtime.tasks.compact") => CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -188,7 +188,8 @@ if configured_home:
     codex_home = Path(configured_home)
 else:
     executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
-    base = Path(executor_home) if executor_home else Path.home() / ".wegent-executor"
+    workbench = os.environ.get("WEGENT_WORKBENCH_HOME", "").strip()
+    base = Path(executor_home).expanduser() if executor_home else (Path(workbench) if workbench else Path.home() / ".wegent/workbench") / "executor"
     codex_home = base / "codex"
 target = codex_home / "auth.json"
 result = {
@@ -831,72 +832,6 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        if method == "executions.claim_next" {
-            let Some(handler) = &self.runtime_work_handler else {
-                return Err(AppIpcError::new(
-                    "runtime_unavailable",
-                    "Runtime work handler is not available",
-                ));
-            };
-            let runtime_instance_id = self.runtime_instance_id.as_ref().ok_or_else(|| {
-                AppIpcError::new(
-                    "runtime_identity_unavailable",
-                    "Runtime instance identity is not available",
-                )
-            })?;
-            let capacity = handler
-                .handle_runtime_rpc(json!({
-                    "method": "runtime.capacity.get",
-                    "payload": {},
-                }))
-                .await?;
-            let limit = capacity
-                .get("limit")
-                .and_then(Value::as_u64)
-                .filter(|value| (1..=20).contains(value))
-                .ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime capacity is not available",
-                    )
-                })?;
-            let mut params = params.as_object().cloned().ok_or_else(|| {
-                AppIpcError::new("invalid_request", "Claim params must be an object")
-            })?;
-            let claim = params
-                .get_mut("claim")
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| AppIpcError::new("invalid_request", "Claim must be an object"))?;
-            claim.insert(
-                "execution_device_id".to_owned(),
-                Value::String(self.device_id.clone()),
-            );
-            claim.insert(
-                "runtime_instance_id".to_owned(),
-                Value::String(runtime_instance_id.clone()),
-            );
-            claim.insert("device_capacity".to_owned(), Value::from(limit));
-            claim.insert(
-                "runtime_active".to_owned(),
-                capacity.get("active").cloned().ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime active capacity is not available",
-                    )
-                })?,
-            );
-            claim.insert(
-                "runtime_active_task_ids".to_owned(),
-                capacity.get("active_task_ids").cloned().ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime active task identities are not available",
-                    )
-                })?,
-            );
-            return handle_task_runtime_request(method, Value::Object(params)).await;
-        }
-
         if method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
@@ -1504,14 +1439,6 @@ impl AppIpcServer {
             .ok_or_else(|| AppIpcError::new("bad_request", "command_key is required"))?;
         let command_key = command_key.trim();
 
-        if command_key == "git_generate_commit_message" {
-            let cwd = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
-            let env = string_env(params.get("env"))?;
-            let result = generate_commit_message(cwd, env).await;
-            return serde_json::to_value(result)
-                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
-        }
-
         if command_key == "ls_skills" {
             let result = list_local_skills().await;
             return serde_json::to_value(result)
@@ -1620,19 +1547,13 @@ impl AppIpcServer {
 
         let args = string_list(params.get("args"))?;
         let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
-        let mut env = string_env(params.get("env"))?;
+        let env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
-            if !env.contains_key(WORKSPACE_ROOTS_ENV) {
-                if let Some(path) = path.as_ref() {
-                    env.insert(WORKSPACE_ROOTS_ENV.to_owned(), path.clone());
-                }
-            }
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
                     command_key,
                     path,
                     args,
-                    env,
                     string_field(&params, "stdin"),
                 )
                 .await,
@@ -2229,25 +2150,27 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "todos.mark_read" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
+            let activity_sequence = params.get("activity_sequence").and_then(Value::as_i64);
             serialize_task_value(
                 runtime
-                    .mark_task_read(project_id, task_id)
+                    .mark_task_read(project_id, task_id, activity_sequence)
                     .await
                     .map_err(task_runtime_error)?,
             )
         }
         "todos.create" => {
             let project_id = required_task_string(&params, "project_id")?;
-            let input = serde_json::from_value::<TaskCreate>(
-                params
-                    .get("todo")
-                    .cloned()
-                    .unwrap_or_else(|| params.clone()),
-            )
-            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let todo = params.get("todo").unwrap_or(&params);
+            let input = serde_json::from_value::<TaskCreate>(todo.clone())
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task(project_id, input)
+                    .create_task_with_schedule(
+                        project_id,
+                        input,
+                        optional_nullable_task_string(todo, "start_at")?.flatten(),
+                        optional_nullable_task_string(todo, "due_at")?.flatten(),
+                    )
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2255,16 +2178,18 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "todos.update" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
-            let input = serde_json::from_value::<TaskUpdate>(
-                params
-                    .get("todo")
-                    .cloned()
-                    .unwrap_or_else(|| params.clone()),
-            )
-            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let todo = params.get("todo").unwrap_or(&params);
+            let input = serde_json::from_value::<TaskUpdate>(todo.clone())
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .update_task(project_id, task_id, input)
+                    .update_task_with_schedule(
+                        project_id,
+                        task_id,
+                        input,
+                        optional_nullable_task_string(todo, "start_at")?,
+                        optional_nullable_task_string(todo, "due_at")?,
+                    )
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2277,6 +2202,36 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .await
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "todos.archived.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let offset = params
+                .get("cursor")
+                .and_then(Value::as_str)
+                .unwrap_or("0")
+                .parse::<usize>()
+                .map_err(|_| AppIpcError::new("bad_request", "invalid archive cursor"))?;
+            let limit = params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(50)
+                .clamp(1, 100) as usize;
+            serialize_task_value(
+                runtime
+                    .list_archived_tasks(project_id, offset, limit)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.restore" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .restore_task(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
         }
         "todos.comment" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -2352,6 +2307,20 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "executions.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let agent_id = params.get("agent_id").and_then(Value::as_str);
+            let status = params.get("status").and_then(Value::as_str);
+            let include_terminal = params
+                .get("include_terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            serialize_task_value(
+                runtime
+                    .list_executions(project_id, agent_id, status, include_terminal)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.reorder" => {
             let project_id = required_task_string(&params, "project_id")?;
             let input = serde_json::from_value::<TaskReorder>(
@@ -2394,9 +2363,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .unwrap_or_else(|| params.clone()),
             )
             .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let dispatch = params.get("dispatch").filter(|value| value.is_object());
             serialize_task_value(
                 runtime
-                    .bind_task(project_id, item_id, input)
+                    .bind_task(project_id, item_id, input, dispatch)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2485,47 +2455,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
-        "projects.automation.cancel" => runtime
-            .cancel_project_automation_run(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.retry" => runtime
-            .retry_project_automation_run(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.run" => runtime
-            .run_project_automation(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "automation_id")?,
-                params.get("issue_id").and_then(Value::as_str),
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.runs" => serialize_task_value(
-            runtime
-                .list_project_automation_runs(
-                    required_task_string(&params, "project_id")?,
-                    required_task_string(&params, "automation_id")?,
-                )
-                .map_err(task_runtime_error)?,
-        ),
-        "executions.list" => {
-            let project_id = required_task_string(&params, "project_id")?;
-            let agent_id = params.get("agent_id").and_then(Value::as_str);
-            let status = params.get("status").and_then(Value::as_str);
-            let include_terminal = params
-                .get("include_terminal")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            serialize_task_value(
-                runtime
-                    .list_executions(project_id, agent_id, status, include_terminal)
-                    .map_err(task_runtime_error)?,
-            )
-        }
         "executions.approve" | "executions.reject" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
             let reason = params
@@ -2548,14 +2477,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .cancel_execution(execution_id, note)
-                    .map_err(task_runtime_error)?,
-            )
-        }
-        "executions.claim_next" => {
-            let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
-            serialize_task_value(
-                runtime
-                    .claim_next_local_execution(input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -2859,6 +2780,22 @@ fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, App
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))
+}
+
+fn optional_nullable_task_string(
+    params: &Value,
+    key: &str,
+) -> Result<Option<Option<String>>, AppIpcError> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(Some(value.to_owned()))),
+        Some(Value::String(_)) => Ok(Some(None)),
+        Some(_) => Err(AppIpcError::new(
+            "bad_request",
+            format!("{key} must be a string or null"),
+        )),
+    }
 }
 
 fn required_task_i64(params: &Value, key: &str) -> Result<i64, AppIpcError> {
@@ -3269,12 +3206,8 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "pwd" => Some(command_definition("pwd", &["pwd"], None)),
         "home_dir" => Some(command_definition("printenv HOME", &["printenv", "HOME"], None)),
         "project_workspace_root" => Some(command_definition(
-            "sh -c 'printf %s \"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}\"'",
-            &[
-                "sh",
-                "-c",
-                "printf %s \"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}\"",
-            ],
+            "project_workspace_root",
+            &[],
             None,
         )),
         "ls_dirs" => Some(command_definition(
@@ -3446,7 +3379,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &[
                 "sh",
                 "-lc",
-                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+                "exec \"${WEGENT_EXECUTOR_HOME:-${WEGENT_WORKBENCH_HOME:-$HOME/.wegent/workbench}/executor}/bin/cdp-relay-server\" --restart",
             ],
             None,
         )),
@@ -3455,7 +3388,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &[
                 "sh",
                 "-lc",
-                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "payload=${1:?browser tool payload is required}; exec \"${WEGENT_EXECUTOR_HOME:-${WEGENT_WORKBENCH_HOME:-$HOME/.wegent/workbench}/executor}/bin/browser-tool\" \"$payload\"",
                 "--",
             ],
             Some(PostProcessor::Json),
@@ -3691,8 +3624,9 @@ mod tests {
 
     use super::{
         app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
-        local_app_command, AppIpcServer, BlockingSingleFlight,
+        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
+    use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 
     #[test]
     fn transcript_export_allows_large_snapshot_packaging() {
@@ -3705,6 +3639,22 @@ mod tests {
             75
         );
     }
+
+    #[test]
+    fn context_compaction_outlives_the_executor_action_budget() {
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.compact")),
+            CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS
+        );
+    }
+
+    /// The compaction deadline must stay above the default request deadline.
+    const _: () = {
+        assert!(
+            CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS > APP_IPC_REQUEST_TIMEOUT_SECONDS,
+            "the compaction deadline must exceed the default request deadline"
+        );
+    };
 
     #[test]
     fn app_ipc_request_metadata_includes_device_command_key() {

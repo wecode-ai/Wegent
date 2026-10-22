@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Attachment } from "@wegent/chat-core/runtime";
+import { ChevronDown } from "lucide-react";
 import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
 import {
   ProjectComposerBody,
@@ -49,7 +50,11 @@ export interface IssueHomeTaskComposerProps {
   onDraftChange?(value: string): void;
   ownerControl?: ReactNode;
   environmentNotice?: ReactNode;
-  onSubmit(value: string): Promise<boolean>;
+  onSubmit(
+    value: string,
+    standInDeviceId?: string,
+    standInId?: string,
+  ): Promise<boolean>;
   disabled: boolean;
   placeholder: string;
   error: string | null;
@@ -101,6 +106,8 @@ export function IssueHomeComposer({
     content: string,
     owner: IssueHomeOwner | null,
     files: File[],
+    standInDeviceId?: string,
+    standInId?: string,
   ): Promise<boolean>;
   pending: boolean;
   members: CollaborationMember[];
@@ -193,10 +200,15 @@ export function IssueHomeComposer({
       onChange={(id) => setOwnerOverride({ projectId, id })}
     />
   );
+  const selectedProject = projects.find((project) => project.id === projectId);
   useEffect(() => {
     setAutomaticOwner(firstMentionedMember(value));
   }, [value, projectId, candidates]);
-  const submit = async (draft: string) => {
+  const submit = async (
+    draft: string,
+    standInDeviceId?: string,
+    standInId?: string,
+  ) => {
     const mentions = parseComposerMentions(draft);
     if (
       mentions.some(
@@ -238,25 +250,38 @@ export function IssueHomeComposer({
       candidates.find((candidate) => candidate.id === selectedOwner)?.owner ??
         null,
       files.map((item) => item.file),
+      ...(standInDeviceId
+        ? [standInDeviceId, ...(standInId ? [standInId] : [])]
+        : []),
     );
   };
   const projectSelector = (
-    <label className="mb-3 flex min-w-0 items-center justify-center gap-2 text-text-secondary">
-      <span className="sr-only">{projectLabel}</span>
-      <select
-        data-testid="collaboration-issue-project"
-        value={projectId}
-        disabled={pending}
-        className="max-w-48 cursor-pointer rounded-md border-0 bg-transparent px-2 py-1 text-base text-text-primary underline decoration-dotted underline-offset-4"
-        onChange={(event) => onSelectProject(event.target.value)}
-      >
-        {projects.map((project) => (
-          <option key={project.id} value={project.id}>
-            {project.name}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="flex min-h-10 items-center justify-center rounded-t-[26px] bg-surface px-4">
+      <label className="relative inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-text-secondary hover:bg-background/70 hover:text-text-primary focus-within:ring-2 focus-within:ring-primary/30">
+        <span className="sr-only">{projectLabel}</span>
+        <span
+          data-testid="collaboration-issue-project-label"
+          className="max-w-48 truncate text-text-primary"
+        >
+          {selectedProject?.name ?? projectLabel}
+        </span>
+        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0" />
+        <select
+          data-testid="collaboration-issue-project"
+          aria-label={projectLabel}
+          value={projectId}
+          disabled={pending}
+          className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0 disabled:cursor-default"
+          onChange={(event) => onSelectProject(event.target.value)}
+        >
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
   if (renderTaskComposer)
     return (
@@ -302,7 +327,7 @@ export function IssueHomeComposer({
           draftChanged(draft);
           onChange(draft);
         }}
-        onSubmit={submit}
+        onSubmit={(value) => submit(value)}
         disabled={pending}
         requireText
         isModelSelectionReady

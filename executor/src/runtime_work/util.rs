@@ -159,6 +159,7 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
+        .or_else(|| payload.get("collaboration_model"))
         .or_else(|| {
             payload
                 .get("modelOptions")
@@ -167,6 +168,7 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
                     options
                         .get("collaborationMode")
                         .or_else(|| options.get("collaboration_mode"))
+                        .or_else(|| options.get("collaboration_model"))
                 })
         })
         .filter(|value| value.is_string())
@@ -532,14 +534,10 @@ pub(crate) fn item_id(item: &Value, prefix: &str) -> String {
 }
 
 pub(crate) fn extract_text(item: &Value) -> Option<String> {
-    if let Some(text) = string_field(item, "text") {
-        return Some(text);
-    }
-    if let Some(content) = string_field(item, "content") {
-        return Some(content);
-    }
-    if let Some(message) = string_field(item, "message") {
-        return Some(message);
+    for key in ["text", "content", "message"] {
+        if let Some(text) = raw_string_field(item, key).filter(|text| !text.is_empty()) {
+            return Some(text);
+        }
     }
     let text = item
         .get("content")
@@ -686,21 +684,26 @@ pub(crate) fn path_is_within(root: &str, path: &str) -> bool {
 }
 
 fn git_common_workspace_root(path: &str) -> Option<String> {
-    let mut current = PathBuf::from(path);
+    let (workspace, _, common_dir) = git_metadata_directories(Path::new(path))?;
+    let root = if common_dir.file_name().and_then(|name| name.to_str()) == Some(".git") {
+        common_dir.parent()?
+    } else {
+        &workspace
+    };
+    Some(root.to_string_lossy().into_owned())
+}
+
+pub(crate) fn git_metadata_directories(path: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let mut current = path.to_path_buf();
     loop {
         let git_marker = current.join(".git");
         if git_marker.is_dir() {
-            return Some(current.to_string_lossy().into_owned());
+            return Some((current, git_marker.clone(), git_marker));
         }
         if git_marker.is_file() {
             let git_dir = parse_gitdir_file(&git_marker, &current)?;
-            let common_dir = read_common_git_dir(&git_dir).unwrap_or(git_dir);
-            if common_dir.file_name().and_then(|name| name.to_str()) == Some(".git") {
-                return common_dir
-                    .parent()
-                    .map(|root| root.to_string_lossy().into_owned());
-            }
-            return Some(current.to_string_lossy().into_owned());
+            let common_dir = read_common_git_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
+            return Some((current, git_dir, common_dir));
         }
         if !current.pop() {
             return None;
@@ -709,21 +712,12 @@ fn git_common_workspace_root(path: &str) -> Option<String> {
 }
 
 fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
-    let mut current = PathBuf::from(path);
-    loop {
-        let git_marker = current.join(".git");
-        if git_marker.is_file() {
-            let git_dir = parse_gitdir_file(&git_marker, &current)?;
-            let worktree_id = worktree_id_from_git_dir(&git_dir)?;
-            return Some((current.to_string_lossy().into_owned(), worktree_id));
-        }
-        if git_marker.is_dir() {
-            return None;
-        }
-        if !current.pop() {
-            return None;
-        }
+    let (workspace, git_dir, _) = git_metadata_directories(Path::new(path))?;
+    if workspace.join(".git").is_dir() {
+        return None;
     }
+    let worktree_id = worktree_id_from_git_dir(&git_dir)?;
+    Some((workspace.to_string_lossy().into_owned(), worktree_id))
 }
 
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
@@ -911,6 +905,33 @@ mod tests {
     }
 
     #[test]
+    fn copies_nested_collaboration_mode_into_execution_request_extra() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"modelOptions": {"collaborationMode": "coordinate"}}),
+        );
+
+        assert_eq!(
+            request.extra.get("collaborationMode"),
+            Some(&json!("coordinate"))
+        );
+    }
+
+    #[test]
+    fn copies_backend_collaboration_model_into_execution_request_extra() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(&mut request, &json!({"collaboration_model": "single"}));
+
+        assert_eq!(
+            request.extra.get("collaborationMode"),
+            Some(&json!("single"))
+        );
+    }
+
+    #[test]
     fn normalizes_runtime_additional_skills_for_agent_consumers() {
         let mut request = ExecutionRequest::default();
 
@@ -1081,7 +1102,11 @@ mod tests {
             format!("gitdir: {}\n", outer_git_dir.display()),
         )
         .expect("outer worktree git file");
-        let chat = outer_worktree.join("executor-home/Documents/Codex/chat");
+        let chat = outer_worktree
+            .join("executor-home")
+            .join("Documents")
+            .join("Codex")
+            .join("chat");
         std::fs::create_dir_all(&chat).expect("standalone chat workspace");
         let chat_path = chat.display().to_string();
 

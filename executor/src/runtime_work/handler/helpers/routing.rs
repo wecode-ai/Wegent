@@ -271,6 +271,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_key: project.key.clone(),
             project_kind: project.kind.clone(),
             project_source: project.source.clone(),
+            owner_project_key: project.owner_project_key.clone(),
             project_roots: project.roots.clone(),
             project_sidebar_order: Some(project_sidebar_order),
             project_pinned: project.pinned,
@@ -431,10 +432,12 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
         matches!(
             key.as_str(),
             "additional_skills"
+                | "deferred_project_environment"
                 | "additionalSkills"
                 | "cloudProjectId"
                 | "cloud_project_id"
                 | "collaboration_mode"
+                | "collaboration_model"
                 | "modelSelection"
                 | "model_selection"
                 | "origin"
@@ -446,6 +449,10 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "runtimePermissionProfile"
                 | "skill_names"
                 | "standaloneChatWorkspace"
+                | "team_id"
+                | "team_name"
+                | "team_owner"
+                | "user_id"
                 | "user_selected_skills"
         )
     });
@@ -666,4 +673,23 @@ fn byte_index_for_char(text: &str, char_index: usize) -> usize {
         .nth(char_index)
         .map(|(byte_index, _)| byte_index)
         .unwrap_or(text.len())
+}
+
+fn runtime_model_request(
+    link: &RuntimeTaskLink,
+    payload: &Value,
+) -> Result<ExecutionRequest, AppIpcError> {
+    let mut request = runtime_event_request_from_link(link);
+    if let Some(model_config) = payload.get("modelConfig") {
+        if !model_config.is_object() || model_config.as_object().is_some_and(Map::is_empty) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "modelConfig must be a non-empty object",
+            ));
+        }
+        // The stored profile intentionally has no credentials or default headers.
+        // Model-consuming actions receive a freshly materialized configuration.
+        request.model_config = model_config.clone();
+    }
+    Ok(request)
 }

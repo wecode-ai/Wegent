@@ -87,6 +87,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let query_id = uuid::Uuid::new_v4().to_string();
         let include_hidden = bool_field(&payload, "includeHidden")
             .or_else(|| bool_field(&payload, "include_hidden"));
         let limit = integer_field(&payload, "limit")
@@ -99,8 +100,8 @@ impl RuntimeWorkRpcHandler {
             "includeHidden": include_hidden,
         });
         let config = self
-            .codex_app_server
-            .request(
+            .request_model_discovery(
+                &query_id,
                 "config/read",
                 json!({
                     "includeLayers": false,
@@ -111,14 +112,13 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
         let provider = current_codex_model_provider_from_config(&config);
         let (available, error, models) = match self
-            .codex_app_server
-            .request("model/list", model_list_params)
+            .request_model_discovery(&query_id, "model/list", model_list_params)
             .await
         {
             Ok(response) => (
                 true,
                 Value::Null,
-                codex_models_with_provider(&response, &provider),
+                codex_models_with_configured_default(&response, &provider, &config),
             ),
             Err(error) => (false, Value::String(error), Vec::new()),
         };
@@ -131,10 +131,72 @@ impl RuntimeWorkRpcHandler {
             "error": error,
             "data": models.clone(),
         })];
+        log_executor_event(
+            "runtime model default resolved",
+            &[
+                ("query_id", query_id),
+                ("provider_id", provider.id.clone()),
+                (
+                    "configured_model",
+                    config
+                        .pointer("/config/model")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                ),
+                (
+                    "default_model",
+                    models
+                        .iter()
+                        .find(|model| model.get("isDefault").and_then(Value::as_bool) == Some(true))
+                        .and_then(|model| model.get("model").or_else(|| model.get("id")))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                ),
+            ],
+        );
         Ok(json!({
             "data": models,
             "providers": provider_results,
         }))
+    }
+
+    async fn request_model_discovery(
+        &self,
+        query_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let started = std::time::Instant::now();
+        log_executor_event(
+            "runtime model discovery started",
+            &[
+                ("query_id", query_id.to_owned()),
+                ("stage", method.to_owned()),
+            ],
+        );
+        let result = self.codex_app_server.request(method, params).await;
+        let mut fields = vec![
+            ("query_id", query_id.to_owned()),
+            ("stage", method.to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ("ok", result.is_ok().to_string()),
+        ];
+        if method == "model/list" {
+            if let Ok(response) = &result {
+                fields.push((
+                    "model_count",
+                    response
+                        .get("data")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                        .to_string(),
+                ));
+            }
+        }
+        log_executor_event("runtime model discovery finished", &fields);
+        result
     }
 
     pub(super) async fn read_codex_model_overrides(
@@ -343,6 +405,24 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn codex_models_with_configured_default(
+    response: &Value,
+    provider: &CodexModelProviderInfo,
+    config: &Value,
+) -> Vec<Value> {
+    let mut models = codex_models_with_provider(response, provider);
+    if let Some(default) = config.pointer("/config/model").and_then(Value::as_str) {
+        for model in &mut models {
+            let id = model
+                .get("model")
+                .or_else(|| model.get("id"))
+                .and_then(Value::as_str);
+            model["isDefault"] = Value::Bool(id == Some(default));
+        }
+    }
+    models
+}
+
 pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppIpcError> {
     let Some(value) = payload.get("proxyUrl").or_else(|| payload.get("proxy_url")) else {
         return Ok(None);
@@ -369,4 +449,38 @@ pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppI
         ));
     }
     Ok(Some(proxy_url.to_owned()))
+}
+
+#[cfg(test)]
+mod configured_default_tests {
+    use super::*;
+
+    #[test]
+    fn configured_model_overrides_the_catalog_recommendation() {
+        let config = json!({"config": {"model": "chosen", "model_provider": "custom"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let models = codex_models_with_configured_default(
+            &json!({"data": [
+                {"model": "recommended", "isDefault": true},
+                {"model": "chosen", "isDefault": false}
+            ]}),
+            &provider,
+            &config,
+        );
+        assert_eq!(models[0]["isDefault"], false);
+        assert_eq!(models[1]["isDefault"], true);
+        assert_eq!(models[1]["providerId"], "custom");
+    }
+
+    #[test]
+    fn unavailable_configured_model_does_not_choose_a_replacement() {
+        let config = json!({"config": {"model": "removed"}});
+        let provider = current_codex_model_provider_from_config(&config);
+        let models = codex_models_with_configured_default(
+            &json!({"data": [{"model": "recommended", "isDefault": true}]}),
+            &provider,
+            &config,
+        );
+        assert_eq!(models[0]["isDefault"], false);
+    }
 }

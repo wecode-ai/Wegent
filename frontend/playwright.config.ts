@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const EXECUTOR_REGRESSION_SPEC =
-  /(tasks\/(agent-conversation-regression|provider-native-claudecode)|collaboration\/collaboration-agent-execution)\.spec\.ts/
+  /(tasks\/(agent-conversation-regression|provider-native-claudecode)|collaboration\/(collaboration-agent-execution|issue-dispatch-executor))\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
   /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
@@ -27,7 +27,12 @@ export default defineConfig({
 
   /* Reporter to use - use blob reporter for sharded runs */
   reporter: process.env.CI
-    ? [['list'], ['blob', { outputDir: 'blob-report' }], ['html', { open: 'never' }]]
+    ? [
+        ['./e2e/utils/process-diagnostics-reporter.ts'],
+        ['list'],
+        ['blob', { outputDir: 'blob-report' }],
+        ['html', { open: 'never' }],
+      ]
     : [['html', { open: 'never' }], ['list']],
 
   /* Output directory for test artifacts */

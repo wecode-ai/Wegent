@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::{JsonProjection, OpaqueJson};
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]

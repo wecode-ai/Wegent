@@ -21,6 +21,7 @@ from app.services.llm_proxy_service import (
     proxy_llm_responses,
     resolve_llm_proxy_model_config,
 )
+from shared.utils.crypto import CryptoConfigurationError
 
 
 def _model_kind(
@@ -199,6 +200,33 @@ def test_resolve_llm_proxy_model_config_processes_custom_header_placeholders(
     }
 
 
+def test_cloud_model_reports_unavailable_credentials(
+    test_db: Session,
+    test_user: User,
+    test_model_kind: Kind,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_credentials(value: str) -> str:
+        raise CryptoConfigurationError("Invalid test encryption configuration")
+
+    monkeypatch.setattr(
+        "app.services.chat.config.model_resolver.decrypt_api_key",
+        unavailable_credentials,
+    )
+    with pytest.raises(HTTPException) as error:
+        resolve_llm_proxy_model_config(
+            test_db,
+            test_user,
+            model_name=test_model_kind.name,
+            model_type="user",
+            namespace="default",
+            resource_user_id=test_user.id,
+        )
+
+    assert error.value.status_code == 503
+    assert "credentials are unavailable" in error.value.detail
+
+
 async def test_proxy_llm_responses_forwards_to_provider(
     test_db, test_user: User, test_model_kind: Kind
 ):
@@ -213,6 +241,8 @@ async def test_proxy_llm_responses_forwards_to_provider(
             "x-wegent-model-type": "user",
             "x-wegent-model-namespace": "default",
             "x-wegent-model-user-id": str(test_user.id),
+            "thread-id": "manager-thread",
+            "x-openai-subagent": "collab_spawn",
         }
     )
 
@@ -245,6 +275,8 @@ async def test_proxy_llm_responses_forwards_to_provider(
     assert sent_request.headers["Content-Type"] == "application/json"
     assert sent_request.headers["Accept"] == "text/event-stream"
     assert sent_request.headers["user"] == test_user.user_name
+    assert sent_request.headers["thread-id"] == "manager-thread"
+    assert sent_request.headers["x-openai-subagent"] == "collab_spawn"
     assert b'"model": "gpt-4-turbo"' in sent_request.content
     assert b'"input": "hello"' in sent_request.content
     assert "x-wegent-model-type" not in sent_request.headers
@@ -369,6 +401,65 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
     assert config["api_key"] == "sk-test-key"
     assert config["upstream_api_format"] == "openai-responses"
     assert "codex_responses_compat_proxy" not in config
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api_format", "env_model"),
+    [
+        ("openai", None, None),
+        ("claude", None, None),
+        ("openai-responses", "chat/completions", None),
+        ("openai-responses", "messages", None),
+        (None, None, "openai"),
+        (None, None, "claude"),
+    ],
+)
+def test_direct_runtime_rejects_passthrough_for_other_protocols(
+    test_db: Session,
+    test_user: User,
+    protocol: str | None,
+    api_format: str | None,
+    env_model: str | None,
+) -> None:
+    """Reject incompatible explicit and inferred wire formats before dispatch."""
+    model = _model_kind(
+        test_user.id,
+        protocol=protocol,
+        api_format=api_format,
+        env_model=env_model,
+    )
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = "passthrough"
+    test_db.add(model)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        _build_codex_runtime_model_config(model.name, db=test_db, user_id=test_user.id)
+
+    assert error.value.status_code == 400
+    assert "Responses" in error.value.detail
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api_format"), [("openai-responses", None), (None, "responses")]
+)
+def test_direct_runtime_preserves_responses_passthrough(
+    test_db: Session,
+    test_user: User,
+    protocol: str | None,
+    api_format: str | None,
+) -> None:
+    """Keep valid direct Responses requests in passthrough mode."""
+    model = _model_kind(test_user.id, protocol=protocol, api_format=api_format)
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = "passthrough"
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name, db=test_db, user_id=test_user.id
+    )
+
+    assert config["codex_request_mode"] == "passthrough"
+    assert config["upstream_api_format"] == "openai-responses"
 
 
 @pytest.mark.parametrize(
@@ -498,6 +589,7 @@ def test_cloud_runtime_protocol_comes_from_model_crd(
         assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
     assert config["native_tool_search"] is (expected == "openai-responses")
     assert config["native_namespace_tools"] is (expected == "openai-responses")
+    assert config["tool_profile"] == "custom"
 
 
 def test_cloud_runtime_can_bridge_standard_responses_tools(
@@ -528,6 +620,83 @@ def test_cloud_runtime_can_bridge_standard_responses_tools(
 
     assert config["native_tool_search"] is False
     assert config["native_namespace_tools"] is False
+
+
+@pytest.mark.parametrize("mode", ["auto", "standard", "passthrough"])
+@pytest.mark.parametrize("reasoning", [{"effort": "high"}, {"summary": "detailed"}])
+def test_cloud_runtime_preserves_model_reasoning_and_request_policy(
+    test_db, test_user, monkeypatch, mode, reasoning
+) -> None:
+    from app.core.config import settings
+    from app.services.runtime_work_service import _runtime_model_override_values
+
+    model = _model_kind(0, protocol="openai-responses")
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = mode
+    model.json["spec"]["modelConfig"]["env"]["thinking_config"] = {
+        "reasoning": reasoning
+    }
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+
+    config, _, _ = _runtime_model_override_values(
+        db=test_db,
+        user_id=test_user.id,
+        runtime="codex",
+        model_id=model.name,
+        model_type="public",
+        model_options={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+            "weworkCloudModelNativeToolSearch": "true",
+        },
+    )
+    legacy = build_wework_runtime_model_config(
+        test_db, model_name=model.name, creator=test_user
+    )
+    for resolved in (config, legacy):
+        assert resolved["reasoning"] == reasoning
+        assert resolved["codex_request_mode"] == mode
+        assert "sk-test-key" not in json.dumps(resolved)
+        if mode != "auto":
+            assert resolved["native_tool_search"] is (mode == "passthrough")
+            assert resolved["native_namespace_tools"] is (mode == "passthrough")
+
+
+def test_cloud_runtime_rejects_passthrough_for_other_protocols(
+    test_db, test_user, monkeypatch
+) -> None:
+    from app.core.config import settings
+
+    model = _model_kind(0, protocol="openai")
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = "passthrough"
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+
+    with pytest.raises(HTTPException, match="OpenAI Responses"):
+        build_wework_runtime_model_config(
+            test_db, model_name=model.name, creator=test_user
+        )
+
+
+@pytest.mark.parametrize("resource_user_id", [0, -1])
+def test_runtime_rejects_invalid_request_policy_without_provider_fallback(
+    test_db, test_user, monkeypatch, resource_user_id
+) -> None:
+    from app.core.config import settings
+
+    owner = test_user.id if resource_user_id == -1 else resource_user_id
+    model = _model_kind(owner)
+    model.json["spec"]["modelConfig"]["codex_request_mode"] = "invalid"
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+    with pytest.raises(HTTPException) as exc_info:
+        build_wework_runtime_model_config(
+            test_db, model_name=model.name, creator=test_user
+        )
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.parametrize(

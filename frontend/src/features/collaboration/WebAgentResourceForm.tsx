@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
+import { getClientRequestCache } from '@wegent/chat-core/request-cache'
 import {
   AgentCapabilitiesSelector,
   AgentCapabilityModeSelector,
@@ -52,7 +53,8 @@ export function WebAgentResourceForm({
   const [name] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
   const runtime = 'Codex'
-  const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
+  const [selectedCapabilityMode, setCapabilityMode] =
+    useState<UnifiedAgentCapabilityMode>('follow_device')
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [selectedModelKey, setSelectedModelKey] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -70,6 +72,7 @@ export function WebAgentResourceForm({
   const [pluginError, setPluginError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [capabilitiesActive, setCapabilitiesActive] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -97,8 +100,17 @@ export function WebAgentResourceForm({
   }, [groupName, runtime, scope, t])
 
   useEffect(() => {
+    if (!capabilitiesActive) return
     let active = true
-    void fetchUnifiedSkillsList({ limit: 100, scope, groupName })
+    setLoadingSkills(true)
+    setLoadingPlugins(true)
+    setSkillError(null)
+    setPluginError(null)
+    const cache = getClientRequestCache(apiClient)
+    void cache
+      .get(`agent-skills:${scope}:${groupName ?? ''}`, () =>
+        fetchUnifiedSkillsList({ limit: 100, scope, groupName })
+      )
       .then(items => {
         if (active) setSkills(items.filter(skill => skill.visible !== false))
       })
@@ -111,8 +123,10 @@ export function WebAgentResourceForm({
         if (active) setLoadingSkills(false)
       })
 
-    void apiClient
-      .get<{ items: InstalledPlugin[] }>('/plugins/installed')
+    void cache
+      .get('/plugins/installed', () =>
+        apiClient.get<{ items: InstalledPlugin[] }>('/plugins/installed')
+      )
       .then(response => {
         if (!active) return
         setPlugins(
@@ -136,7 +150,7 @@ export function WebAgentResourceForm({
     return () => {
       active = false
     }
-  }, [groupName, scope, t])
+  }, [capabilitiesActive, groupName, scope, t])
 
   const selectedSkills = useMemo(() => new Set(selectedSkillKeys), [selectedSkillKeys])
   const selectedPlugins = useMemo(() => new Set(selectedPluginIds), [selectedPluginIds])
@@ -144,6 +158,10 @@ export function WebAgentResourceForm({
     () => resolveAgentPromptCapabilityReferences(systemPrompt, plugins, skills),
     [plugins, skills, systemPrompt]
   )
+  const capabilityMode =
+    promptCapabilities.pluginIds.size || promptCapabilities.skillKeys.size
+      ? 'manual'
+      : selectedCapabilityMode
   const effectiveSelectedPlugins = useMemo(
     () => new Set([...selectedPlugins, ...promptCapabilities.pluginIds]),
     [promptCapabilities.pluginIds, selectedPlugins]
@@ -225,6 +243,9 @@ export function WebAgentResourceForm({
         bots: [{ bot_id: savedBot.id, bot_prompt: '', role: 'leader' }],
         requires_workspace: true,
       })
+      const cache = getClientRequestCache(apiClient)
+      cache.invalidate('/v1/resources')
+      cache.invalidate('/v1/workspaces/')
       await onCreated({
         name: savedTeam.displayName || savedTeam.name,
         teamId: savedTeam.id,
@@ -238,6 +259,7 @@ export function WebAgentResourceForm({
 
   return (
     <AgentFormDialog
+      onAdvancedOpen={() => setCapabilitiesActive(true)}
       advancedSummary={{
         description:
           capabilityMode === 'follow_device'
@@ -338,7 +360,6 @@ export function WebAgentResourceForm({
       labels={{
         advanced: t('agent_form.advanced'),
         advancedDescription: t('agent_form.advanced_description'),
-        capabilitiesSection: t('agent_form.capabilities_section'),
         cancel: t('actions.cancel'),
         close: t('actions.close'),
         owner: t('agent_form.owner'),
@@ -399,6 +420,7 @@ export function WebAgentResourceForm({
       }}
       promptEditor={
         <AgentPromptEditor
+          onFocus={() => setCapabilitiesActive(true)}
           busy={saving}
           field={{
             label: t('agent_form.prompt'),
@@ -419,7 +441,12 @@ export function WebAgentResourceForm({
           }
         />
       }
-      saveDisabled={loadingModels || !selectedModel}
+      saveDisabled={
+        loadingModels ||
+        !selectedModel ||
+        (capabilityMode === 'manual' &&
+          (loadingSkills || loadingPlugins || Boolean(skillError || pluginError)))
+      }
       saveLabel={t('agent_form.title')}
       savingLabel={t('actions.creating')}
       testIds={{

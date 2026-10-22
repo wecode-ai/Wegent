@@ -154,6 +154,7 @@ export class TerminalRuntime {
       session_id: session.id,
       sequence: session.sequence,
       data: session.snapshot,
+      running: Boolean(session.pty),
     }
   }
 

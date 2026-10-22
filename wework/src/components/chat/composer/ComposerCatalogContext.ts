@@ -11,12 +11,10 @@ export interface ComposerCatalogBinding {
   catalogEvents: ComposerCatalogEvents
   listApps?: () => Promise<LocalDeviceApp[]>
   listSkills?: () => Promise<LocalDeviceSkill[]>
-  prefetchLocalAuth: boolean
 }
 
 export const ComposerCatalogContext = createContext<ComposerCatalogBinding>({
   appsStore: desktopComposerCatalogStore,
   catalogEvents: desktopComposerCatalogEvents,
-  prefetchLocalAuth: true,
 })
 export const useComposerCatalogBinding = () => useContext(ComposerCatalogContext)

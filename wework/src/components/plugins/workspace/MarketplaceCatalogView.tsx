@@ -24,6 +24,8 @@ import {
   type PluginMarketplaceRowLabels,
 } from './PluginMarketplaceRow'
 import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
+import { Button } from '@/components/ui/button'
+import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
 
 const SEARCH_VIRTUALIZE_THRESHOLD = 40
 const SEARCH_ROW_ESTIMATE_PX = 78
@@ -179,11 +181,13 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   scrollRef,
   installedStrip,
   showInstalledStrip,
-  pluginMarketplaceState,
+  pluginMarketplaceState: sourceMarketplaceState,
   marketplaceLoadingMessage,
-  isMarketplaceRefreshing,
+  isMarketplaceRefreshing: sourceMarketplaceRefreshing,
   isMarketplaceSearchUpdating,
   isOpenAiOfficialViewLoading,
+  openAiCatalogError,
+  isOpenAiCatalogRefreshing = false,
   normalizedQuery,
   visibleMarketplaceItems,
   marketplaceCategorySections,
@@ -223,6 +227,8 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isMarketplaceRefreshing: boolean
   isMarketplaceSearchUpdating: boolean
   isOpenAiOfficialViewLoading: boolean
+  openAiCatalogError?: ReturnType<typeof remoteCatalogErrorKind> | null
+  isOpenAiCatalogRefreshing?: boolean
   normalizedQuery: string
   visibleMarketplaceItems: PluginMarketplaceItem[]
   marketplaceCategorySections: MarketplaceCategorySection[]
@@ -242,6 +248,13 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   onAction: (action: PluginMarketplaceRowAction, item: PluginMarketplaceItem) => void
 }) {
   const { t } = useTranslation('common')
+  const isOfficialView = selectedDistributionTab === 'official' && !marketplaceSourceFilterKey
+  const pluginMarketplaceState = isOfficialView
+    ? { ...sourceMarketplaceState, isLoading: isOpenAiOfficialViewLoading, error: null }
+    : sourceMarketplaceState
+  const isMarketplaceRefreshing = isOfficialView
+    ? isOpenAiCatalogRefreshing
+    : sourceMarketplaceRefreshing
   const distributionTabs = useMemo(
     () =>
       [
@@ -336,6 +349,24 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
         className="plugin-market-scroll-region min-h-0 flex-1 overflow-y-auto pb-14"
       >
         {installedStrip}
+        {isOfficialView && openAiCatalogError && (
+          <div
+            role="alert"
+            data-testid="plugins-openai-catalog-error"
+            className="mb-3 flex items-center gap-2 text-sm text-text-secondary"
+          >
+            <span>{t(`workbench.plugins_openai_catalog_${openAiCatalogError}`)}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="plugins-openai-catalog-retry"
+              onClick={onRefresh}
+              disabled={isOpenAiCatalogRefreshing}
+            >
+              {t('workbench.plugins_openai_official_empty_refresh', '刷新并重试')}
+            </Button>
+          </div>
+        )}
         <section
           className={[
             'plugin-market-catalog',
@@ -367,7 +398,8 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
             >
               {pluginMarketplaceState.error}
             </div>
-          ) : marketplaces.length === 0 &&
+          ) : !isOfficialView &&
+            marketplaces.length === 0 &&
             !pluginMarketplaceState.isLoading &&
             !isMarketplaceRefreshing ? (
             <div
@@ -396,7 +428,9 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                 t('workbench.plugins_refreshing_marketplace', '正在刷新插件市场')
               }
             />
-          ) : visibleMarketplaceItems.length === 0 ? (
+          ) : isOfficialView &&
+            openAiCatalogError &&
+            visibleMarketplaceItems.length === 0 ? null : visibleMarketplaceItems.length === 0 ? (
             selectedDistributionTab === 'official' &&
             !marketplaceSourceFilterKey &&
             !normalizedQuery &&
@@ -412,7 +446,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                 <p className="text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.plugins_openai_official_empty_hint',
-                    '首次打开需要从 GitHub 同步 openai/plugins。请检查网络后刷新重试。'
+                    '暂未获取到远程目录，请检查 Codex 登录和网络连接后重试。'
                   )}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">

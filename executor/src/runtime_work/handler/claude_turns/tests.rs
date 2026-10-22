@@ -91,6 +91,70 @@ fn cloud_model_selection_materializes_claude_gateway_route() {
 }
 
 #[test]
+fn cloud_model_route_forwards_session_id_upstream() {
+    let _lock = crate::test_env::lock();
+    let mut request = ExecutionRequest {
+        task_id: "456".to_owned(),
+        model_config: json!({}),
+        extra: serde_json::Map::from_iter([(
+            "modelSelection".to_owned(),
+            json!({
+                "modelName": "public-review-model",
+                "modelType": "public",
+                "options": {
+                    "weworkCloudModelNamespace": "default",
+                    "weworkCloudModelResourceUserId": "0",
+                },
+            }),
+        )]),
+        ..ExecutionRequest::default()
+    };
+    let backend_credentials = BackendSessionCredentials {
+        backend_url: "https://wegent.example".to_owned(),
+        session_token: "backend-token".to_owned(),
+    };
+
+    prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials))
+        .expect("cloud model selection should materialize");
+
+    assert_eq!(
+        request.model_config["default_headers"]["X-Wegent-Upstream-Header-wecode-session-id"],
+        "456"
+    );
+}
+
+#[test]
+fn cloud_model_route_skips_session_id_without_task() {
+    let _lock = crate::test_env::lock();
+    let mut request = ExecutionRequest {
+        model_config: json!({}),
+        extra: serde_json::Map::from_iter([(
+            "modelSelection".to_owned(),
+            json!({
+                "modelName": "public-review-model",
+                "modelType": "public",
+                "options": {
+                    "weworkCloudModelNamespace": "default",
+                    "weworkCloudModelResourceUserId": "0",
+                },
+            }),
+        )]),
+        ..ExecutionRequest::default()
+    };
+    let backend_credentials = BackendSessionCredentials {
+        backend_url: "https://wegent.example".to_owned(),
+        session_token: "backend-token".to_owned(),
+    };
+
+    prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials))
+        .expect("cloud model selection should materialize");
+
+    assert!(request.model_config["default_headers"]
+        .get("X-Wegent-Upstream-Header-wecode-session-id")
+        .is_none());
+}
+
+#[test]
 fn cloud_model_selection_fails_closed_without_backend_token() {
     let _lock = crate::test_env::lock();
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "https://wegent.example");

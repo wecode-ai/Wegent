@@ -158,6 +158,14 @@ fn cleanup_targets_for_task(
     push_cleanup_target(
         &mut targets,
         &mut seen,
+        Some(CleanupTarget {
+            kind: "runtime_attachment",
+            path: crate::attachments::legacy_device_runtime_attachment_task_dir(&link.local_task_id),
+        }),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
         workspace_attachment_cleanup_target(link, ".wegent/attachments"),
     );
     push_cleanup_target(
@@ -216,7 +224,7 @@ fn worktree_cleanup_target(worktrees: &WorktreeManager, path: &str) -> Option<Cl
 
 fn standalone_chat_cleanup_target(local_task_id: &str, path: &str) -> Option<CleanupTarget> {
     let normalized = normalize_workspace_path(path);
-    if !normalized.contains("/Documents/Codex/") {
+    if !normalized.replace('\\', "/").contains("/Documents/Codex/") {
         return None;
     }
     let segment = workspace_segment(local_task_id);
@@ -331,7 +339,9 @@ fn path_size(path: &Path) -> Option<u64> {
 }
 
 fn is_local_attachment_draft_path(path: &str) -> bool {
+    let path = path.replace('\\', "/");
     path.contains("/.wegent-executor/workspace/attachments/draft/")
+        || path.contains("/.wegent/workbench/executor/workspace/attachments/draft/")
         || path.contains("/.wecode/wegent-executor/workspace/attachments/draft/")
 }
 

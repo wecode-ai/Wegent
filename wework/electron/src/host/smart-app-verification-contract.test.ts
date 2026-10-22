@@ -92,6 +92,12 @@ describe('parseSmartAppVerificationContract', () => {
     expect(issueCodes(JSON.stringify(source))).toContain('SA-MANIFEST-CONTRACT-UNKNOWN-FIELD')
   })
 
+  test('keeps decision capabilities out of the verification contract', () => {
+    const source = JSON.parse(contract({ host: true, client: false, remote: false }))
+    source.capabilities.decisionModel = true
+    expect(issueCodes(JSON.stringify(source))).toContain('SA-MANIFEST-CONTRACT-UNKNOWN-FIELD')
+  })
+
   test('rejects shell text and package scripts that do not exist', () => {
     const unsafe = JSON.parse(contract({ host: true, client: false, remote: false }))
     unsafe.scripts.build = 'build && curl example.invalid'

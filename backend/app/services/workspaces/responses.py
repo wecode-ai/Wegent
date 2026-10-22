@@ -6,6 +6,8 @@
 from sqlalchemy import BigInteger, cast, func, literal, select, union_all
 from sqlalchemy.orm import Session
 
+from app.models.cloud_project import CloudProject
+from app.models.delivery import project_parent_relationships
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.workspace import WorkspaceResponse
@@ -43,7 +45,7 @@ def _summary_counts(db: Session, ids: list[int]) -> dict[int, dict[str, int]]:
         )
         .where(
             ResourceMember.resource_type.in_(
-                [key for key in COUNT_FIELDS if key != ResourceType.WORKSPACE.value]
+                [ResourceType.TEAM.value, ResourceType.DEVICE.value]
             ),
             ResourceMember.entity_type == "workspace",
             ResourceMember.status == MemberStatus.APPROVED.value,
@@ -51,7 +53,18 @@ def _summary_counts(db: Session, ids: list[int]) -> dict[int, dict[str, int]]:
         )
         .group_by(ResourceMember.entity_id, ResourceMember.resource_type)
     )
-    rows = db.execute(union_all(members, grants)).all()
+    parents = project_parent_relationships().subquery()
+    projects = (
+        select(
+            parents.c.workspace_id,
+            literal("CloudProject"),
+            func.count(CloudProject.id),
+        )
+        .join(CloudProject, cast(CloudProject.id, BigInteger) == parents.c.project_id)
+        .where(parents.c.workspace_id.in_(ids), CloudProject.status == "active")
+        .group_by(parents.c.workspace_id)
+    )
+    rows = db.execute(union_all(members, grants, projects)).all()
     counts = {value: {} for value in ids}
     for workspace, resource_type, count in rows:
         counts[int(workspace)][COUNT_FIELDS[resource_type]] = count
@@ -75,7 +88,11 @@ def list_workspace_responses(db: Session, user_id: int) -> list[WorkspaceRespons
         WorkspaceResponse.model_validate(
             {
                 **workspace.__dict__,
-                "access_role": roles[workspace.id],
+                "access_role": (
+                    "Owner"
+                    if workspace.owner_user_id == user_id
+                    else roles[workspace.id]
+                ),
                 **counts[workspace.id],
             }
         )

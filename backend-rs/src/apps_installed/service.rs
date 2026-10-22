@@ -10,12 +10,16 @@
 //! `list_visible_apps` (enabled + role visibility), `user_response`
 //! (connection view), `_connected_apps`, and `list_tools` (MCP discovery per
 //! streamable-http app with `toolAllowlist` filtering).
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use brz_mysql::Mysql;
+use brz_mysql::{Mysql, MysqlError, MysqlResult};
 use serde::Deserialize;
 
-use super::db::{KindRow, UserRow};
+use brz_json::FieldState as _;
+use brz_json::{JsonProjection, OpaqueJson};
+
+use super::connection::{self, ConnectorConnection};
+use super::db::{self, KindRow, UserRow};
 use super::mcp::{self, UpstreamTool};
 use super::models::{
     ConnectionResponse, InstalledApp, InstalledResponse, ToolSummary, connected_no_auth,
@@ -37,62 +41,75 @@ pub struct ConnectorApp {
     pub transport: String,
     pub mcp_url: String,
     pub tool_allowlist: Vec<String>,
+    /// `spec["providerHeadersEncrypted"]`; the administrator view decrypts it.
+    pub provider_headers_encrypted: Option<String>,
+    pub forward_user_context_headers: bool,
+    /// `list(spec.get("httpTools") or [])`; the administrator view echoes it.
+    pub http_tools: Vec<OpaqueJson>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 /// The `spec` object of one `kinds` row (`ConnectorAppService._spec`).
 ///
 /// Every field decodes like the source's `spec.get(key) or default` chain:
-/// missing, `null`, and empty-string values fall back to the default, and
-/// non-string / non-array shapes also fall back (the source `str()`/`list()`
-/// coercions are not reproduced beyond that; the recorded specs are strings).
+/// missing and `null` use field defaults. Wrong string/list shapes reject
+/// the typed projection, causing `from_row` to use the whole-spec default.
+#[brz_json::model]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct AppSpec {
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     name: String,
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     description: String,
     #[serde(rename = "iconUrl")]
     icon_url: Option<String>,
     enabled: Option<bool>,
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     visibility: String,
-    #[serde(rename = "allowedRoles", deserialize_with = "text_list_or_default")]
+    #[serde(
+        rename = "allowedRoles",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     allowed_roles: Vec<String>,
-    #[serde(rename = "authType", deserialize_with = "text_or_default")]
+    #[serde(
+        rename = "authType",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     auth_type: String,
-    #[serde(deserialize_with = "text_or_default")]
+    #[serde(deserialize_with = "brz_json::adapters::null_as_default")]
     transport: String,
-    #[serde(rename = "mcpUrl", deserialize_with = "text_or_default")]
+    #[serde(
+        rename = "mcpUrl",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     mcp_url: String,
-    #[serde(rename = "toolAllowlist", deserialize_with = "text_list_or_default")]
+    #[serde(
+        rename = "toolAllowlist",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
     tool_allowlist: Vec<String>,
+    /// `spec.get("providerHeadersEncrypted")`: only a string is kept.
+    #[serde(rename = "providerHeadersEncrypted")]
+    #[json(presence, lenient)]
+    provider_headers_encrypted: String,
+    /// `bool(spec.get("forwardUserContextHeaders", False))`: only a JSON
+    /// boolean is truthy here.
+    #[serde(rename = "forwardUserContextHeaders")]
+    #[json(presence, lenient)]
+    forward_user_context_headers: bool,
+    /// `list(spec.get("httpTools") or [])`: a JSON array of opaque tool
+    /// definitions is kept, every other shape is empty.
+    #[serde(rename = "httpTools")]
+    #[json(presence, lenient)]
+    http_tools: Vec<OpaqueJson>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct AppDocument {
     #[serde(default)]
     spec: Option<AppSpec>,
-}
-
-/// `str(spec.get(key) or default)`: a non-empty string is kept, every other
-/// shape (missing, `null`, `""`, non-string) falls back to the field default.
-fn text_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value: Option<String> = Option::<String>::deserialize(deserializer)?;
-    Ok(value.unwrap_or_default())
-}
-
-/// `list(spec.get(key) or default)`: an array of strings is kept, every other
-/// shape falls back to the field default.
-fn text_list_or_default<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value: Option<Vec<String>> = Option::<Vec<String>>::deserialize(deserializer)?;
-    Ok(value.unwrap_or_default())
 }
 
 impl AppSpec {
@@ -155,6 +172,14 @@ pub fn row_to_app(row: &KindRow) -> ConnectorApp {
         },
         mcp_url: spec.mcp_url,
         tool_allowlist: spec.tool_allowlist,
+        provider_headers_encrypted: spec.provider_headers_encrypted.into_value(),
+        forward_user_context_headers: spec
+            .forward_user_context_headers
+            .into_value()
+            .unwrap_or(false),
+        http_tools: spec.http_tools.into_value().unwrap_or_default(),
+        created_at: row.kinds_created_at,
+        updated_at: row.kinds_updated_at,
     }
 }
 
@@ -172,51 +197,203 @@ pub(crate) fn list_visible_apps<'a>(
         .collect()
 }
 
-/// `user_response` connection view. Only the `auth_type == "none"` branch is
-/// reachable on this endpoint without an OAuth connection store; the source
-/// falls back to `connector_connection_service.response(None)` which is
-/// `{"status": "disconnected", ...}` for apps that require authorization.
-fn connection_view(app: &ConnectorApp) -> ConnectionResponse {
+/// `user_response` connection view: `connector_connection_service.response`
+/// of the caller's stored connection, or the `auth_type == "none"` default
+/// that the source synthesizes without a lookup.
+pub(crate) async fn user_connection<M>(
+    mysql: &M,
+    app: &ConnectorApp,
+    user_id: i64,
+) -> MysqlResult<ConnectionResponse>
+where
+    M: Mysql,
+{
     if app.auth_type == "none" {
-        connected_no_auth()
-    } else {
-        ConnectionResponse {
-            status: "disconnected",
-            external_account_name: None,
-            granted_scopes: Vec::new(),
-            expires_at: None,
-        }
+        return Ok(connected_no_auth());
     }
+    let row = db::find_connector_connection(mysql, &app.slug, user_id).await?;
+    let connection = row.as_ref().map(ConnectorConnection::from_row);
+    Ok(connection::response(connection.as_ref()))
 }
 
 /// Whether the app is connected for the user (`_connected_apps`).
 ///
-/// Shared with the connector-runtime tool listing.
-pub(crate) fn app_connected(app: &ConnectorApp) -> bool {
-    // Without a stored OAuth connection, only `auth_type == "none"` apps are
-    // connected; `connector_connection_service.get` returning None maps to
-    // status "disconnected" for every other auth type.
-    app.auth_type == "none"
+/// `auth_type == "none"` apps are always connected; every other app requires
+/// the caller's stored `ConnectorConnection` to have a `connected` view.
+pub(crate) async fn app_connected<M>(
+    mysql: &M,
+    app: &ConnectorApp,
+    user_id: i64,
+) -> MysqlResult<bool>
+where
+    M: Mysql,
+{
+    if app.auth_type == "none" {
+        return Ok(true);
+    }
+    let row = db::find_connector_connection(mysql, &app.slug, user_id).await?;
+    let connection = row.as_ref().map(ConnectorConnection::from_row);
+    Ok(connection::response(connection.as_ref()).status == "connected")
+}
+
+/// `_connected_apps`: the visible apps whose connection view is `connected`.
+/// Every authorization lookup completes before tool discovery starts, exactly
+/// like the source's separate `_connected_apps` pass.
+pub(crate) async fn connected_apps<'a, M>(
+    mysql: &M,
+    apps: &'a [ConnectorApp],
+    user: &UserRow,
+) -> MysqlResult<Vec<&'a ConnectorApp>>
+where
+    M: Mysql,
+{
+    let mut connected = Vec::new();
+    for app in list_visible_apps(apps, user) {
+        if app_connected(mysql, app, user.users_id).await? {
+            connected.push(app);
+        }
+    }
+    Ok(connected)
+}
+
+/// One `_server_config` failure. `_upstream_tools` converts every one of
+/// these into its 502 wrapper, which `list_tools` then skips.
+#[derive(Debug)]
+pub(crate) enum SessionError {
+    /// The connection lookup failed.
+    Database(MysqlError),
+    /// `_get_encryption_key` could not resolve a usable key/IV.
+    Crypto,
+    /// The app is not connected or carries no access token.
+    AuthorizationRequired,
+}
+
+impl std::fmt::Display for SessionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Database(error) => write!(formatter, "connection lookup failed: {error}"),
+            Self::Crypto => formatter.write_str("sensitive-data decryption is not configured"),
+            Self::AuthorizationRequired => {
+                formatter.write_str("connector authorization is unavailable")
+            }
+        }
+    }
+}
+
+/// `_server_config` session headers for the authenticated caller.
+///
+/// The source starts from `_decrypt_json(app.provider_headers_encrypted)`,
+/// adds `Authorization: Bearer <decrypted access token>` for authorized apps,
+/// and then always adds the caller's user context headers, forwarding them on
+/// every request of the MCP session.
+pub(crate) async fn session_headers<M>(
+    mysql: &M,
+    app: &ConnectorApp,
+    user: &UserRow,
+) -> Result<Vec<(String, String)>, SessionError>
+where
+    M: Mysql,
+{
+    let mut headers = provider_headers(app)?;
+    if app.auth_type != "none" {
+        let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
+            .await
+            .map_err(SessionError::Database)?;
+        let connection = row.as_ref().map(ConnectorConnection::from_row);
+        // `_server_config` refreshes an expired connection before this check;
+        // refresh lives in the OAuth service and is not reachable from the
+        // recorded streamable-HTTP tool discovery.
+        if connection::response(connection.as_ref()).status != "connected" {
+            return Err(SessionError::AuthorizationRequired);
+        }
+        let access_token = connection
+            .as_ref()
+            .ok_or(SessionError::AuthorizationRequired)?
+            .access_token()
+            .map_err(|_| SessionError::Crypto)?;
+        if access_token.is_empty() {
+            return Err(SessionError::AuthorizationRequired);
+        }
+        insert_header(
+            &mut headers,
+            "Authorization",
+            format!("Bearer {access_token}"),
+        );
+    }
+    insert_header(
+        &mut headers,
+        "X-Wegent-Username",
+        user.users_user_name.clone(),
+    );
+    insert_header(&mut headers, "X-Wegent-User-Id", user.users_id.to_string());
+    Ok(headers)
+}
+
+/// `_decrypt_json(app.provider_headers_encrypted)`: the decrypted JSON object's
+/// string-valued entries. `""` answers no headers; an undecryptable payload
+/// keeps its stored text, which then fails JSON parsing and also answers none.
+fn provider_headers(app: &ConnectorApp) -> Result<Vec<(String, String)>, SessionError> {
+    let Some(value) = app
+        .provider_headers_encrypted
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Vec::new());
+    };
+    let decrypted = crate::subscriptions_item::crypto::decrypt_sensitive_data(value)
+        .map_err(|_| SessionError::Crypto)?;
+    let body = if decrypted.is_empty() {
+        "{}"
+    } else {
+        decrypted.as_str()
+    };
+    let parsed = OpaqueJson::from_json_text(body)
+        .and_then(|document| document.project::<BTreeMap<String, JsonProjection<String>>>());
+    Ok(parsed
+        .map(|entries| {
+            entries
+                .into_iter()
+                .filter_map(|(name, value)| value.value.map(|value| (name, value)))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Python dict assignment: an existing key keeps its position and takes the
+/// new value; a new key is appended.
+fn insert_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
+    if let Some(existing) = headers.iter_mut().find(|(key, _)| key == name) {
+        existing.1 = value;
+    } else {
+        headers.push((name.to_string(), value));
+    }
 }
 
 /// `connector_runtime_service.list_tools` restricted to this endpoint's
 /// needs: per connected app, MCP tools filtered by the allowlist. Apps whose
 /// discovery fails are skipped with a warning, exactly like the source's
-/// `except HTTPException` branch.
-async fn list_tools(apps: &[&ConnectorApp]) -> Vec<ConnectorTool> {
+/// `except HTTPException` branch. The connection lookup itself runs inside
+/// `_connected_apps`, outside that catch, so its failures propagate.
+async fn list_tools<M>(
+    mysql: &M,
+    apps: &[ConnectorApp],
+    user: &UserRow,
+) -> MysqlResult<Vec<ConnectorTool>>
+where
+    M: Mysql,
+{
     let mut tools = Vec::new();
-    for app in apps {
-        if !app_connected(app) {
-            continue;
-        }
+    for app in connected_apps(mysql, apps, user).await? {
         if app.transport == "http" {
             // HTTP-transport apps carry inline `httpTools` definitions; the
             // recorded deployment exposes none, so the definition list is
             // empty and contributes no tools.
             continue;
         }
-        let upstream: Vec<UpstreamTool> = match mcp::list_tools(&app.mcp_url).await {
-            Ok(tools) => tools,
+        let headers = match session_headers(mysql, app, user).await {
+            Ok(headers) => headers,
+            // `_upstream_tools` wraps configuration failures in its 502
+            // `HTTPException`, which `list_tools` skips.
             Err(error) => {
                 tracing::warn!(
                     connector = %app.slug,
@@ -226,6 +403,18 @@ async fn list_tools(apps: &[&ConnectorApp]) -> Vec<ConnectorTool> {
                 continue;
             }
         };
+        let upstream: Vec<UpstreamTool> =
+            match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
+                Ok(tools) => tools,
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping unavailable connector during tool discovery"
+                    );
+                    continue;
+                }
+            };
         let allowlist = &app.tool_allowlist;
         for tool in upstream {
             if !allowlist.is_empty() && !allowlist.contains(&tool.name) {
@@ -240,23 +429,20 @@ async fn list_tools(apps: &[&ConnectorApp]) -> Vec<ConnectorTool> {
             });
         }
     }
-    tools
+    Ok(tools)
 }
 
 /// Build the response for `installed_apps`.
-pub async fn installed_apps(
-    _mysql: &impl Mysql,
+pub async fn installed_apps<M>(
+    mysql: &M,
     apps: &[ConnectorApp],
     user: &UserRow,
-) -> Result<InstalledResponse, mcp::McpError> {
+) -> MysqlResult<InstalledResponse>
+where
+    M: Mysql,
+{
     // `_tool_summaries_by_app` runs discovery before the projection loop.
-    let visible_for_tools = list_visible_apps(apps, user);
-    let connected_for_tools: Vec<&ConnectorApp> = visible_for_tools
-        .iter()
-        .copied()
-        .filter(|app| app_connected(app))
-        .collect();
-    let tools = list_tools(&connected_for_tools).await;
+    let tools = list_tools(mysql, apps, user).await?;
     let mut tools_by_app: HashMap<&str, Vec<ToolSummary>> = HashMap::new();
     for tool in &tools {
         let summaries = tools_by_app.entry(tool.connector_id.as_str()).or_default();
@@ -273,7 +459,7 @@ pub async fn installed_apps(
     let visible = list_visible_apps(apps, user);
     let mut items = Vec::new();
     for app in visible {
-        let connection = connection_view(app);
+        let connection = user_connection(mysql, app, user.users_id).await?;
         if connection.status != "connected" {
             continue;
         }
@@ -414,11 +600,63 @@ mod tests {
         assert_eq!(slugs, vec!["on"]);
     }
 
-    #[test]
-    fn connection_view_requires_no_auth_for_connected() {
+    #[tokio::test]
+    async fn user_connection_requires_no_auth_for_connected() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
         let none = app_row(1, "a", serde_json::json!({"authType": "none"}));
         let oauth = app_row(2, "b", serde_json::json!({"authType": "oauth2"}));
-        assert_eq!(connection_view(&row_to_app(&none)).status, "connected");
-        assert_eq!(connection_view(&row_to_app(&oauth)).status, "disconnected");
+        assert_eq!(
+            user_connection(&mysql, &row_to_app(&none), 83)
+                .await
+                .unwrap()
+                .status,
+            "connected"
+        );
+        assert_eq!(
+            user_connection(&mysql, &row_to_app(&oauth), 83)
+                .await
+                .unwrap()
+                .status,
+            "disconnected"
+        );
+        // Only the authorized app needs a stored connection lookup.
+        assert_eq!(mysql.queries().len(), 1);
+        assert!(mysql.queries()[0].sql.contains("ConnectorConnection"));
+        assert_eq!(mysql.queries()[0].args, 2);
+    }
+
+    #[tokio::test]
+    async fn app_connected_looks_up_the_stored_authorization() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let none = app_row(1, "a", serde_json::json!({"authType": "none"}));
+        let oauth = app_row(2, "b", serde_json::json!({"authType": "oauth2"}));
+        assert!(app_connected(&mysql, &row_to_app(&none), 83).await.unwrap());
+        // The capture returns no connection row, so the OAuth app is not
+        // connected.
+        assert!(
+            !app_connected(&mysql, &row_to_app(&oauth), 83)
+                .await
+                .unwrap()
+        );
+        assert_eq!(mysql.queries().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn session_headers_carry_the_user_context() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let app = row_to_app(&app_row(1, "a", serde_json::json!({"authType": "none"})));
+        let user = UserRow {
+            users_id: 83,
+            users_user_name: "junshu".to_string(),
+            ..user()
+        };
+        assert_eq!(
+            session_headers(&mysql, &app, &user).await.unwrap(),
+            vec![
+                ("X-Wegent-Username".to_string(), "junshu".to_string()),
+                ("X-Wegent-User-Id".to_string(), "83".to_string()),
+            ]
+        );
+        assert!(mysql.queries().is_empty());
     }
 }

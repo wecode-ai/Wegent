@@ -1,3 +1,5 @@
+import { gunzipSync } from 'node:zlib'
+
 import {
   ARTIFACT_CONTENT,
   ARTIFACT_NAME,
@@ -19,7 +21,38 @@ import {
 } from './shared.mjs'
 
 function createSse(events) {
-  return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+  const completedOutput = []
+  return events
+    .map(event => {
+      if (event.type === 'response.output_item.done' && event.item) {
+        completedOutput.push(event.item)
+      }
+      const existingOutput = event.response?.output
+      const normalizedEvent =
+        event.type === 'response.completed' &&
+        Array.isArray(existingOutput) &&
+        completedOutput.length > 0
+          ? {
+              ...event,
+              response: {
+                ...event.response,
+                output: [
+                  ...completedOutput,
+                  ...existingOutput.filter(
+                    existing =>
+                      !completedOutput.some(
+                        completed =>
+                          (completed.id && completed.id === existing.id) ||
+                          (completed.call_id && completed.call_id === existing.call_id)
+                      )
+                  ),
+                ],
+              },
+            }
+          : event
+      return `event: ${normalizedEvent.type}\ndata: ${JSON.stringify(normalizedEvent)}\n\n`
+    })
+    .join('')
 }
 
 function codexRequestKind(body) {
@@ -45,8 +78,12 @@ function responseCreated(id) {
     response: {
       id,
       object: 'response',
+      created_at: Math.floor(Date.now() / 1000),
       status: 'in_progress',
+      model: 'wework-desktop-e2e',
       output: [],
+      error: null,
+      incomplete_details: null,
     },
   }
 }
@@ -57,7 +94,9 @@ function responseCompleted(id, output) {
     response: {
       id,
       object: 'response',
+      created_at: Math.floor(Date.now() / 1000),
       status: 'completed',
+      model: 'wework-desktop-e2e',
       output: output ?? [],
       usage: {
         input_tokens: 0,
@@ -66,6 +105,8 @@ function responseCompleted(id, output) {
         output_tokens_details: null,
         total_tokens: 0,
       },
+      error: null,
+      incomplete_details: null,
     },
   }
 }
@@ -83,13 +124,15 @@ function responseFailed(id, message, code = 'context_length_exceeded') {
 
 function functionCall(callId, name, argumentsValue, outputIndex = 0) {
   const argumentsText = JSON.stringify(argumentsValue)
+  const itemId = `fc_${callId}`
   return [
     {
       type: 'response.output_item.added',
       output_index: outputIndex,
       item: {
-        id: callId,
+        id: itemId,
         type: 'function_call',
+        status: 'in_progress',
         call_id: callId,
         name,
         arguments: '',
@@ -98,14 +141,14 @@ function functionCall(callId, name, argumentsValue, outputIndex = 0) {
     {
       type: 'response.function_call_arguments.delta',
       output_index: outputIndex,
-      item_id: callId,
+      item_id: itemId,
       call_id: callId,
       delta: argumentsText,
     },
     {
       type: 'response.function_call_arguments.done',
       output_index: outputIndex,
-      item_id: callId,
+      item_id: itemId,
       call_id: callId,
       arguments: argumentsText,
     },
@@ -113,8 +156,9 @@ function functionCall(callId, name, argumentsValue, outputIndex = 0) {
       type: 'response.output_item.done',
       output_index: outputIndex,
       item: {
-        id: callId,
+        id: itemId,
         type: 'function_call',
+        status: 'completed',
         call_id: callId,
         name,
         arguments: argumentsText,
@@ -152,7 +196,9 @@ function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
     item: {
+      id: `fc_${callId}`,
       type: 'custom_tool_call',
+      status: 'completed',
       call_id: callId,
       name,
       input,
@@ -301,7 +347,7 @@ function localModelSwitchCommand() {
 }
 
 function matrixCaseId(model) {
-  return `${model.execution}-${model.source}-${model.protocol}`
+  return `${model.execution}-${model.source}-${model.protocol}${model.requestMode ? `-${model.requestMode}` : ''}`
 }
 
 function matrixTextPrompt(model) {
@@ -365,7 +411,12 @@ function readRawRequestBody(request) {
     request.on('data', chunk => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
-    request.once('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    request.once('end', () => {
+      const body = Buffer.concat(chunks)
+      resolvePromise(
+        (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
+      )
+    })
     request.once('error', reject)
   })
 }
@@ -533,6 +584,17 @@ function selectConvertedTool(request, toolName, argumentsValue) {
 function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const searchedNamespace = requestToolSearchResults(request).find(
+    tool =>
+      tool?.type === 'namespace' &&
+      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  )
+  if (searchedNamespace) {
+    return {
+      mode: 'direct',
+      ...selectMcpTool(request, searchedNamespace.name, toolName, argumentsValue),
+    }
+  }
   const advertisesToolSearch = tools.some(
     tool =>
       tool?.type === 'tool_search' ||
@@ -598,7 +660,9 @@ function selectToolSearch(request, query) {
     `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
   )
   assert.equal(
-    tools.some(tool => tool?.type === 'namespace' && tool.name !== 'image_gen'),
+    tools.some(
+      tool => tool?.type === 'namespace' && !['collaboration', 'image_gen'].includes(tool.name)
+    ),
     false,
     'Real Codex eagerly advertised deferred namespace tools before tool_search'
   )
@@ -649,13 +713,13 @@ function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
 
-function selectShellToolCommand(request, command, workspacePath) {
+function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs = 1000 } = {}) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
       cmd: command,
       workdir: workspacePath,
-      yield_time_ms: 1000,
+      yield_time_ms: yieldTimeMs,
     })
   }
   if (tools.some(tool => tool?.name === 'shell_command')) {

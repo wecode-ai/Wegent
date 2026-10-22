@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.schemas.kind import KnowledgeBaseDefaultRef, SkillRefMeta
+from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerSelection
 from app.schemas.user import UserInDB
 
 
@@ -21,6 +22,8 @@ class BotCreate(BaseModel):
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
     capability_mode: Optional[str] = None
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     inherit_base_capabilities: bool = False
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
@@ -48,6 +51,8 @@ class BotUpdate(BaseModel):
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
     capability_mode: Optional[str] = None
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     inherit_base_capabilities: Optional[bool] = None
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
@@ -77,6 +82,8 @@ class BotInDB(BaseModel):
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
     capability_mode: str = "manual"
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     inherit_base_capabilities: bool = False
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
@@ -108,6 +115,8 @@ class BotDetail(BaseModel):
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
     capability_mode: str = "manual"
+    execution_policy: ExecutionPolicy | None = None
+    model_policy: ModelPolicy | None = None
     inherit_base_capabilities: bool = False
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None

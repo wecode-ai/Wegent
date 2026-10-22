@@ -459,6 +459,7 @@ export function SubscriptionForm({
           displayName: m.displayName,
           provider: m.provider || undefined,
           modelId: m.modelId || undefined,
+          capability: m.capability,
           type: m.type,
           modelGroup: m.modelGroup,
           modelSubGroup: m.modelSubGroup,

@@ -1,4 +1,5 @@
 import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
+import type { LocalRuntimeSidebarOptions } from '@/lib/local-runtime-sidebar-identity'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
@@ -83,9 +84,15 @@ export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
 
 export interface RuntimeWorkListRequestOptions extends Pick<HttpRequestOptions, 'signal'> {
   preferCached?: boolean
+  deviceId?: string
+  /** Preserve absent raw roots when verifying a runtime that advertises root editing. */
+  requireExplicitProjectRoots?: boolean
 }
 
 export function createRuntimeWorkApi(client: HttpClient) {
+  const requireBackendSidebarTarget = (options?: LocalRuntimeSidebarOptions) => {
+    if (options?.localSidebarIdentity) throw new Error('local-sidebar-ipc-required')
+  }
   return {
     ...createRuntimeConversationApi(client),
     prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {
@@ -203,13 +210,17 @@ export function createRuntimeWorkApi(client: HttpClient) {
       return client.post('/runtime-work/sidebar/projects/appearance', data)
     },
     syncRuntimeRemoteProjects(
-      data: RuntimeRemoteProjectsSyncRequest
+      data: RuntimeRemoteProjectsSyncRequest,
+      options?: LocalRuntimeSidebarOptions
     ): Promise<RuntimeSidebarMutationResponse> {
+      requireBackendSidebarTarget(options)
       return client.post('/runtime-work/sidebar/projects/sync-remote', data)
     },
     activateRuntimeProject(
-      data: RuntimeProjectActivateRequest
+      data: RuntimeProjectActivateRequest,
+      options?: LocalRuntimeSidebarOptions
     ): Promise<RuntimeSidebarMutationResponse> {
+      requireBackendSidebarTarget(options)
       return client.post('/runtime-work/sidebar/projects/activate', data)
     },
     reorderRuntimeProjectTasks(

@@ -12,12 +12,11 @@ from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.endpoints.installed_plugins import (
-    _sync_global_capabilities,
     install_marketplace_plugin,
     report_installed_plugins_on_device,
     sync_installed_plugins_to_device,
@@ -50,6 +49,7 @@ from app.schemas.installed_plugin import (
     PluginSubmissionInitRequest,
     PluginUpstreamCreateRequest,
 )
+from app.services import plugin_write_operations
 from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     DeviceCapabilitySyncService,
@@ -61,6 +61,7 @@ from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
     plugin_device_installation_service,
 )
+from app.services.plugin_device_sync import sync_global_capabilities
 from app.services.plugin_marketplace_migration_service import (
     PluginMarketplaceMigrationService,
 )
@@ -72,6 +73,9 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_write_errors import PluginWriteError
+
+pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
 
 GITHUB_UPSTREAM_SKILL_PATHS = (
     "skills/gh-address-comments/SKILL.md",
@@ -872,7 +876,7 @@ def test_catalog_marks_manual_update_available(test_db, test_user, monkeypatch):
     assert item.updateAvailable is True
 
 
-def _create_auto_update_install(
+def _create_marketplace_update_install(
     db: Session,
     *,
     user_id: int,
@@ -944,107 +948,38 @@ def _create_auto_update_install(
     return installed, plugin, current, latest
 
 
-@pytest.mark.parametrize(
-    ("install_count", "expected_batches"),
-    [(0, 0), (1, 1), (5, 5), (6, 6), (12, 12)],
-)
-def test_auto_update_batches_are_bounded_and_drain_all_candidates(
-    test_db, test_user, install_count, expected_batches
-):
+def test_marketplace_release_update_and_reinstall_advance_revision(test_db, test_user):
     service = PluginMarketplaceService()
-    installs = [
-        _create_auto_update_install(
-            test_db,
-            user_id=test_user.id,
-            index=index + 1,
-        )
-        for index in range(install_count)
-    ]
+    installed, plugin, _, latest = _create_marketplace_update_install(
+        test_db, user_id=test_user.id, index=1
+    )
     test_db.commit()
+    assert installed.json["spec"]["revision"] == 1
 
-    batch_sizes: list[int] = []
-    while True:
-        result = service.auto_update_batch(test_db, user_id=test_user.id)
-        if result.updatedCount == 0:
-            break
-        batch_sizes.append(result.updatedCount)
-        if result.remainingCount == 0:
-            break
+    service.update_release(
+        test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        release_id=latest.id,
+    )
+    assert installed.json["spec"]["revision"] == 2
+    assert installed.json["spec"]["enabled"] is False
+    assert installed.json["spec"]["componentStates"] == {"skills:review": False}
+    installed_plugin_service.uninstall_installed_plugin(
+        db=test_db, user_id=test_user.id, installed_id=installed.id
+    )
+    assert installed.json["spec"]["revision"] == 3
 
-    assert len(batch_sizes) == expected_batches
-    assert all(size == 1 for size in batch_sizes)
-    assert sum(batch_sizes) == install_count
-    for installed, _, _, latest in installs:
-        test_db.refresh(installed)
-        assert installed.json["spec"]["releaseId"] == latest.id
-        assert installed.json["spec"]["version"] == "2.0.0"
-        assert installed.json["spec"]["updatePolicy"] == "auto"
-        assert installed.json["spec"]["enabled"] is False
-        assert installed.json["spec"]["componentStates"] == {"skills:review": False}
+    reinstalled = service.install(test_db, user_id=test_user.id, plugin_id=plugin.id)
+
+    assert int(reinstalled.metadata["labels"]["id"]) == installed.id
+    assert installed.json["spec"]["revision"] == 4
+    assert installed.is_active is True
 
 
-def test_auto_update_is_idempotent_and_excludes_invalid_installations(
-    test_db, test_user
-):
+def test_manual_release_update_preserves_manual_policy(test_db, test_user):
     service = PluginMarketplaceService()
-    valid, _, _, latest = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=1,
-    )
-    invalid_scan, _, _, invalid_latest = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=2,
-    )
-    invalid_latest.scan_status = "pending"
-    invalid_source, _, _, _ = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=3,
-    )
-    invalid_source.json["spec"]["source"]["type"] = "upload"
-    flag_modified(invalid_source, "json")
-    invalid_catalog, _, _, _ = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=4,
-    )
-    invalid_catalog.json["spec"]["releaseId"] = 999999
-    flag_modified(invalid_catalog, "json")
-    inaccessible, inaccessible_plugin, _, _ = _create_auto_update_install(
-        test_db,
-        user_id=test_user.id,
-        index=5,
-    )
-    inaccessible_plugin.visibility = "personal"
-    inaccessible_plugin.owner_user_id = test_user.id + 1000
-    test_db.commit()
-
-    first = service.auto_update_batch(test_db, user_id=test_user.id)
-    second = service.auto_update_batch(test_db, user_id=test_user.id)
-
-    assert first.updatedCount == 1
-    assert first.updated[0].installedPluginId == valid.id
-    assert first.updated[0].toReleaseId == latest.id
-    assert first.remainingCount == 0
-    assert second.updatedCount == 0
-    assert second.remainingCount == 0
-    for excluded in (
-        invalid_scan,
-        invalid_source,
-        invalid_catalog,
-        inaccessible,
-    ):
-        test_db.refresh(excluded)
-        assert excluded.json["spec"]["version"] == "1.0.0"
-
-
-def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
-    test_db, test_user
-):
-    service = PluginMarketplaceService()
-    installed, _, _, latest = _create_auto_update_install(
+    installed, _, _, latest = _create_marketplace_update_install(
         test_db,
         user_id=test_user.id,
         index=1,
@@ -1053,10 +988,6 @@ def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
     flag_modified(installed, "json")
     test_db.commit()
 
-    result = service.auto_update_batch(test_db, user_id=test_user.id)
-
-    assert result.updatedCount == 0
-    assert result.remainingCount == 0
     updated = service.update_release(
         test_db,
         user_id=test_user.id,
@@ -1068,8 +999,7 @@ def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
 
 
 def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_user):
-    marketplace_service = PluginMarketplaceService()
-    installed, _, _, latest = _create_auto_update_install(
+    installed, _, _, _ = _create_marketplace_update_install(
         test_db,
         user_id=test_user.id,
         index=1,
@@ -1084,12 +1014,9 @@ def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_u
         installed_id=installed.id,
         request=InstalledPluginUpdateRequest(updatePolicy="auto"),
     )
-    result = marketplace_service.auto_update_batch(test_db, user_id=test_user.id)
-
     assert opted_in.spec.updatePolicy == "auto"
-    assert result.updatedCount == 1
     test_db.refresh(installed)
-    assert installed.json["spec"]["releaseId"] == latest.id
+    assert installed.json["spec"]["updatePolicy"] == "auto"
 
     opted_out = installed_plugin_service.update_installed_plugin(
         db=test_db,
@@ -1719,6 +1646,262 @@ def test_personal_plugin_delete_requires_impact_confirmation_and_revokes_usage(
     )
 
 
+@pytest.fixture
+def shared_personal_plugin(
+    test_db: Session, test_user: User, request: pytest.FixtureRequest
+) -> tuple[PluginMarketplaceService, Plugin, list[User], list[Kind]]:
+    recipients = [
+        User(
+            user_name=f"bulk-plugin-recipient-{index}",
+            password_hash=test_user.password_hash,
+            email=f"bulk-plugin-recipient-{index}@example.com",
+            is_active=True,
+        )
+        for index in range(getattr(request, "param", 3))
+    ]
+    plugin = Plugin(
+        slug="bulk-revocation",
+        name="bulk-revocation",
+        display_name="Bulk Revocation",
+        owner_user_id=test_user.id,
+        keywords_json=[],
+        interface_json={},
+        visibility="personal",
+        status="published",
+        allow_copy=True,
+    )
+    test_db.add_all([plugin, *recipients])
+    test_db.flush()
+    installations = []
+    for recipient in recipients:
+        installed = Kind(
+            user_id=recipient.id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name=plugin.name,
+            json={
+                "spec": {
+                    "pluginId": plugin.id,
+                    "revision": 4,
+                    "enabled": True,
+                    "installState": "installed",
+                    "componentStates": {"review": False},
+                }
+            },
+            is_active=True,
+        )
+        test_db.add_all(
+            [
+                installed,
+                Kind(
+                    user_id=recipient.id,
+                    kind="ConnectorAuthPolicy",
+                    namespace="plugin-auth",
+                    name="account",
+                    json={"spec": {"enabled": True, "revision": 3}},
+                    is_active=True,
+                ),
+                ResourceMember.create(
+                    resource_type="Plugin",
+                    resource_id=plugin.id,
+                    entity_type="user",
+                    entity_id=str(recipient.id),
+                    status=MemberStatus.APPROVED.value,
+                ),
+            ]
+        )
+        installations.append(installed)
+    test_db.commit()
+    return PluginMarketplaceService(), plugin, recipients, installations
+
+
+def _revoke_personal_plugin_usage(
+    db: Session,
+    service: PluginMarketplaceService,
+    plugin_id: int,
+    owner_user_id: int,
+    operation: str,
+) -> list[tuple[int, int]]:
+    if operation == "access":
+        _, revoked = service.update_plugin_access(
+            db,
+            plugin_id=plugin_id,
+            user_id=owner_user_id,
+            request=PluginAccessUpdateRequest(scope="private", targets=[]),
+        )
+        return revoked
+    impact = service.get_personal_plugin_delete_impact(
+        db, plugin_id=plugin_id, user_id=owner_user_id
+    )
+    return service.delete_owned_personal_plugin(
+        db,
+        plugin_id=plugin_id,
+        user_id=owner_user_id,
+        impact_revision=impact.impactRevision,
+        revoke_and_delete=True,
+    )
+
+
+@pytest.mark.parametrize("operation", ["access", "delete"])
+@pytest.mark.parametrize("shared_personal_plugin", [3, 20, 21, 50], indirect=True)
+def test_personal_plugin_revocation_updates_all_recipients_atomically(
+    test_db, test_user, shared_personal_plugin, plugin_write_backend, operation
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+
+    revoked = _revoke_personal_plugin_usage(
+        test_db, service, plugin.id, test_user.id, operation
+    )
+
+    assert set(revoked) == {
+        (recipient.id, installed.id)
+        for recipient, installed in zip(recipients, installations)
+    }
+    test_db.refresh(plugin)
+    assert plugin.status == ("deleted" if operation == "delete" else "published")
+    assert plugin.allow_copy is False
+    assert service._plugin_grants(test_db, plugin.id) == []
+    for installed in installations:
+        test_db.refresh(installed)
+        assert installed.is_active is False
+        assert installed.json["spec"] == {
+            "pluginId": plugin.id,
+            "revision": 5,
+            "enabled": False,
+            "installState": "uninstalled",
+            "componentStates": {"review": False},
+        }
+    policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
+    assert {row.user_id for row in policies} == {user.id for user in recipients}
+    assert all(row.json["spec"]["revision"] == 4 for row in policies)
+    assert not plugin_write_backend.values
+
+
+@pytest.mark.parametrize("operation", ["access", "delete"])
+@pytest.mark.parametrize("shared_personal_plugin", [3, 21, 50], indirect=True)
+def test_personal_plugin_revocation_busy_recipient_preserves_every_record(
+    test_db,
+    test_user,
+    shared_personal_plugin,
+    plugin_write_backend,
+    monkeypatch,
+    operation,
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+    recipient_ids = sorted(user.id for user in recipients)
+    busy_key = f"wegent:plugin-write:{recipient_ids[-1]}"
+    busy_lock = plugin_write_backend.lock(
+        busy_key, timeout=30, blocking_timeout=0, thread_local=False
+    )
+    assert busy_lock.acquire()
+    original_lock = plugin_write_backend.lock
+
+    def immediate_busy_lock(name: str, **options):
+        lock = original_lock(name, **options)
+        if name == busy_key:
+            # Exercise contention without depending on a wall-clock timeout.
+            lock.blocking_timeout = 0
+        return lock
+
+    lock_factory = Mock(side_effect=immediate_busy_lock)
+    monkeypatch.setattr(plugin_write_backend, "lock", lock_factory)
+    original_grants = {
+        (grant.id, grant.entity_id)
+        for grant in service._plugin_grants(test_db, plugin.id)
+    }
+    try:
+        with pytest.raises(PluginWriteError, match="plugin_write_busy"):
+            _revoke_personal_plugin_usage(
+                test_db, service, plugin.id, test_user.id, operation
+            )
+
+        assert [call.args[0] for call in lock_factory.call_args_list] == [
+            f"wegent:plugin-write:{user_id}" for user_id in recipient_ids
+        ]
+        test_db.refresh(plugin)
+        assert plugin.status == "published"
+        assert plugin.allow_copy is True
+        assert {
+            (grant.id, grant.entity_id)
+            for grant in service._plugin_grants(test_db, plugin.id)
+        } == original_grants
+        for installed in installations:
+            test_db.refresh(installed)
+            assert installed.is_active is True
+            assert installed.json["spec"]["revision"] == 4
+            assert installed.json["spec"]["enabled"] is True
+            assert installed.json["spec"]["installState"] == "installed"
+        policies = test_db.query(Kind).filter(Kind.kind == "ConnectorAuthPolicy").all()
+        assert all(row.json["spec"]["revision"] == 3 for row in policies)
+        assert not test_db.info.get("plugin_write_leases")
+        assert set(plugin_write_backend.values) == {busy_key}
+        assert busy_lock.owned()
+    finally:
+        busy_lock.release()
+
+    revoked = _revoke_personal_plugin_usage(
+        test_db, service, plugin.id, test_user.id, operation
+    )
+    assert set(revoked) == {
+        (recipient.id, installed.id)
+        for recipient, installed in zip(recipients, installations)
+    }
+    test_db.refresh(plugin)
+    assert plugin.status == ("deleted" if operation == "delete" else "published")
+    assert service._plugin_grants(test_db, plugin.id) == []
+    for installed in installations:
+        test_db.refresh(installed)
+        assert installed.is_active is False
+        assert installed.json["spec"]["revision"] == 5
+    assert not plugin_write_backend.values
+
+
+def test_access_revocation_does_not_lock_retained_recipient(
+    test_db, test_user, shared_personal_plugin, plugin_write_backend, monkeypatch
+):
+    service, plugin, recipients, installations = shared_personal_plugin
+    retained = recipients[0]
+    retained_key = f"wegent:plugin-write:{retained.id}"
+    retained_lock = plugin_write_backend.lock(
+        retained_key, timeout=30, blocking_timeout=0, thread_local=False
+    )
+    assert retained_lock.acquire()
+    lock_factory = Mock(wraps=plugin_write_backend.lock)
+    monkeypatch.setattr(plugin_write_backend, "lock", lock_factory)
+    try:
+        access, revoked = service.update_plugin_access(
+            test_db,
+            plugin_id=plugin.id,
+            user_id=test_user.id,
+            request=PluginAccessUpdateRequest(
+                scope="restricted",
+                targets=[
+                    PluginAccessTarget(entityType="user", entityId=str(retained.id))
+                ],
+                allowCopy=True,
+            ),
+        )
+
+        assert [target.entityId for target in access.targets] == [str(retained.id)]
+        assert set(revoked) == {
+            (recipient.id, installed.id)
+            for recipient, installed in zip(recipients[1:], installations[1:])
+        }
+        assert {call.args[0] for call in lock_factory.call_args_list} == {
+            f"wegent:plugin-write:{user.id}" for user in recipients[1:]
+        }
+        test_db.refresh(installations[0])
+        assert installations[0].is_active is True
+        assert installations[0].json["spec"]["revision"] == 4
+        for installed in installations[1:]:
+            test_db.refresh(installed)
+            assert installed.is_active is False
+        assert set(plugin_write_backend.values) == {retained_key}
+        assert retained_lock.owned()
+    finally:
+        retained_lock.release()
+
+
 def test_personal_plugin_delete_rejects_stale_impact_revision(test_db, test_user):
     plugin = Plugin(
         slug="delete-revision",
@@ -2252,13 +2435,18 @@ def test_new_desired_release_resets_auto_update_failure_limit(test_db, test_user
 def test_device_payload_preserves_old_release_after_auto_update_circuit_opens(
     test_db, test_user, monkeypatch
 ):
-    installed, _, old_release, new_release = _create_auto_update_install(
+    installed, _, old_release, new_release = _create_marketplace_update_install(
         test_db,
         user_id=test_user.id,
         index=15,
     )
     test_db.commit()
-    PluginMarketplaceService().auto_update_batch(test_db, user_id=test_user.id)
+    PluginMarketplaceService().update_release(
+        test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        release_id=new_release.id,
+    )
     test_db.add(
         PluginDeviceInstallation(
             installed_kind_id=installed.id,
@@ -2321,9 +2509,22 @@ def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
 async def test_sync_installed_plugins_to_device_materializes_account_install(
     test_db, test_user, monkeypatch
 ):
-    from contextlib import contextmanager
+    user_id = test_user.id
 
-    installed, release = _device_install(test_db, test_user.id)
+    class OneShotCurrentUser:
+        accesses = 0
+
+        @property
+        def id(self):
+            self.accesses += 1
+            if self.accesses > 1:
+                raise AssertionError(
+                    "current_user.id was read after the request session closed"
+                )
+            return user_id
+
+    installed, release = _device_install(test_db, user_id)
+    installed_id, release_id = installed.id, release.id
     reconcile_calls: list[int] = []
 
     def reconcile(_db, *, user_id):
@@ -2336,12 +2537,8 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
         return DeviceCapabilitySyncResult(
             device_id=device_id,
             success=True,
-            plugins=[DeviceCapabilityItemResult(id=str(installed.id), status="synced")],
+            plugins=[DeviceCapabilityItemResult(id=str(installed_id), status="synced")],
         )
-
-    @contextmanager
-    def reuse_test_db():
-        yield test_db
 
     monkeypatch.setattr(
         plugin_marketplace_service,
@@ -2353,32 +2550,26 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
         "sync_device_payload",
         sync_device_payload,
     )
-    # Nested test transactions are connection-bound; reuse the fixture session.
-    monkeypatch.setattr(test_db, "close", lambda: None)
     monkeypatch.setattr(
         device_capability_sync_service,
         "_session_factory",
-        reuse_test_db,
-    )
-    monkeypatch.setattr(
-        "app.api.endpoints.installed_plugins.get_db_session",
-        reuse_test_db,
+        plugin_write_operations.get_db_session,
     )
 
     response = await sync_installed_plugins_to_device(
         device_id="new-device",
         db=test_db,
-        current_user=test_user,
+        current_user=OneShotCurrentUser(),
     )
 
-    assert reconcile_calls == [test_user.id]
+    assert reconcile_calls == [user_id]
     assert response.deviceId == "new-device"
     assert response.pendingCount >= 1
     assert response.sync.synced == 1
     row = test_db.query(PluginDeviceInstallation).one()
     assert row.device_id == "new-device"
     assert row.state == "installed"
-    assert row.actual_release_id == release.id
+    assert row.actual_release_id == release_id
 
 
 def test_report_installed_plugins_on_device_acks_without_pushing_packages(
@@ -2645,7 +2836,7 @@ async def test_plugin_mutation_only_fails_for_the_required_device(
         sync,
     )
 
-    result = await _sync_global_capabilities(
+    result = await sync_global_capabilities(
         test_db,
         test_user.id,
         required_device_id="current-device",
@@ -2653,7 +2844,7 @@ async def test_plugin_mutation_only_fails_for_the_required_device(
     assert result is response
 
     with pytest.raises(HTTPException) as exc_info:
-        await _sync_global_capabilities(
+        await sync_global_capabilities(
             test_db,
             test_user.id,
             required_device_id="other-device",
@@ -2687,7 +2878,7 @@ async def test_plugin_mutation_requires_the_current_plugin_result(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await _sync_global_capabilities(
+        await sync_global_capabilities(
             test_db,
             test_user.id,
             required_device_id="current-device",
@@ -2944,10 +3135,12 @@ async def test_install_returns_plugin_when_device_sync_fails(
 
 
 @pytest.mark.asyncio
-async def test_uninstall_succeeds_when_device_sync_fails(
+async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
     test_db, test_user, monkeypatch
 ):
-    installed, release = _device_install(test_db, test_user.id)
+    user_id = test_user.id
+    installed, release = _device_install(test_db, user_id)
+    installed_id = installed.id
     test_db.add(
         PluginDeviceInstallation(
             installed_kind_id=installed.id,
@@ -2960,48 +3153,79 @@ async def test_uninstall_succeeds_when_device_sync_fails(
     )
     test_db.commit()
 
-    async def sync(*_args, **_kwargs):
-        return DeviceCapabilitySyncResponse(
-            failed=1,
-            synced=0,
-            results=[
-                DeviceCapabilitySyncResult(
-                    device_id="current-device",
-                    success=False,
-                    error="device rejected sync",
-                )
-            ],
+    from unittest.mock import AsyncMock
+
+    from app.services.device import plugin_removal_sync
+
+    monkeypatch.setattr(
+        plugin_removal_sync, "get_db_session", plugin_write_operations.get_db_session
+    )
+    sync = AsyncMock(
+        return_value=DeviceCapabilitySyncResult(
+            device_id="current-device", success=False, error="device rejected sync"
         )
+    )
 
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_user_global_capabilities",
+        "sync_current_device_capabilities",
         sync,
     )
 
+    tasks = BackgroundTasks()
     await uninstall_installed_plugin(
-        installed_id=installed.id,
+        installed_id=installed_id,
+        background_tasks=tasks,
         device_id="current-device",
         db=test_db,
         current_user=test_user,
     )
 
-    test_db.refresh(installed)
+    installed = test_db.get(Kind, installed_id)
+    assert installed is not None
     assert installed.is_active is False
     assert installed.json["spec"]["installState"] == "uninstalled"
-    assert test_db.query(PluginDeviceInstallation).count() == 0
+    sync.assert_not_awaited()
+    assert test_db.query(PluginDeviceInstallation).one().state == "uninstalling"
+    assert plugin_removal_sync.pending_removal_devices(user_id, None) == {
+        "current-device"
+    }
 
     item = (
         PluginMarketplaceService()
         .list_plugins(
             test_db,
-            user_id=test_user.id,
+            user_id=user_id,
             device_id="current-device",
         )
         .items[0]
     )
     assert item.installed is False
     assert item.installedPluginId is None
+    assert item.currentDeviceInstallation is None
+
+    await tasks()
+    sync.assert_awaited_once()
+    row = test_db.query(PluginDeviceInstallation).populate_existing().one()
+    assert row.state == "failed"
+    assert plugin_removal_sync.pending_removal_devices(user_id, None) == set()
+    # A later heartbeat retries the durable row, without any new DELETE request.
+    row.last_sync_at = datetime.now() - timedelta(seconds=61)
+    test_db.commit()
+    await plugin_removal_sync.sync_pending_plugin_removals(user_id, "current-device")
+    test_db.refresh(row)
+    assert row.attempt_count == 2
+    row.last_sync_at = datetime.now() - timedelta(seconds=61)
+    test_db.commit()
+    await plugin_removal_sync.sync_pending_plugin_removals(user_id, "current-device")
+    assert sync.await_count == 2
+    row.last_sync_at = datetime.now() - timedelta(seconds=121)
+    test_db.commit()
+    sync.return_value = DeviceCapabilitySyncResult(
+        device_id="current-device", success=True, acknowledged=True
+    )
+    await plugin_removal_sync.sync_pending_plugin_removals(user_id, "current-device")
+    assert test_db.query(PluginDeviceInstallation).count() == 0
 
 
 @pytest.mark.asyncio
@@ -3025,6 +3249,7 @@ async def test_uninstall_is_idempotent_for_inactive_kind(
 
     await uninstall_installed_plugin(
         installed_id=installed.id,
+        background_tasks=BackgroundTasks(),
         device_id="current-device",
         db=test_db,
         current_user=test_user,
@@ -3058,6 +3283,80 @@ def test_reconnect_sync_clears_materialized_uninstall_state(test_db, test_user):
     )
 
     assert test_db.query(PluginDeviceInstallation).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_uninstall_creates_durable_cleanup_for_legacy_device_without_rows(
+    test_db, test_user, monkeypatch
+):
+    from app.services.device import plugin_removal_sync
+    from app.services.device_service import device_service
+
+    user_id = test_user.id
+    installed, _ = _device_install(test_db, user_id)
+    installed_id = installed.id
+    device = device_service.upsert_device_crd(
+        test_db,
+        user_id,
+        "legacy-device",
+        "Wework",
+        device_type="app",
+        runtime_instance_id="runtime",
+        app_device_id="electron-app",
+    )
+    route = f"app-record-{device.id}"
+    await uninstall_installed_plugin(
+        installed_id=installed_id,
+        background_tasks=BackgroundTasks(),
+        db=test_db,
+        current_user=test_user,
+    )
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.device_id == route
+    assert row.state == "uninstalling"
+
+    monkeypatch.setattr(
+        plugin_removal_sync, "get_db_session", plugin_write_operations.get_db_session
+    )
+    assert plugin_removal_sync.pending_removal_devices(user_id, "electron-app") == {
+        route
+    }
+    assert plugin_removal_sync.pending_removal_devices(user_id, "other-device") == set()
+    assert plugin_removal_sync.pending_removal_devices(user_id + 1, None) == set()
+
+    # Reinstall is authoritative even if the previous cleanup task has not run.
+    installed = test_db.get(Kind, installed_id)
+    assert installed is not None
+    assert installed.is_active is False
+    installed.is_active = True
+    test_db.commit()
+    with plugin_write_operations.get_db_session() as db:
+        assert db.get(Kind, installed_id).is_active is True
+    assert plugin_removal_sync.pending_removal_devices(user_id, route) == set()
+
+
+def test_preparing_uninstall_does_not_commit_or_touch_another_users_plugin(
+    test_db, test_user
+):
+    from app.services.device.plugin_removal_sync import prepare_plugin_removal
+
+    installed, release = _device_install(test_db, test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            user_id=test_user.id,
+            installed_kind_id=installed.id,
+            device_id="device",
+            desired_release_id=release.id,
+            state="installed",
+        )
+    )
+    test_db.commit()
+    prepare_plugin_removal(test_db, test_user.id + 1, installed.id)
+    assert test_db.query(PluginDeviceInstallation).one().state == "installed"
+    prepare_plugin_removal(test_db, test_user.id, installed.id)
+    assert test_db.query(PluginDeviceInstallation).one().state == "uninstalling"
+    test_db.rollback()
+    assert test_db.query(PluginDeviceInstallation).one().state == "installed"
 
 
 def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
@@ -3879,6 +4178,91 @@ def test_legacy_submission_cannot_upgrade_personal_plugin_to_workspace(
     assert exc.value.status_code == 422
     assert plugin.visibility == "personal"
     assert plugin.status == "published"
+
+
+@pytest.mark.parametrize("removal_state", ["uninstalling", "failed"])
+def test_desired_catalog_repair_retains_removal_until_device_ack(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    removal_state: str,
+) -> None:
+    from app.services.device import plugin_reconciliation
+
+    active, release = _device_install(test_db, test_user.id)
+    active.json = {
+        "spec": {
+            **active.json["spec"],
+            "source": {
+                "type": "marketplace",
+                "providerKey": "wegent-market",
+                "pluginKey": "device-state",
+                "catalogItemId": "obsolete-catalog-id",
+                "marketplace": "wegent",
+            },
+        }
+    }
+    removed = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="removed-plugin",
+        json={"spec": {"enabled": False, "installState": "uninstalled"}},
+        is_active=False,
+    )
+    test_db.add(removed)
+    test_db.flush()
+    pending = PluginDeviceInstallation(
+        installed_kind_id=removed.id,
+        user_id=test_user.id,
+        device_id="offline-device",
+        desired_release_id=release.id,
+        actual_release_id=release.id,
+        state=removal_state,
+        error_code="PLUGIN_SYNC_FAILED" if removal_state == "failed" else "",
+        attempt_count=2 if removal_state == "failed" else 0,
+        last_sync_at=datetime(2026, 1, 1),
+    )
+    test_db.add(pending)
+    test_db.commit()
+    active_id, removed_id = active.id, removed.id
+    pending_id = pending.id
+    expected_retry = (pending.error_code, pending.attempt_count, pending.last_sync_at)
+    monkeypatch.setattr(
+        plugin_reconciliation,
+        "get_db_session",
+        plugin_write_operations.get_db_session,
+    )
+    monkeypatch.setattr(
+        plugin_package_storage,
+        "presign_download",
+        lambda key: (f"https://objects.example/{key}", datetime.now()),
+    )
+
+    payload = plugin_reconciliation.desired_plugins(test_user.id, "current-device")
+
+    test_db.expire_all()
+    repaired = test_db.get(Kind, active_id)
+    assert repaired.json["spec"]["source"]["catalogItemId"] == str(release.plugin_id)
+    assert [item["installed_plugin_id"] for item in payload["plugins"]] == [active_id]
+    retained = test_db.get(PluginDeviceInstallation, pending_id)
+    assert retained is not None, "Catalog repair deleted unacknowledged device removal"
+    assert retained.state == removal_state
+    assert (retained.error_code, retained.attempt_count, retained.last_sync_at) == (
+        expected_retry
+    )
+    assert test_db.get(Kind, removed_id).is_active is False
+
+    plugin_device_installation_service.record_device_sync_result(
+        test_db,
+        user_id=test_user.id,
+        result=DeviceCapabilitySyncResult(
+            device_id="offline-device", success=True, acknowledged=True, plugins=[]
+        ),
+    )
+
+    assert test_db.get(PluginDeviceInstallation, pending_id) is None
+    assert test_db.get(Kind, active_id).is_active is True
 
 
 def test_reconcile_stale_installed_catalog_refs_after_reimport(test_db, test_user):

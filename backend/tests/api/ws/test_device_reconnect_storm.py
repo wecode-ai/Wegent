@@ -367,10 +367,10 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     assert upsert_calls[0][1][7] == "runtime-stable"
     assert upsert_calls[0][1][8] == "local-app-device"
     saved_session = save_session.await_args.args[1]
-    assert saved_session["execution_target_id"] == "local-app-device"
+    assert saved_session["execution_target_id"] == "app-record-70"
     assert enter_room.await_args_list[-1].args == (
         "sid-app",
-        "execution-target:7:local-app-device",
+        "execution-target:7:app-record-70",
     )
     reconcile.assert_awaited_once_with(
         user_id=7,
@@ -425,10 +425,16 @@ async def test_cloud_device_register_matches_cloud_device(monkeypatch):
 
     assert result == {"success": True, "device_id": "standalone-admin-device"}
     match_cloud_device.assert_awaited_once_with(
-        7, "198.18.0.1", "standalone-admin-device", None
+        7,
+        "198.18.0.1",
+        "standalone-admin-device",
+        None,
+        "198.18.0.1",
+        17888,
     )
     run_sync_in_executor.assert_not_awaited()
     set_device_online.assert_awaited_once()
+    assert set_device_online.await_args.kwargs["runtime_transfer_port"] == 17888
 
 
 def test_connection_rate_limit_tracks_attempt_window():

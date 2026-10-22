@@ -2,17 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BoardLayoutEditor } from "./BoardLayoutEditor";
 import {
-  clearMemberResultsForEmptyQuery,
-  runActiveMemberSearch,
-} from "./memberSearch";
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SetStateAction,
+} from 'react'
+import { BoardLayoutEditor } from './BoardLayoutEditor'
+import { ProjectProviderSection, ProjectTagsSection } from './ProjectManageSections'
+import { ProjectMembersSection } from './ProjectMembersSection'
+import { useProjectMembers } from './useProjectMembers'
 import {
   createProjectVersionMutationQueue,
   type ProjectVersionMutationQueue,
-} from "./projectMutationQueue";
-import { repositoryAddress, repositoryProviderConfig } from "./provider";
+} from './projectMutationQueue'
+import { repositoryAddress, repositoryProviderConfig } from './provider'
 import type {
   ProjectManageApi,
   ProjectManageCardDisplay,
@@ -21,22 +28,19 @@ import type {
   ProjectManageItem,
   ProjectManageMember,
   ProjectManageProject,
-  ProjectManageRole,
   ProjectManageStatus,
   ProjectManageUpdate,
   ProjectManageUser,
   ProjectManageVisibility,
-} from "./types";
+} from './types'
 
-function classNames(
-  ...values: Array<string | false | null | undefined>
-): string {
-  return values.filter(Boolean).join(" ");
+function classNames(...values: Array<string | false | null | undefined>): string {
+  return values.filter(Boolean).join(' ')
 }
 
 function initialDisplay(
   project: ProjectManageProject,
-  display?: ProjectManageCardDisplay,
+  display?: ProjectManageCardDisplay
 ): ProjectManageCardDisplay {
   return (
     display ?? {
@@ -45,7 +49,7 @@ function initialDisplay(
       showTags: project.card_display?.show_tags ?? true,
       showDate: project.card_display?.show_date ?? true,
     }
-  );
+  )
 }
 
 export function ProjectManageView<
@@ -59,112 +63,122 @@ export function ProjectManageView<
   project,
   boardCardDisplay,
   embedded = false,
-  section = "all",
+  section = 'all',
   renderProviderSettings,
+  providerSettingsSection = 'agents',
   onProjectUpdated,
   openMembersRequestId,
   onOpenMembersRequestConsumed,
 }: {
-  api: ProjectManageApi<Project, Member, Item, User>;
-  host: ProjectManageHost;
-  project: Project;
-  boardCardDisplay?: ProjectManageCardDisplay;
-  embedded?: boolean;
-  section?: "all" | "overview" | "members" | "agents" | "board";
-  renderProviderSettings?(
-    context: ProjectManageExtensionContext<Project>,
-  ): React.ReactNode;
-  onProjectUpdated?(project: Project): void;
-  openMembersRequestId?: number;
-  onOpenMembersRequestConsumed?(requestId: number): void;
+  api: ProjectManageApi<Project, Member, Item, User>
+  host: ProjectManageHost
+  project: Project
+  boardCardDisplay?: ProjectManageCardDisplay
+  embedded?: boolean
+  section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
+  renderProviderSettings?(context: ProjectManageExtensionContext<Project>): React.ReactNode
+  providerSettingsSection?: 'overview' | 'agents'
+  onProjectUpdated?(project: Project): void
+  openMembersRequestId?: number
+  onOpenMembersRequestConsumed?(requestId: number): void
 }) {
-  const { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } =
-    host.icons;
-  const [error, setError] = useState<string | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [tags, setTags] = useState(project.tags ?? []);
-  const [display, setDisplay] = useState(() =>
-    initialDisplay(project, boardCardDisplay),
-  );
-  const [statuses, setStatuses] = useState<ProjectManageStatus[]>(
-    project.board_config?.statuses ?? [],
-  );
-  const [visibility, setVisibility] = useState<ProjectManageVisibility>(
-    project.visibility ?? "private",
-  );
-
-  const [membersOpen, setMembersOpen] = useState(false);
-  const memberComposerRef = useRef<HTMLDivElement>(null);
-  const [memberQuery, setMemberQuery] = useState("");
-  const memberSearchInputRef = useRef<HTMLInputElement | null>(null);
-  const memberSearchFocusRequestRef = useRef<number | null>(null);
-  const [memberResults, setMemberResults] = useState<User[]>([]);
-  const [memberRole, setMemberRole] = useState<ProjectManageRole>("Developer");
-  const [savingUserId, setSavingUserId] = useState<number | null>(null);
-
-  const [tagComposerOpen, setTagComposerOpen] = useState(false);
-  const [newTag, setNewTag] = useState("");
-  const [renamingTag, setRenamingTag] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [tagBusy, setTagBusy] = useState(false);
-  const [displayBusy, setDisplayBusy] = useState(false);
-  const [statusBusy, setStatusBusy] = useState(false);
-  const [visibilityBusy, setVisibilityBusy] = useState(false);
-
-  const externalProvider =
-    project.task_provider === "github" || project.task_provider === "gitlab"
-      ? project.task_provider
-      : null;
-  const relatedTaskVisibilityAvailable = project.task_provider === "local";
-  const visibilityOptions: ProjectManageVisibility[] =
-    relatedTaskVisibilityAvailable
-      ? ["private", "public_restricted", "public"]
-      : ["private", "public"];
-  const visibilityLabels: Record<ProjectManageVisibility, string> = {
-    private: host.translate("todo.private_project", "私有项目"),
-    public_restricted: host.translate(
-      "todo.related_tasks_project",
-      "仅看相关任务",
-    ),
-    public: host.translate("todo.public_project", "公开项目"),
-  };
-  const visibilityDescriptions: Record<ProjectManageVisibility, string> = {
-    private: host.translate(
-      "todo.private_project_description",
-      "仅项目成员可以进入。",
-    ),
-    public_restricted: host.translate(
-      "todo.related_tasks_project_description",
-      "所有人可进入，普通用户只看到自己创建、负责或参与的任务。",
-    ),
-    public: host.translate(
-      "todo.public_project_description",
-      "所有登录用户都可以进入并查看全部任务。",
-    ),
-  };
-  const [providerRepository, setProviderRepository] = useState(() =>
-    repositoryAddress(project),
-  );
-  const [providerToken, setProviderToken] = useState("");
-  const [providerBusy, setProviderBusy] = useState(false);
-  const [providerSaved, setProviderSaved] = useState(false);
-  const synchronizedProjectIdRef = useRef(project.id);
-  const synchronizedProjectVersionRef = useRef(project.version);
-  const projectScopeRef = useRef<{
-    projectId: string;
-    mutationQueue: ProjectVersionMutationQueue<Project>;
+  const { GitBranch, LockKeyhole } = host.icons
+  const [error, setError] = useState<string | null>(null)
+  const [itemResult, setItemResult] = useState<{
+    projectId: string
+    items: Item[]
   }>({
     projectId: project.id,
+    items: [],
+  })
+  const items = useMemo(
+    () => (itemResult.projectId === project.id ? itemResult.items : []),
+    [itemResult, project.id]
+  )
+  const setItems = useCallback(
+    (next: SetStateAction<Item[]>) => {
+      setItemResult(current => ({
+        projectId: project.id,
+        items:
+          typeof next === 'function'
+            ? next(current.projectId === project.id ? current.items : [])
+            : next,
+      }))
+    },
+    [project.id]
+  )
+  const [tags, setTags] = useState(project.tags ?? [])
+  const [display, setDisplay] = useState(() => initialDisplay(project, boardCardDisplay))
+  const [statuses, setStatuses] = useState<ProjectManageStatus[]>(
+    project.board_config?.statuses ?? []
+  )
+  const [visibility, setVisibility] = useState<ProjectManageVisibility>(
+    project.visibility ?? 'private'
+  )
+  const [publicAccessRole, setPublicAccessRole] = useState<'Viewer'>(
+    project.public_access?.role ?? 'Viewer'
+  )
+  const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<'open' | 'related'>(
+    project.default_issue_security ?? 'open'
+  )
+
+  const [tagComposerOpen, setTagComposerOpen] = useState(false)
+  const [newTag, setNewTag] = useState('')
+  const [renamingTag, setRenamingTag] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [tagBusy, setTagBusy] = useState(false)
+  const [tagCatalogProjectId, setTagCatalogProjectId] = useState<string | null>(null)
+  const [tagLoadRevision, setTagLoadRevision] = useState(0)
+  const [tagLoadState, setTagLoadState] = useState<{
+    projectId: string
+    error: string | null
+    loading: boolean
+  } | null>(null)
+  const [displayBusy, setDisplayBusy] = useState(false)
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [visibilityBusy, setVisibilityBusy] = useState(false)
+
+  const externalProvider =
+    project.task_provider === 'github' || project.task_provider === 'gitlab'
+      ? project.task_provider
+      : null
+  const visibilityOptions: ProjectManageVisibility[] = ['private', 'public']
+  const visibilityLabels: Record<ProjectManageVisibility, string> = {
+    private: host.translate('todo.private_project', '私有项目'),
+    public: host.translate('todo.public_project', '公开项目'),
+  }
+  const visibilityDescriptions: Record<ProjectManageVisibility, string> = {
+    private: host.translate('todo.private_project_description', '仅项目成员可以进入。'),
+    public: host.translate(
+      'todo.public_project_description',
+      '所有登录用户按所选角色进入；任务可见范围由安全级别控制。'
+    ),
+  }
+  const [providerRepository, setProviderRepository] = useState(() => repositoryAddress(project))
+  const [providerToken, setProviderToken] = useState('')
+  const [providerBusy, setProviderBusy] = useState(false)
+  const [providerSaved, setProviderSaved] = useState(false)
+  const synchronizedProjectIdRef = useRef(project.id)
+  const synchronizedProjectVersionRef = useRef(project.version)
+  const [savedProjectScope, setSavedProjectScope] = useState<{
+    projectId: string
+    mutationQueue: ProjectVersionMutationQueue<Project>
+  }>(() => ({
+    projectId: project.id,
     mutationQueue: createProjectVersionMutationQueue(project.version),
-  });
-  if (projectScopeRef.current.projectId !== project.id) {
-    projectScopeRef.current = {
+  }))
+  let projectScope = savedProjectScope
+  if (savedProjectScope.projectId !== project.id) {
+    projectScope = {
       projectId: project.id,
       mutationQueue: createProjectVersionMutationQueue(project.version),
-    };
+    }
+    setSavedProjectScope(projectScope)
   }
-  const projectScope = projectScopeRef.current;
+  const projectScopeRef = useRef(projectScope)
+  useLayoutEffect(() => {
+    projectScopeRef.current = projectScope
+  }, [projectScope])
   const dirtyRef = useRef({
     tags: false,
     display: false,
@@ -172,30 +186,15 @@ export function ProjectManageView<
     visibility: false,
     providerRepository: false,
     providerToken: false,
-  });
+  })
 
   useEffect(() => {
-    if (!membersOpen || typeof document === "undefined") return;
-    const closeMemberComposer = (event: MouseEvent) => {
-      if (
-        event.target instanceof Node &&
-        !memberComposerRef.current?.contains(event.target)
-      ) {
-        setMembersOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", closeMemberComposer);
-    return () => document.removeEventListener("mousedown", closeMemberComposer);
-  }, [membersOpen]);
-
-  useEffect(() => {
-    const projectChanged = synchronizedProjectIdRef.current !== project.id;
-    synchronizedProjectIdRef.current = project.id;
-    if (!projectChanged)
-      projectScopeRef.current.mutationQueue.synchronize(project.version);
+    const projectChanged = synchronizedProjectIdRef.current !== project.id
+    synchronizedProjectIdRef.current = project.id
+    if (!projectChanged) projectScopeRef.current.mutationQueue.synchronize(project.version)
 
     if (projectChanged) {
-      synchronizedProjectVersionRef.current = project.version;
+      synchronizedProjectVersionRef.current = project.version
       dirtyRef.current = {
         tags: false,
         display: false,
@@ -203,199 +202,184 @@ export function ProjectManageView<
         visibility: false,
         providerRepository: false,
         providerToken: false,
-      };
-      setMembers([]);
-      setItems([]);
-      setTags(project.tags ?? []);
-      setDisplay(initialDisplay(project, boardCardDisplay));
-      setStatuses(project.board_config?.statuses ?? []);
-      setVisibility(project.visibility ?? "private");
-      setProviderRepository(repositoryAddress(project));
-      setProviderToken("");
-      setProviderBusy(false);
-      setProviderSaved(false);
-      setError(null);
-      setMembersOpen(false);
-      setMemberQuery("");
-      setMemberResults([]);
-      setTagComposerOpen(false);
-      setNewTag("");
-      setRenamingTag(null);
-      setRenameValue("");
-      setTagBusy(false);
-      setDisplayBusy(false);
-      setStatusBusy(false);
-      setVisibilityBusy(false);
-      setSavingUserId(null);
-      return;
+      }
+      setTags(project.tags ?? [])
+      setDisplay(initialDisplay(project, boardCardDisplay))
+      setStatuses(project.board_config?.statuses ?? [])
+      setVisibility(project.visibility ?? 'private')
+      setPublicAccessRole(project.public_access?.role ?? 'Viewer')
+      setDefaultIssueSecurity(project.default_issue_security ?? 'open')
+      setProviderRepository(repositoryAddress(project))
+      setProviderToken('')
+      setProviderBusy(false)
+      setProviderSaved(false)
+      setError(null)
+      setTagComposerOpen(false)
+      setNewTag('')
+      setRenamingTag(null)
+      setRenameValue('')
+      setTagBusy(false)
+      setTagCatalogProjectId(null)
+      setTagLoadState(null)
+      setDisplayBusy(false)
+      setStatusBusy(false)
+      setVisibilityBusy(false)
+      return
     }
 
-    const serverVersionChanged =
-      synchronizedProjectVersionRef.current !== project.version;
-    synchronizedProjectVersionRef.current = project.version;
-    if (!serverVersionChanged) return;
+    const serverVersionChanged = synchronizedProjectVersionRef.current !== project.version
+    synchronizedProjectVersionRef.current = project.version
+    if (!serverVersionChanged) return
 
-    if (!dirtyRef.current.tags) setTags(project.tags ?? []);
-    if (!dirtyRef.current.display)
-      setDisplay(initialDisplay(project, boardCardDisplay));
-    if (!dirtyRef.current.statuses)
-      setStatuses(project.board_config?.statuses ?? []);
-    if (!dirtyRef.current.visibility)
-      setVisibility(project.visibility ?? "private");
+    if (!dirtyRef.current.tags) setTags(project.tags ?? [])
+    if (!dirtyRef.current.display) setDisplay(initialDisplay(project, boardCardDisplay))
+    if (!dirtyRef.current.statuses) setStatuses(project.board_config?.statuses ?? [])
+    if (!dirtyRef.current.visibility) {
+      setVisibility(project.visibility ?? 'private')
+      setPublicAccessRole(project.public_access?.role ?? 'Viewer')
+      setDefaultIssueSecurity(project.default_issue_security ?? 'open')
+    }
     if (!dirtyRef.current.providerRepository) {
-      setProviderRepository(repositoryAddress(project));
+      setProviderRepository(repositoryAddress(project))
     }
     if (!dirtyRef.current.providerToken) {
-      setProviderToken("");
+      setProviderToken('')
     }
-  }, [
-    boardCardDisplay?.showAssignee,
-    boardCardDisplay?.showDate,
-    boardCardDisplay?.showPriority,
-    boardCardDisplay?.showTags,
-    project,
-  ]);
-
-  useEffect(() => {
-    if (openMembersRequestId === undefined) return;
-    memberSearchFocusRequestRef.current = openMembersRequestId;
-    setMembersOpen(true);
-    onOpenMembersRequestConsumed?.(openMembersRequestId);
-  }, [openMembersRequestId, onOpenMembersRequestConsumed]);
-
-  useEffect(() => {
-    if (!membersOpen || memberSearchFocusRequestRef.current === null) return;
-    const input = memberSearchInputRef.current;
-    if (!input) return;
-    input.focus();
-    memberSearchFocusRequestRef.current = null;
-  }, [membersOpen, openMembersRequestId]);
+  }, [boardCardDisplay, project])
 
   const reportError = useCallback((cause: unknown, fallback: string) => {
-    setError(cause instanceof Error ? cause.message : fallback);
-  }, []);
+    setError(cause instanceof Error ? cause.message : fallback)
+  }, [])
 
-  useEffect(() => {
-    let active = true;
-    setMembers([]);
-    setItems([]);
-    void Promise.all([api.listMembers(project.id), api.listItems(project.id)])
-      .then(([nextMembers, response]) => {
-        if (!active) return;
-        setMembers(nextMembers);
-        setItems(response.items);
-      })
-      .catch(
-        (cause) =>
-          active &&
-          reportError(
-            cause,
-            host.translate("todo.load_project_failed", "加载项目失败"),
-          ),
-      );
-    return () => {
-      active = false;
-    };
-  }, [api, project.id]);
+  const canManageMembers = project.access_role === 'Owner' || project.access_role === 'Maintainer'
+  const memberController = useProjectMembers({
+    api,
+    host,
+    projectId: project.id,
+    currentUserId: project.current_user_id,
+    onProjectUpdated,
+    projectScopeRef,
+    canManage: canManageMembers,
+    enabled: section === 'all' || section === 'members',
+    reportError,
+    openMembersRequestId,
+    onOpenMembersRequestConsumed,
+  })
 
+  const tagLoadFailed = host.translate('todo.load_tag_catalog_failed', '加载标签目录失败')
   useEffect(() => {
-    const query = memberQuery.trim();
-    if (clearMemberResultsForEmptyQuery(query, setMemberResults)) return;
-    let active = true;
-    const timer = window.setTimeout(() => {
-      void runActiveMemberSearch({
-        query,
-        existingUserIds: new Set(members.map((member) => member.user_id)),
-        search: api.searchUsers,
-        userId: (user) => user.id,
-        isActive: () => active,
-        onResults: setMemberResults,
-        onError: (cause) => {
-          reportError(
-            cause,
-            host.translate("todo.search_members_failed", "搜索项目成员失败"),
-          );
-        },
-      });
-    }, 250);
+    if (tagCatalogProjectId !== project.id || (section !== 'all' && section !== 'overview')) return
+    let active = true
+    setTagLoadState({ projectId: project.id, loading: true, error: null })
+    void api.listItems(project.id).then(
+      response => {
+        if (!active) return
+        setItems(response.items)
+        setTagLoadState({ projectId: project.id, loading: false, error: null })
+      },
+      cause => {
+        if (!active) return
+        setTagLoadState({
+          projectId: project.id,
+          loading: false,
+          error: cause instanceof Error ? cause.message : tagLoadFailed,
+        })
+      }
+    )
     return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [api, host, memberQuery, members, reportError]);
+      active = false
+    }
+  }, [api, project.id, section, setItems, tagCatalogProjectId, tagLoadFailed, tagLoadRevision])
 
   const allTags = useMemo(
-    () =>
-      Array.from(
-        new Set([...tags, ...items.flatMap((item) => item.tags ?? [])]),
-      ),
-    [items, tags],
-  );
-  const visibleMemberResults = memberQuery.trim() ? memberResults : [];
+    () => Array.from(new Set([...tags, ...items.flatMap(item => item.tags ?? [])])),
+    [items, tags]
+  )
   const tagCounts = useMemo(() => {
-    const counts = new Map<string, number>();
+    const counts = new Map<string, number>()
     for (const item of items) {
-      for (const tag of item.tags ?? [])
-        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      for (const tag of item.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1)
     }
-    return counts;
-  }, [items]);
+    return counts
+  }, [items])
 
   async function updateProject(
-    values: Omit<ProjectManageUpdate, "version">,
-    scope: typeof projectScope,
+    values: Omit<ProjectManageUpdate, 'version'>,
+    scope: typeof projectScope
   ): Promise<Project> {
     return scope.mutationQueue.enqueue(
-      async (version) => {
+      async version => {
         const updated = await api.updateProject(scope.projectId, {
           ...values,
           version,
-        });
-        if (projectScopeRef.current === scope) onProjectUpdated?.(updated);
-        return updated;
+        })
+        if (projectScopeRef.current === scope) onProjectUpdated?.(updated)
+        return updated
       },
-      (updated) => updated.version,
-    );
+      updated => updated.version
+    )
   }
 
   async function saveVisibility(next: ProjectManageVisibility) {
-    if (visibilityBusy || visibility === next) return;
-    const scope = projectScopeRef.current;
-    const previous = visibility;
-    dirtyRef.current.visibility = true;
-    setVisibility(next);
-    setVisibilityBusy(true);
+    if (visibilityBusy || visibility === next) return
+    const scope = projectScopeRef.current
+    const previous = visibility
+    dirtyRef.current.visibility = true
+    setVisibility(next)
+    setVisibilityBusy(true)
     try {
-      const updated = await updateProject({ visibility: next }, scope);
-      if (projectScopeRef.current !== scope) return;
-      setVisibility(updated.visibility ?? next);
-      dirtyRef.current.visibility = false;
-      host.trackCompleted("update");
+      const updated = await updateProject({ visibility: next }, scope)
+      if (projectScopeRef.current !== scope) return
+      setVisibility(updated.visibility ?? next)
+      setPublicAccessRole(updated.public_access?.role ?? 'Viewer')
+      dirtyRef.current.visibility = false
+      host.trackCompleted('update')
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      host.trackFailed();
-      dirtyRef.current.visibility = false;
-      setVisibility(previous);
-      reportError(
-        cause,
-        host.translate("todo.update_visibility_failed", "更新项目权限失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      host.trackFailed()
+      dirtyRef.current.visibility = false
+      setVisibility(previous)
+      reportError(cause, host.translate('todo.update_visibility_failed', '更新项目权限失败'))
     } finally {
-      if (projectScopeRef.current === scope) setVisibilityBusy(false);
+      if (projectScopeRef.current === scope) setVisibilityBusy(false)
     }
   }
 
-  async function saveDisplay(
-    key: keyof ProjectManageCardDisplay,
-    checked: boolean,
+  async function saveAccessSettings(
+    values: Pick<
+      ProjectManageUpdate,
+      'public_access' | 'default_issue_security' | 'membership_mode'
+    >
   ) {
-    if (displayBusy) return;
-    const scope = projectScopeRef.current;
-    const previous = display;
-    const next = { ...display, [key]: checked };
-    dirtyRef.current.display = true;
-    setDisplay(next);
-    setDisplayBusy(true);
+    if (visibilityBusy) return
+    const scope = projectScopeRef.current
+    setVisibilityBusy(true)
+    dirtyRef.current.visibility = true
+    try {
+      const updated = await updateProject(values, scope)
+      if (projectScopeRef.current !== scope) return
+      setPublicAccessRole(updated.public_access?.role ?? 'Viewer')
+      setDefaultIssueSecurity(updated.default_issue_security ?? 'open')
+      host.trackCompleted('update')
+    } catch (cause) {
+      if (projectScopeRef.current !== scope) return
+      reportError(cause, host.translate('todo.update_visibility_failed', '更新项目权限失败'))
+    } finally {
+      if (projectScopeRef.current === scope) {
+        dirtyRef.current.visibility = false
+        setVisibilityBusy(false)
+      }
+    }
+  }
+
+  async function saveDisplay(key: keyof ProjectManageCardDisplay, checked: boolean) {
+    if (displayBusy) return
+    const scope = projectScopeRef.current
+    const previous = display
+    const next = { ...display, [key]: checked }
+    dirtyRef.current.display = true
+    setDisplay(next)
+    setDisplayBusy(true)
     try {
       await updateProject(
         {
@@ -406,314 +390,166 @@ export function ProjectManageView<
             show_date: next.showDate,
           },
         },
-        scope,
-      );
-      if (projectScopeRef.current !== scope) return;
-      dirtyRef.current.display = false;
-      host.trackCompleted("update");
+        scope
+      )
+      if (projectScopeRef.current !== scope) return
+      dirtyRef.current.display = false
+      host.trackCompleted('update')
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      host.trackFailed();
-      dirtyRef.current.display = false;
-      setDisplay(previous);
-      reportError(
-        cause,
-        host.translate("todo.save_card_display_failed", "保存卡片显示设置失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      host.trackFailed()
+      dirtyRef.current.display = false
+      setDisplay(previous)
+      reportError(cause, host.translate('todo.save_card_display_failed', '保存卡片显示设置失败'))
     } finally {
-      if (projectScopeRef.current === scope) setDisplayBusy(false);
+      if (projectScopeRef.current === scope) setDisplayBusy(false)
     }
   }
 
   async function saveStatuses(next: ProjectManageStatus[]) {
-    if (statusBusy) return;
-    const scope = projectScopeRef.current;
-    const previous = statuses;
-    dirtyRef.current.statuses = true;
-    setStatuses(next);
-    setStatusBusy(true);
+    if (statusBusy) return
+    const scope = projectScopeRef.current
+    const previous = statuses
+    dirtyRef.current.statuses = true
+    setStatuses(next)
+    setStatusBusy(true)
     try {
       const updated = await updateProject(
         {
           board_config: {
-            group_by: project.board_config?.group_by ?? "status",
+            ...project.board_config,
+            group_by: project.board_config?.group_by ?? 'status',
             statuses: next,
-            processing_start_status_id:
-              project.board_config?.processing_start_status_id ?? null,
+            processing_start_status_id: project.board_config?.processing_start_status_id ?? null,
           },
         },
-        scope,
-      );
-      if (projectScopeRef.current !== scope) return;
-      setStatuses(updated.board_config?.statuses ?? next);
-      dirtyRef.current.statuses = false;
-      host.trackCompleted("update");
-    } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      host.trackFailed();
-      dirtyRef.current.statuses = false;
-      setStatuses(previous);
-      reportError(
-        cause,
-        host.translate("todo.save_statuses_failed", "保存状态设置失败"),
-      );
-    } finally {
-      if (projectScopeRef.current === scope) setStatusBusy(false);
-    }
-  }
-
-  async function addMember(user: User) {
-    if (savingUserId !== null) return;
-    const scope = projectScopeRef.current;
-    setSavingUserId(user.id);
-    try {
-      const member = await api.addMember(scope.projectId, user.id, memberRole);
-      if (projectScopeRef.current !== scope) return;
-      setMembers((current) => [...current, member]);
-      setMemberQuery("");
-      host.trackCompleted("member_invite");
-      try {
-        const nextMembers = await api.listMembers(scope.projectId);
-        if (projectScopeRef.current !== scope) return;
-        setMembers(nextMembers);
-      } catch (cause) {
-        if (projectScopeRef.current !== scope) return;
-        reportError(
-          cause,
-          host.translate("todo.load_project_failed", "加载项目失败"),
-        );
-      }
-    } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      host.trackFailed();
-      reportError(
-        cause,
-        host.translate("todo.add_member_failed", "添加成员失败"),
-      );
-    } finally {
-      if (projectScopeRef.current === scope) setSavingUserId(null);
-    }
-  }
-
-  async function updateMember(
-    member: Member,
-    role: Exclude<ProjectManageRole, "Owner">,
-  ) {
-    const scope = projectScopeRef.current;
-    try {
-      const updated = await api.updateMember(scope.projectId, member.user_id, {
-        role,
-      });
-      if (projectScopeRef.current !== scope) return;
-      setMembers((current) =>
-        current.map((item) =>
-          item.user_id === updated.user_id ? updated : item,
-        ),
-      );
-      host.trackCompleted("member_role_change");
-    } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      host.trackFailed();
-      reportError(
-        cause,
-        host.translate("todo.update_member_failed", "更新成员失败"),
-      );
-    }
-  }
-
-  async function updateMemberCapability(member: Member, value: string) {
-    const capability = value.trim();
-    if (capability === (member.capability_description ?? "")) return;
-    const scope = projectScopeRef.current;
-    setSavingUserId(member.user_id);
-    try {
-      const updated = await api.updateMember(scope.projectId, member.user_id, {
-        capability_description: capability,
-      });
-      if (projectScopeRef.current !== scope) return;
-      setMembers((current) =>
-        current.map((item) =>
-          item.user_id === updated.user_id ? updated : item,
-        ),
-      );
-    } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      reportError(
-        cause,
-        host.translate(
-          "todo.update_member_capability_failed",
-          "更新成员能力失败",
-        ),
-      );
-    } finally {
-      if (projectScopeRef.current === scope) setSavingUserId(null);
-    }
-  }
-
-  async function removeMember(member: Member) {
-    if (
-      !host.confirm(
-        host.translate(
-          "todo.remove_member_confirm",
-          "从项目中移除“{{name}}”？",
-          { name: member.user_name },
-        ),
+        scope
       )
-    )
-      return;
-    const scope = projectScopeRef.current;
-    try {
-      await api.removeMember(scope.projectId, member.user_id);
-      if (projectScopeRef.current !== scope) return;
-      setMembers((current) =>
-        current.filter((item) => item.user_id !== member.user_id),
-      );
-      host.trackCompleted("member_remove");
+      if (projectScopeRef.current !== scope) return
+      setStatuses(updated.board_config?.statuses ?? next)
+      dirtyRef.current.statuses = false
+      host.trackCompleted('update')
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      host.trackFailed();
-      reportError(
-        cause,
-        host.translate("todo.remove_member_failed", "移除成员失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      host.trackFailed()
+      dirtyRef.current.statuses = false
+      setStatuses(previous)
+      reportError(cause, host.translate('todo.save_statuses_failed', '保存状态设置失败'))
+    } finally {
+      if (projectScopeRef.current === scope) setStatusBusy(false)
     }
   }
 
   async function persistTags(next: string[], scope: typeof projectScope) {
-    dirtyRef.current.tags = true;
+    dirtyRef.current.tags = true
     try {
-      const updated = await updateProject({ tags: next }, scope);
-      if (projectScopeRef.current !== scope) return;
-      setTags(updated.tags ?? next);
+      const updated = await updateProject({ tags: next }, scope)
+      if (projectScopeRef.current !== scope) return
+      setTags(updated.tags ?? next)
     } finally {
-      if (projectScopeRef.current === scope) dirtyRef.current.tags = false;
+      if (projectScopeRef.current === scope) dirtyRef.current.tags = false
     }
   }
 
   async function createTag() {
-    const value = newTag.trim();
-    if (!value || tagBusy) return;
-    const scope = projectScopeRef.current;
-    setTagBusy(true);
+    const value = newTag.trim()
+    if (!value || tagBusy) return
+    const scope = projectScopeRef.current
+    setTagBusy(true)
     try {
-      if (!allTags.includes(value)) await persistTags([...tags, value], scope);
-      if (projectScopeRef.current !== scope) return;
-      setNewTag("");
-      setTagComposerOpen(false);
+      if (!allTags.includes(value)) await persistTags([...tags, value], scope)
+      if (projectScopeRef.current !== scope) return
+      setNewTag('')
+      setTagComposerOpen(false)
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      reportError(
-        cause,
-        host.translate("todo.create_tag_failed", "新建标签失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      reportError(cause, host.translate('todo.create_tag_failed', '新建标签失败'))
     } finally {
-      if (projectScopeRef.current === scope) setTagBusy(false);
+      if (projectScopeRef.current === scope) setTagBusy(false)
     }
   }
 
   async function renameTag(source: string) {
-    const target = renameValue.trim();
-    setRenamingTag(null);
-    if (!target || target === source || allTags.includes(target)) return;
-    const scope = projectScopeRef.current;
-    setTagBusy(true);
+    const target = renameValue.trim()
+    setRenamingTag(null)
+    if (!target || target === source || allTags.includes(target)) return
+    const scope = projectScopeRef.current
+    setTagBusy(true)
     try {
       const changed = await Promise.all(
         items
-          .filter((item) => (item.tags ?? []).includes(source))
-          .map((item) =>
+          .filter(item => (item.tags ?? []).includes(source))
+          .map(item =>
             api.updateItem(item.id, {
               version: item.version,
-              tags: (item.tags ?? []).map((tag) =>
-                tag === source ? target : tag,
-              ),
-            }),
-          ),
-      );
-      if (projectScopeRef.current !== scope) return;
-      setItems((current) =>
-        current.map(
-          (item) => changed.find((next) => next.id === item.id) ?? item,
-        ),
-      );
+              tags: (item.tags ?? []).map(tag => (tag === source ? target : tag)),
+            })
+          )
+      )
+      if (projectScopeRef.current !== scope) return
+      setItems(current => current.map(item => changed.find(next => next.id === item.id) ?? item))
       if (tags.includes(source))
         await persistTags(
-          tags.map((tag) => (tag === source ? target : tag)),
-          scope,
-        );
+          tags.map(tag => (tag === source ? target : tag)),
+          scope
+        )
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      reportError(
-        cause,
-        host.translate("todo.rename_tag_failed", "重命名标签失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      reportError(cause, host.translate('todo.rename_tag_failed', '重命名标签失败'))
     } finally {
-      if (projectScopeRef.current === scope) setTagBusy(false);
+      if (projectScopeRef.current === scope) setTagBusy(false)
     }
   }
 
   async function deleteTag(tag: string) {
-    const count = tagCounts.get(tag) ?? 0;
+    const count = tagCounts.get(tag) ?? 0
     if (
       !host.confirm(
-        host.translate(
-          "todo.delete_tag_confirm",
-          "删除标签“{{tag}}”{{suffix}}？",
-          {
-            tag,
-            suffix: count
-              ? host.translate(
-                  "todo.delete_tag_usage_suffix",
-                  "，并从 {{count}} 个任务上移除",
-                  { count },
-                )
-              : "",
-          },
-        ),
+        host.translate('todo.delete_tag_confirm', '删除标签“{{tag}}”{{suffix}}？', {
+          tag,
+          suffix: count
+            ? host.translate('todo.delete_tag_usage_suffix', '，并从 {{count}} 个任务上移除', {
+                count,
+              })
+            : '',
+        })
       )
     ) {
-      return;
+      return
     }
-    const scope = projectScopeRef.current;
-    setTagBusy(true);
+    const scope = projectScopeRef.current
+    setTagBusy(true)
     try {
       const changed = await Promise.all(
         items
-          .filter((item) => (item.tags ?? []).includes(tag))
-          .map((item) =>
+          .filter(item => (item.tags ?? []).includes(tag))
+          .map(item =>
             api.updateItem(item.id, {
               version: item.version,
-              tags: (item.tags ?? []).filter((value) => value !== tag),
-            }),
-          ),
-      );
-      if (projectScopeRef.current !== scope) return;
-      setItems((current) =>
-        current.map(
-          (item) => changed.find((next) => next.id === item.id) ?? item,
-        ),
-      );
+              tags: (item.tags ?? []).filter(value => value !== tag),
+            })
+          )
+      )
+      if (projectScopeRef.current !== scope) return
+      setItems(current => current.map(item => changed.find(next => next.id === item.id) ?? item))
       if (tags.includes(tag))
         await persistTags(
-          tags.filter((value) => value !== tag),
-          scope,
-        );
+          tags.filter(value => value !== tag),
+          scope
+        )
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      reportError(
-        cause,
-        host.translate("todo.delete_tag_failed", "删除标签失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      reportError(cause, host.translate('todo.delete_tag_failed', '删除标签失败'))
     } finally {
-      if (projectScopeRef.current === scope) setTagBusy(false);
+      if (projectScopeRef.current === scope) setTagBusy(false)
     }
   }
 
   async function saveProvider() {
-    if (!externalProvider || providerBusy) return;
-    const scope = projectScopeRef.current;
-    setProviderBusy(true);
-    setProviderSaved(false);
+    if (!externalProvider || providerBusy) return
+    const scope = projectScopeRef.current
+    setProviderBusy(true)
+    setProviderSaved(false)
     try {
       const updated = await updateProject(
         {
@@ -722,547 +558,262 @@ export function ProjectManageView<
             ...(providerToken.trim() ? { token: providerToken.trim() } : {}),
           },
         },
-        scope,
-      );
-      if (projectScopeRef.current !== scope) return;
-      setProviderRepository(repositoryAddress(updated));
-      setProviderToken("");
-      dirtyRef.current.providerRepository = false;
-      dirtyRef.current.providerToken = false;
-      setProviderSaved(true);
+        scope
+      )
+      if (projectScopeRef.current !== scope) return
+      setProviderRepository(repositoryAddress(updated))
+      setProviderToken('')
+      dirtyRef.current.providerRepository = false
+      dirtyRef.current.providerToken = false
+      setProviderSaved(true)
     } catch (cause) {
-      if (projectScopeRef.current !== scope) return;
-      reportError(
-        cause,
-        host.translate("todo.save_provider_failed", "保存任务来源失败"),
-      );
+      if (projectScopeRef.current !== scope) return
+      reportError(cause, host.translate('todo.save_provider_failed', '保存任务来源失败'))
     } finally {
-      if (projectScopeRef.current === scope) setProviderBusy(false);
+      if (projectScopeRef.current === scope) setProviderBusy(false)
     }
   }
 
   return (
-    <div
-      className={
-        embedded ? "min-h-0" : "min-h-0 flex-1 overflow-y-auto px-8 py-7"
-      }
-    >
-      <div className={embedded ? "" : "mx-auto max-w-[900px]"}>
-        {!embedded ? (
+    <div className={embedded ? 'min-h-0' : 'min-h-0 flex-1 overflow-y-auto px-8 py-7'}>
+      <div className={embedded ? '' : 'mx-auto max-w-[900px]'}>
+        {!embedded && section !== 'members' ? (
           <header className="pb-7">
             <h1 className="text-heading-lg font-semibold">
-              {section === "members"
-                ? host.translate("todo.project_members", "项目成员")
-                : section === "agents"
-                  ? host.translate("todo.project_agents", "智能体")
-                  : section === "board"
-                    ? host.translate("todo.board_settings", "看板设置")
-                    : host.translate(
-                        "todo.project_basic_information",
-                        "基本信息",
-                      )}
+              {section === 'agents'
+                ? host.translate('todo.project_agents', '智能体')
+                : section === 'board'
+                  ? host.translate('todo.board_settings', '看板设置')
+                  : host.translate('todo.project_basic_information', '基本信息')}
             </h1>
             <p className="mt-1 text-sm text-text-muted">
-              {section === "members"
+              {section === 'agents'
                 ? host.translate(
-                    "todo.project_members_description",
-                    "成员可以访问项目任务和共享文件。",
+                    'todo.project_agents_description',
+                    '管理当前项目可以分配和调度的智能体。'
                   )
-                : section === "agents"
+                : section === 'board'
                   ? host.translate(
-                      "todo.project_agents_description",
-                      "管理当前项目可以分配和调度的智能体。",
+                      'todo.board_layout_edit_description',
+                      '调整状态顺序和任务卡展示字段。'
                     )
-                  : section === "board"
-                    ? host.translate(
-                        "todo.board_layout_edit_description",
-                        "调整状态顺序和任务卡展示字段。",
-                      )
-                    : host.translate(
-                        "todo.project_basic_information_description",
-                        "管理项目属性、标签与任务来源。",
-                      )}
+                  : host.translate(
+                      'todo.project_basic_information_description',
+                      '管理项目属性、标签与任务来源。'
+                    )}
             </p>
           </header>
         ) : null}
 
-        {(section === "all" || section === "overview") && (
+        {(section === 'all' || section === 'overview') && (
           <section className="border-t border-border py-6">
             <h2 className="text-heading-md font-semibold">
-              {host.translate("todo.project_information", "项目信息")}
+              {host.translate('todo.project_information', '项目信息')}
             </h2>
             <dl className="mt-4 grid gap-4 rounded-xl bg-muted px-4 py-4 sm:grid-cols-2">
               <div>
                 <dt className="text-xs text-text-muted">
-                  {host.translate("todo.project_name", "项目名称")}
+                  {host.translate('todo.project_name', '项目名称')}
                 </dt>
                 <dd className="mt-1 text-sm font-medium">{project.name}</dd>
               </div>
               <div>
                 <dt className="text-xs text-text-muted">
-                  {host.translate("todo.project_identifier", "项目标识")}
+                  {host.translate('todo.project_identifier', '项目标识')}
                 </dt>
-                <dd className="mt-1 text-sm font-medium">
-                  {project.project_key}
-                </dd>
+                <dd className="mt-1 text-sm font-medium">{project.project_key}</dd>
               </div>
               <div className="sm:col-span-2">
                 <dt className="text-xs text-text-muted">
-                  {host.translate("todo.project_description", "项目说明")}
+                  {host.translate('todo.project_description', '项目说明')}
                 </dt>
                 <dd className="mt-1 text-sm">
                   {project.description ||
-                    host.translate(
-                      "todo.project_description_empty",
-                      "暂无说明",
-                    )}
+                    host.translate('todo.project_description_empty', '暂无说明')}
                 </dd>
               </div>
             </dl>
           </section>
         )}
 
-        {(section === "all" || section === "overview") && (
+        {(section === 'all' || section === 'overview') && (
           <section className="border-t border-border py-6">
             <h2 className="text-heading-md font-semibold">
-              {host.translate("todo.project_access", "项目访问范围")}
+              {host.translate('todo.project_access', '项目访问范围')}
             </h2>
             <p className="mt-1 text-sm text-text-muted">
               {host.translate(
-                "todo.project_access_description",
-                "决定谁能进入项目，以及普通用户可以看到哪些任务。",
+                'todo.project_access_description',
+                '决定谁能进入项目，以及普通用户可以看到哪些任务。'
               )}
             </p>
             <div
               className={classNames(
-                "mt-4 grid gap-1 rounded-lg bg-muted p-1",
-                relatedTaskVisibilityAvailable
-                  ? "max-w-2xl grid-cols-1 md:grid-cols-3"
-                  : "max-w-md grid-cols-2",
+                'mt-4 grid gap-1 rounded-lg bg-muted p-1',
+                'max-w-md grid-cols-2'
               )}
             >
-              {visibilityOptions.map((value) => (
+              {visibilityOptions.map(value => (
                 <button
                   key={value}
                   type="button"
-                  data-testid={`cloud-project-manage-visibility-${value.replace(
-                    "_",
-                    "-",
-                  )}`}
+                  data-testid={`cloud-project-manage-visibility-${value.replace('_', '-')}`}
                   disabled={visibilityBusy}
                   onClick={() => void saveVisibility(value)}
                   className={classNames(
-                    "h-8 rounded-md text-xs",
-                    visibility === value
-                      ? "bg-background shadow-sm"
-                      : "text-text-muted",
+                    'h-8 rounded-md text-xs',
+                    visibility === value ? 'bg-background shadow-sm' : 'text-text-muted'
                   )}
                 >
                   {visibilityLabels[value]}
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-sm text-text-muted">
-              {visibilityDescriptions[visibility]}
-            </p>
+            <p className="mt-2 text-sm text-text-muted">{visibilityDescriptions[visibility]}</p>
+            {visibility === 'public' && (
+              <label className="mt-4 flex items-center justify-between gap-3 text-sm">
+                <span>{host.translate('todo.public_access_role', '所有登录用户的角色')}</span>
+                <select
+                  data-testid="cloud-project-public-access-role"
+                  value={publicAccessRole}
+                  disabled={visibilityBusy}
+                  onChange={event =>
+                    void saveAccessSettings({
+                      public_access: {
+                        role: event.target.value as 'Viewer',
+                      },
+                    })
+                  }
+                  className="h-8 rounded-lg border border-border bg-background px-2"
+                >
+                  <option value="Viewer">
+                    {host.translate('todo.permission_viewer', '只读成员')}
+                  </option>
+                </select>
+              </label>
+            )}
+            {project.task_provider !== 'dingtalk_aitable' && (
+              <label className="mt-4 flex items-center justify-between gap-3 text-sm">
+                <span>{host.translate('todo.default_issue_security', '新任务默认可见范围')}</span>
+                <select
+                  data-testid="cloud-project-default-issue-security"
+                  value={defaultIssueSecurity}
+                  disabled={visibilityBusy}
+                  onChange={event =>
+                    void saveAccessSettings({
+                      default_issue_security: event.target.value as 'open' | 'related',
+                    })
+                  }
+                  className="h-8 rounded-lg border border-border bg-background px-2"
+                >
+                  <option value="open">
+                    {host.translate('todo.issue_security_open', '项目可访问者可见')}
+                  </option>
+                  <option value="related">
+                    {host.translate('todo.issue_security_related', '仅相关人员可见')}
+                  </option>
+                </select>
+              </label>
+            )}
           </section>
         )}
 
-        <section
+        <ProjectMembersSection
+          project={project}
+          host={host}
+          controller={memberController}
+          canManage={canManageMembers}
+          membershipModeBusy={visibilityBusy}
+          onMembershipModeChange={mode => void saveAccessSettings({ membership_mode: mode })}
           className={
-            section === "all" || section === "members"
+            section === 'all' || section === 'members'
               ? embedded
-                ? ""
-                : "border-t border-border py-6"
-              : "hidden"
+                ? ''
+                : 'border-t border-border py-6'
+              : 'hidden'
           }
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="heading-subsection text-text-primary">
-                {host.translate("todo.project_members", "项目成员")}
-              </h2>
-              <p className="mt-1 text-sm text-text-muted">
-                {host.translate(
-                  "todo.project_members_description",
-                  "管理成员访问和项目角色。填写职责与能力后会自动保存，AI 托管会据此选择合适的负责人。",
-                )}
-              </p>
-            </div>
-            <div className="relative" ref={memberComposerRef}>
-              <button
-                type="button"
-                data-testid="cloud-project-members-toggle"
-                aria-expanded={membersOpen}
-                onClick={() => setMembersOpen((open) => !open)}
-                className="h-8 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
-              >
-                {host.translate("todo.add_project_member", "添加成员")}
-              </button>
-              {membersOpen ? (
-                <div
-                  className="absolute right-0 top-10 z-50 w-80 rounded-xl border border-border bg-background p-2 shadow-lg"
-                  data-testid="cloud-project-member-picker"
-                >
-                  <label className="flex h-9 min-w-0 items-center rounded-lg border border-border bg-background px-3">
-                    <Search className="h-4 w-4 text-text-muted" />
-                    <input
-                      ref={memberSearchInputRef}
-                      data-testid="cloud-member-search"
-                      value={memberQuery}
-                      onChange={(event) => {
-                        const nextQuery = event.target.value;
-                        setMemberQuery(nextQuery);
-                        clearMemberResultsForEmptyQuery(
-                          nextQuery,
-                          setMemberResults,
-                        );
-                      }}
-                      className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
-                      placeholder={host.translate(
-                        "todo.member_search_placeholder",
-                        "搜索用户名或邮箱",
-                      )}
-                    />
-                  </label>
-                  <label className="mt-2 flex items-center justify-between gap-3 px-2 text-sm text-text-secondary">
-                    <span>
-                      {host.translate("todo.member_role", "加入角色")}
-                    </span>
-                    <select
-                      data-testid="cloud-member-role"
-                      value={memberRole}
-                      onChange={(event) =>
-                        setMemberRole(event.target.value as ProjectManageRole)
-                      }
-                      className="h-8 rounded-lg border border-border bg-background px-2 text-sm outline-none"
-                    >
-                      <option value="Maintainer">Maintainer</option>
-                      <option value="Developer">Developer</option>
-                      <option value="Reporter">Reporter</option>
-                    </select>
-                  </label>
-                  <div className="mt-2 max-h-52 overflow-y-auto">
-                    {visibleMemberResults.map((user) => (
-                      <button
-                        key={user.id}
-                        type="button"
-                        data-testid={`cloud-member-result-${user.id}`}
-                        onClick={() => void addMember(user)}
-                        className="flex min-h-10 w-full items-center rounded-lg px-2 text-left hover:bg-muted"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-sm">
-                          {user.user_name}
-                        </span>
-                        <span className="text-xs text-text-muted">
-                          {savingUserId === user.id
-                            ? host.translate("todo.adding", "添加中…")
-                            : host.translate("common.add", "添加")}
-                        </span>
-                      </button>
-                    ))}
-                    {memberQuery.trim() && !visibleMemberResults.length ? (
-                      <p className="px-2 py-3 text-sm text-text-muted">
-                        {host.translate(
-                          "todo.no_search_members",
-                          "没有匹配的成员",
-                        )}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
+        />
 
-          <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
-            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px] items-center gap-3 px-3 py-1.5 text-xs font-medium text-text-muted md:grid">
-              <span>{host.translate("todo.project_member", "成员")}</span>
-              <span data-testid="cloud-project-member-capability-heading">
-                {host.translate("todo.project_member_capability", "职责与能力")}
-              </span>
-              <span>
-                {host.translate("todo.project_member_role", "项目角色")}
-              </span>
-              <span className="sr-only">
-                {host.translate("todo.project_member_actions", "成员操作")}
-              </span>
-            </div>
-            {members.map((member) => (
-              <div
-                key={member.user_id}
-                data-testid={`cloud-project-member-${member.user_id}`}
-                className="grid grid-cols-1 items-center gap-3 rounded-lg bg-background/60 px-3 py-2 transition-colors hover:bg-background md:grid-cols-[minmax(0,1fr)_minmax(220px,1fr)_144px_28px]"
-              >
-                <span className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs text-white">
-                    {member.user_name.slice(0, 1)}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
-                      {member.user_name}
-                    </span>
-                    <span className="block truncate text-xs text-text-muted">
-                      {member.email}
-                    </span>
-                  </span>
-                </span>
-                <label className="min-w-0">
-                  <span className="mb-1 block text-xs font-medium text-text-muted md:sr-only">
-                    {host.translate(
-                      "todo.project_member_capability",
-                      "职责与能力",
-                    )}
-                  </span>
-                  <input
-                    data-testid={`cloud-project-member-capability-${member.user_id}`}
-                    defaultValue={member.capability_description}
-                    disabled={savingUserId === member.user_id}
-                    onBlur={(event) =>
-                      void updateMemberCapability(member, event.target.value)
-                    }
-                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-text-tertiary focus:border-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    placeholder={host.translate(
-                      "todo.project_member_capability_placeholder",
-                      "例如：前端开发、产品验收",
-                    )}
-                    aria-label={host.translate(
-                      "todo.project_member_capability_label",
-                      "{{name}} 的职责与能力",
-                      {
-                        name: member.user_name,
-                      },
-                    )}
-                  />
-                </label>
-                {member.role === "Owner" ? (
-                  <span className="flex h-9 items-center px-2 text-sm text-text-secondary">
-                    Owner
-                  </span>
-                ) : (
-                  <>
-                    <select
-                      data-testid={`cloud-project-member-role-${member.user_id}`}
-                      value={member.role}
-                      onChange={(event) =>
-                        void updateMember(
-                          member,
-                          event.target.value as Exclude<
-                            ProjectManageRole,
-                            "Owner"
-                          >,
-                        )
-                      }
-                      className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-secondary"
-                      aria-label={host.translate(
-                        "todo.project_member_role_label",
-                        "{{name}} 的项目角色",
-                        { name: member.user_name },
-                      )}
-                    >
-                      <option value="Maintainer">Maintainer</option>
-                      <option value="Developer">Developer</option>
-                      <option value="Reporter">Reporter</option>
-                    </select>
-                    {host.renderTooltip({
-                      label: host.translate(
-                        "todo.remove_member",
-                        "移除 {{name}}",
-                        {
-                          name: member.user_name,
-                        },
-                      ),
-                      align: "end",
-                      children: (
-                        <button
-                          type="button"
-                          data-testid={`cloud-project-member-remove-${member.user_id}`}
-                          onClick={() => void removeMember(member)}
-                          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
-                          aria-label={host.translate(
-                            "todo.remove_member",
-                            "移除 {{name}}",
-                            {
-                              name: member.user_name,
-                            },
-                          )}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      ),
-                    })}
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section
+        <details
+          key={project.id}
           className={
-            section === "all" || section === "overview"
-              ? "border-t border-border py-6"
-              : "hidden"
+            section === 'all' || section === 'overview' ? 'border-t border-border py-6' : 'hidden'
           }
+          data-testid="cloud-project-manage-tags"
+          onToggle={event => {
+            if (event.currentTarget.open) setTagCatalogProjectId(project.id)
+          }}
         >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-heading-md font-semibold">
-                {host.translate("todo.project_tags", "标签")}
-              </h2>
-              <p className="mt-1 text-sm text-text-muted">
-                {host.translate(
-                  "todo.project_tags_description",
-                  "用于区分任务类型并筛选看板。",
-                )}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setTagComposerOpen((open) => !open)}
-              className="h-8 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
-            >
-              ＋ {host.translate("todo.create_tag", "新建标签")}
-            </button>
-          </div>
-          {tagComposerOpen && (
-            <div className="mt-3 flex gap-2">
-              <input
-                data-testid="cloud-project-tag-create-input"
-                autoFocus
-                value={newTag}
-                onChange={(event) => setNewTag(event.target.value)}
-                onKeyDown={(event) => event.key === "Enter" && void createTag()}
-                placeholder={host.translate(
-                  "todo.tag_name_placeholder",
-                  "输入标签名称",
-                )}
-                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none"
-              />
-              <button
-                type="button"
-                data-testid="cloud-project-tag-create-confirm"
-                disabled={!newTag.trim() || tagBusy}
-                onClick={() => void createTag()}
-                className="h-9 rounded-lg bg-text-primary px-3.5 text-sm text-background disabled:bg-text-primary disabled:text-background"
+          <summary
+            className="cursor-pointer text-heading-md font-semibold"
+            data-testid="cloud-project-manage-tags-toggle"
+          >
+            <h2 className="inline text-heading-md font-semibold">
+              {host.translate('todo.project_tags', '标签')}
+            </h2>
+          </summary>
+          {tagCatalogProjectId === project.id &&
+            (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
+              <p
+                role="status"
+                data-testid="cloud-project-manage-tags-loading"
+                className="mt-3 text-sm text-text-muted"
               >
-                {host.translate("todo.create_tag", "新建标签")}
-              </button>
-            </div>
-          )}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {allTags.map((tag) =>
-              renamingTag === tag ? (
-                <span
-                  key={tag}
-                  className="flex h-8 items-center gap-1 rounded-lg bg-muted px-1.5"
+                {host.translate('common.loading', '正在加载…')}
+              </p>
+            ) : tagLoadState.error ? (
+              <div
+                role="alert"
+                data-testid="cloud-project-manage-tags-error"
+                className="mt-3 text-sm text-text-primary"
+              >
+                {tagLoadState.error}
+                <button
+                  type="button"
+                  className="ml-2 underline"
+                  data-testid="cloud-project-manage-tags-retry"
+                  onClick={() => setTagLoadRevision(revision => revision + 1)}
                 >
-                  <input
-                    data-testid={`cloud-project-tag-rename-input-${tag}`}
-                    autoFocus
-                    value={renameValue}
-                    onChange={(event) => setRenameValue(event.target.value)}
-                    onKeyDown={(event) =>
-                      event.key === "Enter" && void renameTag(tag)
-                    }
-                    className="h-6 w-28 bg-transparent px-1 text-sm outline-none"
-                  />
-                  {host.renderTooltip({
-                    label: host.translate("todo.confirm_rename", "确认重命名"),
-                    children: (
-                      <button
-                        type="button"
-                        onClick={() => void renameTag(tag)}
-                        aria-label={host.translate(
-                          "todo.confirm_rename",
-                          "确认重命名",
-                        )}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </button>
-                    ),
-                  })}
-                  {host.renderTooltip({
-                    label: host.translate("todo.cancel_rename", "取消重命名"),
-                    children: (
-                      <button
-                        type="button"
-                        onClick={() => setRenamingTag(null)}
-                        aria-label={host.translate(
-                          "todo.cancel_rename",
-                          "取消重命名",
-                        )}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    ),
-                  })}
-                </span>
-              ) : (
-                <span
-                  key={tag}
-                  data-testid={`cloud-project-tag-${tag}`}
-                  className="group/tag relative flex h-8 items-center rounded-lg bg-muted px-2.5 text-sm text-text-secondary"
-                >
-                  <span className="transition-opacity group-hover/tag:opacity-0">
-                    {tag}
-                  </span>
-                  <span className="absolute inset-0 opacity-0 transition-opacity group-hover/tag:opacity-100 focus-within:opacity-100">
-                    {host.renderActionMenu({
-                      ariaLabel: host.translate(
-                        "todo.tag_menu",
-                        "{{tag}} 标签菜单",
-                        { tag },
-                      ),
-                      testId: `cloud-project-tag-menu-${tag}`,
-                      placement: "bottom-end",
-                      triggerClassName:
-                        "flex h-8 w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30",
-                      items: [
-                        {
-                          label: host.translate("todo.rename", "重命名"),
-                          icon: Pencil,
-                          onSelect: () => {
-                            setRenamingTag(tag);
-                            setRenameValue(tag);
-                          },
-                          testId: `cloud-project-tag-rename-${tag}`,
-                        },
-                        {
-                          label: host.translate("todo.delete_tag", "删除标签"),
-                          icon: Trash2,
-                          onSelect: () => deleteTag(tag),
-                          testId: `cloud-project-tag-delete-${tag}`,
-                          danger: true,
-                        },
-                      ],
-                    })}
-                  </span>
-                </span>
-              ),
-            )}
-          </div>
-        </section>
+                  {host.translate('common.retry', '重试')}
+                </button>
+              </div>
+            ) : (
+              <ProjectTagsSection
+                host={host}
+                className="mt-3"
+                allTags={allTags}
+                renamingTag={renamingTag}
+                renameValue={renameValue}
+                tagComposerOpen={tagComposerOpen}
+                newTag={newTag}
+                tagBusy={tagBusy}
+                setTagComposerOpen={setTagComposerOpen}
+                setNewTag={setNewTag}
+                setRenamingTag={setRenamingTag}
+                setRenameValue={setRenameValue}
+                createTag={createTag}
+                renameTag={renameTag}
+                deleteTag={deleteTag}
+              />
+            ))}
+        </details>
 
-        <div
-          className={section === "all" || section === "agents" ? "" : "hidden"}
-        >
-          {renderProviderSettings?.({
-            updateProject: (values) => updateProject(values, projectScope),
-            reportError,
-          })}
-        </div>
+        {(section === 'all' || section === providerSettingsSection) && (
+          <ProjectProviderSection
+            className=""
+            render={renderProviderSettings}
+            updateProject={values => updateProject(values, projectScope)}
+            reportError={reportError}
+          />
+        )}
 
-        {(section === "all" || section === "overview") && externalProvider && (
+        {(section === 'all' || section === 'overview') && externalProvider && (
           <section className="border-t border-border py-6">
             <h2 className="text-heading-md font-semibold">
-              {host.translate("todo.task_source", "任务来源")}
+              {host.translate('todo.task_source', '任务来源')}
             </h2>
             <p className="mt-1 text-sm text-text-muted">
-              {host.translate(
-                "todo.task_source_description",
-                "连接并同步外部 Issue 仓库。",
-              )}
+              {host.translate('todo.task_source_description', '连接并同步外部 Issue 仓库。')}
             </p>
             <div className="mt-4 grid gap-2 rounded-xl bg-muted p-3 sm:grid-cols-[1fr_1fr_auto]">
               <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3">
@@ -1270,16 +821,13 @@ export function ProjectManageView<
                 <input
                   data-testid="cloud-project-provider-manage-repository"
                   value={providerRepository}
-                  onChange={(event) => {
-                    setProviderRepository(event.target.value);
-                    dirtyRef.current.providerRepository = true;
-                    setProviderSaved(false);
+                  onChange={event => {
+                    setProviderRepository(event.target.value)
+                    dirtyRef.current.providerRepository = true
+                    setProviderSaved(false)
                   }}
                   className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-                  aria-label={host.translate(
-                    "todo.repository_address",
-                    "仓库地址",
-                  )}
+                  aria-label={host.translate('todo.repository_address', '仓库地址')}
                 />
               </label>
               <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3">
@@ -1288,19 +836,16 @@ export function ProjectManageView<
                   data-testid="cloud-project-provider-manage-token"
                   type="password"
                   value={providerToken}
-                  onChange={(event) => {
-                    setProviderToken(event.target.value);
-                    dirtyRef.current.providerToken = true;
-                    setProviderSaved(false);
+                  onChange={event => {
+                    setProviderToken(event.target.value)
+                    dirtyRef.current.providerToken = true
+                    setProviderSaved(false)
                   }}
                   className="min-w-0 flex-1 bg-transparent text-sm outline-none"
                   placeholder={
                     project.provider_config.credential_configured
-                      ? host.translate(
-                          "todo.keep_existing_token",
-                          "留空保留当前令牌",
-                        )
-                      : host.translate("todo.access_token", "访问令牌")
+                      ? host.translate('todo.keep_existing_token', '留空保留当前令牌')
+                      : host.translate('todo.access_token', '访问令牌')
                   }
                 />
               </label>
@@ -1312,36 +857,34 @@ export function ProjectManageView<
                 className="h-9 rounded-lg bg-text-primary px-3.5 text-sm text-background disabled:bg-text-primary disabled:text-background"
               >
                 {providerSaved
-                  ? host.translate("todo.saved", "已保存")
-                  : host.translate("common.save", "保存")}
+                  ? host.translate('todo.saved', '已保存')
+                  : host.translate('common.save', '保存')}
               </button>
             </div>
             {!project.provider_config.credential_configured && (
               <p className="mt-2 text-xs text-text-muted">
-                {host.translate("todo.token_required", "需要配置令牌")}
+                {host.translate('todo.token_required', '需要配置令牌')}
               </p>
             )}
           </section>
         )}
 
-        {(section === "all" || section === "board") && (
+        {(section === 'all' || section === 'board') && (
           <BoardLayoutEditor
             statuses={statuses}
             display={display}
             statusBusy={statusBusy}
             displayBusy={displayBusy}
-            canEditStatuses={project.task_provider === "local"}
+            canEditStatuses={project.task_provider === 'local'}
             embedded={embedded}
-            onStatusesChange={(next) => void saveStatuses(next)}
+            onStatusesChange={next => void saveStatuses(next)}
             onDisplayChange={(key, checked) => void saveDisplay(key, checked)}
             renderActionMenu={host.renderActionMenu}
-            translate={(key, fallback, options) =>
-              host.translate(key, fallback ?? key, options)
-            }
+            translate={(key, fallback, options) => host.translate(key, fallback ?? key, options)}
           />
         )}
         {error && <p className="pb-6 text-xs text-destructive">{error}</p>}
       </div>
     </div>
-  );
+  )
 }

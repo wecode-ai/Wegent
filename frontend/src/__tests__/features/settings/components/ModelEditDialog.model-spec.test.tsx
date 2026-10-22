@@ -79,6 +79,7 @@ const existingModel: ModelCRD = {
     modelType: 'llm',
     protocol: 'openai',
     apiFormat: 'chat/completions',
+    capability: 'Fast responses for everyday questions',
     futureSpecOption: { mode: 'strict' },
   },
   status: { state: 'Available' },
@@ -88,6 +89,54 @@ describe('ModelEditDialog model spec modes', () => {
   beforeEach(() => {
     jest.restoreAllMocks()
   })
+
+  it.each(['systemone', 'openai'])(
+    'preserves decision protocol %s without introducing a chat apiFormat',
+    async protocol => {
+      const user = userEvent.setup()
+      const onSave = jest.fn().mockResolvedValue(true)
+      const model: ModelCRD = {
+        ...existingModel,
+        spec: {
+          modelType: 'decision',
+          protocol,
+          isWeworkAvailable: true,
+          modelConfig: {
+            env: {
+              model: protocol,
+              model_id: 'decision-provider-model',
+              api_key: 'decision-test-key',
+              base_url: 'https://decision.example/v1',
+            },
+          },
+        },
+      }
+      render(
+        <ModelEditDialog open model={model} onClose={jest.fn()} toast={jest.fn()} onSave={onSave} />
+      )
+      expect(screen.getByTestId('model-category-select')).toHaveTextContent(
+        'models.model_category_type_decision'
+      )
+      expect(screen.getByTestId('model-protocol-select')).toHaveTextContent(
+        protocol === 'systemone' ? 'SystemOne' : 'OpenAI Decisions'
+      )
+      await user.click(screen.getByTestId('model-spec-json-mode-button'))
+      expect(
+        JSON.parse((screen.getByTestId('model-spec-json-editor') as HTMLTextAreaElement).value)
+          .protocol
+      ).toBe(protocol)
+      await user.click(screen.getByTestId('model-spec-form-mode-button'))
+      await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      expect(onSave.mock.calls[0][1].spec).toMatchObject({
+        modelType: 'decision',
+        protocol,
+        isWeworkAvailable: true,
+        modelConfig: { env: { model_id: 'decision-provider-model' } },
+      })
+      expect(onSave.mock.calls[0][1].spec).not.toHaveProperty('apiFormat')
+    }
+  )
 
   it('defaults to the visual form and exposes plaintext secrets only after opting into JSON', async () => {
     const user = userEvent.setup()
@@ -161,6 +210,12 @@ describe('ModelEditDialog model spec modes', () => {
     fireEvent.change(screen.getByLabelText('common:models.base_url'), {
       target: { value: 'https://changed.example/v1' },
     })
+    expect(screen.getByTestId('model-capability-input')).toHaveValue(
+      'Fast responses for everyday questions'
+    )
+    fireEvent.change(screen.getByTestId('model-capability-input'), {
+      target: { value: '  Strong reasoning for complex tasks  ' },
+    })
     await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
@@ -170,6 +225,60 @@ describe('ModelEditDialog model spec modes', () => {
     expect(savedSpec.modelConfig.env.supports_developer_role).toBe(false)
     expect(savedSpec.modelConfig.env.retry_policy).toEqual({ attempts: 0 })
     expect(savedSpec.modelConfig.env.base_url).toBe('https://changed.example/v1')
+    expect(savedSpec.capability).toBe('Strong reasoning for complex tasks')
+  })
+
+  it('removes a cleared capability description when saving the form', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(true)
+    render(
+      <ModelEditDialog
+        open
+        model={existingModel}
+        onClose={jest.fn()}
+        toast={jest.fn()}
+        onSave={onSave}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('model-capability-input'), { target: { value: '   ' } })
+    await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][1].spec).not.toHaveProperty('capability')
+  })
+
+  it('edits a published model description without overwriting publication settings', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(true)
+    const publication = {
+      description: 'Published capabilities',
+      publishStatus: 'published',
+      visibility: 'public',
+      version: '1.0.0',
+      allowPersonalInstall: true,
+    }
+    render(
+      <ModelEditDialog
+        open
+        model={{ ...existingModel, spec: { ...existingModel.spec, capability: publication } }}
+        onClose={jest.fn()}
+        toast={jest.fn()}
+        onSave={onSave}
+      />
+    )
+
+    expect(screen.getByTestId('model-capability-input')).toHaveValue('Published capabilities')
+    fireEvent.change(screen.getByTestId('model-capability-input'), {
+      target: { value: 'Updated published capabilities' },
+    })
+    await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    expect(onSave.mock.calls[0][1].spec.capability).toEqual({
+      ...publication,
+      description: 'Updated published capabilities',
+    })
   })
 
   it('hydrates known fields when returning to the form and keeps incompatible specs in JSON', async () => {
@@ -183,6 +292,7 @@ describe('ModelEditDialog model spec modes', () => {
         value: JSON.stringify({
           ...existingModel.spec,
           modelGroup: 'expert-group',
+          capability: 'Capability edited in JSON',
           modelConfig: {
             ...existingModel.spec.modelConfig,
             env: {
@@ -195,6 +305,7 @@ describe('ModelEditDialog model spec modes', () => {
     })
     await user.click(screen.getByTestId('model-spec-form-mode-button'))
     expect(screen.getByTestId('model-group-input')).toHaveValue('expert-group')
+    expect(screen.getByTestId('model-capability-input')).toHaveValue('Capability edited in JSON')
     expect(screen.getByLabelText('common:models.base_url')).toHaveValue('https://json.example/v1')
 
     await user.click(screen.getByTestId('model-spec-json-mode-button'))

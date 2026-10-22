@@ -17,7 +17,7 @@ from app.services.channels.callback import (
     get_callback_registry,
     runtime_local_task_callback_key,
 )
-from app.services.execution.dispatcher import ResponsesAPIEventParser
+from app.services.execution.response_parser import ResponsesAPIEventParser
 from shared.models import EventType, ExecutionEvent
 from shared.models.blocks import BlockStatus, create_tool_block
 from shared.models.responses_api import ResponsesAPIStreamEvents

@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import { startTaskAiRun, type TaskAiRuntimeBridge } from './taskAiExecution'
+import {
+  mergeProjectChatMessages,
+  startTaskAiRun,
+  type TaskAiRuntimeBridge,
+} from './taskAiExecution'
 
 const kimiModel = {
   name: 'wecode-moonshot-kimi-k2.7-code-highspeed(公网)',
@@ -50,6 +54,83 @@ const agentMessage: ProjectChatMessage = {
   createdAt: '',
   updatedAt: '',
 }
+
+describe('project chat message ordering', () => {
+  const live = {
+    ...agentMessage,
+    content: 'Live result',
+    updatedAt: '2026-10-14T10:57:41.123456Z',
+  }
+
+  it('ignores older snapshots even when their timestamps use a different timezone', () => {
+    const stale = { ...live, content: '', updatedAt: '2026-10-14T18:57:40+08:00' }
+    expect(mergeProjectChatMessages([live], [stale])).toEqual([live])
+  })
+
+  it('preserves submillisecond update order', () => {
+    const stale = { ...live, content: '', updatedAt: '2026-10-14T10:57:41.123455Z' }
+    expect(mergeProjectChatMessages([live], [stale])).toEqual([live])
+  })
+
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'keeps the %s result in both acknowledgement delivery orders',
+    status => {
+      const terminal = { ...live, status }
+      const lateAck = {
+        ...live,
+        content: '',
+        metadata: { run_status: 'running' },
+        updatedAt: '2026-10-14T10:57:42Z',
+      }
+      expect(mergeProjectChatMessages([terminal], [lateAck])).toEqual([terminal])
+      expect(mergeProjectChatMessages([lateAck], [terminal])).toEqual([terminal])
+    }
+  )
+
+  it.each([live.updatedAt, '2026-10-14T10:57:42Z'])(
+    'keeps streamed text when an empty acknowledgement requeues the active message at %s',
+    updatedAt => {
+      const queued = { ...live, content: '', status: 'pending' as const, updatedAt }
+      expect(mergeProjectChatMessages([live], [queued])).toEqual([
+        { ...queued, content: live.content },
+      ])
+    }
+  )
+
+  it('still ignores an older terminal snapshot after the terminal transition', () => {
+    const completed = { ...live, status: 'completed' as const }
+    const stale = {
+      ...completed,
+      content: 'Old result',
+      updatedAt: '2026-10-14T10:57:40Z',
+    }
+    expect(mergeProjectChatMessages([completed], [stale])).toEqual([completed])
+  })
+
+  it('accepts a shorter nonempty streaming snapshot', () => {
+    const replacement = { ...live, content: 'Live' }
+    expect(mergeProjectChatMessages([live], [replacement])).toEqual([replacement])
+  })
+
+  it('accepts terminal content replacements including empty content', () => {
+    for (const content of ['Final', '']) {
+      const completed = { ...live, content, status: 'completed' as const }
+      expect(mergeProjectChatMessages([live], [completed])).toEqual([completed])
+    }
+  })
+
+  it('accepts new retry messages without changing the original terminal result', () => {
+    const failed = { ...live, status: 'failed' as const }
+    const retry = { ...agentMessage, messageId: 'retry-1', sequenceNumber: 2 }
+    expect(mergeProjectChatMessages([failed], [retry])).toEqual([failed, retry])
+  })
+
+  it('does not prevent user message content updates', () => {
+    const user = { ...live, sender: { type: 'user' as const, id: '1', name: 'Me' } }
+    const edited = { ...user, content: '' }
+    expect(mergeProjectChatMessages([user], [edited])).toEqual([edited])
+  })
+})
 
 function createRuntime(): TaskAiRuntimeBridge {
   return {
@@ -163,6 +244,98 @@ async function runWith(
 }
 
 describe('startTaskAiRun model resolution', () => {
+  it('queues manual reruns through the same runner resolver as comments', async () => {
+    const client = createClient()
+    const comment: ProjectChatMessage = {
+      ...agentMessage,
+      messageId: 'rerun-comment',
+      sender: { type: 'user', id: 'user-1', name: 'User' },
+      type: 'text',
+      content: 'Run the assigned Issue',
+      status: 'completed',
+    }
+    vi.mocked(client.send).mockResolvedValue(comment)
+    client.executeTaskComment = vi.fn(async () => [agentMessage])
+    const runtime = createRuntime()
+    const onMessages = vi.fn()
+    const onError = vi.fn()
+    const input = {
+      client,
+      runtime,
+      services: {},
+      project,
+      task,
+      agent: agent(null),
+      prompt: comment.content,
+      messages: [],
+      onMessages,
+      onError,
+      startFailedText: '启动失败',
+    }
+
+    await expect(startTaskAiRun(input)).resolves.toBe(true)
+
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: task.id,
+        mentions: [{ type: 'agent', id: 'agent-1', label: 'Project AI' }],
+        replyToMessageId: null,
+        model: null,
+      })
+    )
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: project.id,
+      taskId: task.id,
+      triggerMessageId: comment.messageId,
+      attachmentIds: [],
+    })
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+    expect(onMessages).toHaveBeenLastCalledWith([agentMessage])
+    expect(onError).not.toHaveBeenCalled()
+
+    vi.mocked(client.executeTaskComment).mockRejectedValueOnce(new Error('Runner access revoked'))
+    await expect(startTaskAiRun({ ...input, trigger: comment })).resolves.toBe(false)
+    expect(client.send).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledWith('Runner access revoked')
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  it('materializes the assigned Team instead of dropping its model and shell defaults', async () => {
+    const { runtime } = await run({
+      agent: { ...agent(null), runtime: 'wegent', wegentTeamId: 1880 },
+      models: [],
+      selectedModel: null,
+      selectedModelOptions: {},
+    })
+
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelSelection: null,
+        origin: expect.objectContaining({ dispatchRole: 'executor' }),
+      })
+    )
+    expect(runtime.createProjectRuntimeTask.mock.calls[0]?.[1]).not.toHaveProperty('executionModel')
+  })
+
+  it('preserves an explicit per-run model override while materializing the assigned Team', async () => {
+    const { runtime } = await run({
+      agent: { ...agent(null), runtime: 'wegent', wegentTeamId: 1880 },
+      models: [kimiModel],
+      selectedModel: kimiModel,
+      selectedModelOptions: {},
+    })
+
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelSelection: expect.objectContaining({ modelName: kimiModel.name }),
+      })
+    )
+  })
   it.each([false, true])(
     'seeds the user comment before execution (continuation=%s)',
     async continuation => {
@@ -309,6 +482,7 @@ describe('startTaskAiRun model resolution', () => {
         cloudProjectId: '11',
         origin: {
           type: 'board_comment',
+          dispatchRole: 'executor',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
         },

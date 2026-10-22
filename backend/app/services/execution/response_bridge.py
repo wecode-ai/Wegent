@@ -15,14 +15,14 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 
-from .dispatcher import (
+from .emitters import ResultEmitter
+from .response_parser import (
     _build_shell_call_context,
     _extract_reasoning_event_content,
     _extract_shell_call_input,
     _require_non_empty_tool_use_id,
     extract_completed_result,
 )
-from .emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
 

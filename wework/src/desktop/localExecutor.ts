@@ -1,4 +1,5 @@
 import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
+import { readRuntimeTranscript } from '@wegent/chat-core'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
@@ -6,6 +7,7 @@ import {
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
 import { resolveLocalCodexProxyUrl } from './systemProxy'
+import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
 
 export type UnlistenFn = () => void
 
@@ -86,6 +88,7 @@ export interface BundledPluginMarketplace {
 
 let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
@@ -93,6 +96,125 @@ let initializeBundledPluginMarketplacePromise: Promise<BundledPluginMarketplace>
 let reconciledBundledPluginMarketplaceKey = ''
 let reconcilingBundledPluginMarketplaceKey = ''
 let reconcileBundledPluginMarketplacePromise: Promise<void> | null = null
+export interface BundledPluginUpdateState {
+  status: 'updating' | 'ready' | 'deferred' | 'failed'
+  error?: string
+}
+const bundledPluginUpdates = new Map<string, BundledPluginUpdateState>()
+const bundledPluginUpdateTasks = new Map<string, Promise<void>>()
+const pausedBundledPluginUpdates = new Set<string>()
+const bundledPluginUpdateListeners = new Set<() => void>()
+let bundledPluginRetryListener: UnlistenFn | null = null
+let bundledPluginRetryTimer: ReturnType<typeof setTimeout> | null = null
+let bundledPluginUpdateEpoch = 0
+export const BUNDLED_PLUGIN_UPDATED_EVENT = 'wework:local-plugin-skills-changed'
+
+export function getBundledPluginUpdateState(name: string): BundledPluginUpdateState | undefined {
+  return bundledPluginUpdates.get(name)
+}
+
+export function subscribeBundledPluginUpdates(listener: () => void): UnlistenFn {
+  bundledPluginUpdateListeners.add(listener)
+  return () => bundledPluginUpdateListeners.delete(listener)
+}
+
+function setBundledPluginUpdateState(name: string, state: BundledPluginUpdateState): void {
+  bundledPluginUpdates.set(name, state)
+  for (const listener of bundledPluginUpdateListeners) listener()
+}
+
+export async function withBundledPluginUpdatesPaused<T>(
+  name: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  const wasPaused = pausedBundledPluginUpdates.has(name)
+  const previousState = bundledPluginUpdates.get(name)
+  pausedBundledPluginUpdates.add(name)
+  bundledPluginUpdates.delete(name)
+  for (const listener of bundledPluginUpdateListeners) listener()
+  // Let any admitted file mutation finish before deleting its cache/configuration.
+  await bundledPluginUpdateTasks.get(name)?.catch(() => undefined)
+  try {
+    return await mutation()
+  } catch (error) {
+    if (!wasPaused) {
+      pausedBundledPluginUpdates.delete(name)
+      if (previousState) {
+        setBundledPluginUpdateState(name, { status: 'deferred' })
+        scheduleDeferredBundledPlugins()
+      }
+    }
+    throw error
+  }
+}
+
+export function resumeBundledPluginUpdates(name: string): void {
+  if (!pausedBundledPluginUpdates.delete(name)) return
+  bundledPluginUpdates.delete(name)
+  for (const listener of bundledPluginUpdateListeners) listener()
+}
+
+async function synchronizeBundledPlugin(
+  name: string,
+  marketplace: BundledPluginMarketplace
+): Promise<void> {
+  if (pausedBundledPluginUpdates.has(name)) return
+  const pending = bundledPluginUpdateTasks.get(name)
+  if (pending) return pending
+  const epoch = bundledPluginUpdateEpoch
+  setBundledPluginUpdateState(name, { status: 'updating' })
+  const task = requestLocalExecutor<{ status: 'ready' | 'deferred'; updated: boolean }>(
+    'runtime.codex.plugin.sync_bundled',
+    { pluginName: name, marketplacePath: bundledMarketplaceManifestPath(marketplace.path) }
+  )
+    .then(result => {
+      if (epoch !== bundledPluginUpdateEpoch || pausedBundledPluginUpdates.has(name)) return
+      setBundledPluginUpdateState(name, { status: result.status })
+      if (result.status === 'deferred') scheduleDeferredBundledPlugins()
+      if (result.updated) window.dispatchEvent(new Event(BUNDLED_PLUGIN_UPDATED_EVENT))
+    })
+    .catch((error: unknown) => {
+      if (epoch === bundledPluginUpdateEpoch && !pausedBundledPluginUpdates.has(name)) {
+        setBundledPluginUpdateState(name, {
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+      throw error
+    })
+    .finally(() => {
+      if (bundledPluginUpdateTasks.get(name) === task) bundledPluginUpdateTasks.delete(name)
+    })
+  bundledPluginUpdateTasks.set(name, task)
+  return task
+}
+
+function watchDeferredBundledPlugins(): void {
+  if (bundledPluginRetryListener) return
+  bundledPluginRetryListener = subscribeDshExecutorEvents(event => {
+    if (event.event === 'runtime.work.changed') scheduleDeferredBundledPlugins()
+  })
+}
+
+function scheduleDeferredBundledPlugins(): void {
+  if (
+    bundledPluginRetryTimer ||
+    ![...bundledPluginUpdates.values()].some(state => state.status === 'deferred')
+  )
+    return
+  bundledPluginRetryTimer = setTimeout(() => {
+    bundledPluginRetryTimer = null
+    const marketplace = initializedBundledPluginMarketplace
+    if (!marketplace) return
+    for (const [name, state] of bundledPluginUpdates) {
+      if (state.status === 'deferred') {
+        void synchronizeBundledPlugin(name, marketplace).catch(error =>
+          console.warn('[local-ipc] bundled plugin update failed', error)
+        )
+      }
+    }
+  }, 2_000)
+}
 let nextLocalExecutorRequestFailure: {
   method: string
   message: string
@@ -112,6 +234,30 @@ function isExecutorHealthy(status: LocalExecutorStatus): boolean {
   return status.running && status.ready !== false && !status.error
 }
 
+function ensureLocalExecutorIdentityUnchanged(epoch: number): void {
+  if (epoch !== localExecutorIdentityEpoch) {
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'Executor identity was revoked while checking executor readiness'
+    )
+  }
+}
+
+function markLocalExecutorUnavailable(cause: unknown): void {
+  if (cause instanceof DshExecutorTransportError && cause.code === 'protocol_mismatch') {
+    localExecutorIdentityEpoch += 1
+    availableLocalExecutorStatus = null
+  } else if (availableLocalExecutorStatus) {
+    availableLocalExecutorStatus = {
+      ...availableLocalExecutorStatus,
+      running: false,
+      ready: false,
+      error: cause instanceof Error ? cause.message : String(cause),
+    }
+  }
+  initializedLocalExecutorStatus = null
+}
+
 function normalizedMarketplacePath(path: string | null | undefined): string {
   return (path ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '')
 }
@@ -125,29 +271,13 @@ async function installBundledMarketplaceDefaults(
 ): Promise<void> {
   const defaultPluginNames = marketplace.defaultPluginNames ?? []
   if (defaultPluginNames.length === 0) return
-  const response = await requestLocalExecutor<{
-    config: { plugins?: Record<string, unknown> | null }
-  }>('codex.app_server_request', {
-    method: 'config/read',
-    params: {
-      includeLayers: false,
-      cwd: null,
-    },
-  })
-  const configuredPluginKeys = new Set(Object.keys(response.config.plugins ?? {}))
-  for (const pluginName of defaultPluginNames) {
-    if (configuredPluginKeys.has(`${pluginName}@${marketplace.id}`)) continue
-    // The local path identifies the bundled catalog. Codex resolves each
-    // plugin entry's declared source, which may itself be local or remote.
-    await requestLocalExecutor('codex.app_server_request', {
-      method: 'plugin/install',
-      params: {
-        marketplacePath: bundledMarketplaceManifestPath(marketplace.path),
-        remoteMarketplaceName: null,
-        pluginName,
-      },
-    })
-  }
+  watchDeferredBundledPlugins()
+  const results = await Promise.allSettled(
+    defaultPluginNames.map(name => synchronizeBundledPlugin(name, marketplace))
+  )
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure?.status === 'rejected')
+    console.warn('[local-ipc] bundled plugin update failed', failure.reason)
 }
 
 async function reconcileBundledPluginMarketplace(
@@ -172,7 +302,9 @@ async function reconcileBundledPluginMarketplace(
       `Bundled plugin marketplace resolved to ${reconciled.marketplaceName || 'an unknown name'}`
     )
   }
-  await installBundledMarketplaceDefaults(marketplace)
+  void installBundledMarketplaceDefaults(marketplace).catch(error => {
+    console.warn('[local-ipc] bundled plugin updates failed', error)
+  })
   reconciledBundledPluginMarketplaceKey = reconciliationKey
 }
 
@@ -218,6 +350,28 @@ export async function ensureBundledPluginInstalled(pluginName: string): Promise<
     throw new Error(`Bundled plugin ${normalizedPluginName} is not installed by default`)
   }
   await ensureBundledPluginMarketplaceRegistered()
+  if (pausedBundledPluginUpdates.has(normalizedPluginName)) {
+    throw new DshExecutorTransportError(
+      'bundled_plugin_uninstalled',
+      'Codex plugin is not installed'
+    )
+  }
+  const current = bundledPluginUpdates.get(normalizedPluginName)?.status
+  if (current !== 'ready' && current !== 'deferred') {
+    await synchronizeBundledPlugin(normalizedPluginName, marketplace)
+  }
+  if (pausedBundledPluginUpdates.has(normalizedPluginName)) {
+    throw new DshExecutorTransportError(
+      'bundled_plugin_uninstalled',
+      'Codex plugin is not installed'
+    )
+  }
+  if (bundledPluginUpdates.get(normalizedPluginName)?.status !== 'ready') {
+    throw new DshExecutorTransportError(
+      'bundled_plugin_update_deferred',
+      'Bundled plugin update is waiting for active work to finish'
+    )
+  }
 }
 
 export function getInitializedBundledPluginMarketplace(): BundledPluginMarketplace | null {
@@ -232,13 +386,30 @@ export function getKnownLocalExecutorDeviceId(): string | null {
   )
 }
 
-export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
-  if (availableLocalExecutorStatus && isExecutorHealthy(availableLocalExecutorStatus)) {
+export function ensureLocalExecutorAvailable(
+  options: { refresh?: boolean } = {}
+): Promise<LocalExecutorStatus> {
+  if (
+    !options.refresh &&
+    availableLocalExecutorStatus &&
+    isExecutorHealthy(availableLocalExecutorStatus)
+  ) {
     return Promise.resolve(availableLocalExecutorStatus)
   }
-  if (!ensureLocalExecutorAvailablePromise) {
-    ensureLocalExecutorAvailablePromise = describeDshExecutor()
+  if (options.refresh || !ensureLocalExecutorAvailablePromise) {
+    const epoch = localExecutorIdentityEpoch
+    const availability = describeDshExecutor()
       .then(description => {
+        ensureLocalExecutorIdentityUnchanged(epoch)
+        if (
+          availableLocalExecutorStatus &&
+          (availableLocalExecutorStatus.runtimeInstanceId !== description.runtime_instance_id ||
+            availableLocalExecutorStatus.deviceId !== description.device_id)
+        ) {
+          localExecutorIdentityEpoch += 1
+          initializedLocalExecutorStatus = null
+          ensureLocalExecutorStartedPromise = null
+        }
         const status: LocalExecutorStatus = {
           running: true,
           ready: true,
@@ -249,9 +420,15 @@ export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
         availableLocalExecutorStatus = status
         return status
       })
-      .finally(() => {
-        ensureLocalExecutorAvailablePromise = null
+      .catch((cause: unknown) => {
+        if (epoch === localExecutorIdentityEpoch) markLocalExecutorUnavailable(cause)
+        throw cause
       })
+      .finally(() => {
+        if (ensureLocalExecutorAvailablePromise === availability)
+          ensureLocalExecutorAvailablePromise = null
+      })
+    ensureLocalExecutorAvailablePromise = availability
   }
   return ensureLocalExecutorAvailablePromise
 }
@@ -261,19 +438,28 @@ export function initializeBundledPluginMarketplace(): Promise<BundledPluginMarke
     return Promise.resolve(initializedBundledPluginMarketplace)
   }
   if (!initializeBundledPluginMarketplacePromise) {
-    initializeBundledPluginMarketplacePromise = ensureLocalExecutorAvailable()
+    const epoch = bundledPluginUpdateEpoch
+    const initialization = ensureLocalExecutorAvailable()
       .then(() =>
         requestDshExecutor<BundledPluginMarketplace>(
           'executor.plugins.initialize_bundled_marketplace'
         )
       )
       .then(marketplace => {
+        if (epoch !== bundledPluginUpdateEpoch) {
+          throw new DshExecutorTransportError(
+            'bundled_plugin_runtime_changed',
+            'Executor changed while preparing bundled plugins'
+          )
+        }
         initializedBundledPluginMarketplace = marketplace
         return marketplace
       })
       .finally(() => {
-        initializeBundledPluginMarketplacePromise = null
+        if (initializeBundledPluginMarketplacePromise === initialization)
+          initializeBundledPluginMarketplacePromise = null
       })
+    initializeBundledPluginMarketplacePromise = initialization
   }
   return initializeBundledPluginMarketplacePromise
 }
@@ -283,16 +469,22 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
     return Promise.resolve(initializedLocalExecutorStatus)
   }
   if (!ensureLocalExecutorStartedPromise) {
-    ensureLocalExecutorStartedPromise = (async () => {
-      const available = await ensureLocalExecutorAvailable()
-      const proxyUrl = await resolveLocalCodexProxyUrl()
-      await requestDshExecutor('runtime.codex.runtime_config.update', {
-        proxyUrl,
-      })
-      const codexStartup = await requestDshExecutor<CodexStartupStatus>(
-        'runtime.codex.ensure_started'
+    const epoch = localExecutorIdentityEpoch
+    const traceId = createModelLoadingTrace()
+    const startup = (async () => {
+      const available = await traceModelLoading(
+        traceId,
+        'executor.available',
+        ensureLocalExecutorAvailable
       )
-      await initializeBundledPluginMarketplace()
+      const proxyUrl = await traceModelLoading(traceId, 'executor.proxy', resolveLocalCodexProxyUrl)
+      await traceModelLoading(traceId, 'executor.runtime_config', () =>
+        requestDshExecutor('runtime.codex.runtime_config.update', { proxyUrl })
+      )
+      const codexStartup = await traceModelLoading(traceId, 'executor.codex_start', () =>
+        requestDshExecutor<CodexStartupStatus>('runtime.codex.ensure_started')
+      )
+      ensureLocalExecutorIdentityUnchanged(epoch)
       const status: LocalExecutorStatus = {
         ...available,
         ready: codexStartup.ready,
@@ -304,19 +496,31 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       // renderer ever opens the app/plugin catalog (e.g. isolated plugin
       // development instances). Reconcile is local-only: it reads the bundled
       // marketplace from disk and never contacts GitHub.
-      void ensureBundledPluginMarketplaceRegistered().catch(error => {
-        console.warn('[local-ipc] bundled plugin marketplace reconcile failed', error)
-      })
+      void initializeBundledPluginMarketplace()
+        .then(() => ensureBundledPluginMarketplaceRegistered())
+        .catch(error => {
+          console.warn('[local-ipc] bundled plugin marketplace reconcile failed', error)
+        })
       return status
     })().finally(() => {
-      ensureLocalExecutorStartedPromise = null
+      if (ensureLocalExecutorStartedPromise === startup) ensureLocalExecutorStartedPromise = null
     })
+    ensureLocalExecutorStartedPromise = startup
   }
 
   return ensureLocalExecutorStartedPromise
 }
 
 export function resetLocalExecutorStateForTests(): void {
+  localExecutorIdentityEpoch += 1
+  bundledPluginUpdateEpoch += 1
+  bundledPluginRetryListener?.()
+  bundledPluginRetryListener = null
+  if (bundledPluginRetryTimer) clearTimeout(bundledPluginRetryTimer)
+  bundledPluginRetryTimer = null
+  bundledPluginUpdates.clear()
+  bundledPluginUpdateTasks.clear()
+  pausedBundledPluginUpdates.clear()
   ensureLocalExecutorAvailablePromise = null
   ensureLocalExecutorStartedPromise = null
   availableLocalExecutorStatus = null
@@ -329,7 +533,10 @@ export function resetLocalExecutorStateForTests(): void {
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
-  return ensureLocalExecutorAvailable()
+  return ensureLocalExecutorAvailable().catch((cause: unknown) => {
+    if (availableLocalExecutorStatus) return availableLocalExecutorStatus
+    throw cause
+  })
 }
 
 export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
@@ -393,21 +600,30 @@ export function requestLocalExecutor<T = unknown>(
     failure.resolve()
     return Promise.reject(new Error(failure.message))
   }
-  return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
+  const request =
+    method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
+      ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
+      : requestDshExecutor<T>(method, params)
+  return request.catch((cause: unknown) => {
     if (isExecutorTransportFailure(cause)) {
-      availableLocalExecutorStatus = null
-      initializedLocalExecutorStatus = null
+      bundledPluginUpdateEpoch += 1
+      bundledPluginUpdateTasks.clear()
+      bundledPluginUpdates.clear()
+      markLocalExecutorUnavailable(cause)
       initializedBundledPluginMarketplace = null
       initializeBundledPluginMarketplacePromise = null
       reconciledBundledPluginMarketplaceKey = ''
     }
-    console.error('[local-ipc] request failed', {
-      method,
-      paramsKeys: Object.keys(params ?? {}),
-      error: String(cause),
-      message: (cause as { message?: unknown } | null)?.message ?? null,
-      stack: (cause as { stack?: unknown } | null)?.stack ?? null,
-    })
+    console.error(
+      '[local-ipc] request failed',
+      JSON.stringify({
+        method,
+        paramsKeys: Object.keys(params ?? {}),
+        error: String(cause),
+        message: (cause as { message?: unknown } | null)?.message ?? null,
+        stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+      })
+    )
     throw cause
   })
 }

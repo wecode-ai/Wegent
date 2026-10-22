@@ -114,6 +114,7 @@ export const composerMarkdownNodes: Record<string, NodeSpec> = {
 
 export const composerMarkdownMarks: Record<string, MarkSpec> = {
   strong: {
+    inclusive: false,
     toDOM: () => ["strong", 0],
     parseDOM: [
       { tag: "strong" },
@@ -126,10 +127,12 @@ export const composerMarkdownMarks: Record<string, MarkSpec> = {
     ],
   },
   em: {
+    inclusive: false,
     toDOM: () => ["em", 0],
     parseDOM: [{ tag: "em" }, { tag: "i" }, { style: "font-style=italic" }],
   },
   strike: {
+    inclusive: false,
     toDOM: () => ["s", 0],
     parseDOM: [
       { tag: "s" },
@@ -166,5 +169,10 @@ export const composerMarkdownMarks: Record<string, MarkSpec> = {
       },
     ],
   },
-  code: { code: true, toDOM: () => ["code", 0], parseDOM: [{ tag: "code" }] },
+  code: {
+    code: true,
+    inclusive: false,
+    toDOM: () => ["code", 0],
+    parseDOM: [{ tag: "code" }],
+  },
 };

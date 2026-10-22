@@ -109,6 +109,12 @@ If the agent supports skills:
 3. **Press Enter to send** - Or click the send button
 4. **Wait for response** - Agent starts processing and streams results
 
+#### Attach a Sketch
+
+Select **Draw** from the Wework composer's **+** menu, or type `@` and select **Draw**, to open the Excalidraw canvas. It supports freehand drawing, text, shapes, erasing, colors, stroke widths, and undo/redo.
+
+Click **Add to chat** to export the sketch as a PNG with a white background and add it to the composer's attachments. Preview, remove, or send it with your message. Empty drawings cannot be attached. Canceling adds no attachment; failed exports preserve the sketch for retry. The canvas and fonts are bundled with the desktop app, so drawing and export do not require an external service.
+
 #### Add Files and Selected Text from the Workspace
 
 In Wework desktop, you can reuse context directly from the right workspace and

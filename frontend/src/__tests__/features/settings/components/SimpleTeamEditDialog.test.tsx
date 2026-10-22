@@ -114,7 +114,6 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.simple.description': 'Chat executor.',
         'settings:team.simple.executor.simple.title': 'Simple',
         'settings:team.simple.executor.title': 'Executor',
-        'settings:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
         'common:teams.edit_title': 'Edit agent',
@@ -427,7 +426,11 @@ describe('Simple TeamEditDialog', () => {
     )
 
     expect(await screen.findByRole('radio', { name: /complex/i })).toBeChecked()
+    expect(screen.queryByTestId('select-mode-radio-solo')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
+    expect(screen.getByTestId('simple-section-advanced-content')).toContainElement(
+      screen.getByTestId('select-mode-radio-solo')
+    )
     expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
       'Custom entry points · Chat, Code, Device'
     )
@@ -804,6 +807,42 @@ describe('Simple TeamEditDialog', () => {
     expect(await screen.findByLabelText('Display name')).toBeInTheDocument()
     expect(screen.getByTestId('simple-section-basic-content')).toBeInTheDocument()
     expect(screen.queryByTestId('simple-section-basic-trigger')).not.toBeInTheDocument()
+  })
+
+  it('waits for the execution engine catalog before enabling save', async () => {
+    let resolveShells!: (value: unknown) => void
+    mockedGetUnifiedShells.mockReturnValue(
+      new Promise(resolve => {
+        resolveShells = resolve
+      })
+    )
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Delayed engine catalog' },
+    })
+    const save = screen.getByRole('button', { name: /^save$/i })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(mockedCreateBot).not.toHaveBeenCalled()
+    resolveShells({
+      data: [
+        { name: 'ClaudeCode', type: 'public', displayName: 'Claude Code', shellType: 'ClaudeCode' },
+      ],
+    })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+    await waitFor(() => expect(mockedCreateTeam).toHaveBeenCalled())
   })
 
   it('saves a new simple solo agent through bot and team payloads', async () => {
@@ -1640,7 +1679,13 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    expect(await screen.findByText('This agent uses advanced collaboration.')).toBeInTheDocument()
-    expect(screen.getByText('Solo')).toBeInTheDocument()
+    expect(await screen.findByTestId('select-mode-radio-pipeline')).toBeChecked()
+    expect(screen.queryByTestId('simple-section-model')).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('team-display-name-input')
+        .compareDocumentPosition(screen.getByTestId('select-mode-radio-pipeline')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 })

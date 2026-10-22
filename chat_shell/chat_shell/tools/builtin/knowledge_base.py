@@ -1165,8 +1165,6 @@ class KnowledgeBaseTool(BaseTool):
 
         return {
             "user_subtask_id": self.user_subtask_id,
-            "user_id": self.user_id,
-            "restricted_mode": self._is_restricted_search_only(),
         }
 
     def _build_backend_direct_injection_result(
@@ -1211,150 +1209,20 @@ class KnowledgeBaseTool(BaseTool):
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
-        """Retrieve KB data using Backend-side route selection."""
-        if self.external_knowledge_refs:
-            result = await self._retrieve_with_strategy_via_http(
-                query=query,
-                max_results=max_results,
-                route_mode=route_mode,
-                search_hints=search_hints,
-                document_ids=document_ids,
-                document_names=document_names,
-            )
-            mode = result.get("mode", InjectionMode.RAG_ONLY)
-            logger.info(
-                "[KnowledgeBaseTool] Retrieved %d records via Backend route mode=%s",
-                len(result.get("records", [])),
-                mode,
-            )
-            return mode, result
+        """Retrieve KB data through the Backend internal retrieve endpoint.
 
-        if self.db_session is None:
-            result = await self._retrieve_with_strategy_via_http(
-                query=query,
-                max_results=max_results,
-                route_mode=route_mode,
-                search_hints=search_hints,
-                document_ids=document_ids,
-                document_names=document_names,
-            )
-        else:
-            try:
-                if self._has_restricted_scope():
-                    result = await self._retrieve_with_scopes_package_mode(
-                        query=query,
-                        max_results=max_results,
-                        route_mode=route_mode,
-                        search_hints=search_hints,
-                        document_ids=document_ids,
-                        document_names=document_names,
-                    )
-                    mode = result.get("mode", InjectionMode.RAG_ONLY)
-                    logger.info(
-                        "[KnowledgeBaseTool] Retrieved %d scoped records via Backend route mode=%s",
-                        len(result.get("records", [])),
-                        mode,
-                    )
-                    return mode, result
-
-                resolved_document_ids = document_ids or None
-                if not resolved_document_ids and document_names:
-                    from app.services.knowledge import KnowledgeService
-
-                    resolved_document_ids = (
-                        KnowledgeService.resolve_document_ids_by_names(
-                            db=self.db_session,
-                            knowledge_base_ids=self.knowledge_base_ids,
-                            document_names=document_names,
-                        )
-                        or None
-                    )
-                    if not resolved_document_ids:
-                        result = {
-                            "mode": InjectionMode.RAG_ONLY,
-                            "records": [],
-                            "total": 0,
-                            "total_estimated_tokens": 0,
-                            "message": "Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
-                        }
-                        mode = result.get("mode", InjectionMode.RAG_ONLY)
-                        logger.info(
-                            "[KnowledgeBaseTool] Retrieved %d records via Backend route mode=%s",
-                            len(result.get("records", [])),
-                            mode,
-                        )
-                        return mode, result
-
-                from app.services.rag.retrieval_service import RetrievalService
-
-                from shared.models import RetrievalScope
-
-                retrieval_service = RetrievalService()
-                retrieval_scope = (
-                    RetrievalScope(document_ids=resolved_document_ids)
-                    if resolved_document_ids
-                    else None
-                )
-                result = await retrieval_service.retrieve_with_routing(
-                    query=query,
-                    knowledge_base_ids=self.knowledge_base_ids,
-                    db=self.db_session,
-                    max_results=max_results,
-                    scope=retrieval_scope,
-                    user_name=self.user_name,
-                    route_mode=route_mode,
-                    search_hints=search_hints,
-                    user_id=self.user_id,
-                    context_window=self._get_effective_context_window(),
-                    used_context_tokens=self._get_used_context_tokens(),
-                    reserved_output_tokens=self._get_reserved_output_tokens(),
-                    context_buffer_ratio=self.context_buffer_ratio,
-                    max_direct_chunks=self.max_direct_chunks,
-                    restricted_mode=self._is_restricted_search_only(),
-                )
-
-                if self.user_subtask_id:
-                    from app.services.knowledge.retrieval_persistence import (
-                        retrieval_persistence_service,
-                    )
-
-                    retrieval_persistence_service.persist_retrieval_result(
-                        db=self.db_session,
-                        user_subtask_id=self.user_subtask_id,
-                        user_id=self.user_id,
-                        query=query,
-                        mode=result.get("mode", InjectionMode.RAG_ONLY),
-                        records=result.get("records", []),
-                        restricted_mode=self._is_restricted_search_only(),
-                    )
-
-                if self._is_restricted_search_only():
-                    from app.services.knowledge.protected_mediation import (
-                        protected_knowledge_mediator,
-                    )
-
-                    mediated_result = await protected_knowledge_mediator.transform(
-                        db=self.db_session,
-                        query=query,
-                        retrieval_mode=result.get("mode", InjectionMode.RAG_ONLY),
-                        records=result.get("records", []),
-                        mediation_context=self._build_mediation_context(),
-                        knowledge_base_ids=self.knowledge_base_ids,
-                        total_estimated_tokens=result.get("total_estimated_tokens", 0),
-                        user_id=self.user_id,
-                        user_name=self.user_name or "system",
-                    )
-                    result = mediated_result.model_dump()
-            except ImportError:
-                result = await self._retrieve_with_strategy_via_http(
-                    query=query,
-                    max_results=max_results,
-                    route_mode=route_mode,
-                    search_hints=search_hints,
-                    document_ids=document_ids,
-                    document_names=document_names,
-                )
-
+        The Backend owns route selection (direct injection vs. retrieval) and
+        executes every retrieval in knowledge_runtime, so chat_shell always asks
+        the Backend rather than reading the database itself.
+        """
+        result = await self._retrieve_with_strategy_via_http(
+            query=query,
+            max_results=max_results,
+            route_mode=route_mode,
+            search_hints=search_hints,
+            document_ids=document_ids,
+            document_names=document_names,
+        )
         mode = result.get("mode", InjectionMode.RAG_ONLY)
         logger.info(
             "[KnowledgeBaseTool] Retrieved %d records via Backend route mode=%s",
@@ -1396,127 +1264,6 @@ class KnowledgeBaseTool(BaseTool):
             for scope in (self.knowledge_base_scopes or [])
         ]
 
-    async def _retrieve_with_scopes_package_mode(
-        self,
-        query: str,
-        max_results: int,
-        route_mode: str,
-        search_hints: SearchHints | None = None,
-        document_ids: Optional[list[int]] = None,
-        document_names: Optional[list[str]] = None,
-    ) -> Dict[str, Any]:
-        """Retrieve data in package mode while preserving per-KB scopes."""
-        if document_ids or document_names:
-            raise ValueError(
-                "Per-call document filters are not allowed for scoped knowledge base access"
-            )
-
-        from app.services.rag.retrieval_service import RetrievalService
-
-        from shared.models import RetrievalScope
-
-        retrieval_service = RetrievalService()
-        records: list[dict[str, Any]] = []
-        total_estimated_tokens = 0
-        modes: set[str] = set()
-
-        unscoped_kb_ids = [
-            scope.knowledge_base_id
-            for scope in self.knowledge_base_scopes
-            if not scope.scope_restricted
-        ]
-        retrieve_groups: list[tuple[list[int], Optional[list[int]]]] = []
-        if unscoped_kb_ids:
-            retrieve_groups.append((unscoped_kb_ids, None))
-        for scope in self.knowledge_base_scopes:
-            if scope.scope_restricted and scope.document_ids:
-                retrieve_groups.append(
-                    ([scope.knowledge_base_id], list(scope.document_ids))
-                )
-
-        if not retrieve_groups:
-            return {
-                "mode": InjectionMode.RAG_ONLY,
-                "records": [],
-                "total": 0,
-                "total_estimated_tokens": 0,
-                "message": "No documents are available in the current knowledge scope.",
-            }
-
-        for kb_ids, scoped_document_ids in retrieve_groups:
-            retrieval_scope = (
-                RetrievalScope(document_ids=scoped_document_ids)
-                if scoped_document_ids
-                else None
-            )
-            result = await retrieval_service.retrieve_with_routing(
-                query=query,
-                knowledge_base_ids=kb_ids,
-                db=self.db_session,
-                max_results=max_results,
-                scope=retrieval_scope,
-                user_name=self.user_name,
-                route_mode=route_mode,
-                search_hints=search_hints,
-                user_id=self.user_id,
-                context_window=self._get_effective_context_window(),
-                used_context_tokens=self._get_used_context_tokens(),
-                reserved_output_tokens=self._get_reserved_output_tokens(),
-                context_buffer_ratio=self.context_buffer_ratio,
-                max_direct_chunks=self.max_direct_chunks,
-                restricted_mode=self._is_restricted_search_only(),
-            )
-            modes.add(result.get("mode", InjectionMode.RAG_ONLY))
-            total_estimated_tokens += result.get("total_estimated_tokens", 0)
-            records.extend(result.get("records", []))
-
-        records.sort(key=lambda item: item.get("score") or 0, reverse=True)
-        records = records[:max_results]
-        mode = (
-            InjectionMode.DIRECT_INJECTION
-            if modes == {InjectionMode.DIRECT_INJECTION}
-            else InjectionMode.RAG_ONLY
-        )
-        result = {
-            "mode": mode,
-            "records": records,
-            "total": len(records),
-            "total_estimated_tokens": total_estimated_tokens,
-        }
-        if self.user_subtask_id:
-            from app.services.knowledge.retrieval_persistence import (
-                retrieval_persistence_service,
-            )
-
-            retrieval_persistence_service.persist_retrieval_result(
-                db=self.db_session,
-                user_subtask_id=self.user_subtask_id,
-                user_id=self.user_id,
-                query=query,
-                mode=mode,
-                records=records,
-                restricted_mode=self._is_restricted_search_only(),
-            )
-
-        if self._is_restricted_search_only():
-            from app.services.knowledge.protected_mediation import (
-                protected_knowledge_mediator,
-            )
-
-            mediated_result = await protected_knowledge_mediator.transform(
-                db=self.db_session,
-                query=query,
-                retrieval_mode=mode,
-                records=records,
-                mediation_context=self._build_mediation_context(),
-                knowledge_base_ids=self.knowledge_base_ids,
-                total_estimated_tokens=total_estimated_tokens,
-                user_id=self.user_id,
-                user_name=self.user_name or "system",
-            )
-            result = mediated_result.model_dump()
-        return result
-
     async def _retrieve_with_strategy_via_http(
         self,
         query: str,
@@ -1547,6 +1294,7 @@ class KnowledgeBaseTool(BaseTool):
                 search_hints.model_dump(exclude_none=True) if search_hints else None
             ),
             "runtime_context": self._build_runtime_context(),
+            "restricted_mode": self._is_restricted_search_only(),
         }
         if self.external_knowledge_refs:
             payload["external_knowledge_refs"] = self.external_knowledge_refs
@@ -1602,12 +1350,8 @@ class KnowledgeBaseTool(BaseTool):
                         }
                 except Exception:
                     pass
-                return {
-                    "mode": InjectionMode.RAG_ONLY,
-                    "records": [],
-                    "total": 0,
-                }
 
+            response.raise_for_status()
             data = response.json()
             logger.info(
                 "[KnowledgeBaseTool] HTTP internal retrieve mode=%s records=%d",

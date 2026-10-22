@@ -15,6 +15,7 @@ import {
 export {
   classifyComposerReference,
   composerSkillName,
+  parseComposerReferences,
 } from "./composerReference";
 
 const composerMentionIcons = new Map<

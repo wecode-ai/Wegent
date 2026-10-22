@@ -4,7 +4,18 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
 from app.services.remote_workspace_service import RemoteWorkspaceService
+
+
+@pytest.fixture(autouse=True)
+def executor_workspace_root():
+    with patch(
+        "app.services.remote_workspace_service.resolve_executor_workspace_root",
+        return_value="/srv/workspaces/demo-12345678",
+    ) as resolve:
+        yield resolve
 
 
 def test_status_connected_and_available():
@@ -100,7 +111,7 @@ def test_status_connected_and_available_via_executor():
 
     assert status.connected is True
     assert status.available is True
-    assert status.root_path == "/workspace/1"
+    assert status.root_path == "/srv/workspaces/demo-12345678"
     assert status.reason is None
 
 

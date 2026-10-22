@@ -1,27 +1,71 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared, set-based read visibility and effective roles for Cloud Projects."""
+"""Set-based relationship queries shared by collaboration authorization."""
 
-from sqlalchemy import BigInteger, String, case, cast, func, literal, select, union_all
+from sqlalchemy import (
+    Integer,
+    String,
+    case,
+    cast,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.orm import Query, Session
 from sqlalchemy.sql import Select
 
 from app.models.cloud_project import CloudProject
+from app.models.delivery import project_parent_relationships
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.schemas.base_role import ROLE_HIERARCHY, BaseRole
+from app.models.user import User
+from app.schemas.base_role import COLLABORATION_ROLE_ALIASES, ROLE_HIERARCHY, BaseRole
 
-VALID_CLOUD_PROJECT_MEMBER_ROLES = tuple(role.value for role in BaseRole)
+VALID_CLOUD_PROJECT_MEMBER_ROLES = (
+    BaseRole.Owner.value,
+    BaseRole.Maintainer.value,
+    BaseRole.Developer.value,
+    BaseRole.Viewer.value,
+    BaseRole.Reporter.value,
+)
+LEGACY_COLLABORATION_ROLES = COLLABORATION_ROLE_ALIASES
+
+
+def collaboration_role(role: str) -> str:
+    """Interpret retained legacy grants without rewriting shared database rows."""
+    return LEGACY_COLLABORATION_ROLES.get(role, role)
+
+
+def effective_project_role(
+    direct_role: str | None, inherited_role: str | None
+) -> str | None:
+    """Space administration is protected; direct roles override ordinary inheritance."""
+    if inherited_role == BaseRole.Maintainer.value:
+        return inherited_role
+    return direct_role or inherited_role
+
+
+def collaboration_role_expression():
+    return case(
+        LEGACY_COLLABORATION_ROLES, value=ResourceMember.role, else_=ResourceMember.role
+    )
+
+
+AUTHENTICATED_ENTITY_TYPE = "authenticated_users"
+AUTHENTICATED_ENTITY_ID = "*"
 ROLES_BY_PRIORITY = {
     priority: BaseRole(role) for role, priority in ROLE_HIERARCHY.items()
 }
 
 
 def user_memberships(user_id: int, resource_type: str) -> Select:
-    """Start permission lookups at the user/entity index."""
-    return select(ResourceMember.resource_id, ResourceMember.role).where(
+    return select(
+        ResourceMember.resource_id, collaboration_role_expression().label("role")
+    ).where(
         ResourceMember.resource_type == resource_type,
         ResourceMember.entity_type == "user",
         ResourceMember.entity_id == str(user_id),
@@ -31,44 +75,42 @@ def user_memberships(user_id: int, resource_type: str) -> Select:
 
 
 def readable_workspace_ids(user_id: int) -> Select:
+    members = user_memberships(user_id, ResourceType.WORKSPACE.value).subquery()
     return (
-        user_memberships(user_id, ResourceType.WORKSPACE.value)
-        .with_only_columns(ResourceMember.resource_id)
-        .join(Kind, Kind.id == ResourceMember.resource_id)
+        select(Kind.id)
+        .outerjoin(members, members.c.resource_id == Kind.id)
         .where(
             Kind.kind == "CollaborationWorkspace",
             Kind.is_active.is_(True),
-            ResourceMember.role != BaseRole.RestrictedAnalyst.value,
+            or_(Kind.user_id == user_id, members.c.resource_id.is_not(None)),
         )
     )
 
 
 def workspace_project_ids(workspace_id: int) -> Select:
-    """Keep the string project primary key uncast when joining numeric grants."""
-    return select(cast(ResourceMember.resource_id, String(64))).where(
-        ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-        ResourceMember.entity_type == "workspace",
-        ResourceMember.entity_id == str(workspace_id),
-        ResourceMember.status == MemberStatus.APPROVED.value,
-    )
+    return select(CloudProject.id).where(CloudProject.workspace_id == workspace_id)
 
 
 def _inherited_project_grants(user_id: int) -> Select:
-    workspaces = readable_workspace_ids(user_id).subquery()
+    members = user_memberships(user_id, ResourceType.WORKSPACE.value).subquery()
+    parents = project_parent_relationships().subquery()
+    is_admin = or_(Kind.user_id == user_id, members.c.role == BaseRole.Maintainer.value)
     return (
         select(
-            cast(ResourceMember.resource_id, String(64)).label("project_id"),
-            literal(ROLE_HIERARCHY[BaseRole.Reporter.value]).label("priority"),
+            CloudProject.id.label("project_id"),
+            case(
+                (is_admin, ROLE_HIERARCHY[BaseRole.Maintainer.value]),
+                else_=case(ROLE_HIERARCHY, value=members.c.role),
+            ).label("priority"),
         )
-        .join(
-            workspaces,
-            # Workspace IDs are integers; CHAR casts inherit connection collation.
-            cast(ResourceMember.entity_id, BigInteger) == workspaces.c.resource_id,
-        )
+        .join(parents, parents.c.project_id == cast(CloudProject.id, Integer))
+        .join(Kind, Kind.id == parents.c.workspace_id)
+        .outerjoin(members, members.c.resource_id == Kind.id)
         .where(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.entity_type == "workspace",
-            ResourceMember.status == MemberStatus.APPROVED.value,
+            Kind.kind == "CollaborationWorkspace",
+            Kind.is_active.is_(True),
+            or_(is_admin, members.c.resource_id.is_not(None)),
+            or_(is_admin, CloudProject.membership_mode == "inherit"),
         )
     )
 
@@ -76,46 +118,129 @@ def _inherited_project_grants(user_id: int) -> Select:
 def project_access_query(
     db: Session, user_id: int, project_id: int | str | None = None
 ) -> Query:
-    """Resolve roles without per-project IO; spaces grant Reporter, not admin."""
+    """Creators and public visitors are never implicit administrators."""
     direct = user_memberships(
         user_id, ResourceType.CLOUD_PROJECT.value
     ).with_only_columns(
         cast(ResourceMember.resource_id, String(64)).label("project_id"),
-        case(ROLE_HIERARCHY, value=ResourceMember.role).label("priority"),
+        case(ROLE_HIERARCHY, value=collaboration_role_expression()).label("priority"),
     )
     public = select(
-        CloudProject.id.label("project_id"),
-        literal(ROLE_HIERARCHY[BaseRole.RestrictedAnalyst.value]).label("priority"),
+        cast(ResourceMember.resource_id, String(64)).label("project_id"),
+        literal(ROLE_HIERARCHY[BaseRole.Viewer.value]).label("priority"),
     ).where(
-        CloudProject.status == "active",
-        CloudProject.metadata_json["visibility"]
-        .as_string()
-        .in_(("public_restricted", "public")),
+        ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+        ResourceMember.entity_type == AUTHENTICATED_ENTITY_TYPE,
+        ResourceMember.entity_id == AUTHENTICATED_ENTITY_ID,
+        ResourceMember.status == MemberStatus.APPROVED.value,
+        ResourceMember.role.in_((BaseRole.Viewer.value, BaseRole.Developer.value)),
     )
-    owned = select(
-        CloudProject.id.label("project_id"),
-        literal(ROLE_HIERARCHY[BaseRole.Owner.value]).label("priority"),
-    ).where(CloudProject.created_by_user_id == user_id, CloudProject.status == "active")
     inherited = _inherited_project_grants(user_id)
     if project_id is not None:
-        # Push point lookups into every branch before aggregation.
         direct = direct.where(ResourceMember.resource_id == int(project_id))
-        inherited = inherited.where(ResourceMember.resource_id == int(project_id))
-        public = public.where(CloudProject.id == str(project_id))
-        owned = owned.where(CloudProject.id == str(project_id))
-    grants = union_all(direct, inherited, public, owned).subquery()
+        inherited = inherited.where(CloudProject.id == str(project_id))
+        public = public.where(ResourceMember.resource_id == int(project_id))
+    grants = union_all(
+        direct.add_columns(literal(1).label("authority")),
+        inherited.add_columns(
+            case(
+                (
+                    inherited.selected_columns.priority
+                    == ROLE_HIERARCHY[BaseRole.Maintainer.value],
+                    0,
+                ),
+                else_=2,
+            ).label("authority")
+        ),
+        public.add_columns(literal(3).label("authority")),
+    ).subquery()
+    parents = project_parent_relationships().subquery()
+    priority = func.coalesce(
+        *(
+            func.min(case((grants.c.authority == authority, grants.c.priority)))
+            for authority in range(4)
+        )
+    )
     roles = (
-        select(grants.c.project_id, func.min(grants.c.priority).label("priority"))
+        select(grants.c.project_id, priority.label("priority"))
         .group_by(grants.c.project_id)
         .subquery()
     )
     return (
         db.query(CloudProject, roles.c.priority)
         .join(roles, CloudProject.id == roles.c.project_id)
-        .filter(CloudProject.status == "active")
+        .join(parents, parents.c.project_id == cast(CloudProject.id, Integer))
+        .join(Kind, Kind.id == parents.c.workspace_id)
+        .filter(
+            CloudProject.status == "active",
+            Kind.kind == "CollaborationWorkspace",
+            Kind.is_active.is_(True),
+            select(User.id)
+            .where(User.id == user_id, User.is_active.is_(True))
+            .exists(),
+        )
     )
 
 
 def accessible_cloud_projects(db: Session, user_id: int) -> Query[CloudProject]:
-    """Return active projects visible through any valid permission source."""
     return project_access_query(db, user_id).with_entities(CloudProject)
+
+
+def _direct_project_member_roles(db: Session, project: CloudProject) -> dict[int, str]:
+    rows = db.query(ResourceMember.entity_id, ResourceMember.role).filter(
+        ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+        ResourceMember.resource_id == int(project.id),
+        ResourceMember.entity_type == "user",
+        ResourceMember.status == MemberStatus.APPROVED.value,
+        ResourceMember.role.in_(VALID_CLOUD_PROJECT_MEMBER_ROLES),
+    )
+    return {
+        int(entity_id): collaboration_role(role)
+        for entity_id, role in rows
+        if entity_id.isdecimal()
+    }
+
+
+def project_participant_ids(
+    db: Session, project: CloudProject, *, required_role: BaseRole = BaseRole.Viewer
+) -> set[int]:
+    """Effective humans for rosters and assignments, excluding public visitors."""
+    workspace = db.get(Kind, project.workspace_id) if project.workspace_id else None
+    if (
+        project.status != "active"
+        or workspace is None
+        or workspace.kind != "CollaborationWorkspace"
+        or not workspace.is_active
+    ):
+        return set()
+    roles = _direct_project_member_roles(db, project)
+    roles[int(workspace.user_id)] = BaseRole.Maintainer.value
+    rows = db.query(ResourceMember.entity_id, ResourceMember.role).filter(
+        ResourceMember.resource_type == ResourceType.WORKSPACE.value,
+        ResourceMember.resource_id == project.workspace_id,
+        ResourceMember.entity_type == "user",
+        ResourceMember.status == MemberStatus.APPROVED.value,
+        ResourceMember.role.in_(VALID_CLOUD_PROJECT_MEMBER_ROLES),
+    )
+    for entity_id, role in rows:
+        if not entity_id.isdecimal() or int(entity_id) == workspace.user_id:
+            continue
+        inherited_role = collaboration_role(role)
+        if (
+            project.membership_mode == "inherit"
+            or inherited_role == BaseRole.Maintainer.value
+        ):
+            user_id = int(entity_id)
+            roles[user_id] = effective_project_role(roles.get(user_id), inherited_role)
+    ids = {
+        user_id
+        for user_id, role in roles.items()
+        if ROLE_HIERARCHY[role]
+        <= ROLE_HIERARCHY[collaboration_role(required_role.value)]
+    }
+    return {
+        user_id
+        for (user_id,) in db.query(User.id).filter(
+            User.id.in_(ids), User.is_active.is_(True)
+        )
+    }

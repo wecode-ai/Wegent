@@ -4,7 +4,13 @@
 
 import type { ReactNode, Ref } from "react";
 
-export type CollaborationProjectView = "board" | "table" | "files" | "manage";
+export type CollaborationProjectView =
+  | "board"
+  | "calendar"
+  | "gantt"
+  | "table"
+  | "files"
+  | "manage";
 
 export interface CollaborationProjectViewOption<
   View extends CollaborationProjectView = CollaborationProjectView,
@@ -40,6 +46,7 @@ export function ProjectViewSwitcher<View extends CollaborationProjectView>({
         className="electron-titlebar-interactive-region relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
       >
         <select
+          data-testid="collaboration-project-view-select"
           aria-label={ariaLabel ?? "视图切换"}
           value={value}
           onChange={(event) => onChange(event.target.value as View)}

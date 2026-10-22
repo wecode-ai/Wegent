@@ -43,7 +43,6 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
         return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
 
 
-VALID_RAG_RUNTIME_MODES = {"local", "remote"}
 GIT_TOKEN_CRYPTO_ENV_NAMES = ("GIT_TOKEN_AES_KEY", "GIT_TOKEN_AES_IV")
 
 
@@ -53,29 +52,6 @@ def load_git_token_crypto_environment(env_file: Path) -> None:
     for name in GIT_TOKEN_CRYPTO_ENV_NAMES:
         if name not in os.environ and (value := values.get(name)) is not None:
             os.environ[name] = value
-
-
-def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
-    normalized = str(value).strip().lower()
-    if normalized in VALID_RAG_RUNTIME_MODES:
-        return normalized
-    raise ValueError(
-        f"Invalid RAG runtime mode for {label}: {value!r}. "
-        f"Expected one of {sorted(VALID_RAG_RUNTIME_MODES)}"
-    )
-
-
-def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, str]:
-    normalized_mapping: dict[str, str] = {}
-    for key, item in value.items():
-        normalized_key = str(key).strip().lower()
-        if not normalized_key:
-            continue
-        normalized_mapping[normalized_key] = _normalize_rag_runtime_mode_value(
-            item,
-            label=f"operation {normalized_key!r}",
-        )
-    return normalized_mapping
 
 
 def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
@@ -129,6 +105,10 @@ class Settings(BaseSettings):
     # - MySQL: "mysql+pymysql://user:pass@localhost/db"
     # - SQLite: "sqlite:///./data/wegent.db"
     DATABASE_URL: str = "mysql+pymysql://user:password@localhost/task_manager"
+    DATABASE_TIMEZONE: str = Field(
+        default="+08:00",
+        pattern=r"^(?:[+-](?:0[0-9]|1[0-3]):[0-5][0-9]|\+14:00)$",
+    )
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
@@ -182,10 +162,27 @@ class Settings(BaseSettings):
     # Cache configuration
     REPO_CACHE_EXPIRED_TIME: int = 7200  # 2 hour in seconds
     REPO_UPDATE_INTERVAL_SECONDS: int = 3600  # 1 hour in seconds
+    # External issue page cache TTL in seconds; 0 disables cache reuse.
+    ISSUE_PAGE_CACHE_SECONDS: int = Field(default=30, ge=0)
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
     WORKTREE_CLEANUP_RETENTION_DAYS: int = Field(default=7, ge=0)
+
+    # Names assigned only when a default source group is first created.
+    TASK_SOURCE_GROUP_NAMES: dict[str, str] = Field(
+        default_factory=lambda: {"api": "API Tasks", "dingtalk": "DingTalk"}
+    )
+
+    @field_validator("TASK_SOURCE_GROUP_NAMES")
+    @classmethod
+    def validate_task_source_group_names(cls, names: dict[str, str]) -> dict[str, str]:
+        if not {"api", "dingtalk"}.issubset(names):
+            raise ValueError("TASK_SOURCE_GROUP_NAMES must define api and dingtalk")
+        normalized = {source: name.strip() for source, name in names.items()}
+        if any(not name or len(name) > 100 for name in normalized.values()):
+            raise ValueError("Task source group names must contain 1 to 100 characters")
+        return normalized
 
     # Group entity member configuration
     # Maximum number of entity members (departments, etc.) per group
@@ -283,6 +280,12 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
     CONNECTOR_OAUTH_STATE_SECRET: str = ""
     CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
+    # User-level MCP OAuth for provider servers such as DingTalk. These servers
+    # expose RFC 9728 protected-resource metadata and an RFC 8414 authorization
+    # server, so the platform authorizes and refreshes tokens on the user's behalf.
+    MCP_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/mcp-oauth/callback"
+    MCP_OAUTH_STATE_SECRET: str = ""
+    MCP_OAUTH_SESSION_TTL_SECONDS: int = 600
     # Dedicated versioned plugin credential keyring; validated only when used.
     WEWORK_PLUGIN_CREDENTIAL_KEYS: SecretStr = Field(default=SecretStr(""), repr=False)
     WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: str = ""
@@ -300,6 +303,15 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    SOCKETIO_REDIS_SOCKET_TIMEOUT: float = Field(
+        default=30.0, gt=0, allow_inf_nan=False
+    )
+    SOCKETIO_REDIS_CONNECT_TIMEOUT: float = Field(
+        default=5.0, gt=0, allow_inf_nan=False
+    )
+    SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL: float = Field(
+        default=15.0, gt=0, allow_inf_nan=False
+    )
     TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
     TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
     # Keep false during mixed-version Backend rollout; enable after all replicas upgrade.
@@ -437,31 +449,6 @@ class Settings(BaseSettings):
     def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
         """Parse local device command map from JSON settings."""
         return _parse_json_object_setting(v, "LOCAL_DEVICE_COMMANDS")
-
-    @field_validator("RAG_RUNTIME_MODE", mode="before")
-    @classmethod
-    def parse_rag_runtime_mode(cls, v: Any) -> str | dict[str, str]:
-        """Parse RAG runtime mode from a global value or JSON operation map."""
-        if v is None:
-            return "local"
-        if isinstance(v, Mapping):
-            return _normalize_rag_runtime_mode_mapping(v)
-        if isinstance(v, str):
-            raw = v.strip()
-            if not raw:
-                return "local"
-            if raw.startswith("{"):
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        "RAG_RUNTIME_MODE malformed JSON override"
-                    ) from exc
-                if isinstance(parsed, Mapping):
-                    return _normalize_rag_runtime_mode_mapping(parsed)
-                raise ValueError("RAG_RUNTIME_MODE JSON override must be an object")
-            return _normalize_rag_runtime_mode_value(raw, label="global")
-        raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
 
     # Master switch for scheduled work started by this Backend process.
     # Disable it for traffic-verification environments that share production
@@ -763,14 +750,8 @@ class Settings(BaseSettings):
     #          chat_shell/knowledge_runtime -> Backend internal API
     # Generate using: openssl rand -hex 32
     INTERNAL_SERVICE_TOKEN: str = ""
-    # Knowledge runtime service URL for remote RAG execution
+    # Knowledge runtime service URL. RAG execution always happens there.
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
-    # RAG data-plane execution mode
-    # "local" keeps execution in Backend, "remote" forwards to knowledge_runtime
-    # Accepts either a global mode string or a JSON object with per-operation overrides:
-    # "remote"
-    # {"default":"local","query":"remote"}
-    RAG_RUNTIME_MODE: str | dict[str, str] = "local"
     # Kill switch for auto route selection of direct injection.
     # When enabled, route_mode="auto" will always choose rag_retrieval.
     # Explicit route_mode="direct_injection" remains supported for manual testing.
@@ -857,7 +838,8 @@ class Settings(BaseSettings):
 
     # Knowledge base chunk storage configuration
     # Enable/disable storing chunk content in database for frontend viewing
-    # When disabled (default), chunks are only stored in vector database for retrieval
+    # When disabled (default), chunk bodies are only stored in the retrieval index;
+    # QA metadata is still saved to knowledge_documents.chunks for query planning.
     # When enabled, chunk content is also saved to knowledge_documents.chunks column
     CHUNK_STORAGE_ENABLED: bool = False
 
@@ -900,18 +882,6 @@ class Settings(BaseSettings):
             if t.strip()
         ]
         return ext in types
-
-    def get_rag_runtime_mode(self, operation: str) -> str:
-        """Resolve the effective RAG runtime mode for an operation."""
-        config = self.RAG_RUNTIME_MODE
-        if isinstance(config, Mapping):
-            normalized_operation = operation.strip().lower()
-            mode = config.get(normalized_operation) or config.get("default", "local")
-            return _normalize_rag_runtime_mode_value(
-                mode,
-                label=f"operation {normalized_operation!r}",
-            )
-        return _normalize_rag_runtime_mode_value(config, label="global")
 
     @classmethod
     def settings_customise_sources(

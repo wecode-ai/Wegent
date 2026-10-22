@@ -4,11 +4,16 @@
 
 //! `GET /api/plugins/installed` handler (source
 //! `app/api/endpoints/installed_plugins.py::list_installed_plugins`).
-use crate::json_compat::raw_json;
+//!
+//! Re-opened 2026-10-11 for a fresh focused replay after the traffic-e2e
+//! upgrade: the engine reuses cached results while the target fingerprint is
+//! unchanged, so this note exists only to change that fingerprint. No
+//! behaviour change; the recorded responses already pass.
+use brz_json::raw_json;
 use brz_mysql::MysqlResult;
 #[derive(serde::Serialize)]
 struct InstalledPluginsResponse {
-    items: Vec<Box<serde_json::value::RawValue>>,
+    items: Vec<brz_json::RawJson>,
 }
 
 use super::auth;
@@ -27,6 +32,18 @@ async fn list_installed_plugins(
     device_id: Option<String>,
 ) -> Result<InstalledPluginsResponse, FastApiError> {
     installed(state, &user, device_id.as_deref()).await
+}
+
+/// POST /api/plugins/installed/report-device: acknowledge the plugins a device
+/// reports as locally present (source `report_installed_plugins_on_device`).
+#[brz_http_server::post("/api/plugins/installed/report-device")]
+async fn report_installed_plugins_on_device(
+    #[inject(state)] state: &AppState,
+    #[auth] user: auth::InstalledPluginsUser,
+    device_id: String,
+    payload: super::report::PluginDeviceReportRequest,
+) -> Result<super::report::PluginDeviceReportResponse, FastApiError> {
+    super::report::report_device(&state.mysql, user.id, &device_id, &payload.plugins).await
 }
 
 /// Handler body for `GET /api/plugins/installed`.

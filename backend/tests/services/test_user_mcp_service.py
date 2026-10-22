@@ -16,6 +16,58 @@ from shared.utils.crypto import is_data_encrypted
 class TestUserMCPService:
     """Tests for user-scoped MCP preference storage."""
 
+    @pytest.mark.parametrize(
+        ("service_id", "server_name"),
+        [
+            ("docs", "dingtalk_docs"),
+            ("table", "dingtalk_table"),
+            ("ai_table", "dingtalk_ai_table"),
+            ("wikispace", "dingtalk_wikispace"),
+        ],
+    )
+    def test_all_dingtalk_services_support_url_and_oauth_modes(
+        self,
+        service_id: str,
+        server_name: str,
+    ):
+        """Each DingTalk integration stores either credential form."""
+        url_preferences = user_mcp_service.set_provider_service_config(
+            None,
+            provider_id="dingtalk",
+            service_id=service_id,
+            enabled=True,
+            url=f"https://example.com/{service_id}?token=secret",
+            auth_mode="url",
+        )
+        oauth_preferences = user_mcp_service.set_provider_service_config(
+            url_preferences,
+            provider_id="dingtalk",
+            service_id=service_id,
+            enabled=True,
+            url=f"https://example.com/{service_id}/oauth",
+            auth_mode="oauth",
+        )
+
+        url_config = user_mcp_service.get_provider_service_config(
+            url_preferences, "dingtalk", service_id
+        )
+        oauth_config = user_mcp_service.get_provider_service_config(
+            oauth_preferences, "dingtalk", service_id
+        )
+        server = user_mcp_service.get_enabled_mcp_server(
+            oauth_preferences,
+            "dingtalk",
+            service_id,
+        )
+
+        assert url_config["auth_mode"] == "url"
+        assert oauth_config["auth_mode"] == "oauth"
+        assert server == {
+            "name": server_name,
+            "url": f"https://example.com/{service_id}/oauth",
+            "type": "streamable-http",
+        }
+
     def test_set_provider_service_config_encrypts_url(self):
         preferences = user_mcp_service.set_provider_service_config(
             None,
@@ -48,6 +100,10 @@ class TestUserMCPService:
         assert config == {
             "enabled": True,
             "url": "https://example.com/mcp?token=secret",
+            "auth_mode": "url",
+            "oauth_connected": False,
+            "oauth_expires_at": None,
+            "oauth_account": None,
         }
 
     def test_get_decrypted_mcp_preferences_keeps_structure_and_decrypts_url(self):

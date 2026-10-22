@@ -35,9 +35,7 @@ describe('localWorkspaceFiles', () => {
       stderr: '',
     })
 
-    await expect(
-      listLocalWorkspaceEntries('/workspace/project', '/workspace/project')
-    ).resolves.toEqual({
+    await expect(listLocalWorkspaceEntries('/workspace/project')).resolves.toEqual({
       path: '/workspace/project',
       entries: [
         {
@@ -54,9 +52,6 @@ describe('localWorkspaceFiles', () => {
       path: '/workspace/project',
       timeout_seconds: 15,
       max_output_bytes: 1024 * 512,
-      env: {
-        WEGENT_WORKSPACE_ROOTS: '/workspace/project',
-      },
     })
   })
 
@@ -78,9 +73,7 @@ describe('localWorkspaceFiles', () => {
       stderr: '',
     })
 
-    await expect(
-      listLocalWorkspaceEntries(String.raw`C:\work\Wegent`, String.raw`C:\work\Wegent`)
-    ).resolves.toEqual({
+    await expect(listLocalWorkspaceEntries(String.raw`C:\work\Wegent`)).resolves.toEqual({
       path: String.raw`C:\work\Wegent`,
       entries: [
         {
@@ -97,9 +90,6 @@ describe('localWorkspaceFiles', () => {
       path: String.raw`C:\work\Wegent`,
       timeout_seconds: 15,
       max_output_bytes: 1024 * 512,
-      env: {
-        WEGENT_WORKSPACE_ROOTS: String.raw`C:\work\Wegent`,
-      },
     })
   })
 
@@ -133,16 +123,16 @@ describe('localWorkspaceFiles', () => {
         stderr: '',
       })
 
+    await expect(readLocalWorkspaceTextFile('/workspace/project/README.md')).resolves.toMatchObject(
+      {
+        path: '/workspace/project/README.md',
+        content: 'hello',
+        editable: true,
+        revision: 'sha256:abc',
+      }
+    )
     await expect(
-      readLocalWorkspaceTextFile('/workspace/project', '/workspace/project/README.md')
-    ).resolves.toMatchObject({
-      path: '/workspace/project/README.md',
-      content: 'hello',
-      editable: true,
-      revision: 'sha256:abc',
-    })
-    await expect(
-      readLocalWorkspaceFileChunk('/workspace/project', '/workspace/project/image.png', 0)
+      readLocalWorkspaceFileChunk('/workspace/project/image.png', 0)
     ).resolves.toMatchObject({
       path: '/workspace/project/image.png',
       contentBase64: 'aW1hZ2U=',
@@ -159,9 +149,6 @@ describe('localWorkspaceFiles', () => {
           args: ['README.md'],
           timeout_seconds: 15,
           max_output_bytes: 1024 * 1024 * 2,
-          env: {
-            WEGENT_WORKSPACE_ROOTS: '/workspace/project',
-          },
         },
       ],
       [
@@ -172,9 +159,6 @@ describe('localWorkspaceFiles', () => {
           args: ['image.png', '0'],
           timeout_seconds: 30,
           max_output_bytes: 1024 * 1024 * 2,
-          env: {
-            WEGENT_WORKSPACE_ROOTS: '/workspace/project',
-          },
         },
       ],
     ])
@@ -185,11 +169,11 @@ describe('localWorkspaceFiles', () => {
       success: false,
       stdout: '',
       stderr: '',
-      error: 'Workspace path is outside allowed workspace roots',
+      error: 'Invalid workspace path: directory does not exist',
     })
 
-    await expect(
-      listLocalWorkspaceEntries('/workspace/project', '/workspace/secret')
-    ).rejects.toThrow('Workspace path is outside allowed workspace roots')
+    await expect(listLocalWorkspaceEntries('/missing-directory')).rejects.toThrow(
+      'Invalid workspace path: directory does not exist'
+    )
   })
 })

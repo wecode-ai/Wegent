@@ -105,18 +105,6 @@ def test_member_selection_preserves_shared_skill_identity(
     assert resolved == source
 
 
-def test_member_can_download_shared_skill_using_source_namespace(
-    shared_skill, test_client, test_admin_token
-):
-    source, _, archive = shared_skill
-    response = test_client.get(
-        f"/api/v1/kinds/skills/{source.id}/download?namespace=default",
-        headers={"Authorization": f"Bearer {test_admin_token}"},
-    )
-    assert response.status_code == 200
-    assert response.content == archive
-
-
 def test_late_context_resolution_preserves_shared_skill_id(
     shared_skill, test_db, test_admin_user, mocker
 ):
@@ -171,8 +159,8 @@ def test_member_resolves_group_owned_skill_in_personal_chat(
 
 
 @pytest.mark.parametrize("revoked", ["binding", "membership", "skill"])
-def test_removed_access_revokes_resolution_and_download(
-    shared_skill, test_client, test_db, test_admin_user, test_admin_token, revoked
+def test_removed_access_revokes_resolution(
+    shared_skill, test_db, test_admin_user, revoked
 ):
     source, binding, _ = shared_skill
     if revoked == "membership":
@@ -202,15 +190,10 @@ def test_removed_access_revokes_resolution_and_download(
         )
         is None
     )
-    response = test_client.get(
-        f"/api/v1/kinds/skills/{source.id}/download?namespace=default",
-        headers={"Authorization": f"Bearer {test_admin_token}"},
-    )
-    assert response.status_code == 404
 
 
-def test_restricted_analyst_cannot_download_group_bound_skill(
-    shared_skill, test_client, test_db, test_admin_user, test_admin_token
+def test_restricted_analyst_cannot_resolve_group_bound_skill(
+    shared_skill, test_db, test_admin_user
 ):
     source, _, _ = shared_skill
     member = (
@@ -227,8 +210,3 @@ def test_restricted_analyst_cannot_download_group_bound_skill(
     assert source.id not in skill_binding_service.list_user_group_skill_ids(
         test_db, test_admin_user.id
     )
-    response = test_client.get(
-        f"/api/v1/kinds/skills/{source.id}/download?namespace=default",
-        headers={"Authorization": f"Bearer {test_admin_token}"},
-    )
-    assert response.status_code in (403, 404)

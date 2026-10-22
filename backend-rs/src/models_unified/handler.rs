@@ -90,6 +90,7 @@ async fn unified_models(
         return Err(AuthError::Internal("Internal Server Error".to_string()));
     }
 
+    // Aggregation reads MySQL, Redis, and ERP through `list_available_models`.
     match list_available_models(
         &state.mysql,
         state.erp.as_ref(),

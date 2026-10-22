@@ -81,23 +81,21 @@ impl HttpError {
         }
     }
 
-    /// `500 Internal Server Error` for an unsupported loop-item branch.
-    ///
-    /// The recorded cloud-context case never reaches the loop-item branch;
-    /// a partial `LoopItemResponse` projection would diverge from the source
-    /// schema, so this surfaces the unsupported path instead of emitting a
-    /// malformed body.
-    pub fn internal_unsupported_loop_item() -> Self {
-        tracing::error!("cloud-context loop-item branch reached without a recorded projection");
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: "Internal server error".to_string(),
-        }
+    /// Convert to the shared FastAPI-compatible error, for callers outside the
+    /// loop-tasks route that reuse the same projection.
+    pub fn into_fastapi(self) -> crate::http_compat::FastApiError {
+        crate::http_compat::FastApiError::detail(self.status, self.detail)
     }
 }
 
 impl IntoHttpError for HttpError {
     fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
         crate::http_compat::FastApiError::detail(self.status, self.detail).into_http_error(arena)
+    }
+}
+
+impl From<HttpError> for crate::http_compat::FastApiError {
+    fn from(error: HttpError) -> Self {
+        crate::http_compat::FastApiError::detail(error.status, error.detail)
     }
 }

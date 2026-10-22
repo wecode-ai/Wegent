@@ -909,6 +909,14 @@ function DeviceCard({
             )}
           </div>
         </div>
+        {isRemote && device.status !== 'offline' && device.update_available && (
+          <p
+            data-testid={`connection-remote-upgrade-hint-${device.device_id}`}
+            className="mt-2 text-xs text-text-secondary"
+          >
+            {t('workbench.connection_remote_upgrade_hint')}
+          </p>
+        )}
         {isCloudDevice(device) && restartState.phase !== 'idle' ? (
           <DeviceLifecycleNotice
             action="restart"
@@ -1188,7 +1196,7 @@ export function ConnectionsDeviceSettingsPage({
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
-  const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [allDevices, setAllDevices] = useState<DeviceInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
@@ -1196,7 +1204,7 @@ export function ConnectionsDeviceSettingsPage({
 
   const applyDevices = useCallback((allDevices: DeviceInfo[]) => {
     const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
-    setDevices(claudeCodeDevices)
+    setAllDevices(allDevices)
     if (claudeCodeDevices.some(isCloudDevice)) {
       setCreating(false)
     }
@@ -1204,7 +1212,7 @@ export function ConnectionsDeviceSettingsPage({
 
   const fetchDevices = useCallback(async (): Promise<boolean> => {
     if (!cloudConnection.isConnected) {
-      setDevices([])
+      setAllDevices([])
       setLoading(false)
       return false
     }
@@ -1242,10 +1250,13 @@ export function ConnectionsDeviceSettingsPage({
     [applyDevices, refreshDevices]
   )
 
+  const devices = allDevices.filter(isClaudeCodeDevice)
   const cloudDevices = devices.filter(isCloudDevice)
   const remoteDevices = devices.filter(isRemoteDevice)
   const connectionDevices = [...cloudDevices, ...remoteDevices]
-  const onlineCloudDeviceCount = cloudDevices.filter(device => device.status === 'online').length
+  const cloudDeviceCount = allDevices.filter(
+    device => isCloudDevice(device) || isRemoteDevice(device)
+  ).length
 
   useEffect(() => {
     let cancelled = false
@@ -1373,8 +1384,13 @@ export function ConnectionsDeviceSettingsPage({
                   </span>
                 </div>
                 <div>
-                  {t('workbench.cloud_connection_online_devices', '在线云设备')}:{' '}
-                  <span className="font-medium text-text-primary">{onlineCloudDeviceCount}</span>
+                  {t('workbench.cloud_connection_devices')}:{' '}
+                  <span
+                    data-testid="cloud-connection-device-count"
+                    className="font-medium text-text-primary"
+                  >
+                    {cloudDeviceCount}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1383,7 +1399,7 @@ export function ConnectionsDeviceSettingsPage({
               data-testid="settings-cloud-disconnect-button"
               onClick={() => {
                 cloudConnection.disconnect()
-                setDevices([])
+                setAllDevices([])
               }}
               className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
             >

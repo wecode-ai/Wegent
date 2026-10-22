@@ -19,6 +19,7 @@ export {
   projectWorkbenchSubagentActivity,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
+  settleWorkbenchProcessingBlock,
   resolveStreamingThinkingContent
 } from './workbench-message-reducer'
 export type {
@@ -75,5 +76,6 @@ export type {
 export * from './project-chat'
 
 export * from './runtime-ipc'
+export * from './runtime-transcript-transport'
 
 export * from './runtime-conversation-client'

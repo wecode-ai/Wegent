@@ -477,7 +477,7 @@ def test_exported_workbook_is_saved_and_previewable_before_index_success(
     )
     assert context_service.get_attachment_binary_data(test_db, attachment) == body
     response = test_client.get(
-        f"/api/knowledge-bases/{kb_id}/documents/{document_id}/detail",
+        f"/api/knowledge-documents/{document_id}/detail",
         headers={"Authorization": f"Bearer {test_token}"},
         params={"include_summary": False},
     )

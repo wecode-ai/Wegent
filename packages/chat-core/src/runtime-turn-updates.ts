@@ -9,7 +9,9 @@ import type { RuntimePaneMessageAction } from "./runtime-conversation";
 import type { TurnFileChangesSummary } from "./runtime";
 import {
   limitWorkbenchProcessingBlock,
+  mergeProcessingBlockUpdate as mergeWorkbenchProcessingBlockUpdate,
   resolveStreamingThinkingContent,
+  settleWorkbenchProcessingBlock,
 } from "./workbench-message-reducer";
 
 import type {
@@ -623,18 +625,11 @@ export function boundVisibleRuntimeProcessingBlocks(
 export function settleProcessingBlocks(
   items: RuntimeConversationItem[],
 ): RuntimeConversationItem[] {
-  const completedAt = Date.now();
   return items.map((item) => {
     if (item.type !== "block") return item;
-    if (item.block.status === "done" || item.block.status === "error")
-      return item;
     return {
       ...item,
-      block: {
-        ...item.block,
-        status: "done",
-        completedAt: item.block.completedAt ?? completedAt,
-      } as ProcessingBlock,
+      block: settleWorkbenchProcessingBlock(item.block),
     };
   });
 }
@@ -687,39 +682,9 @@ export function mergeProcessingBlockUpdate(
     { type: "block_updated" }
   >["updates"],
 ): ProcessingBlock {
-  const { contentDelta, durationMs, ...directUpdates } = updates;
-  let merged = {
-    ...block,
-    ...directUpdates,
-    ...(durationMs !== undefined && {
-      durationMs: Math.max(0, durationMs),
-      completedAt: block.createdAt + Math.max(0, durationMs),
-    }),
-  } as ProcessingBlock;
-  if (
-    typeof contentDelta === "string" &&
-    (merged.type === "thinking" ||
-      merged.type === "text" ||
-      merged.type === "plan")
-  ) {
-    const previousContentChars =
-      block.contentOriginalChars ??
-      ("content" in block ? block.content.length : 0);
-    merged = {
-      ...merged,
-      content: `${merged.content}${contentDelta}`,
-      contentOriginalChars: previousContentChars + contentDelta.length,
-    } as ProcessingBlock;
-  }
-  if (merged.type === "tool" && block.type === "tool") {
-    merged.toolInput = updates.toolInput ?? block.toolInput;
-  }
-  const wasActive = block.status !== "done" && block.status !== "error";
-  const isComplete = merged.status === "done" || merged.status === "error";
-  if (wasActive && isComplete && merged.completedAt === undefined) {
-    merged = { ...merged, completedAt: Date.now() } as ProcessingBlock;
-  }
-  return limitWorkbenchProcessingBlock(merged);
+  return limitWorkbenchProcessingBlock(
+    mergeWorkbenchProcessingBlockUpdate(block, updates),
+  );
 }
 
 export function replaceAt<T>(items: T[], index: number, item: T): T[] {

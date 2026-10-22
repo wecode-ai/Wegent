@@ -124,3 +124,27 @@ export function projectSpaceChatRuntimeContext(
     ...dingtalkAITableRuntimeContext(project, item),
   }
 }
+
+export function projectSpaceIssueRuntimeContext(
+  project: ProjectSpaceContext,
+  item: ProjectSpaceItemContext
+): RuntimeAdditionalContext {
+  return {
+    projectSpaceIssue: {
+      kind: 'application',
+      value: [
+        '<current_project_space>',
+        JSON.stringify({ id: String(project.id), name: project.name }),
+        '</current_project_space>',
+        '<current_issue>',
+        JSON.stringify({ id: String(item.id), title: item.title }),
+        '</current_issue>',
+        'This is a private AI task created by the current human assignee from a shared Issue.',
+        'Starting the private task may mark the shared Issue as in progress, but stopping, succeeding, failing, or producing a delivery must not advance its status or change its assignee.',
+        'Use wework_space when the user asks to read or change the shared Issue. Pass the space_id and item_id above explicitly.',
+        'Only change shared Issue fields, status, comments, attachments, or deliveries when the user explicitly requests that collaboration action.',
+      ].join('\n'),
+    },
+    ...dingtalkAITableRuntimeContext(project, item),
+  }
+}

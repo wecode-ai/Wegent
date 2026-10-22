@@ -231,14 +231,7 @@ fn verify_session_token(token: &str, config: &AuthConfig) -> Result<String, Fast
 }
 
 fn python_truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null | Value::Bool(false)) => false,
-        Some(Value::Bool(true)) => true,
-        Some(Value::Number(number)) => number.as_f64().is_some_and(|number| number != 0.0),
-        Some(Value::String(value)) => !value.is_empty(),
-        Some(Value::Array(value)) => !value.is_empty(),
-        Some(Value::Object(value)) => !value.is_empty(),
-    }
+    value.is_some_and(brz_json::adapters::python_truthy)
 }
 
 fn invalid_credentials() -> FastApiError {

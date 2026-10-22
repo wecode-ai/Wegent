@@ -222,7 +222,19 @@ Wework manages worktrees through device-scoped `runtime.worktrees.settings.get/u
 
 The Project actions menu can create a permanent worktree from the current Git workspace `HEAD` and immediately register the new directory as a separate Project. These requests pass `permanent: true` through `runtime.worktrees.prepare`; the Executor persists the flag in `worktrees.json`, and automatic cleanup candidate selection must exclude permanent worktrees. Permanent means the worktree is not removed automatically because linked tasks were archived or the retention limit was exceeded; users can still delete it explicitly through Project removal or worktree management.
 
-In packaged Wework App `local-first` mode, pasted or selected files are saved under the executor home attachment draft directory (`$WEGENT_EXECUTOR_HOME/workspace/attachments/draft` when configured, otherwise `~/.wegent-executor/workspace/attachments/draft`) and sent to the executor as local `attachments`, not as Backend `attachmentIds`. Images use a browser object URL as soon as they enter the attachment area, so Wework does not show progress for the local persistence copy. The same preview remains in use after background persistence completes and is released when the attachment is sent, removed, or the composer is reset. Non-image files continue to show progress for their upload or persistence state. Image attachments keep `local_preview_url` so the sent message can preview the file immediately through the desktop local-file capability, and Codex receives the same path as a `localImage` input. Text-like local attachments are not injected in full; the executor adds only a bounded preview of the first 10 lines or 4 KiB, whichever comes first, plus the `Local File Path` so Codex can read the full file when needed. Wework keeps `text_length` and `text_preview` on local attachment metadata so refreshes can still render compact text-preview attachments; in the Electron app, clicking that attachment opens the original local file through the `open_local_file` command. When Wework is connected to Backend and uses uploaded attachments, persisted attachment ids remain the source of truth after refresh.
+In packaged Wework App `local-first` mode, selecting, dropping, or pasting an existing local file sets the attachment's `local_path` to its source path without creating a copy. Later reads use the file at that path; moving or deleting the source can make it unavailable. Removing an attachment does not delete its source file. Screenshots and pasted content without a source path are still saved under `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`. Local execution receives local `attachments` through executor IPC. Cloud and remote execution still upload attachments before sending, use Backend `attachmentIds`, and remove local paths from the request.
+
+```mermaid
+flowchart LR
+  Source[Existing local file] --> Path[Reference source path]
+  Generated[Screenshot or pasted content] --> Draft[Create local attachment file]
+  Path --> Target{Execution device}
+  Draft --> Target
+  Target -->|Local| Local[Read local path]
+  Target -->|Cloud or remote| Upload[Upload and pass attachment IDs]
+```
+
+Images use a browser object URL as soon as they enter the attachment area and release it when the attachment is sent, removed, or the composer is reset. Image attachments keep `local_preview_url` so sent messages can preview them through the desktop local-file capability, and Codex receives the same path as a `localImage` input. Text-like local attachments are not injected in full; the executor adds only a bounded preview of the first 10 lines or 4 KiB, whichever comes first, plus the `Local File Path` so Codex can read the full file when needed. Wework keeps `text_length` and `text_preview` on local attachment metadata so refreshes can still render compact text-preview attachments. When Wework is connected to Backend and uses uploaded attachments, persisted attachment ids remain the source of truth after refresh.
 
 When rendering a message that already has persisted image attachments, Wework prefers those attachment previews and ignores local image file mentions embedded in the Codex prompt. This avoids showing both the uploaded attachment and a temporary local path. Codex local image mentions are used only as a same-device preview fallback when no attachment record exists. If the current environment cannot convert the local path through the desktop local-file URL converter, or the converted image fails to load, the frontend does not display that local path.
 
@@ -335,6 +347,7 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
 - The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
 - Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
+- Backend stores Redis delivery receipts by user, device task, turn and terminal status, and recipient IM session. Successfully delivered notifications are suppressed when events replay after desktop restarts or device reconnects. Concurrent delivery uses a short-lived lock; successful receipts do not expire. Failures release the lock, and partial failures retry only recipients without a successful receipt. Legacy watcher updates use `updatedAt`; events without a turn ID or update timestamp cannot be reliably deduplicated because distinct turns may return identical content.
 
 ## URL
 
@@ -347,6 +360,26 @@ Wework runtime task URLs use:
 The URL does not contain `workspacePath`. On refresh or shared links, the frontend opens the task from `deviceId + localTaskId` and then restores its workspace context from the latest runtime work list.
 
 New conversation and no-project entry points use the root path or regular conversation path, not placeholder parameters such as `projectId=0`. Project selection state is restored from the runtime workspace reference and the current conversation context.
+
+## New-task send state and diagnostics
+
+After sending, the frontend displays the user message and loads history while the executor may still be preparing a worktree, before registering the LocalTask. When no task link, provider session, or known execution exists, an empty transcript must omit `running` to represent unknown state. Returning `running=false` would prematurely settle the frontend send. Known running and completed states still use explicit booleans.
+
+Explicit sends update the shared `RuntimeTaskLifecycleStore` directly. Switching tabs or hiding the initiating view must not block `sendRequested`, `sendAccepted`, or send-failure updates. Background list and transcript synchronization remain subject to view ownership.
+
+Hidden workbenches kept mounted must not subscribe to global project creation, workspace binding, or cloud device settings events. Only the `routeActive` workbench handles these interactions, preventing duplicate portal dialogs after switching tabs. When a known task fails before creating its provider session, its transcript must still return `running=false` so clients can settle the pending state.
+
+Electron startup readiness must be idempotent: after startup completes, notifications from navigation or remounting must not show and focus the main window again, stealing focus from a popout. Concurrent notifications share one completion operation; a failed operation can be attempted again.
+
+The popout chat window uses one current conversation to drive messages, its title, and native window dimensions, without restoring the main workbench's split layout. Its modes are composer, menu, and conversation. Opening a menu preserves the composer's bottom position; sending switches to conversation dimensions. The toolbar remains available in compact composer mode.
+
+The popout handles unmodified `Esc` at the native keyboard event layer, hiding the window while retaining its conversation; IME composition is excluded. Invoking the popout shortcut must not restore the main window. Explicit Dock, tray, or “Open in main window” actions may open it; ordinary application focus activation does not restore it.
+
+When a page does not recover after reload, inspect Electron's `[renderer-load]` events. Correlate loading, DOM readiness, completion, failure, and prevented unload events by `webContentsId`. These events omit page URLs to avoid exposing query parameters.
+
+When restoring a local task's project-space context, use the project ID in its binding to read the item without scanning the project list again. The `project-space-context-resolved/failed` diagnostics record lookup duration and whether the current view applied the result, distinguishing lookup timeouts from stale responses.
+
+To investigate a blank interval after sending, correlate `deviceId + taskId` between `runtime-launch.log` in the Electron log directory and executor logs. The former records transcript receipt, lifecycle transitions, waiting-indicator state, and `web_contents_id`; executor `runtime worktree stage` entries measure lock waits, preflight, Git worktree creation, and persistence. A backend `running=true` response does not prove that the frontend rendered a waiting indicator: compare both timelines. Message bodies are not required for these diagnostics. Changes to Electron log capture or the executor require restarting the corresponding process; frontend hot reload does not update either process.
 
 ## Compatibility
 

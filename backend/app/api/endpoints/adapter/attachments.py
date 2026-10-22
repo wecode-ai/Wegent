@@ -13,7 +13,7 @@ import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import List, Literal, Optional
+from typing import Optional
 from urllib.parse import quote
 
 from fastapi import (
@@ -1026,49 +1026,6 @@ async def create_attachment_download_token(
     }
 
 
-@router.get("/{attachment_id}/executor-download")
-async def executor_download_attachment(
-    attachment_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-):
-    """
-    Download attachment for executor.
-
-    This endpoint is called by the Executor to download attachments
-    to the workspace. It supports multiple authentication methods.
-
-    Authentication:
-    - JWT Token: Standard Bearer token in Authorization header
-    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
-    - Task Token: JWT token issued for task execution
-
-    Returns:
-        File binary data with appropriate content type
-    """
-    # Get context and verify ownership
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-        user_id=current_user.id,
-    )
-
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    _require_attachment_download_allowed(db, context, "executor")
-
-    external_response = await _stream_external_attachment(context)
-    if external_response is not None:
-        return external_response
-
-    return await _stream_stored_attachment(context)
-
-
 @router.delete("/{attachment_id}")
 async def delete_attachment(
     attachment_id: int,
@@ -1146,66 +1103,6 @@ async def get_attachment_by_subtask(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return AttachmentDetailResponse.from_context(context)
-
-
-@router.get("/task/{task_id}/all", response_model=List[AttachmentDetailResponse])
-async def get_all_task_attachments(
-    task_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-):
-    """
-    Get all attachments for a task (across all subtasks).
-
-    This endpoint is used by the executor to pre-download all attachments
-    for a task at sandbox startup.
-
-    Supports multiple authentication methods:
-    - JWT Token: Standard Bearer token in Authorization header
-    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
-    - Task Token: JWT token issued for task execution
-
-    Args:
-        task_id: Task ID
-
-    Returns:
-        List of attachment details for all subtasks of the task
-    """
-    # Verify task exists and user has access
-    task = task_store.get_by_id(db, task_id=task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    # Check if user is the task owner or a member
-    from app.models.resource_member import MemberStatus, ResourceMember
-    from app.models.share_link import ResourceType
-
-    is_owner = task.user_id == current_user.id
-    is_member = (
-        db.query(ResourceMember)
-        .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
-            ResourceMember.resource_id == task_id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(current_user.id),
-            ResourceMember.status == MemberStatus.APPROVED,
-        )
-        .first()
-        is not None
-    )
-
-    if not is_owner and not is_member:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    # Get all attachments for the task
-    attachments = context_service.get_attachments_by_task(db=db, task_id=task_id)
-
-    return [AttachmentDetailResponse.from_context(att) for att in attachments]
-
-
-# =============================================================================
-# Public Share Link Endpoints
-# =============================================================================
 
 
 class PublicShareLinkResponse(BaseModel):

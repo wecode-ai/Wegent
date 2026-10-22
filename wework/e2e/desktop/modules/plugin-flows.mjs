@@ -1,6 +1,7 @@
 import {
   assertMentionRenderedAsToken,
   closeComposerPluginPicker,
+  openComposerPluginPicker,
   waitForInstalledComposerPlugin,
   waitForSnapshot,
 } from './conversation-layout.mjs'
@@ -90,6 +91,32 @@ async function createDirectRemoteMcpPluginZip(root) {
   return archivePath
 }
 
+async function createComposerNetworkIsolationPluginZip(root) {
+  const archivePath = join(root, 'composer-network-isolation-plugin.zip')
+  await createZipFixture(archivePath, {
+    '.codex-plugin/plugin.json': JSON.stringify({
+      name: 'composer-network-isolation-plugin',
+      version: '1.0.0',
+      description: 'Verifies that remote app timeouts do not hide installed plugins',
+      author: { name: 'Wework Desktop E2E' },
+      skills: './skills/',
+      interface: {
+        displayName: 'Composer Network Isolation',
+        shortDescription: 'Remains available while external app requests time out',
+        longDescription:
+          'Verifies that an installed composer plugin remains visible while remote app requests time out.',
+        developerName: 'Wework Desktop E2E',
+        category: 'Developer Tools',
+        capabilities: ['Skills'],
+        defaultPrompt: 'Verify composer plugin network isolation.',
+      },
+    }),
+    'skills/network-isolation/SKILL.md':
+      '---\nname: network-isolation\ndescription: Verify composer plugin network isolation.\n---\n',
+  })
+  return archivePath
+}
+
 async function createCoreDshPluginFixture(root) {
   const pluginRoot = join(root, 'core-dsh-e2e-plugin')
   await mkdir(pluginRoot, { recursive: true })
@@ -145,6 +172,11 @@ async function verifyCoreDshPluginManagement({
     await control.command('waitFor', '[data-testid="plugin-management-page-content"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await control.command(
+      'waitFor',
+      '[data-testid="plugin-management-installed-list"], [data-testid="plugin-management-empty-state"]',
+      { timeoutMs: 10_000 }
+    )
     await control.command('click', '[data-testid="plugin-management-surface-core-dsh"]')
     await control.command('waitFor', '[data-testid="core-dsh-plugin-management"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -272,7 +304,10 @@ async function initializeBlankCodexHome({ codexHome, control }) {
 
 async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) {
   const configPath = join(codexHome, 'config.toml')
-  const expectedSourceLine = expectedSource ? `source = ${JSON.stringify(expectedSource)}` : null
+  // toml_edit uses literal strings for paths containing Windows separators.
+  const expectedSourceLines = expectedSource
+    ? [`source = ${JSON.stringify(expectedSource)}`, `source = '${expectedSource}'`]
+    : []
   const startedAt = Date.now()
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
@@ -280,7 +315,7 @@ async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) 
       if (
         config.includes('[marketplaces.wework-personal]') &&
         config.includes('source_type = "local"') &&
-        (!expectedSourceLine || config.includes(expectedSourceLine))
+        (!expectedSource || expectedSourceLines.some(line => config.includes(line)))
       ) {
         return
       }
@@ -294,6 +329,8 @@ async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) 
 
 async function verifyStartupIgnoresBlockedCodexNetwork({
   blockingNetworkProxy,
+  bundledMarketplacePath,
+  codexHome,
   configureCodex,
   control,
   restartDesktopApp,
@@ -327,11 +364,234 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // Releasing the proxy lets startup finish. Updating its runtime proxy sooner
+  // terminates that app-server and cancels the marketplace initialization.
+  await waitForBundledMarketplaceRegistration(codexHome, bundledMarketplacePath)
   await control.command('setLocalProxyUrl', 'body', { value: '' })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+}
+
+async function waitForBlockedChatGptRequest(blockingNetworkProxy, requestCount) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const request = blockingNetworkProxy.requests
+      .slice(requestCount)
+      .find(candidate => candidate.toLowerCase().includes('chatgpt.com'))
+    if (request) return request
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `Codex app/list did not reach the blocking proxy; requests: ${JSON.stringify(blockingNetworkProxy.requests.slice(requestCount))}`
+  )
+}
+
+function syntheticChatGptAuth() {
+  const claims = Buffer.from(
+    JSON.stringify({
+      email: 'desktop-e2e@example.test',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'desktop-e2e-account',
+        chatgpt_plan_type: 'pro',
+      },
+    })
+  ).toString('base64url')
+  return {
+    auth_mode: 'chatgpt',
+    tokens: {
+      account_id: 'desktop-e2e-account',
+      access_token: 'desktop-e2e-access-token',
+      refresh_token: 'desktop-e2e-refresh-token',
+      id_token: `header.${claims}.signature`,
+    },
+    last_refresh: new Date().toISOString(),
+  }
+}
+
+async function verifyComposerPluginNetworkIsolation({
+  blockingNetworkProxy,
+  codexHome,
+  control,
+  marketplacePath,
+  restartDesktopApp,
+  workspacePath,
+}) {
+  const archivePath = await createComposerNetworkIsolationPluginZip(marketplacePath)
+  const preview = JSON.parse(
+    await control.command('previewPluginImport', 'body', {
+      value: JSON.stringify({ archivePath, marketplacePath }),
+    })
+  )
+  assert.equal(
+    preview.valid,
+    true,
+    `Composer network-isolation plugin was rejected: ${JSON.stringify(preview.issues)}`
+  )
+  await control.command('importPluginPackage', 'body', {
+    value: JSON.stringify({ preview, overwrite: false }),
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  if (!debug.workbench?.currentProject?.id) {
+    await createSingleRootLocalProject(
+      control,
+      workspacePath,
+      'composer-network-isolation',
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+  }
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  blockingNetworkProxy.block()
+  const blockedRequestCount = blockingNetworkProxy.requests.length
+  await writeFile(
+    join(codexHome, 'auth.json'),
+    `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`,
+    'utf8'
+  )
+  await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+
+  try {
+    // Restart to clear the renderer's in-memory plugin inventory. The installed
+    // package remains in the isolated real Codex home, while every external
+    // Codex request is held open by the proxy instead of returning an error.
+    await restartDesktopApp()
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await openComposerPluginPicker(control)
+
+    const pluginName = 'composer-network-isolation-plugin'
+    const blockedRequest = await waitForBlockedChatGptRequest(
+      blockingNetworkProxy,
+      blockedRequestCount
+    )
+    assert.match(
+      blockedRequest,
+      /chatgpt\.com/i,
+      'The held external request was not the ChatGPT app directory request'
+    )
+
+    const itemTestId = `composer-plugin-picker-item-plugin:${pluginName}`
+    try {
+      await waitForSnapshot(
+        control,
+        snapshot => snapshot.testIds.includes(itemTestId),
+        'A pending ChatGPT app/list request blocked the installed composer plugin inventory',
+        30_000,
+        '[data-testid="composer-plugin-picker"]'
+      )
+    } catch (error) {
+      const diagnostics = JSON.parse(
+        await control.command('getComposerPluginInventoryDiagnostics', 'body', {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+      )
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; diagnostics=${JSON.stringify(diagnostics)}`
+      )
+    }
+    const inventoryDiagnostics = JSON.parse(
+      await control.command('getComposerPluginInventoryDiagnostics', 'body', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    )
+    assert.ok(
+      inventoryDiagnostics.composerApps.some(app => app.id === `plugin:${pluginName}`),
+      `The rendered plugin was missing from composer memory; diagnostics=${JSON.stringify(inventoryDiagnostics)}`
+    )
+    assert.ok(
+      inventoryDiagnostics.sharedInventory.installedPlugins.some(
+        plugin => plugin.pluginKey === pluginName && plugin.enabled
+      ),
+      'The composer rendered an installed plugin absent from the shared inventory'
+    )
+    await captureVerificationScreenshot(
+      control,
+      'plugins-00-composer-network-isolation.png',
+      '[data-testid="composer-plugin-picker"]'
+    )
+
+    // Exercise the real remote catalog under the same held network, without
+    // replacing the catalog API or local inventory with frontend mocks.
+    await closeComposerPluginPicker(control)
+    await control.command('click', '[data-testid="plugins-button"]')
+    await control.command('waitFor', '[data-testid="plugins-workspace"]')
+    await control.command('click', '[data-testid="plugins-distribution-tab-official"]')
+    await control.command('waitFor', '[data-testid="plugins-openai-catalog-error"]', {
+      // The remote request is deliberately held until its 30-second UI deadline.
+      timeoutMs: 40_000,
+    })
+    assert.match(
+      await control.command('getText', '[data-testid="plugins-openai-catalog-error"]'),
+      /timed out|超时/i,
+      'Expected the held remote catalog to time out, not fail local protocol validation'
+    )
+    await control.command('waitFor', '[data-testid="plugins-openai-catalog-retry"]:not(:disabled)')
+    await control.command('click', '[data-testid="plugins-openai-catalog-retry"]')
+    await control.command('waitFor', '[data-testid="plugins-refresh-button"]:disabled')
+    await control.command('click', '[data-testid="plugins-manage-button"]')
+    await control.command('waitFor', '[data-testid="plugin-management-installed-list"]')
+    await waitForControlValueIncludes(
+      control,
+      '[data-testid="plugin-management-installed-list"]',
+      'Composer Network Isolation',
+      'Remote catalog retry blocked the shared installed-plugin list'
+    )
+    // Return while the actual remote retry is still pending. Its deadline must
+    // settle loading again, without removing installed local plugins.
+    await control.command('click', '[data-testid="plugins-button"]')
+    await control.command('click', '[data-testid="plugins-distribution-tab-official"]')
+    await control.command(
+      'waitFor',
+      '[data-testid="plugins-openai-catalog-retry"]:not(:disabled)',
+      {
+        timeoutMs: 40_000,
+      }
+    )
+    await control.command('waitFor', '[data-testid="plugins-refresh-button"]:not(:disabled)')
+    await control.command('waitFor', '[data-testid="plugins-openai-catalog-error"]', {
+      timeoutMs: 40_000,
+    })
+    const catalogError = await control.command(
+      'getText',
+      '[data-testid="plugins-openai-catalog-error"]'
+    )
+    assert.ok(catalogError.length < 500, 'Catalog error exposed a raw response body')
+    assert.doesNotMatch(catalogError, /<html|<svg|<style/i)
+    const settled = JSON.parse(
+      await control.command('getComposerPluginInventoryDiagnostics', 'body')
+    )
+    assert.ok(
+      settled.sharedInventory.installedPlugins.some(
+        plugin => plugin.pluginKey === pluginName && plugin.enabled
+      ),
+      'Remote retry timeout discarded local membership'
+    )
+    assert.ok(
+      settled.composerApps.some(app => app.id === 'plugin:' + pluginName),
+      'Remote retry timeout discarded the composer plugin'
+    )
+  } finally {
+    blockingNetworkProxy.release()
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
+    await rm(join(codexHome, 'auth.json'), { force: true })
+    await control.command('deleteLocalPluginPackage', 'body', {
+      value: JSON.stringify({
+        pluginId: 'composer-network-isolation-plugin@wework-personal',
+        pluginName: 'composer-network-isolation-plugin',
+      }),
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
 }
 
 async function verifyOfficialPluginSource(repositoryRoot) {
@@ -457,6 +717,17 @@ async function installOfficialPluginFixture({
   await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // Reproduce a background local-only reconciliation after the shared catalog
+  // item was selected. Installation must keep the selected item's identity.
+  const scopedCatalogIds = JSON.parse(
+    await control.command('reconcileLocalPluginCatalog', 'body', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  )
+  assert.ok(
+    scopedCatalogIds.includes(pluginId),
+    'The real local catalog did not include the pinned marketplace fixture'
+  )
   await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -468,6 +739,16 @@ async function installOfficialPluginFixture({
       snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
     'The official plugin was not shown as installed after the real app-server request',
     WORKBENCH_READY_TIMEOUT_MS
+  )
+  const installedInventory = JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body')
+  )
+  assert.equal(
+    installedInventory.sharedInventory.installedPlugins.filter(
+      plugin => plugin.pluginKey === OFFICIAL_PLUGIN_NAME && plugin.installState === 'installed'
+    ).length,
+    1,
+    'The accepted native installation was not committed exactly once to the shared inventory'
   )
   await control.command('waitFor', '[data-testid="plugin-operation-notice"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -578,6 +859,39 @@ async function openOfficialPluginChat(control, installSelector) {
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const pluginChipSelector = `[data-testid="composer-plugin-chip-${OFFICIAL_PLUGIN_NAME}"]`
+  await control.command('waitFor', pluginChipSelector)
+  const trialReference = await control.command('getAttribute', pluginChipSelector, {
+    value: 'data-composer-skill-reference',
+  })
+  const trialLabel = await control.command('getAttribute', pluginChipSelector, {
+    value: 'data-composer-skill-label',
+  })
+  // Display text is not a round-trippable composer document. Keep the real
+  // reference when restoring the detail page's suggested prompt.
+  assert.ok(trialReference && trialLabel)
+  const trialDraft = (await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)).replace(
+    trialLabel,
+    trialReference
+  )
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
+  await openComposerPluginPicker(control)
+  await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+    value: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
+  const pickerItem = `[data-testid="composer-plugin-picker-item-plugin:${OFFICIAL_PLUGIN_NAME}"]`
+  await control.command('waitFor', pickerItem)
+  await control.command('click', pickerItem)
+  await control.command('waitFor', pluginChipSelector)
+  assert.ok(
+    (
+      await control.command('getAttribute', pluginChipSelector, {
+        value: 'data-composer-skill-reference',
+      })
+    ).includes(`plugin://${OFFICIAL_PLUGIN_NAME}@${OFFICIAL_PLUGIN_MARKETPLACE_NAME}`),
+    'The installed plugin picker did not insert its native package reference'
+  )
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: trialDraft })
 }
 
 async function createOfficialPluginTask({ control, installSelector, skillPath }) {
@@ -671,15 +985,20 @@ async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
     snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
     'The plugin remained installed after the uninstall request'
   )
-  // Uninstalling bumps the marketplace refresh tick, which temporarily replaces
-  // the catalog rows with a loading state, so poll until the install action
-  // settles back instead of asserting against the transient refresh UI.
+  // Account removal must settle the shared inventory even while device cleanup
+  // continues. A pending label or disabled action is not a completed uninstall.
   const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
   const startedAt = Date.now()
   let lastActionText = ''
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     lastActionText = await control.command('getText', installSelector)
-    if (/Install|安装/.test(lastActionText)) return
+    if (/^(Install|安装)$/.test(lastActionText.trim())) {
+      await control.command('waitFor', installSelector, {
+        enabled: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      return
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   assert.fail(
@@ -1204,6 +1523,15 @@ async function verifyMarketplacePluginLifecycle({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForMarketplaceInstallStateAfterUninstall(control, pluginId)
+  const committedUninstall = JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body')
+  )
+  assert.ok(
+    !committedUninstall.sharedInventory.installedPlugins.some(
+      plugin => plugin.pluginKey === PLUGIN_NAME
+    ) && !committedUninstall.composerApps.some(plugin => plugin.pluginKey === PLUGIN_NAME),
+    'Confirmed uninstall must update inventory and composer before navigation or catalog reload'
+  )
   await captureVerificationScreenshot(control, 'marketplace-plugins-05-uninstalled.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1213,6 +1541,15 @@ async function verifyMarketplacePluginLifecycle({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const composerAfterUninstall = JSON.parse(await control.command('snapshot', 'body'))
+  const inventoryAfterUninstall = JSON.parse(
+    await control.command('getComposerPluginInventoryDiagnostics', 'body')
+  )
+  assert.ok(
+    !inventoryAfterUninstall.sharedInventory.installedPlugins.some(
+      plugin => plugin.pluginKey === PLUGIN_NAME
+    ),
+    'The uninstalled marketplace plugin remained in the shared inventory'
+  )
   assert.ok(
     !composerAfterUninstall.testIds.includes(`composer-plugin-picker-item-plugin:${PLUGIN_NAME}`),
     'The uninstalled marketplace plugin remained available in the composer plugin picker'
@@ -1424,6 +1761,7 @@ export {
   initializeBlankCodexHome,
   waitForBundledMarketplaceRegistration,
   verifyStartupIgnoresBlockedCodexNetwork,
+  verifyComposerPluginNetworkIsolation,
   verifyOfficialPluginSource,
   openMarketplacePluginActions,
   installOfficialPluginFixture,

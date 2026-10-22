@@ -1,3 +1,4 @@
+import type { AgentExecutionPolicy, AgentModelPolicy } from "./runnerRouting";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -29,6 +30,8 @@ export interface UnifiedAgentPluginRef {
 export type UnifiedAgentCapabilityMode = "follow_device" | "manual";
 
 export interface UnifiedAgentDefinition {
+  executionPolicy?: AgentExecutionPolicy;
+  modelPolicy?: AgentModelPolicy;
   displayName: string;
   capabilityMode: UnifiedAgentCapabilityMode;
   mcpServers: Record<string, unknown>;

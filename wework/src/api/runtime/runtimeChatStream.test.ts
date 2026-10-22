@@ -271,7 +271,7 @@ describe('createRuntimeChatStream', () => {
         projectName: '运营项目',
         itemId: 'WEG-12',
         itemTitle: '准备周报',
-        assignerName: 'Alice',
+        actorName: 'Alice',
       },
     })
 
@@ -282,6 +282,42 @@ describe('createRuntimeChatStream', () => {
       itemTitle: '准备周报',
       assignerName: 'Alice',
     })
+  })
+
+  test('preserves local assignment identity and recipient for the global notification bridge', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onProjectTaskAssigned = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+    const cleanup = stream.subscribe({ onProjectTaskAssigned })
+    await Promise.resolve()
+    listener({
+      event: 'project.task.assigned',
+      payload: {
+        projectId: 'local-project',
+        projectStore: 'local',
+        projectName: 'Offline',
+        itemId: 'OFF-1',
+        itemTitle: 'Inspect memory',
+        actorName: 'Coordinator',
+        assignmentId: 'human-1',
+        recipientUserId: '1',
+      },
+    })
+    expect(onProjectTaskAssigned).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'local-project',
+      projectStore: 'local',
+      projectName: 'Offline',
+      itemId: 'OFF-1',
+      itemTitle: 'Inspect memory',
+      assignerName: 'Coordinator',
+      assignmentId: 'human-1',
+      recipientUserId: '1',
+    })
+    cleanup()
   })
 
   test('delivers executor lag notifications for lifecycle reconciliation', async () => {

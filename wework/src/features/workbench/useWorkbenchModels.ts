@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import {
+  logModelLoading,
+  observeModelLoadingMainThread,
+  traceModelLoading,
+} from '@/lib/model-loading-diagnostics'
+import type { ModelApi } from '@/api/models'
 import {
   getDefaultModelOptions,
   inferModelFamily,
@@ -9,21 +15,15 @@ import {
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { findModelForSelection } from './runtimeContextUsage'
 import { modelSelectionIdentityOptions } from './runtimeModelSelection'
-import { WORKBENCH_MODELS_CHANGED_EVENT } from './workbenchCloudDataEvents'
 import type {
   ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   UnifiedModel,
-  UnifiedModelListResponse,
 } from '@/types/api'
 
-interface WorkbenchModelApi {
-  listModels: () => Promise<UnifiedModelListResponse>
-}
-
 interface UseWorkbenchModelsOptions {
-  api: WorkbenchModelApi
+  api: ModelApi
   locked: boolean
   enabled?: boolean
   filterModel?: (model: UnifiedModel) => boolean
@@ -41,6 +41,7 @@ interface UseWorkbenchModelsOptions {
 }
 
 const DEFAULT_MODEL_SCOPE_KEY = 'default'
+const EMPTY_MODEL_OPTIONS: ModelOptions = Object.freeze({})
 
 function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSelectionConfig {
   return {
@@ -91,6 +92,8 @@ export function useWorkbenchModels({
   onSelectionChange,
   onSelectionBlocked,
 }: UseWorkbenchModelsOptions) {
+  const traceId = useId()
+  useEffect(() => observeModelLoadingMainThread(traceId), [traceId])
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
   const models = useMemo(
     () => (filterModel ? availableModels.filter(filterModel) : availableModels),
@@ -103,7 +106,7 @@ export function useWorkbenchModels({
     Record<string, ModelOptions>
   >({})
   const selectedModel = selectedModelByScope[scopeKey] ?? null
-  const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? {}
+  const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? EMPTY_MODEL_OPTIONS
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
   const modelLoadRevisionRef = useRef(0)
@@ -171,12 +174,28 @@ export function useWorkbenchModels({
     ]
   )
 
+  useEffect(() => {
+    logModelLoading(traceId, 'workbench.gates', { enabled, selectionReady })
+  }, [traceId, enabled, selectionReady])
+
+  useEffect(() => {
+    logModelLoading(traceId, 'workbench.selection', {
+      isSelectionReady,
+      selectedModelAvailable,
+      modelCount: models.length,
+    })
+  }, [traceId, isSelectionReady, selectedModelAvailable, models.length])
+
   const restoreSelection = useCallback(
     (availableModels: UnifiedModel[], nextSelectionConfig?: ModelSelectionConfig | null) => {
       const model = findModelForSelection(availableModels, nextSelectionConfig)
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
         : (nextSelectionConfig?.options ?? {})
+      logModelLoading(traceId, 'workbench.selection_restored', {
+        runtimeTaskScope: scopeKey.includes(':runtime:'),
+        planMode: nextOptions.collaborationMode === 'plan',
+      })
       selectedModelRef.current[scopeKey] = model
       selectedModelOptionsRef.current[scopeKey] = nextOptions
       setSelectedModelByScope(current => {
@@ -191,7 +210,7 @@ export function useWorkbenchModels({
         current[scopeKey] ? { ...current, [scopeKey]: false } : current
       )
     },
-    [scopeKey]
+    [scopeKey, traceId]
   )
 
   const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
@@ -231,43 +250,58 @@ export function useWorkbenchModels({
     }
   }, [])
 
-  useEffect(() => {
+  const loadModels = useCallback(async () => {
     if (!enabled) return
-
-    let cancelled = false
-
-    async function loadModels() {
-      const revision = ++modelLoadRevisionRef.current
-      setIsLoading(true)
-      setError(null)
-      try {
-        const response = await api.listModels()
-        if (!cancelled && revision === modelLoadRevisionRef.current) {
-          const filtered = response.data.filter(isSupportedModelFamily)
-          reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
-          setAvailableModels(filtered)
-        }
-      } catch (nextError) {
-        if (!cancelled && revision === modelLoadRevisionRef.current) {
-          setError(nextError instanceof Error ? nextError : new Error('Failed to load models'))
-        }
-      } finally {
-        if (!cancelled && revision === modelLoadRevisionRef.current) {
-          setHasCompletedModelLoad(true)
-          setIsLoading(false)
-        }
+    const revision = ++modelLoadRevisionRef.current
+    const loadTraceId = `${traceId}-${revision}`
+    setIsLoading(true)
+    setError(null)
+    try {
+      const response = await traceModelLoading(loadTraceId, 'workbench.catalog', () =>
+        api.listModels()
+      )
+      logModelLoading(loadTraceId, 'workbench.catalog_received', {
+        modelCount: response.data.length,
+        discarded: revision !== modelLoadRevisionRef.current,
+      })
+      if (revision === modelLoadRevisionRef.current) {
+        const filtered = response.data.filter(isSupportedModelFamily)
+        reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
+        setAvailableModels(filtered)
+      }
+    } catch (nextError) {
+      if (revision === modelLoadRevisionRef.current) {
+        setError(nextError instanceof Error ? nextError : new Error('Failed to load models'))
+      }
+    } finally {
+      if (revision === modelLoadRevisionRef.current) {
+        setHasCompletedModelLoad(true)
+        setIsLoading(false)
       }
     }
+  }, [api, enabled, filterModel, reconcileSelectedModels, traceId])
 
+  const refreshModels = useCallback(() => {
+    if (!enabled) return
+    api.refresh?.()
     void loadModels()
+  }, [api, enabled, loadModels])
+
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    const unsubscribe = api.subscribe?.(loadModels)
+    queueMicrotask(() => {
+      if (!cancelled) void loadModels()
+    })
     window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
-    window.addEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     return () => {
       cancelled = true
+      modelLoadRevisionRef.current += 1
+      unsubscribe?.()
       window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
-      window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     }
-  }, [api, enabled, filterModel, reconcileSelectedModels])
+  }, [api, enabled, loadModels])
 
   useEffect(() => {
     if (!enabled || !selectionReady) {
@@ -404,6 +438,13 @@ export function useWorkbenchModels({
         [optionId]: value,
       }
       const currentModel = selectedModelRef.current[targetScopeKey] ?? null
+      if (optionId === 'collaborationMode') {
+        logModelLoading(traceId, 'workbench.collaboration_mode_selected', {
+          runtimeTaskScope: targetScopeKey.includes(':runtime:'),
+          planMode: value === 'plan',
+          persist,
+        })
+      }
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
       if (!persist) return
@@ -413,7 +454,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(toDefaultModelSelectionConfig(nextOptions))
       }
     },
-    [locked, onSelectionChange]
+    [locked, onSelectionChange, traceId]
   )
 
   const setSelectedModelOption = useCallback(
@@ -456,7 +497,7 @@ export function useWorkbenchModels({
 
   const getSelectedModel = useCallback(() => selectedModelRef.current[scopeKey] ?? null, [scopeKey])
   const getSelectedModelOptions = useCallback(
-    () => selectedModelOptionsRef.current[scopeKey] ?? {},
+    () => selectedModelOptionsRef.current[scopeKey] ?? EMPTY_MODEL_OPTIONS,
     [scopeKey]
   )
   const hasSelectionForScope = useCallback(
@@ -467,6 +508,7 @@ export function useWorkbenchModels({
 
   return {
     models,
+    refreshModels,
     selectedModel,
     selectedModelOptions,
     isSelectionReady,

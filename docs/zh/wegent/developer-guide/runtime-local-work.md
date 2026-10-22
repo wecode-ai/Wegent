@@ -220,7 +220,19 @@ Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.wo
 
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 
-在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片进入附件区时直接使用浏览器对象 URL 显示预览，不展示本机持久化复制的进度；后台复制完成后继续复用同一预览，直到附件发送、删除或输入框重置时释放。非图片文件仍按上传或持久化状态显示进度。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Electron app 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+在打包 Wework App 的 `local-first` 模式下，选择、拖拽或粘贴已有本地文件时，附件的 `local_path` 直接引用源文件，不创建附件副本。会话后续读取的是该路径上的文件；源文件移动或删除后，读取可能失败。移除附件不会删除源文件。截图、粘贴正文等没有源路径的内容仍保存到 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`。本机执行通过 executor IPC 传递本地 `attachments`；云端或远程执行仍在发送前上传附件，使用 Backend `attachmentIds`，并移除请求中的本机路径。
+
+```mermaid
+flowchart LR
+  Source[已有本地文件] --> Path[引用源路径]
+  Generated[截图或粘贴内容] --> Draft[创建本地附件文件]
+  Path --> Target{执行设备}
+  Draft --> Target
+  Target -->|本机| Local[读取本地路径]
+  Target -->|云端或远程| Upload[上传后传递附件 ID]
+```
+
+图片进入附件区时直接使用浏览器对象 URL 显示预览，直到附件发送、删除或输入框重置时释放。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 预览，Codex 收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 
@@ -329,6 +341,7 @@ Wework 不再显示“未映射工作区”。executor 返回的线程必须能�
 - 单个 IM 会话订阅某个运行时任务后，只接收该任务的更新。
 - executor 通过设备 WebSocket 发送 `runtime:event`；Backend 只把 `response.completed`、`response.failed`、`response.incomplete` 和 `error` 终态按任务绑定、任务订阅和全局通知设置投递到 IM。成功终态没有回复正文时不发送。
 - 通知身份使用 `deviceId + localTaskId`，不包含 `workspacePath`；IM 发起的回合不会再向同一 IM 回声通知。旧 executor 的 `runtime.tasks.updated` 接收端仅作为兼容路径保留。
+- Backend 按用户、设备任务、回合与终态、收件 IM 会话保存 Redis 投递回执，已成功发送的通知在桌面重启或设备重连后不会因事件重放再次发送。并发投递使用短期锁，成功回执不设置过期时间；失败会释放锁，部分失败仅重试未成功的收件会话。旧 watcher 使用 `updatedAt` 识别更新；缺少回合 ID 和更新时间的事件无法可靠去重，不能以正文相同为由丢弃新通知。
 
 ## URL
 
@@ -341,6 +354,26 @@ Wework 的运行时任务 URL 使用：
 URL 不包含 `workspacePath`。刷新页面或复制链接时，前端先用 URL 里的 `deviceId + localTaskId` 打开任务，再从最新的 runtime work 列表恢复该任务的工作区上下文。
 
 新对话和未选择项目的入口使用根路径或普通会话路径，不使用 `projectId=0` 这类占位参数。项目选择状态由 runtime workspace 引用和当前会话上下文恢复。
+
+## 新任务发送状态与诊断
+
+Electron 启动完成通知必须幂等：首次完成启动后，页面切换或重新挂载发来的通知不应再次显示、聚焦主窗口，避免抢走弹出窗口的焦点。并发通知共享同一次启动完成操作；失败后允许重新完成启动。
+
+悬浮聊天窗口使用单一当前会话驱动消息、标题和原生窗口尺寸，不恢复主工作台的分屏布局。窗口分为输入、菜单和会话三种模式；打开菜单时保持输入框底部位置，发送后切换到会话尺寸。工具栏在紧凑输入模式下始终可用。
+
+悬浮窗口在原生键盘事件层处理无修饰键的 `Esc`，隐藏窗口并保留会话；输入法组合输入期间不拦截。快捷键唤起悬浮窗口不应恢复主窗口；仅主动点击 Dock、托盘或“在主窗口打开”时进入主窗口。普通应用激活事件不触发主窗口恢复。
+
+刷新后页面未恢复时，检查 Electron 的 `[renderer-load]` 事件，按 `webContentsId` 关联加载开始、DOM 就绪、加载结束、失败和退出拦截。日志不包含页面 URL，避免暴露查询参数。
+
+发送消息后，前端会先展示用户消息并读取历史，此时 executor 可能仍在创建 worktree，尚未登记 LocalTask。无任务索引、无 provider 会话且没有已知执行时，空 transcript 必须省略 `running`，表示状态未知；不能用 `running=false` 提前结束前端的发送状态。已知运行和完成状态仍使用明确的布尔值。
+
+显式发送操作直接更新共享 `RuntimeTaskLifecycleStore`。切换标签页或隐藏发起发送的界面不应阻止 `sendRequested`、`sendAccepted` 或发送失败的状态更新；后台列表和历史同步继续受界面所有权限制。
+
+保留挂载的隐藏工作台不得订阅创建项目、绑定工作目录和打开云端设备设置的全局交互事件；这些事件仅由 `routeActive` 的工作台处理，避免切换标签页后重复打开 Portal 对话框。已知任务在创建 provider 会话前失败时，transcript 仍须返回 `running=false`，让客户端结束等待。
+
+恢复本地任务的项目空间上下文时，复用绑定记录中的项目 ID 读取任务，不要再次遍历项目列表。`project-space-context-resolved/failed` 诊断记录上下文查询耗时及结果是否被当前界面采用，用于区分查询超时和过期响应。
+
+排查发送后的空白时，用 `deviceId + taskId` 关联 Electron 日志目录中的 `runtime-launch.log` 与 executor 日志。前者记录历史响应接收、状态机转换、等待提示状态和 `web_contents_id`；后者的 `runtime worktree stage` 记录锁等待、预检查、Git worktree 创建与持久化耗时。后端返回 `running=true` 不等于前端已经渲染等待提示，必须核对两侧时间。这些日志不需要记录消息正文。Electron 日志采集器和 executor 的修改需要重启对应进程，前端热更新不能替代重启。
 
 ## 兼容性
 

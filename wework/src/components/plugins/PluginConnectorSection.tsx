@@ -9,6 +9,7 @@ type Props = {
   connectors: Connector[]
   installed: boolean
   authBySlug?: Record<string, 'connected' | 'disconnected'>
+  busySlug?: string | null
   onManage?: (slug: string) => void
 }
 
@@ -120,7 +121,13 @@ function ConnectorSourceDialog({
   )
 }
 
-export function PluginConnectorSection({ connectors, installed, authBySlug, onManage }: Props) {
+export function PluginConnectorSection({
+  connectors,
+  installed,
+  authBySlug,
+  busySlug,
+  onManage,
+}: Props) {
   const { t } = useTranslation()
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const groups = groupConnectors(connectors)
@@ -165,20 +172,23 @@ export function PluginConnectorSection({ connectors, installed, authBySlug, onMa
               </span>
               <button
                 type="button"
-                disabled={!installed}
+                disabled={!installed || Boolean(busySlug)}
+                aria-busy={group.connectors.some(item => item.slug === busySlug)}
                 data-testid={`plugin-connection-manage-${group.key}`}
                 className="h-11 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 md:h-8"
                 onClick={() => (grouped ? setSelectedGroup(group) : manage(connector.slug))}
               >
-                {!installed
-                  ? t('workbench.plugin_connect_after_install', '安装后可连接')
-                  : grouped
-                    ? t('workbench.plugin_manage_connection', '管理连接')
-                    : state === 'connected'
-                      ? t('workbench.plugin_disconnect_connection', '退出登录')
-                      : state === 'disconnected'
-                        ? t('workbench.plugin_connect_login', '登录')
-                        : t('workbench.plugin_manage_connection', '管理连接')}
+                {group.connectors.some(item => item.slug === busySlug)
+                  ? t('common.loading', '加载中…')
+                  : !installed
+                    ? t('workbench.plugin_connect_after_install', '安装后可连接')
+                    : grouped
+                      ? t('workbench.plugin_manage_connection', '管理连接')
+                      : state === 'connected'
+                        ? t('workbench.plugin_disconnect_connection', '退出登录')
+                        : state === 'disconnected'
+                          ? t('workbench.plugin_connect_login', '登录')
+                          : t('workbench.plugin_manage_connection', '管理连接')}
               </button>
             </div>
           )

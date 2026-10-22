@@ -29,14 +29,18 @@ from app.schemas.project import (
     ProjectListResponse,
     ProjectResponse,
     ProjectTaskCreate,
-    ProjectUpdate,
+    ProjectTaskListResponse,
     ProjectWithTasksResponse,
     ProjectWorktreeDeleteResponse,
     ProjectWorktreeListResponse,
     RemoveTaskFromProjectResponse,
 )
 from app.schemas.task import TaskArchiveBatchResponse
-from app.services import project_device_session_service, project_service
+from app.services import (
+    project_device_session_service,
+    project_service,
+    project_task_queries,
+)
 
 router = APIRouter()
 
@@ -222,34 +226,6 @@ def get_project_endpoint(
     return project
 
 
-@router.put("/{project_id}", response_model=ProjectResponse)
-def update_project_endpoint(
-    project_id: int = Path(..., description="Project ID"),
-    project_update: ProjectUpdate = Body(...),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Update project information.
-    """
-    try:
-        return project_service.update_project(
-            db=db,
-            project_id=project_id,
-            update_data=project_update,
-            user_id=current_user.id,
-            client_origin=client_origin,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update project: {str(e)}",
-        )
-
-
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
@@ -390,6 +366,30 @@ async def start_project_code_server_session_endpoint(
 # ============================================================================
 # Project-Task association routes
 # ============================================================================
+
+
+@router.get("/{project_id}/tasks", response_model=ProjectTaskListResponse)
+def list_project_tasks_endpoint(
+    project_id: int = Path(..., description="Project ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Tasks per page"),
+    cursor: str | None = Query(None, max_length=512, description="Next-page cursor"),
+    title: str | None = Query(None, min_length=1, description="Task title keywords"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List one page of active tasks in an accessible project."""
+    return project_task_queries.list_project_tasks(
+        db=db,
+        project_id=project_id,
+        user_id=current_user.id,
+        page=page,
+        limit=limit,
+        cursor=cursor,
+        title=title,
+        client_origin=client_origin,
+    )
 
 
 @router.post(

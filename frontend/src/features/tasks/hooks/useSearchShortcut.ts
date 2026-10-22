@@ -12,8 +12,8 @@ interface UseSearchShortcutOptions {
 
 /**
  * Custom hook for global search shortcut (Cmd+K / Ctrl+K or Cmd+F / Ctrl+F)
- * This hook should be used at the page level to ensure the shortcut works
- * regardless of sidebar collapse state.
+ * The owning component must remain mounted so the shortcut keeps working
+ * while its visible controls are hidden or collapsed.
  */
 export function useSearchShortcut({ onToggle, enabled = true }: UseSearchShortcutOptions) {
   const { user } = useUser()

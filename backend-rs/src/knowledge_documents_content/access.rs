@@ -19,9 +19,21 @@ use super::group_membership::GroupMembership;
 use super::group_membership::effective_roles;
 use super::group_membership::{effective_role_in_group, is_restricted_analyst};
 use crate::crd::CrdDocument;
-use crate::json_compat::OpaqueJson;
+use crate::permissions::ResolutionPurpose;
+use brz_json::OpaqueJson;
 #[cfg(test)]
 use serde_json::Value;
+
+/// The resolution purpose for every entity-resolver call of this endpoint's
+/// ACL chain (`resolve_knowledge_base_permission`'s group and entity sources).
+///
+/// The source has exactly one membership path: `ErpEntityResolver`'s
+/// `_get_membership_with_cache`, which reads `erp:membership:{user_id}:{ssn}`
+/// and, on a cache miss or partial hit, calls
+/// `erp_client.batch_check_membership` and writes the rebuilt map back. The
+/// cache-only purpose would resolve nothing on a miss and skip that request
+/// and write, diverging from the recorded request-owned dependency traffic.
+pub(super) const ENTITY_RESOLUTION_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAccess;
 
 /// `namespace` columns as rendered by `db.query(Namespace)`.
 pub(super) const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, \
@@ -34,7 +46,7 @@ pub(super) const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, \
      namespace.updated_at AS namespace_updated_at";
 
 /// `resource_members` columns as rendered by `db.query(ResourceMember)`.
-pub(super) const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
+pub(crate) const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members.resource_type AS resource_members_resource_type, \
      resource_members.resource_id AS resource_members_resource_id, \
      resource_members.entity_type AS resource_members_entity_type, \
@@ -54,7 +66,7 @@ pub(super) const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members
 
 /// Role hierarchy ranks (`app.schemas.base_role.ROLE_HIERARCHY`); lower is
 /// more privileged.
-fn role_rank(role: &str) -> Option<u8> {
+pub(crate) fn role_rank(role: &str) -> Option<u8> {
     match role {
         "Owner" => Some(0),
         "Maintainer" => Some(1),
@@ -66,7 +78,7 @@ fn role_rank(role: &str) -> Option<u8> {
 }
 
 /// `get_highest_role`: the most privileged role among the candidates.
-pub(super) fn highest_role(roles: &[String]) -> Option<String> {
+pub(crate) fn highest_role(roles: &[String]) -> Option<String> {
     roles
         .iter()
         .filter(|role| role_rank(role).is_some())
@@ -75,7 +87,7 @@ pub(super) fn highest_role(roles: &[String]) -> Option<String> {
 }
 
 /// `has_permission` (`app.schemas.base_role`).
-fn has_permission(user_role: &str, required_role: &str) -> bool {
+pub(crate) fn has_permission(user_role: &str, required_role: &str) -> bool {
     match (role_rank(user_role), role_rank(required_role)) {
         (Some(user), Some(required)) => user <= required,
         _ => false,
@@ -120,6 +132,50 @@ where
                  kinds.updated_at AS kinds_updated_at \nFROM kinds \n\
                  WHERE kinds.id = {knowledge_base_id} AND kinds.kind = 'KnowledgeBase' \
                  AND kinds.is_active = true \n LIMIT 1"
+            ),
+            (),
+        )
+        .await?;
+    Ok(row.map(|row| KnowledgeBase {
+        kinds_id: row.kinds_id,
+        kinds_user_id: row.kinds_user_id,
+        kinds_namespace: row.kinds_namespace,
+        kinds_json: row.kinds_json.0,
+        kinds_created_at: row.kinds_created_at,
+        kinds_updated_at: row.kinds_updated_at,
+    }))
+}
+
+/// `KnowledgeService.update_document_content`'s own KB lookup
+/// (`db.query(Kind).filter(Kind.id == document.kind_id, Kind.kind ==
+/// "KnowledgeBase").first()`): the same labeled projection as
+/// [`knowledge_base_record`] without the `is_active` predicate, so the two are
+/// distinct recorded statements.
+pub(crate) async fn document_kb_record<M>(
+    mysql: &M,
+    knowledge_base_id: i64,
+) -> MysqlResult<Option<KnowledgeBase>>
+where
+    M: Mysql,
+{
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        kinds_id: i64,
+        kinds_user_id: i64,
+        kinds_namespace: String,
+        kinds_json: Json<OpaqueJson>,
+        kinds_created_at: chrono::NaiveDateTime,
+        kinds_updated_at: chrono::NaiveDateTime,
+    }
+    let row: Option<Row> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+                 kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+                 kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+                 kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
+                 kinds.updated_at AS kinds_updated_at \nFROM kinds \n\
+                 WHERE kinds.id = {knowledge_base_id} AND kinds.kind = 'KnowledgeBase' \n LIMIT 1"
             ),
             (),
         )
@@ -208,31 +264,32 @@ where
             }
             .to_string(),
         );
-    } else {
-        // Group source (`_append_group_source`) for non-default namespaces.
-        // The source re-checks `is_organization_namespace` here before
-        // resolving the group role, so the namespace lookup repeats.
-        let group_is_organization = is_organization_namespace(mysql, &kb.kinds_namespace)
+    }
+
+    // Group source (`_append_group_source`). The source always runs this after
+    // the organization source, and its guard is
+    // `kb.namespace == "default" or is_organization_namespace(...)`, so the
+    // namespace lookup repeats even for organization namespaces. The `or`
+    // short-circuits only for the personal namespace, which never queries.
+    if kb.kinds_namespace != "default"
+        && !is_organization_namespace(mysql, &kb.kinds_namespace)
             .await
-            .map_err(|error| ApiFailure::internal(error.to_string()))?;
-        if !group_is_organization
-            && kb.kinds_namespace != "default"
-            && let Some(group_role) =
-                effective_role_in_group(mysql, redis, resolvers, user_id, &kb.kinds_namespace)
-                    .await
-                    .map_err(|error| ApiFailure::internal(error.to_string()))?
-        {
-            if group_role == "RestrictedAnalyst" {
-                return Ok(false);
-            }
-            let base = match group_role.as_str() {
-                "Owner" => "Owner",
-                "Maintainer" => "Maintainer",
-                "Developer" => "Developer",
-                _ => "Reporter",
-            };
-            roles.push(base.to_string());
+            .map_err(|error| ApiFailure::internal(error.to_string()))?
+        && let Some(group_role) =
+            effective_role_in_group(mysql, redis, resolvers, user_id, &kb.kinds_namespace)
+                .await
+                .map_err(|error| ApiFailure::internal(error.to_string()))?
+    {
+        if group_role == "RestrictedAnalyst" {
+            return Ok(false);
         }
+        let base = match group_role.as_str() {
+            "Owner" => "Owner",
+            "Maintainer" => "Maintainer",
+            "Developer" => "Developer",
+            _ => "Reporter",
+        };
+        roles.push(base.to_string());
     }
 
     // Entity sources (`_append_entity_sources`).
@@ -263,6 +320,205 @@ where
     }
 }
 
+/// The raw ACL facts of `resolve_knowledge_base_permission` before an
+/// action-specific access policy is applied: the merged `has_access` flag, the
+/// highest granted role, whether the caller created the knowledge base, and
+/// whether the resolution hit an explicit denial (`is_denied`).
+///
+/// The source sets `is_denied` for the restricted-analyst pre-check and for a
+/// direct membership whose role is `RestrictedAnalyst`, but *not* for a group
+/// whose effective role is `RestrictedAnalyst` (that branch returns the
+/// default `is_denied=False`). `GET /api/share/KnowledgeBase/*/my-permission`
+/// uses the flag to decide whether a pending request is reported.
+pub(crate) struct PermissionFacts {
+    pub(crate) has_access: bool,
+    pub(crate) role: Option<String>,
+    pub(crate) is_creator: bool,
+    pub(crate) is_denied: bool,
+}
+
+/// `get_user_knowledge_base_permission`'s Kind lookup, used when the caller
+/// does not already hold a loaded record. SQLAlchemy renders
+/// `Kind.is_active.is_(True)` as `kinds.is_active IS true`, distinct from
+/// `knowledge_base_record`'s `== True` rendering, so the two lookups are not
+/// interchangeable in replay.
+pub(crate) async fn permission_kb_record<M>(
+    mysql: &M,
+    knowledge_base_id: i64,
+) -> MysqlResult<Option<KnowledgeBase>>
+where
+    M: Mysql,
+{
+    #[derive(Debug, FromMysqlRow)]
+    struct Row {
+        kinds_id: i64,
+        kinds_user_id: i64,
+        kinds_namespace: String,
+        kinds_json: Json<OpaqueJson>,
+        kinds_created_at: chrono::NaiveDateTime,
+        kinds_updated_at: chrono::NaiveDateTime,
+    }
+    let row: Option<Row> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+                 kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+                 kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+                 kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
+                 kinds.updated_at AS kinds_updated_at \nFROM kinds \n\
+                 WHERE kinds.id = {knowledge_base_id} AND kinds.kind = 'KnowledgeBase' \
+                 AND kinds.is_active IS true \n LIMIT 1"
+            ),
+            (),
+        )
+        .await?;
+    Ok(row.map(|row| KnowledgeBase {
+        kinds_id: row.kinds_id,
+        kinds_user_id: row.kinds_user_id,
+        kinds_namespace: row.kinds_namespace,
+        kinds_json: row.kinds_json.0,
+        kinds_created_at: row.kinds_created_at,
+        kinds_updated_at: row.kinds_updated_at,
+    }))
+}
+
+/// `resolve_knowledge_base_permission` role/creator facts: the merged roles
+/// from the creator, direct-membership, organization, group, and entity
+/// sources, without applying a direct-access requirement. A membership or
+/// group role of `RestrictedAnalyst` is an explicit denial.
+pub(crate) async fn resolve_permission_facts<M, R>(
+    mysql: &M,
+    redis: Option<&R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
+    kb: &KnowledgeBase,
+    user_id: i64,
+) -> MysqlResult<PermissionFacts>
+where
+    M: Mysql,
+    R: brz_redis::Redis,
+{
+    // `db.query(User)` by id.
+    let user = user_by_id(mysql, user_id).await?;
+    let user_role = user.as_ref().map(|row| row.users_role.clone());
+    let is_creator = kb.kinds_user_id == user_id;
+
+    let mut roles: Vec<String> = Vec::new();
+    if is_creator {
+        roles.push("Owner".to_string());
+    }
+
+    // Restricted-analyst pre-check (non-default, non-organization namespaces,
+    // non-creators) is an explicit denial.
+    if !is_creator && kb.kinds_namespace != "default" {
+        let is_organization = is_organization_namespace(mysql, &kb.kinds_namespace).await?;
+        if !is_organization
+            && is_restricted_analyst(mysql, redis, resolvers, user_id, &kb.kinds_namespace).await?
+        {
+            return Ok(PermissionFacts {
+                has_access: false,
+                role: None,
+                is_creator,
+                is_denied: true,
+            });
+        }
+    }
+
+    // Direct KB membership: a RestrictedAnalyst membership is an explicit
+    // denial; any other role grants.
+    if let Some(role) = direct_kb_member_role(mysql, kb.kinds_id, user_id).await? {
+        if role == "RestrictedAnalyst" {
+            return Ok(PermissionFacts {
+                has_access: false,
+                role: None,
+                is_creator,
+                is_denied: true,
+            });
+        }
+        roles.push(role);
+    }
+
+    // Organization source (`_append_organization_source`).
+    let is_organization = is_organization_namespace(mysql, &kb.kinds_namespace).await?;
+    if is_organization {
+        roles.push(
+            if user_role.as_deref() == Some("admin") {
+                "Owner"
+            } else {
+                "Reporter"
+            }
+            .to_string(),
+        );
+    }
+
+    // Group source (`_append_group_source`): the source short-circuits on the
+    // "default" namespace and otherwise re-checks `is_organization_namespace`,
+    // so a non-default namespace issues the lookup again before the group role
+    // resolves.
+    if kb.kinds_namespace != "default" {
+        let group_is_organization = is_organization_namespace(mysql, &kb.kinds_namespace).await?;
+        if !group_is_organization
+            && let Some(group_role) =
+                effective_role_in_group(mysql, redis, resolvers, user_id, &kb.kinds_namespace)
+                    .await?
+        {
+            if group_role == "RestrictedAnalyst" {
+                return Ok(PermissionFacts {
+                    has_access: false,
+                    role: None,
+                    is_creator,
+                    // `_append_group_source` returning True renders the
+                    // source's default `is_denied=False`.
+                    is_denied: false,
+                });
+            }
+            let base = match group_role.as_str() {
+                "Owner" => "Owner",
+                "Maintainer" => "Maintainer",
+                "Developer" => "Developer",
+                _ => "Reporter",
+            };
+            roles.push(base.to_string());
+        }
+    }
+
+    // Entity sources (`_append_entity_sources`).
+    roles.extend(entity_source_roles(mysql, redis, resolvers, kb.kinds_id, user_id).await?);
+
+    Ok(PermissionFacts {
+        has_access: !roles.is_empty() || is_creator,
+        role: highest_role(&roles),
+        is_creator,
+        is_denied: false,
+    })
+}
+
+/// `can_manage_knowledge_base_documents`: reload the KB (`is_(True)` lookup),
+/// resolve its raw ACL facts, then apply
+/// `can_manage_accessible_knowledge_base_documents` — the creator or a role
+/// with at least Developer permission.
+pub(crate) async fn can_manage_knowledge_base_documents<M, R>(
+    mysql: &M,
+    redis: Option<&R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
+    knowledge_base_id: i64,
+    user_id: i64,
+) -> MysqlResult<bool>
+where
+    M: Mysql,
+    R: brz_redis::Redis,
+{
+    let Some(kb) = permission_kb_record(mysql, knowledge_base_id).await? else {
+        return Ok(false);
+    };
+    let facts = resolve_permission_facts(mysql, redis, resolvers, &kb, user_id).await?;
+    Ok(facts.has_access
+        && (facts.is_creator
+            || facts
+                .role
+                .as_deref()
+                .is_some_and(|role| has_permission(role, "Developer"))))
+}
+
 /// `db.query(User).filter(User.id == user_id).first()` — full labeled
 /// projection.
 pub(crate) async fn user_by_id<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<UserRow>>
@@ -288,15 +544,6 @@ where
 #[derive(Debug, FromMysqlRow)]
 pub(crate) struct UserRow {
     pub(crate) users_role: String,
-}
-
-/// Wrapper of the by-id user lookup for sibling knowledge modules
-/// (`resolve_knowledge_base_permission`'s `db.query(User)` by id).
-pub async fn user_by_id_row<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<UserRow>>
-where
-    M: Mysql,
-{
-    user_by_id(mysql, user_id).await
 }
 
 /// `load_active_namespace_map` for one name (`namespace.in_(names)` with
@@ -327,7 +574,7 @@ fn namespace_names_sql(names: &[String]) -> String {
 
 /// MySQL default string-literal escaping (mirrors the source's rendered
 /// COM_QUERY text).
-pub(super) fn quote_literal(value: &str) -> String {
+pub(crate) fn quote_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('\'');
     for byte in value.bytes() {
@@ -356,7 +603,11 @@ pub(super) struct NamespaceRow {
 /// `organization`. The personal namespace (`default`) never queries: the
 /// source's `load_active_namespace_map` filters it out and
 /// `classify_namespace_level` returns `personal`.
-pub(crate) async fn is_organization_namespace<M>(mysql: &M, name: &str) -> MysqlResult<bool>
+///
+/// Re-exported at the crate root: the deployment document-download policy
+/// (the source document-protection policy) makes the same
+/// decision through the shared `load_active_namespace_map` lookup.
+pub async fn is_organization_namespace<M>(mysql: &M, name: &str) -> MysqlResult<bool>
 where
     M: Mysql,
 {
@@ -476,7 +727,7 @@ where
                 user_id,
                 &entity_type,
                 &ids,
-                crate::permissions::ResolutionPurpose::CachedResourceAccess,
+                ENTITY_RESOLUTION_PURPOSE,
             )
             .await?;
         let matched_set: std::collections::HashSet<&str> =
@@ -553,6 +804,24 @@ pub(super) struct EntityRoleRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every entity-resolver call of this endpoint's ACL chain must request
+    /// the with-fallback membership path.
+    ///
+    /// The provider maps `ResolutionPurpose::CachedResourceAccess` to
+    /// `ErpProvider::cached_membership`, which returns no membership on a
+    /// cache miss and performs no cache write, while the source's single
+    /// membership path falls back to `batch_check_membership` and stores the
+    /// rebuilt map. The cache-only variant would silently drop
+    /// entity-derived roles and the request-owned ERP exchange the source
+    /// performs, so this test pins the purpose itself.
+    #[test]
+    fn entity_resolution_uses_the_with_fallback_membership_purpose() {
+        assert!(matches!(
+            ENTITY_RESOLUTION_PURPOSE,
+            ResolutionPurpose::ResourceAccess
+        ));
+    }
 
     #[test]
     fn role_hierarchy_and_permission() {

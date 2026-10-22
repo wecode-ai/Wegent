@@ -117,7 +117,7 @@ class WorkspaceCollaborationGroupService:
             group=group,
             values=values,
         )
-        db.commit()
+        _commit_group_authorization_change(db, workspace_id)
         db.refresh(group)
         return result
 
@@ -141,7 +141,22 @@ class WorkspaceCollaborationGroupService:
         )
         for grant in grants:
             db.delete(grant)
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+        from app.services.workspaces.storage import project_ids_for_workspace
+
+        db.flush()
+        pending = [
+            run
+            for project_id in project_ids_for_workspace(db, workspace_id)
+            for run in revoke_unauthorized_project_work(db, project_id)
+        ]
         db.commit()
+        request_execution_cancellations(pending)
 
     def list_project_collaboration_groups(
         self, db: Session, project_id: int, user_id: int
@@ -280,7 +295,7 @@ class WorkspaceCollaborationGroupService:
             group=group,
             values=values,
         )
-        db.commit()
+        _commit_group_authorization_change(db, workspace_id, project_id=project_id)
         db.refresh(group)
         return result
 
@@ -315,7 +330,17 @@ class WorkspaceCollaborationGroupService:
                 db.delete(resource_grant)
         else:
             db.delete(grant)
+        from app.services.collaboration_revocation import (
+            revoke_unauthorized_project_work,
+        )
+        from app.services.loop_item_executions.cancellation import (
+            request_execution_cancellations,
+        )
+
+        db.flush()
+        pending = revoke_unauthorized_project_work(db, project_id)
         db.commit()
+        request_execution_cancellations(pending)
 
     @staticmethod
     def _require_project_workspace(db: Session, project_id: int) -> int:
@@ -554,6 +579,15 @@ class WorkspaceCollaborationGroupService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Collaboration group stage assignee must be a group member",
             )
+        if any(
+            stage.assignee is not None
+            and (stage.assignee.kind, stage.assignee.id) == (leader.kind, leader.id)
+            for stage in stages
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Collaboration group leader cannot execute a stage",
+            )
         for member_kind, member_id in identities:
             available = (
                 self._agent_is_available(
@@ -588,28 +622,20 @@ class WorkspaceCollaborationGroupService:
         owner_id: int,
         user_id: int,
     ) -> bool:
-        resource_type = (
-            ResourceType.WORKSPACE.value
-            if owner_type == "workspace"
-            else ResourceType.CLOUD_PROJECT.value
-        )
-        resource_id = workspace_id if owner_type == "workspace" else owner_id
         if owner_type == "project":
-            project = db.get(CloudProject, owner_id)
-            if project is not None and int(project.created_by_user_id) == user_id:
-                return True
-        return (
-            db.query(ResourceMember.id)
-            .filter(
-                ResourceMember.resource_type == resource_type,
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
+            from app.services.cloud_project_visibility import project_participant_ids
+
+            project = db.get(CloudProject, str(owner_id))
+            return project is not None and user_id in project_participant_ids(
+                db, project, required_role=BaseRole.Developer
             )
-            .first()
-            is not None
+        from app.services.collaboration_permissions import (
+            collaboration_permission_service,
         )
+
+        return collaboration_permission_service.check(
+            db, user_id, "execute", workspace_id, scope="workspace"
+        ).allowed
 
     @staticmethod
     def _agent_is_available(
@@ -727,3 +753,27 @@ def _group_values(
         "created_at": group.created_at,
         "updated_at": group.updated_at,
     }
+
+
+def _commit_group_authorization_change(
+    db: Session, workspace_id: int, *, project_id: int | None = None
+) -> None:
+    from app.services.collaboration_revocation import revoke_unauthorized_project_work
+    from app.services.loop_item_executions.cancellation import (
+        request_execution_cancellations,
+    )
+    from app.services.workspaces.storage import project_ids_for_workspace
+
+    project_ids = (
+        [project_id]
+        if project_id is not None
+        else project_ids_for_workspace(db, workspace_id)
+    )
+    db.flush()
+    pending = [
+        run
+        for child_id in project_ids
+        for run in revoke_unauthorized_project_work(db, child_id)
+    ]
+    db.commit()
+    request_execution_cancellations(pending)

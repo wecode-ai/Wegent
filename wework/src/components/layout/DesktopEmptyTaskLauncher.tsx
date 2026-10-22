@@ -3,14 +3,21 @@ import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributi
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { focusComposerAtEnd, WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import { useConversationFind } from '@/components/chat/useConversationFind'
+import { ConversationFindBar } from '@/components/chat/ConversationFindBar'
+
+const EMPTY_CONVERSATION = { messages: [] }
 
 interface DesktopEmptyTaskLauncherProps {
   projectName?: string | null
   onOpenProjectSelector: (anchorElement: HTMLButtonElement) => void
   onSelectSuggestion: (prompt: string) => void
   composer: ReactNode
+  connectorAuthCard?: ReactNode
   /** Defaults to the workbench empty-state composer input. */
   composerInputTestId?: string
+  compact?: boolean
+  searchActive?: boolean
 }
 
 export function DesktopEmptyTaskLauncher({
@@ -18,9 +25,13 @@ export function DesktopEmptyTaskLauncher({
   onOpenProjectSelector,
   onSelectSuggestion,
   composer,
+  connectorAuthCard,
   composerInputTestId = 'chat-message-input',
+  compact = false,
+  searchActive = false,
 }: DesktopEmptyTaskLauncherProps) {
   const { t } = useTranslation('common')
+  const find = useConversationFind(EMPTY_CONVERSATION, searchActive)
   const launcherRef = useRef<HTMLElement>(null)
   const composerInputSelector = `[data-testid="${composerInputTestId}"]`
 
@@ -70,19 +81,31 @@ export function DesktopEmptyTaskLauncher({
     <section
       ref={launcherRef}
       data-testid="desktop-empty-composer-frame"
-      className="flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-2 pt-8"
+      className={
+        compact
+          ? 'flex min-h-0 min-w-0 flex-1 flex-col justify-end'
+          : 'flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-2 pt-8'
+      }
     >
-      <div className="flex min-h-0 flex-1 items-center justify-center pb-8">
-        <DshContributionSlotSurface
-          attachedClassName="w-full"
-          slot={WEWORK_DSH_SLOTS.home}
-          props={{ heading, onSelectSuggestion: selectSuggestion }}
-        />
-      </div>
+      <ConversationFindBar find={find} />
+      {!compact && (
+        <div className="flex min-h-0 flex-1 items-center justify-center pb-8">
+          <DshContributionSlotSurface
+            attachedClassName="w-full"
+            slot={WEWORK_DSH_SLOTS.home}
+            props={{ heading, onSelectSuggestion: selectSuggestion }}
+          />
+        </div>
+      )}
       <div
         data-testid="desktop-empty-composer-dock"
-        className="mx-auto w-[min(46rem,calc(100%_-_2rem))] min-w-0 shrink-0"
+        className={
+          compact
+            ? 'w-full min-w-0 shrink-0'
+            : 'mx-auto w-[min(46rem,calc(100%_-_2rem))] min-w-0 shrink-0'
+        }
       >
+        {connectorAuthCard}
         {composer}
       </div>
     </section>

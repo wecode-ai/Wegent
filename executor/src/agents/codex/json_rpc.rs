@@ -17,7 +17,7 @@ use super::{
     codex_approval_result, codex_error_message, codex_notification_has_initial_progress,
     codex_turn_startup_timeout_seconds, debug_stdout::CodexStdout,
     is_codex_approval_request_method, is_mcp_tool_call_approval_request, json_rpc_request_id,
-    log_codex_raw_turn_message, mcp_tool_call_request_user_input_response, message_params,
+    mcp_tool_call_request_user_input_response, message_params,
     receive_mcp_server_elicitation_response, request_user_input_result, response_id,
     response_result, CodexNotificationSender, CodexRequestUserInputReceiver, CodexRunState,
 };
@@ -26,6 +26,15 @@ pub(super) struct JsonRpcConnection {
     stdin: ChildStdin,
     stdout: CodexStdout,
     next_id: u64,
+}
+
+pub(super) struct TurnReadOptions {
+    pub overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
+    pub overload_continuation_params: Value,
+    pub notifications: Option<CodexNotificationSender>,
+    pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    pub auto_approve_mcp_tool_calls: bool,
+    pub defer_interactive_forms: bool,
 }
 
 impl JsonRpcConnection {
@@ -104,17 +113,23 @@ impl JsonRpcConnection {
 
     pub(super) async fn read_turn(
         &mut self,
-        turn_request_id: u64,
+        mut turn_request_id: u64,
         state: &mut CodexRunState,
-        notifications: Option<CodexNotificationSender>,
-        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-        auto_approve_mcp_tool_calls: bool,
-        defer_interactive_forms: bool,
+        options: TurnReadOptions,
     ) -> Result<ExecutionOutcome, String> {
+        let TurnReadOptions {
+            overload_turn_recovering,
+            overload_continuation_params,
+            notifications,
+            mut request_user_input_answers,
+            auto_approve_mcp_tool_calls,
+            defer_interactive_forms,
+        } = options;
         let mut saw_turn_response = false;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
+        let mut overload_recovery = super::overload_recovery::OverloadRecovery::default();
         loop {
             let message = if waiting_for_initial_progress {
                 match timeout_at(startup_deadline, self.read_message()).await {
@@ -128,7 +143,6 @@ impl JsonRpcConnection {
             } else {
                 self.read_message().await?
             };
-            log_codex_raw_turn_message(&message);
             if response_id(&message) == Some(turn_request_id) {
                 response_result(message)?;
                 saw_turn_response = true;
@@ -138,6 +152,45 @@ impl JsonRpcConnection {
                 && codex_notification_has_initial_progress(&message, state)
             {
                 waiting_for_initial_progress = false;
+            }
+            match overload_recovery.observe(&message, state) {
+                super::overload_recovery::RecoveryAction::Forward => {}
+                super::overload_recovery::RecoveryAction::AwaitCompletion => {
+                    waiting_for_initial_progress = true;
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    continue;
+                }
+                super::overload_recovery::RecoveryAction::Retry {
+                    delay,
+                    notification,
+                } => {
+                    if let Some(callback) = overload_turn_recovering.as_ref() {
+                        let params = message_params(&message);
+                        if let (Some(thread_id), Some(turn_id)) = (
+                            params.get("threadId").and_then(Value::as_str),
+                            params.pointer("/turn/id").and_then(Value::as_str),
+                        ) {
+                            callback(thread_id.to_owned(), turn_id.to_owned());
+                        }
+                    }
+                    let _ = state.handle_message(&message);
+                    if let Some(sender) = &notifications {
+                        let _ = sender.send(notification);
+                    }
+                    tokio::time::sleep(delay).await;
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    turn_request_id = super::with_rpc_timeout(
+                        "overload continuation turn/start",
+                        super::codex_rpc_timeout_seconds(),
+                        self.send_request("turn/start", overload_continuation_params.clone()),
+                    )
+                    .await?;
+                    waiting_for_initial_progress = true;
+                    saw_turn_response = false;
+                    continue;
+                }
             }
             let auto_approve_mcp_tool_call =
                 auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);

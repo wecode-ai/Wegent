@@ -13,9 +13,9 @@ const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
   agents: '/collaboration/agents',
   teams: '/collaboration/teams',
   devices: '/collaboration/devices',
-  'my-work': '/collaboration/my-work',
   inbox: '/collaboration/inbox',
-  runs: '/collaboration/runs',
+  // Stand-in management is provided only by the desktop host.
+  'stand-in': '/collaboration',
 }
 
 export function collaborationRootViewForPath(
@@ -47,7 +47,13 @@ export function collaborationLocationPath(location: CollaborationPlatformLocatio
     return `${workspaceBase}${suffix[location.workspaceView]}`
   }
   const projectBase = `${workspaceBase}/projects/${encodeURIComponent(location.projectId)}`
-  const query = location.projectView === 'board' ? '' : `?view=${location.projectView}`
+  const params = new URLSearchParams()
+  if (location.projectView !== 'board') params.set('view', location.projectView)
+  if (location.projectView === 'manage' && location.projectSettingsSection) {
+    params.set('section', location.projectSettingsSection)
+  }
+  const search = params.toString()
+  const query = search ? `?${search}` : ''
   return location.issueId
     ? `${projectBase}/issues/${encodeURIComponent(location.issueId)}${query}`
     : `${projectBase}${query}`

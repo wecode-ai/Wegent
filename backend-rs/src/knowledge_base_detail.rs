@@ -35,8 +35,8 @@ use serde::Serialize;
 
 use crate::config::env_or_dotenv;
 use crate::http_compat::FastApiError;
-use crate::json_compat::OpaqueJson;
 use crate::state::AppState;
+use brz_json::OpaqueJson;
 
 use crate::knowledge_documents_content::access::{
     KnowledgeBase, knowledge_base_access, knowledge_base_record,
@@ -186,6 +186,7 @@ pub struct KnowledgeBaseResponse {
     is_active: bool,
     retrieval_config: Option<RetrievalConfigResponse>,
     retrieval_capabilities: RetrievalCapabilities,
+    dingtalk_auto_sync_enabled: bool,
     summary_enabled: bool,
     summary_model_ref: Option<ModelRef>,
     execution_model_ref: Option<ModelRef>,
@@ -277,6 +278,7 @@ struct KbDocument {
 struct KbSpec {
     name: Option<String>,
     description: Option<String>,
+    #[serde(rename = "kbType")]
     kb_type: Option<String>,
     source: Option<OpaqueJson>,
     language: Option<String>,
@@ -290,6 +292,8 @@ struct KbSpec {
     allow_document_download: Option<bool>,
     #[serde(rename = "retrievalConfig")]
     retrieval_config: Option<StoredRetrievalConfig>,
+    #[serde(rename = "dingtalkAutoSyncEnabled")]
+    dingtalk_auto_sync_enabled: Option<bool>,
     #[serde(rename = "summaryEnabled")]
     summary_enabled: Option<bool>,
     #[serde(rename = "summaryModelRef")]
@@ -418,6 +422,7 @@ fn build_response(kb: &KnowledgeBase, spec: &KbSpec, document_count: i64) -> Kno
         is_active: true,
         retrieval_config,
         retrieval_capabilities: capabilities,
+        dingtalk_auto_sync_enabled: spec.dingtalk_auto_sync_enabled.unwrap_or(false),
         summary_enabled: spec.summary_enabled.unwrap_or(false),
         summary_model_ref: spec.summary_model_ref.clone(),
         execution_model_ref: spec.execution_model_ref.clone(),
@@ -640,6 +645,7 @@ mod tests {
         assert_eq!(body["retrieval_capabilities"]["semantic_query"], true);
         assert_eq!(body["retrieval_capabilities"]["keywords"], true);
         assert_eq!(body["retrieval_capabilities"]["phrases"], true);
+        assert_eq!(body["dingtalk_auto_sync_enabled"], false);
         assert_eq!(body["summary_model_ref"]["type"], "public");
     }
 
@@ -670,6 +676,23 @@ mod tests {
         assert_eq!(response.retrieval_config, None);
         assert_eq!(response.retrieval_capabilities.retrieval_mode, None);
         assert!(!response.retrieval_capabilities.semantic_query);
+    }
+
+    /// The stored spec key is camelCase `kbType`; a snake_case `kb_type` key
+    /// is not the source's lookup and must fall back to the notebook default.
+    #[test]
+    fn snake_case_kb_type_key_is_not_the_source_lookup() {
+        let (kb, spec) = kb_from_json(r#"{"spec":{"name":"n","kb_type":"classic"}}"#);
+        let response = build_response(&kb, &spec, 0);
+        assert_eq!(response.kb_type, "notebook");
+    }
+
+    /// A camelCase `kbType` is echoed verbatim (`spec.get("kbType", ...)`).
+    #[test]
+    fn camel_case_kb_type_is_echoed() {
+        let (kb, spec) = kb_from_json(r#"{"spec":{"name":"n","kbType":"classic"}}"#);
+        let response = build_response(&kb, &spec, 0);
+        assert_eq!(response.kb_type, "classic");
     }
 
     #[test]

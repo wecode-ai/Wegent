@@ -237,6 +237,7 @@
     "tool_error": "⚠️ Tool Error",
     "model_reasoning": "💭 Model Thinking",
     "text_response": "Text Response",
+    "file_diff": "Changes",
     "expand": "Expand",
     "collapse": "Collapse",
     "result_message": "Result Message",

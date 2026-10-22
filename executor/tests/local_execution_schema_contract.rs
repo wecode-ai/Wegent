@@ -108,7 +108,7 @@ fn upgrades_v7_execution_table_missing_payload_without_losing_issues_or_runs() {
     let connection = Connection::open(path).unwrap();
     let upgrades: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 9",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 10",
             [],
             |row| row.get(0),
         )
@@ -130,4 +130,27 @@ fn upgrades_v7_with_existing_payload_without_overwriting_it() {
     assert_eq!(executions.len(), 1);
     assert_eq!(executions[0].id, execution_id);
     assert_eq!(executions[0].status, "queued");
+}
+
+#[test]
+fn lists_legacy_execution_when_joined_task_title_is_null() {
+    let (directory, project_id, task_id, _, execution_id) = version_seven_store(false);
+    let path = directory.path().join("tasks.sqlite");
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE loop_items SET title = NULL WHERE id = ?1",
+            [&task_id],
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = LocalTaskStore::open(path).unwrap();
+    let executions = store
+        .list_executions(&project_id, None, None, true)
+        .unwrap();
+
+    assert_eq!(executions.len(), 1);
+    assert_eq!(executions[0].id, execution_id);
+    assert_eq!(executions[0].task_title, "");
 }

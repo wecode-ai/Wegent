@@ -1,4 +1,22 @@
-import { useCallback, useRef } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { createCommitMessageGenerator } from '@/api/commitMessage'
+import { type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
+import {
+  assertLocalRuntimeSidebarIdentity,
+  type LocalRuntimeSidebarIdentity,
+} from '@/lib/local-runtime-sidebar-identity'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { projectEditingDeviceRevision } from '@/lib/project-editing-capabilities'
+import {
+  findOwnedRuntimeProject,
+  saveProjectOnOwningRuntime,
+  type ProjectEditingSave,
+} from '@/lib/project-editing-save'
+import {
+  getRuntimeProjectSyncTarget,
+  type RuntimeProjectSyncTarget,
+} from '@/lib/runtime-project-identity'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
@@ -22,8 +40,7 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
   RuntimeProjectAppearanceRequest,
-  RuntimeProjectAiSettings,
-  RuntimeProjectSpaceRef,
+  RuntimeRemoteProjectRegistration,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -53,14 +70,19 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: RefreshWorkLists
+  updateRuntimeProject: (update: RuntimeProjectUpdate) => void
+  getRuntimeWorkSnapshot: () => WorkbenchState['runtimeWork']
+  getRemoteProjectRegistrations: (
+    identity: LocalRuntimeSidebarIdentity
+  ) => RuntimeRemoteProjectRegistration[]
   updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
   rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
     projectId: number,
     workspace?: { deviceId: string; workspacePath: string }
   ) => void
-  invalidateRemoteProjectSync: (workspacePath: string) => void
-  clearRemoteProjectSyncRemoval: (workspacePath: string) => void
+  invalidateRemoteProjectSync: (target: RuntimeProjectSyncTarget) => void
+  clearRemoteProjectSyncRemoval: (target: RuntimeProjectSyncTarget) => void
   enqueueRemoteProjectStateMutation: <T>(mutation: () => Promise<T>) => Promise<T>
 }
 
@@ -119,6 +141,9 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
+  updateRuntimeProject,
+  getRuntimeWorkSnapshot,
+  getRemoteProjectRegistrations,
   updateLocalRuntimeTaskPinned,
   rollbackLocalRuntimeTaskPinned,
   markRuntimeProjectRemoved,
@@ -126,7 +151,12 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const { t } = useTranslation('common')
   const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
+  const currentDevicesRef = useRef(state.devices)
+  useLayoutEffect(() => {
+    currentDevicesRef.current = state.devices
+  }, [state.devices])
 
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
@@ -154,7 +184,10 @@ export function useWorkbenchProjectActions({
       if (!response.accepted) {
         throw new Error(response.error || 'Failed to create local project')
       }
-      response.roots.forEach(clearRemoteProjectSyncRemoval)
+      clearRemoteProjectSyncRemoval({
+        deviceId: response.deviceId,
+        projectKey: response.projectKey,
+      })
       await refreshWorkLists()
       return {
         id: runtimeProjectUiId({
@@ -294,35 +327,86 @@ export function useWorkbenchProjectActions({
   )
 
   const updateLocalRuntimeProject = useCallback(
-    async (data: {
-      deviceId: string
-      projectKey: string
-      name: string
-      roots: string[]
-      defaultProjectSpace: RuntimeProjectSpaceRef | null
-      aiSettings: RuntimeProjectAiSettings | null
-    }) => {
-      const response = await executorClient.runtime.upsertLocalRuntimeProject({
-        ...data,
-        runtime: 'codex',
-      })
-      if (!response.accepted) {
-        const message = response.error || 'Failed to update local project'
-        dispatch({ type: 'error_set', error: message })
-        throw new Error(message)
+    async (data: ProjectEditingSave) => {
+      const device = findWorkbenchDevice(state.devices, data.deviceId)
+      if (!device || (device.status !== 'online' && device.status !== 'busy')) {
+        throw new Error(t('workbench.project_device_offline_settings'))
       }
-      response.roots.forEach(clearRemoteProjectSyncRemoval)
-      dispatch({
-        type: 'runtime_local_project_updated',
-        projectKey: response.projectKey,
-        name: response.name,
-        roots: response.roots,
-        defaultProjectSpace: response.defaultProjectSpace ?? null,
-        aiSettings: response.aiSettings ?? null,
+      const deviceRevision = projectEditingDeviceRevision(device)
+      const ensureSameRuntime = () => {
+        if (
+          projectEditingDeviceRevision(
+            findWorkbenchDevice(currentDevicesRef.current, data.deviceId)
+          ) !== deviceRevision
+        ) {
+          throw new Error(t('workbench.project_runtime_changed'))
+        }
+      }
+      const existing = findOwnedRuntimeProject(
+        getRuntimeWorkSnapshot(),
+        device,
+        data.projectKey,
+        state.devices
+      )
+      if (!existing) throw new Error(t('workbench.project_owner_unresolved'))
+      const update = await saveProjectOnOwningRuntime(data, {
+        device,
+        devices: state.devices,
+        projectWork: existing,
+        runtime: executorClient.runtime,
+        pluginApi: services.projectDevicePluginApi?.(data.deviceId),
+        ensureSameRuntime,
+        onRejected: message => dispatch({ type: 'error_set', error: message }),
+        messages: {
+          upgrade: t('workbench.project_settings_upgrade_required'),
+          plugins: t('workbench.project_plugins_upgrade_required'),
+          rejected: t('workbench.project_save_verification_failed'),
+          mismatch: t('workbench.project_save_verification_failed'),
+        },
       })
+      updateRuntimeProject(update)
+      await (async () => {
+        clearRemoteProjectSyncRemoval({ deviceId: data.deviceId, projectKey: data.projectKey })
+        const readLocalIdentity = services.getLocalRuntimeSidebarIdentity
+        if (!readLocalIdentity || !state.runtimeWork) return
+        const identity = await readLocalIdentity()
+        if (!identity) return
+        if (device.runtime_instance_id === identity.runtimeInstanceId) return
+        await enqueueRemoteProjectStateMutation(async () => {
+          assertLocalRuntimeSidebarIdentity(identity, await readLocalIdentity())
+          const currentWork = getRuntimeWorkSnapshot()
+          if (!currentWork) throw new Error('Project list is unavailable')
+          const projects = getRemoteProjectRegistrations(identity)
+          const sync = await executorClient.runtime.syncRuntimeRemoteProjects(
+            { deviceId: identity.deviceId, projects },
+            { localSidebarIdentity: identity }
+          )
+          if (!sync.accepted) throw new Error(sync.error || 'Failed to sync project settings')
+        })
+      })().catch(error => {
+        throw new Error(
+          t('workbench.project_saved_sync_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
+      })
+
       await refreshWorkLists()
     },
-    [clearRemoteProjectSyncRemoval, dispatch, executorClient, refreshWorkLists]
+    [
+      clearRemoteProjectSyncRemoval,
+      dispatch,
+      enqueueRemoteProjectStateMutation,
+      executorClient,
+      getRemoteProjectRegistrations,
+      getRuntimeWorkSnapshot,
+      refreshWorkLists,
+      state.devices,
+      state.runtimeWork,
+      services,
+      t,
+      updateRuntimeProject,
+    ]
   )
 
   const removeListedRuntimeProject = useCallback(
@@ -334,9 +418,12 @@ export function useWorkbenchProjectActions({
       )
       if (!runtimeWorkspace) return false
 
-      const runtimeProject = state.runtimeWork?.projects.find(
+      const projectWork = state.runtimeWork?.projects.find(
         item => runtimeProjectUiId(item.project) === projectId
-      )?.project
+      )
+      if (!projectWork) return false
+      const runtimeProject = projectWork.project
+      const syncTarget = getRuntimeProjectSyncTarget(projectWork)
       const removesOfflineRemoteProject =
         !runtimeWorkspace.available && isRemoteRuntimeWorkspace(runtimeWorkspace)
       const removePrimaryProject = () =>
@@ -359,7 +446,7 @@ export function useWorkbenchProjectActions({
           throw new Error(message)
         }
       }
-      invalidateRemoteProjectSync(runtimeWorkspace.workspacePath)
+      invalidateRemoteProjectSync(syncTarget)
       if (
         runtimeProject?.sidebarStateKey &&
         runtimeProject.stateDeviceId &&
@@ -381,7 +468,7 @@ export function useWorkbenchProjectActions({
             throw new Error(response.error || 'Failed to remove runtime workspace')
           }
         } catch (error) {
-          clearRemoteProjectSyncRemoval(runtimeWorkspace.workspacePath)
+          clearRemoteProjectSyncRemoval(syncTarget)
           const message =
             error instanceof Error ? error.message : 'Failed to remove runtime workspace'
           dispatch({ type: 'error_set', error: message })
@@ -456,7 +543,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
-      invalidateRemoteProjectSync(standaloneWorkspacePath)
+      invalidateRemoteProjectSync({
+        deviceId: standaloneDeviceId,
+        projectKey: standaloneRuntimeProjectKey(standaloneWorkspacePath),
+      })
       markRuntimeProjectRemoved(projectId, {
         deviceId: standaloneDeviceId,
         workspacePath: standaloneWorkspacePath,
@@ -671,7 +761,8 @@ export function useWorkbenchProjectActions({
           executorClient.commands,
           project,
           message,
-          workspaceTarget
+          workspaceTarget,
+          createCommitMessageGenerator(services)
         )
         track('feature_action_completed', { domain: 'git', action: 'commit' })
         return result
@@ -680,7 +771,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient]
+    [executorClient, services]
   )
 
   const commitAndPushEnvironmentChanges = useCallback(
@@ -694,7 +785,8 @@ export function useWorkbenchProjectActions({
           executorClient.commands,
           project,
           message,
-          workspaceTarget
+          workspaceTarget,
+          createCommitMessageGenerator(services)
         )
         track('feature_action_completed', { domain: 'git', action: 'commit_push' })
         return result
@@ -703,7 +795,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient]
+    [executorClient, services]
   )
 
   const pushEnvironmentChanges = useCallback(

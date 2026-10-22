@@ -40,7 +40,6 @@ from app.schemas.work_queue import (
     QueueMessageStatus,
     QueueMessageStatusUpdate,
     RecentContactsListResponse,
-    UnreadCountResponse,
     UserPublicQueuesResponse,
     WorkQueueCreate,
     WorkQueueListResponse,
@@ -84,15 +83,6 @@ async def list_work_queues(
     """List all work queues for the current user."""
     queues = work_queue_service.list_queues(current_user.id)
     return WorkQueueListResponse(items=queues, total=len(queues))
-
-
-@router.get("/messages/unread-count", response_model=UnreadCountResponse)
-async def get_unread_message_count(
-    current_user: User = Depends(security.get_current_user),
-):
-    """Get unread message count across all queues."""
-    total, by_queue = queue_message_service.get_unread_counts(current_user.id)
-    return UnreadCountResponse(total=total, byQueue=by_queue)
 
 
 @router.get("/{queue_id}", response_model=WorkQueueResponse)

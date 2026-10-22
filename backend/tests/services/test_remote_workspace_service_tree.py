@@ -15,6 +15,14 @@ def test_list_tree_rejects_parent_escape():
 
     with (
         patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
+        patch.object(service, "_get_sandbox_payload", return_value=None),
+        patch.object(
+            service, "_resolve_workspace_base_url", return_value="http://runtime"
+        ),
+        patch(
+            "app.services.remote_workspace_service.resolve_executor_workspace_root",
+            return_value="/srv/workspaces/demo-12345678",
+        ),
         pytest.raises(HTTPException) as exc,
     ):
         service.list_tree(db=Mock(), task_id=1, user_id=100, path="/workspace/../etc")
@@ -62,7 +70,7 @@ def test_list_tree_allows_workspace_subpath():
     assert result.entries[0].name == "main.py"
 
 
-def test_list_tree_allows_executor_runtime_fallback():
+def test_list_tree_uses_resolved_executor_workspace_root():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
     task_detail = {
         "subtasks": [
@@ -72,7 +80,7 @@ def test_list_tree_allows_executor_runtime_fallback():
     list_dir_payload = [
         {
             "name": "src",
-            "path": "/workspace/src",
+            "path": "/srv/workspaces/demo-12345678/src",
             "is_directory": True,
             "size": 0,
             "modified_at": "2026-03-11T10:00:00Z",
@@ -82,6 +90,10 @@ def test_list_tree_allows_executor_runtime_fallback():
     with (
         patch.object(service, "_get_task_detail", return_value=task_detail),
         patch.object(service, "_get_sandbox_payload", return_value=None),
+        patch(
+            "app.services.remote_workspace_service.resolve_executor_workspace_root",
+            return_value="/srv/workspaces/demo-12345678",
+        ),
         patch.object(
             service,
             "_get_executor_payload",
@@ -93,10 +105,10 @@ def test_list_tree_allows_executor_runtime_fallback():
             db=Mock(),
             task_id=1,
             user_id=100,
-            path="/workspace",
+            path=None,
         )
 
-    assert result.path == "/workspace/1"
+    assert result.path == "/srv/workspaces/demo-12345678"
     assert len(result.entries) == 1
     assert result.entries[0].name == "src"
 
@@ -111,7 +123,7 @@ def test_list_tree_normalizes_numeric_modified_at_from_executor_runtime():
     list_dir_payload = [
         {
             "name": ".claude",
-            "path": "/workspace/1/.claude",
+            "path": "/srv/workspaces/demo-12345678/.claude",
             "is_directory": True,
             "size": 0,
             "modified_at": 1782725199,
@@ -121,6 +133,10 @@ def test_list_tree_normalizes_numeric_modified_at_from_executor_runtime():
     with (
         patch.object(service, "_get_task_detail", return_value=task_detail),
         patch.object(service, "_get_sandbox_payload", return_value=None),
+        patch(
+            "app.services.remote_workspace_service.resolve_executor_workspace_root",
+            return_value="/srv/workspaces/demo-12345678",
+        ),
         patch.object(
             service,
             "_get_executor_payload",
@@ -132,7 +148,7 @@ def test_list_tree_normalizes_numeric_modified_at_from_executor_runtime():
             db=Mock(),
             task_id=1,
             user_id=100,
-            path="/workspace",
+            path=None,
         )
 
     assert result.entries[0].modified_at == "2026-06-29T09:26:39Z"

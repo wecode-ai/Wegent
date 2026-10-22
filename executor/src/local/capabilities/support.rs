@@ -403,6 +403,7 @@ fn ensure_plugin_hook_executable(
     Ok(())
 }
 
+#[cfg(unix)]
 fn is_plugin_hook_path(path: &Path) -> bool {
     path.components().next().is_some_and(|component| {
         component
@@ -789,7 +790,7 @@ pub(super) fn plugin_codex_link_name(spec: &PluginSyncSpec) -> String {
 pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), CapabilitySyncError> {
     if link.exists() || link.is_symlink() {
         if link.is_symlink() || link.is_file() {
-            fs::remove_file(link)?;
+            crate::directory_link::remove(link)?;
         } else {
             fs::remove_dir_all(link)?;
         }
@@ -825,7 +826,7 @@ fn symlink_dir(target: &Path, link: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 fn symlink_dir(target: &Path, link: &Path) -> io::Result<()> {
-    std::os::windows::fs::symlink_dir(target, link)
+    crate::directory_link::create(target, link)
 }
 
 pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
@@ -845,7 +846,7 @@ pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Cap
 
 pub(super) fn remove_existing_path(path: &Path) -> Result<(), CapabilitySyncError> {
     if path.is_symlink() || path.is_file() {
-        match fs::remove_file(path) {
+        match crate::directory_link::remove(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),

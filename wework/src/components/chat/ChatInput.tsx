@@ -1,3 +1,4 @@
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
@@ -56,6 +57,8 @@ import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/mo
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
+import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -145,7 +148,8 @@ export interface ProjectWorkControls {
 }
 
 export interface ChatInputProps {
-  presentation?: 'chat' | 'document'
+  predictionAddress?: RuntimeTaskAddress | null
+  presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -159,6 +163,7 @@ export interface ChatInputProps {
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
+  allowEmptySubmit?: boolean
   error?: string | null
   disabledReason?: string
   placeholder?: string
@@ -168,6 +173,7 @@ export interface ChatInputProps {
   submitLabel?: string
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   projectPhrases?: QuickPhrase[]
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
@@ -253,7 +259,7 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 function codexConversationProvider(
   model: UnifiedModel | null | undefined
 ): 'openai' | 'router' | null {
-  if (!model) return null
+  if (!model || model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) return null
   const configuredKind =
     typeof model.config?.weworkModelKind === 'string'
       ? model.config.weworkModelKind
@@ -274,7 +280,33 @@ function requiresNewConversationForModelSwitch(
   return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
+  function ChatInput(props, ref) {
+    return (
+      <ReplyPredictionProvider
+        address={
+          props.predictionAddress === undefined
+            ? props.projectWork?.currentRuntimeTask
+            : props.predictionAddress
+        }
+        blocked={
+          props.disabled ||
+          props.isStreaming ||
+          Boolean(
+            props.projectChat?.attachments.length ||
+            props.projectChat?.uploadingFiles.size ||
+            props.codeComments?.length ||
+            props.projectChat?.selectedSkills.length
+          )
+        }
+      >
+        <ChatInputBody {...props} ref={ref} />
+      </ReplyPredictionProvider>
+    )
+  }
+)
+
+const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInputBody(
   {
     value,
     presentation,
@@ -287,6 +319,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     pluginPickerIconOnly = false,
     submitDisabled = false,
     requireText = false,
+    allowEmptySubmit = false,
     error,
     disabledReason,
     placeholder,
@@ -296,6 +329,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     submitLabel,
     variant = 'compact',
     collapseWhenIdle = false,
+    alwaysShowComposerToolbar = false,
     projectPhrases,
     projectChat,
     projectWork,
@@ -429,8 +463,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   )?.project
   const projectQuickPhrases =
     projectPhrases ??
-    (currentRuntimeProject?.source === 'local_project'
-      ? (currentRuntimeProject.aiSettings?.quickPhrases ?? [])
+    (isDeviceRuntimeProject(currentRuntimeProject)
+      ? (currentRuntimeProject?.aiSettings?.quickPhrases ?? [])
       : [])
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const editor = composerRef.current
@@ -563,6 +597,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabled,
     submitDisabled,
     requireText,
+    allowEmptySubmit,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,
@@ -746,6 +781,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
+            alwaysShowComposerToolbar={alwaysShowComposerToolbar}
             inputLeadingContext={inputLeadingContext}
             onDismissInputLeadingContext={onDismissInputLeadingContext}
             toolbarLeadingContext={toolbarLeadingContext}
@@ -825,6 +861,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
+          modelSelectorOverride={modelSelectorOverride}
           isStreaming={isStreaming}
           onPause={onPause}
           projectPhrases={projectQuickPhrases}

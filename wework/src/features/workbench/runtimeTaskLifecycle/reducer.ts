@@ -31,8 +31,14 @@ export function reduceRuntimeTaskLifecycle(
         (!isTerminalTaskStatus(state.task?.status) ||
           event.task.status !== state.task?.status ||
           completionAdvanced)
+      const awaitingContinuationAdmission =
+        state.executionPhase === 'starting' &&
+        state.task !== null &&
+        isRuntimeTaskAuthoritativeCompletion(state.task)
       const snapshotConfirmsSettlement =
         terminalStatus &&
+        // A terminal snapshot cannot settle an unresolved admission request.
+        !awaitingContinuationAdmission &&
         (!hasIdentifiedActiveTurn || completionAdvanced) &&
         (expectedRunning !== true || terminalSnapshotAdvanced)
       const transitionMismatch =
@@ -70,11 +76,13 @@ export function reduceRuntimeTaskLifecycle(
       const activeTurnId =
         queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
       const hasInteractionStatus = Object.hasOwn(event.task, 'interactionStatus')
-      const interactionStatus = terminalStatus
-        ? null
-        : hasInteractionStatus
-          ? (event.task.interactionStatus ?? null)
-          : state.interactionStatus
+      const snapshotInteractionStatus = hasInteractionStatus
+        ? (event.task.interactionStatus ?? null)
+        : state.interactionStatus
+      const interactionStatus =
+        terminalStatus && snapshotInteractionStatus !== 'awaitingUserReply'
+          ? null
+          : snapshotInteractionStatus
 
       const nextState: RuntimeTaskLifecycleState = {
         ...state,
@@ -83,6 +91,10 @@ export function reduceRuntimeTaskLifecycle(
         executionPhase,
         turnPhase,
         activeTurnId,
+        latestTurnId:
+          typeof event.task.runtimeHandle?.lastTurnId === 'string'
+            ? event.task.runtimeHandle.lastTurnId
+            : state.latestTurnId,
         interactionStatus,
         goalStatus:
           event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
@@ -107,7 +119,8 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'submitting',
         turnOutcome: null,
         expectedExecutorRunning: true,
-        interactionStatus: null,
+        interactionStatus:
+          state.interactionStatus === 'awaitingUserReply' ? state.interactionStatus : null,
         unread: false,
       }
 
@@ -210,6 +223,7 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'streaming',
         turnOutcome: null,
         activeTurnId: event.turnId ?? null,
+        latestTurnId: event.turnId ?? state.latestTurnId,
         expectedExecutorRunning: true,
         unread: false,
       }
@@ -223,6 +237,7 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
+        latestTurnId: event.turnId ?? state.activeTurnId ?? state.latestTurnId,
         expectedExecutorRunning: null,
       }
     }
@@ -235,6 +250,7 @@ export function reduceRuntimeTaskLifecycle(
             turnPhase: 'streaming',
             turnOutcome: null,
             activeTurnId: event.turnId ?? null,
+            latestTurnId: event.turnId ?? state.latestTurnId,
             expectedExecutorRunning: true,
           }
         : state
@@ -242,21 +258,27 @@ export function reduceRuntimeTaskLifecycle(
     case 'user_input_requested':
       return {
         ...state,
-        executionPhase: 'running',
-        interactionStatus: 'waitingForUserInput',
-        expectedExecutorRunning: true,
+        ...(event.delivery === 'async'
+          ? { interactionStatus: 'awaitingUserReply' as const }
+          : {
+              executionPhase: 'running' as const,
+              interactionStatus: 'waitingForUserInput' as const,
+              expectedExecutorRunning: true,
+            }),
       }
 
     case 'user_input_responded':
       return state.interactionStatus === null
         ? state
-        : {
-            ...state,
-            interactionStatus: null,
-            executionPhase: 'running',
-            turnPhase: state.turnPhase === 'idle' ? 'awaiting' : state.turnPhase,
-            expectedExecutorRunning: true,
-          }
+        : state.interactionStatus === 'awaitingUserReply'
+          ? { ...state, interactionStatus: null }
+          : {
+              ...state,
+              interactionStatus: null,
+              executionPhase: 'running',
+              turnPhase: state.turnPhase === 'idle' ? 'awaiting' : state.turnPhase,
+              expectedExecutorRunning: true,
+            }
 
     case 'goal_status_received': {
       const goalJustSettled =
@@ -270,7 +292,8 @@ export function reduceRuntimeTaskLifecycle(
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
-            interactionStatus: null,
+            interactionStatus:
+              state.interactionStatus === 'awaitingUserReply' ? state.interactionStatus : null,
             goalStatus: event.goalStatus,
             hasAuthoritativeGoalStatus: true,
             expectedExecutorRunning: false,

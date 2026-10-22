@@ -19,7 +19,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -33,7 +32,6 @@ from app.models.user import User
 from app.schemas.kind import Bot, Task, Team, resolve_model_category
 from app.schemas.openapi_response import (
     ResponseCreateInput,
-    ResponseDeletedObject,
     ResponseError,
     ResponseObject,
 )
@@ -381,6 +379,54 @@ async def _persist_terminal_failure(
     )
 
 
+async def _resolve_continuation_device_id(
+    *,
+    db: Session,
+    user: User,
+    task: TaskResource,
+) -> Optional[str]:
+    """Resolve the device runtime a follow-up response must be dispatched to.
+
+    A conversation started on a device runs through the device Runtime and its
+    assistant subtask carries a ``device-*`` executor name. Reusing that name
+    while dispatching through the Kubernetes executor manager fails with
+    "Executor is deleted. Please create a new session.", so device bound tasks
+    have to be routed back to the device Runtime.
+    """
+    from app.services.chat.task_device_resolution import resolve_task_device_id
+    from app.services.device_service import device_service
+
+    device_id = resolve_task_device_id(db, user_id=user.id, task=task)
+    if not device_id:
+        return None
+
+    online_info = await device_service.get_device_online_info(user.id, device_id)
+    if not online_info:
+        logger.warning(
+            "[OPENAPI] Continuation device is offline: caller_user_id=%s, "
+            "task_id=%s, device_id=%s",
+            user.id,
+            task.id,
+            device_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Device '{device_id}' is offline. Bring the device online and "
+                "retry, or start a new conversation."
+            ),
+        )
+
+    logger.info(
+        "[OPENAPI] Continuation routed to device: caller_user_id=%s, "
+        "task_id=%s, device_id=%s",
+        user.id,
+        task.id,
+        device_id,
+    )
+    return device_id
+
+
 @router.post("")
 @limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 @trace_async(
@@ -463,6 +509,7 @@ async def create_response(
     # Determine task_id from previous_response_id if provided
     task_id = None
     previous_task_id = None
+    previous_task = None
     if request_body.previous_response_id:
         # Extract task_id from resp_{task_id} format
         if request_body.previous_response_id.startswith("resp_"):
@@ -487,6 +534,20 @@ async def create_response(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Previous response '{request_body.previous_response_id}' not found",
                 )
+            previous_task = existing_task
+
+    # A follow-up runs on the same runtime as the previous turn. Device
+    # conversations are executed by the device Runtime, so the device recorded
+    # on the task has to reach the dispatcher. Without it the dispatcher falls
+    # back to the executor manager, which cannot host the inherited
+    # ``device-*`` executor.
+    device_id = None
+    if previous_task is not None:
+        device_id = await _resolve_continuation_device_id(
+            db=db,
+            user=current_user,
+            task=previous_task,
+        )
 
     # Verify team exists and user has access
     team = kindReader.get_by_name_and_namespace(
@@ -615,6 +676,7 @@ async def create_response(
             task_id=task_id,
             api_key_name=api_key_name,
             auto_delete_executor=auto_delete_executor,
+            device_id=device_id,
         )
     else:
         # Non-streaming mode: background or sync
@@ -630,6 +692,7 @@ async def create_response(
             api_key_name=api_key_name,
             auto_delete_executor=auto_delete_executor,
             background=request_body.background,
+            device_id=device_id,
         )
 
 
@@ -645,6 +708,7 @@ async def _create_non_streaming_response_unified(
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
     background: bool = False,
+    device_id: Optional[str] = None,
 ) -> ResponseObject:
     """Create non-streaming response using unified trigger architecture.
 
@@ -657,7 +721,6 @@ async def _create_non_streaming_response_unified(
     import asyncio
 
     from app.db.session import SessionLocal
-    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
@@ -804,7 +867,11 @@ async def _create_non_streaming_response_unified(
             subtask_id=execution_request.subtask_id,
         )
         dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=emitter)
+            execution_dispatcher.dispatch(
+                execution_request,
+                device_id=device_id,
+                emitter=emitter,
+            )
         )
         accumulated_content, final_event = await emitter.collect()
         dispatch_error = None
@@ -832,8 +899,12 @@ async def _create_non_streaming_response_unified(
         finally:
             query_db.close()
 
-    # Check if SSE mode is supported
-    supports_sse = execution_dispatcher.supports_streaming(execution_request)
+    # Check if SSE mode is supported. Device dispatch always streams its events
+    # through the execution callback channel, never through a direct SSE
+    # connection, so target devices always take the non-SSE path.
+    supports_sse = (
+        execution_dispatcher.supports_streaming(execution_request) and not device_id
+    )
     background = _should_run_in_background(
         requested_background=background,
         execution_request=execution_request,
@@ -843,7 +914,11 @@ async def _create_non_streaming_response_unified(
     if not supports_sse:
         _close_db()
         asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=None)
+            execution_dispatcher.dispatch(
+                execution_request,
+                device_id=device_id,
+                emitter=None,
+            )
         )
         logger.info(
             f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
@@ -972,7 +1047,7 @@ async def _create_non_streaming_response_unified(
 @trace_async(
     span_name="openapi.streaming_response",
     tracer_name="backend.openapi",
-    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None: {
+    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None, device_id=None: {
         "task.id": str(task_id) if task_id else "new",
         "user.id": str(user.id),
         "team.name": model_info.get("team_name"),
@@ -980,6 +1055,7 @@ async def _create_non_streaming_response_unified(
         "model.id": model_info.get("model_id", "default"),
         "stream.enabled": True,
         "task.auto_delete_executor": auto_delete_executor or "default",
+        "task.device_id": device_id or "",
     },
 )
 async def _create_streaming_response_unified(
@@ -993,6 +1069,7 @@ async def _create_streaming_response_unified(
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
+    device_id: Optional[str] = None,
 ) -> StreamingResponse:
     """Create streaming response using unified trigger architecture.
 
@@ -1043,6 +1120,7 @@ async def _create_streaming_response_unified(
     # Extract data needed for streaming before closing db
     user_id = user.id
     user_name = user.user_name
+    team_owner_user_id = team.user_id
 
     current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
     inherited_kb_refs = _get_inherited_knowledge_base_refs(
@@ -1149,6 +1227,32 @@ async def _create_streaming_response_unified(
         task_id=task_kind_id,
     )
 
+    if not execution_dispatcher.supports_streaming(execution_request):
+        target = execution_dispatcher.router.route(
+            execution_request, device_id=device_id
+        )
+        shell_type = (
+            execution_request.bot[0].get("shell_type", "Chat")
+            if execution_request.bot
+            else "Chat"
+        )
+        logger.warning(
+            "[OPENAPI] Non-SSE streaming request: "
+            "caller_user_id=%s, caller_username=%s, team_owner_user_id=%s, "
+            "team_namespace=%s, team_name=%s, api_key_name=%s, "
+            "shell_type=%s, route_mode=%s, task_id=%d, subtask_id=%d",
+            user_id,
+            user_name,
+            team_owner_user_id,
+            model_info.get("namespace"),
+            model_info.get("team_name"),
+            api_key_name,
+            shell_type,
+            target.mode.value,
+            task_kind_id,
+            assistant_subtask_id,
+        )
+
     @trace_async_generator(
         span_name="openapi.raw_chat_stream",
         tracer_name="backend.openapi",
@@ -1163,7 +1267,6 @@ async def _create_streaming_response_unified(
 
         from app.services.execution.emitters import SSEResultEmitter
         from app.services.openapi.streaming import StreamingChunk
-        from shared.models import ExecutionEvent
 
         accumulated_content = ""
         accumulated_reasoning = ""
@@ -1205,7 +1308,12 @@ async def _create_streaming_response_unified(
                 },
             )
 
-            is_sse = execution_dispatcher.supports_streaming(execution_request)
+            # Device dispatch reports its events through the execution callback
+            # channel, so a device target is never handled by the SSE emitter.
+            is_sse = (
+                execution_dispatcher.supports_streaming(execution_request)
+                and not device_id
+            )
             add_span_event(
                 "sse.mode_determined",
                 {
@@ -1225,21 +1333,30 @@ async def _create_streaming_response_unified(
                     subtask_id=execution_request.subtask_id,
                 )
                 dispatch_task = asyncio.create_task(
-                    execution_dispatcher.dispatch(execution_request, emitter=emitter)
+                    execution_dispatcher.dispatch(
+                        execution_request,
+                        device_id=device_id,
+                        emitter=emitter,
+                    )
                 )
             else:
                 # HTTP+Callback mode (ClaudeCode/Agno/Dify): subscribe to Redis
                 # pub/sub channel; the /internal/callback handler publishes events
-                pubsub_redis_client, pubsub_obj = (
-                    await session_manager.subscribe_callback_channel(
-                        assistant_subtask_id
-                    )
+                (
+                    pubsub_redis_client,
+                    pubsub_obj,
+                ) = await session_manager.subscribe_callback_channel(
+                    assistant_subtask_id
                 )
                 if pubsub_redis_client is None:
                     raise RuntimeError("Failed to subscribe to callback stream channel")
                 # Fire-and-forget; executor sends events back via /internal/callback
                 asyncio.create_task(
-                    execution_dispatcher.dispatch(execution_request, emitter=None)
+                    execution_dispatcher.dispatch(
+                        execution_request,
+                        device_id=device_id,
+                        emitter=None,
+                    )
                 )
 
             async def _iter_events():
@@ -1622,96 +1739,6 @@ async def _create_streaming_response_unified(
     )
 
 
-@router.get("/{response_id}", response_model=WeworkResponseObject | ResponseObject)
-@limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
-async def get_response(
-    request: Request,
-    response_id: str,
-    stream: bool = False,
-    starting_after: int | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
-):
-    """
-    Retrieve a response by ID.
-
-    Args:
-        response_id: Response ID in format "resp_{task_id}"
-
-    Returns:
-        ResponseObject with current status and output
-    """
-    if is_wework_response_id(response_id):
-        user = wework_api.current_api_user(request, db)
-        return await wework_api.get_response(
-            response_id, stream, starting_after, db, user
-        )
-
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'. Expected format: 'resp_{{task_id}}'",
-        )
-
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task detail
-    try:
-        task_dict = task_kinds_service.get_task_by_id(
-            db, task_id=task_id, user_id=current_user.id
-        )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
-            )
-        raise
-
-    # Get subtasks for output
-    subtasks = subtask_store.list_by_task_for_user_ordered(
-        db,
-        task_id=task_id,
-        user_id=current_user.id,
-    )
-
-    # Reconstruct model string from task team reference
-    task_kind = task_store.get_task_by_states(
-        db,
-        task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
-    )
-
-    model_string = "unknown"
-    omit_mcp_binary_output = False
-    if task_kind and task_kind.json:
-        task_crd = Task.model_validate(task_kind.json)
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-        labels = task_crd.metadata.labels or {}
-        model_id = labels.get("modelId")
-        omit_mcp_binary_output = labels.get("omitMcpBinaryOutput") == "true"
-        if model_id:
-            model_string = f"{team_namespace}#{team_name}#{model_id}"
-        else:
-            model_string = f"{team_namespace}#{team_name}"
-
-    return _task_to_response_object(
-        task_dict,
-        model_string,
-        subtasks=subtasks,
-        omit_mcp_binary_output=omit_mcp_binary_output,
-    )
-
-
 @router.post(
     "/{response_id}/cancel", response_model=WeworkResponseObject | ResponseObject
 )
@@ -1741,7 +1768,7 @@ async def cancel_response(
         user = wework_api.current_api_user(request, db)
         return await wework_api.cancel_response(response_id, db, user)
 
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
@@ -1915,93 +1942,3 @@ async def cancel_response(
         subtasks=subtasks,
         omit_mcp_binary_output=omit_mcp_binary_output,
     )
-
-
-@router.delete("/{response_id}", response_model=ResponseDeletedObject)
-@limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
-async def delete_response(
-    request: Request,
-    response_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
-):
-    """
-    Delete a response.
-
-    For Chat Shell type tasks with running streams, this will stop the model request
-    before deleting.
-
-    Args:
-        response_id: Response ID in format "resp_{task_id}"
-
-    Returns:
-        ResponseDeletedObject confirming deletion
-    """
-    from app.services.chat.storage import session_manager
-
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task to check if it's a Chat Shell type with running stream
-    task_kind = task_store.get_task_by_states(
-        db,
-        task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
-    )
-
-    if task_kind:
-        # Check if this is a Chat Shell task (source="chat_shell")
-        task_crd = Task.model_validate(task_kind.json)
-        source_label = (
-            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
-        )
-        is_chat_shell = source_label == "chat_shell"
-
-        if is_chat_shell:
-            # For Chat Shell tasks, stop any running stream before deleting
-            running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
-                db,
-                task_id=task_id,
-                user_id=current_user.id,
-                statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
-            )
-
-            if running_subtask:
-                logger.info(
-                    f"[DELETE] Stopping running stream before delete: task_id={task_id}, subtask_id={running_subtask.id}"
-                )
-                # Cancel the stream (this sets the cancel event)
-                await session_manager.cancel_stream(running_subtask.id)
-                # Clean up streaming content from Redis
-                await session_manager.delete_streaming_content(running_subtask.id)
-                await session_manager.unregister_stream(running_subtask.id)
-                logger.info(f"[DELETE] Stream stopped for subtask {running_subtask.id}")
-
-    try:
-        task_kinds_service.delete_task(
-            db,
-            task_id=task_id,
-            user_id=current_user.id,
-        )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
-            )
-        raise
-
-    return ResponseDeletedObject(id=response_id)

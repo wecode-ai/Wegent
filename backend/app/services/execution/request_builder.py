@@ -32,6 +32,10 @@ from app.services.execution.git_credentials import (
     classify_git_auth_transport,
     extract_git_domain,
 )
+from app.services.execution.provider_guidance import (
+    apply_provider_configuration_guidance,
+    build_provider_configuration_prompt,
+)
 from app.services.execution.skill_generation import (
     apply_skill_generation_to_skills,
 )
@@ -55,7 +59,8 @@ from app.services.skill_resolution import (
     find_skill_by_name,
     find_skill_by_ref,
 )
-from app.services.user_mcp_service import user_mcp_service
+from app.services.user_mcp_oauth import is_secure_mcp_url, user_mcp_oauth_service
+from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
 from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
@@ -67,8 +72,6 @@ WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 SYSTEM_RESOURCE_USER_ID = 0
 BOARD_WEGENT_TASK_SOURCES = {
     "project_automation",
-    "board_team_assignment",
-    "board_team_continuation",
 }
 BOARD_MCP_GUIDANCE = """
 <wegent_board_runtime>
@@ -548,18 +551,13 @@ class TaskRequestBuilder:
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
         fork_runtime = self._extract_task_fork_runtime(task)
         fork_sessions = self._extract_inherited_sessions(fork_runtime)
-        persisted_sessions: list[dict[str, Any]] = []
-        if getattr(subtask, "executor_deleted_at", False):
-            persisted_sessions = self._extract_persisted_sessions(
-                subtask_store.list_assistant_by_task(
-                    self.db,
-                    task_id=task.id,
-                    owner_user_id=user.id,
-                )
-            )
-        inherited_sessions = self._merge_inherited_sessions(
-            fork_sessions,
-            persisted_sessions,
+        inherited_sessions, legacy_session_bindings = self._build_session_context(
+            task=task,
+            user=user,
+            bot_configs=bot_config,
+            fork_sessions=fork_sessions,
+            executor_deleted=getattr(subtask, "executor_deleted_at", False),
+            new_session=new_session,
         )
 
         execution_request = ExecutionRequest(
@@ -615,6 +613,7 @@ class TaskRequestBuilder:
             new_session=new_session,
             fork_runtime=fork_runtime,
             inherited_sessions=inherited_sessions,
+            legacy_session_bindings=legacy_session_bindings,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             task_mode=self._derive_task_mode(task),
@@ -629,6 +628,7 @@ class TaskRequestBuilder:
             executor_name=getattr(subtask, "executor_name", None),
             executor_namespace=getattr(subtask, "executor_namespace", None),
         )
+        apply_provider_configuration_guidance(execution_request)
         logger.info(
             "[TaskRequestBuilder] Execution request attachment diagnostics: "
             "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d, "
@@ -691,6 +691,82 @@ class TaskRequestBuilder:
         if not isinstance(sessions, list):
             return []
         return [session for session in sessions if isinstance(session, dict)]
+
+    def _build_session_context(
+        self,
+        *,
+        task: TaskResource,
+        user: User,
+        bot_configs: list[dict[str, Any]],
+        fork_sessions: list[dict[str, Any]],
+        executor_deleted: bool,
+        new_session: bool,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        needs_bindings = (
+            not new_session
+            and task.user_id == user.id
+            and any(
+                config.get("shell_type") in {"Codex", "ClaudeCode"}
+                for config in bot_configs
+            )
+        )
+        persisted = []
+        if executor_deleted or needs_bindings:
+            persisted = self._extract_persisted_sessions(
+                subtask_store.list_assistant_by_task(
+                    self.db, task_id=task.id, owner_user_id=user.id
+                )
+            )
+        inherited = self._merge_inherited_sessions(
+            fork_sessions, persisted if executor_deleted else []
+        )
+        bindings = (
+            self._build_legacy_session_bindings(task, user, bot_configs, persisted)
+            if needs_bindings
+            else []
+        )
+        return inherited, bindings
+
+    @staticmethod
+    def _build_legacy_session_bindings(
+        task: TaskResource,
+        user: User,
+        bot_configs: list[dict[str, Any]],
+        persisted_sessions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if task.user_id != user.id:
+            return []
+        engines = {
+            "Codex": ("codex", "threadId"),
+            "ClaudeCode": ("claudecode", "sessionId"),
+        }
+        allowed = {
+            (str(config.get("id")), engines[config["shell_type"]][0]): engines[
+                config["shell_type"]
+            ][1]
+            for config in bot_configs
+            if config.get("shell_type") in engines
+            and str(config.get("id", "")).isascii()
+            and str(config.get("id", "")).isdigit()
+            and int(config["id"]) > 0
+        }
+        bindings = []
+        # Owner filtering cannot authenticate historical writes retroactively.
+        for session in persisted_sessions:
+            engine = str(session.get("agent", "")).replace(" ", "").lower()
+            key = allowed.get((str(session.get("botId")), engine))
+            session_id = session.get(key) if key else None
+            if (
+                not isinstance(session_id, str)
+                or not session_id
+                or not all(
+                    char.isascii() and (char.isalnum() or char in "-_")
+                    for char in session_id
+                )
+            ):
+                continue
+            bindings.append({**session, "task_id": task.id, "user_id": user.id})
+        return bindings
 
     @staticmethod
     def _extract_persisted_sessions(subtasks: list[Any]) -> list[dict[str, Any]]:
@@ -785,6 +861,7 @@ class TaskRequestBuilder:
             if skill_name not in existing_skill_names
         ]
         if not missing_skill_names:
+            apply_provider_configuration_guidance(request)
             return request
 
         if not request.task_data:
@@ -849,6 +926,7 @@ class TaskRequestBuilder:
         request.user_selected_skills = resolved_user_selected
         request.skill_refs = skill_refs
         request.preload_skill_refs = preload_skill_refs
+        apply_provider_configuration_guidance(request)
 
         if not request.bot:
             return request
@@ -1158,6 +1236,19 @@ class TaskRequestBuilder:
         if runtime_model_config:
             return dict(runtime_model_config)
 
+        policy = (bot.json or {}).get("spec", {}).get("model_policy")
+        if policy is not None:
+            from app.schemas.runner_routing import ModelPolicy
+            from app.services.runner_cloud_models import fixed_model_config
+            from app.services.runner_routing import routing_error
+
+            selected = ModelPolicy.model_validate(policy)
+            if selected.mode != "fixed":
+                raise routing_error(
+                    "RUNNER_MODEL_REQUIRED", "Choose a model before running this agent"
+                )
+            return fixed_model_config(self.db, user_id, selected.model)
+
         from app.services.chat.config.model_resolver import (
             _process_model_config_placeholders,
             get_model_config_for_bot,
@@ -1269,6 +1360,7 @@ class TaskRequestBuilder:
             Secondary model configuration dictionary or None if not configured
         """
         from app.services.chat.config.model_resolver import (
+            PublicModelAccessDeniedError,
             _extract_model_config,
             _find_model_with_namespace,
             _process_model_config_placeholders,
@@ -1287,9 +1379,21 @@ class TaskRequestBuilder:
         model_name = secondary_model_ref.name
 
         # Find the secondary model
-        model_kind, model_spec = _find_model_with_namespace(
-            self.db, model_name, user_id
-        )
+        try:
+            model_kind, model_spec = _find_model_with_namespace(
+                self.db, model_name, user_id
+            )
+        except PublicModelAccessDeniedError:
+            # The bot's secondary model became whitelist-restricted after it was
+            # configured. For this user it is unusable, so report it exactly like
+            # a model that no longer exists and skip the auxiliary config.
+            logger.warning(
+                "[TaskRequestBuilder] Secondary model '%s' is restricted to "
+                "whitelisted users for user_id=%s; treating it as not found",
+                model_name,
+                user_id,
+            )
+            return None
 
         if not model_spec:
             logger.warning(
@@ -1593,15 +1697,8 @@ class TaskRequestBuilder:
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
 
-                    # Build skill_refs entry (prefer Ghost stored refs for precision)
-                    if ghost_skill_ref:
-                        ref_meta = ghost_skill_ref.model_dump()
-                        ref_meta["content_hash"] = ref_meta.get("content_hash") or (
-                            build_skill_ref_meta(skill).get("content_hash")
-                        )
-                        skill_refs[skill_name] = ref_meta
-                    else:
-                        skill_refs[skill_name] = build_skill_ref_meta(skill)
+                    # The Ghost selects identity; the current Skill supplies its version.
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     # Add to preload and user_selected if configured in Ghost
                     # All preloaded skills are treated as user-selected so the model
@@ -1611,12 +1708,18 @@ class TaskRequestBuilder:
                         user_selected_skills.append(skill_name)
                         ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
                         if ghost_preload_ref:
-                            # Preload explicit reference overrides same-name skill ref
-                            ref_meta = ghost_preload_ref.model_dump()
-                            ref_meta["content_hash"] = ref_meta.get("content_hash") or (
-                                build_skill_ref_meta(skill).get("content_hash")
+                            preload_skill = (
+                                skill
+                                if ghost_preload_ref.skill_id == skill.id
+                                else self._find_attached_skill_by_ref(
+                                    skill_name, skill_id=ghost_preload_ref.skill_id
+                                )
                             )
-                            skill_refs[skill_name] = ref_meta
+                            if preload_skill is None:
+                                raise ValueError(
+                                    f"Preloaded Skill not found: {skill_name}"
+                                )
+                            skill_refs[skill_name] = build_skill_ref_meta(preload_skill)
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,
@@ -1919,13 +2022,16 @@ class TaskRequestBuilder:
 
                 if not configured_server:
                     skill_data.pop("mcpServers", None)
-                    skill_data["prompt"] = (
-                        self._build_unconfigured_provider_skill_prompt(
-                            skill_data.get("prompt"),
-                            provider_id=provider["provider_id"],
-                            provider_display_name=provider["display_name"],
-                            service=service,
-                        )
+                    skill_data["configuration_required"] = True
+                    skill_data["prompt"] = build_provider_configuration_prompt(
+                        provider, service
+                    )
+                elif user:
+                    self._apply_user_mcp_oauth_header(
+                        skill_data,
+                        user=user,
+                        provider_id=provider["provider_id"],
+                        service=service,
                     )
 
         if skill_crd.spec.tools:
@@ -1948,43 +2054,85 @@ class TaskRequestBuilder:
 
         return skill_data
 
-    @staticmethod
-    def _build_unconfigured_provider_skill_prompt(
-        existing_prompt: str | None,
+    def _apply_user_mcp_oauth_header(
+        self,
+        skill_data: dict[str, Any],
         *,
+        user: User,
         provider_id: str,
-        provider_display_name: str,
         service: dict[str, Any],
-    ) -> str:
-        """Build a guidance-only prompt when a provider skill is not configured."""
-        display_name = service.get("display_name") or service["service_id"]
-        modal_link = (
-            f"wegent://modal/mcp-provider-config?provider={provider_id}"
-            f"&service={service['service_id']}"
+    ) -> None:
+        """Attach an OAuth bearer header to an OAuth-authorized provider MCP.
+
+        Personal StreamableHttp URLs carry their own credential, so only the
+        OAuth mode needs an injected Authorization header.
+        """
+        servers = skill_data.get("mcpServers")
+        if not isinstance(servers, dict):
+            return
+        service_id = str(service.get("service_id") or "")
+        server_name = str(service.get("server_name") or "")
+        legacy_server_name = server_name.replace("_", "-")
+        server = servers.get(server_name)
+        if server is None:
+            # Older public Skills used hyphenated provider server names. Keep
+            # OAuth working while those deployed Skill assets are upgraded.
+            server = servers.get(legacy_server_name)
+        if not isinstance(server, dict):
+            logger.warning(
+                "[MCP-OAUTH] Provider MCP server not found for %s/%s: "
+                "expected %s or %s",
+                provider_id,
+                service_id,
+                server_name,
+                legacy_server_name,
+            )
+            return
+
+        if (
+            user_mcp_service.get_service_auth_mode(
+                getattr(user, "preferences", None), provider_id, service_id
+            )
+            != MCP_AUTH_MODE_OAUTH
+        ):
+            return
+
+        config = user_mcp_service.get_provider_service_config(
+            getattr(user, "preferences", None), provider_id, service_id
+        )
+        if not is_secure_mcp_url(str(config.get("url") or "")):
+            logger.warning(
+                "[MCP-OAUTH] Refusing to attach an OAuth bearer header over an "
+                "insecure transport for %s/%s",
+                provider_id,
+                service_id,
+            )
+            return
+
+        access_token = user_mcp_oauth_service.ensure_access_token_sync(
+            self.db,
+            user=user,
+            provider_id=provider_id,
+            service_id=service_id,
+        )
+        if not access_token:
+            logger.warning(
+                "[MCP-OAUTH] No usable access token for %s/%s; "
+                "the provider skill will start unauthenticated",
+                provider_id,
+                service_id,
+            )
+            return
+
+        logger.info(
+            "[MCP-OAUTH] Attached bearer authorization for %s/%s",
+            provider_id,
+            service_id,
         )
 
-        guidance_prompt = f"""
-## Configuration Required
-
-The current session does not have a usable {display_name} MCP configured.
-
-Required behavior:
-- Do not pretend to access {provider_display_name} data or local files for this request.
-- Tell the user that {display_name} MCP is not available in the current session.
-- Ask the user to click [打开{display_name} MCP 配置弹窗]({modal_link}) to finish configuration.
-- Keep the guidance brief. If the user asks how to get the URL, direct them to the provider MCP page for this service.
-
-Response template:
-当前会话还没有可用的{display_name} MCP，所以我现在不能直接访问{provider_display_name}能力。
-
-请先点击 [打开{display_name} MCP 配置弹窗]({modal_link}) 完成配置。
-
-配置完成后，再让我继续处理你的{provider_display_name}请求。
-""".strip()
-
-        if existing_prompt:
-            return f"{existing_prompt.rstrip()}\n\n{guidance_prompt}"
-        return guidance_prompt
+        headers = dict(server.get("headers") or {})
+        headers["Authorization"] = f"Bearer {access_token}"
+        server["headers"] = headers
 
     # =========================================================================
     # Bot Configuration Building
@@ -2052,7 +2200,6 @@ Response template:
 
         bot_configs = []
         for bot, member in bot_members:
-
             bot_crd = Bot.model_validate(bot.json)
             bot_spec = bot_crd.spec
 
@@ -2646,15 +2793,16 @@ Response template:
         Each skill may declare mcpServers in dict format. This converts them
         to list format. When the skill name already matches the server name,
         keep the bare server name so tool calls can reference the natural MCP
-        server identifier without an extra prefix. Otherwise use a stable
-        seven-character Skill code and a server name capped at 24 characters.
+        server identifier without an extra prefix. Otherwise keep readable
+        names when they fit, using a stable seven-character Skill code for
+        longer names. Server names are capped at 24 characters.
 
         Args:
             skill_configs: List of resolved skill config dicts
 
         Returns:
             List of MCP server dicts in list format:
-            [{"name": "skillCode_serverName", "type": "...", "url": "...", ...}]
+            [{"name": "skillName_serverName", "type": "...", "url": "...", ...}]
         """
         result = extract_skill_mcp_servers(skill_configs)
         for entry in result:
@@ -3114,11 +3262,18 @@ Response template:
         """
         from app.services.auth import create_task_token
 
+        task_json = task.json if isinstance(task.json, dict) else {}
+        metadata = task_json.get("metadata")
+        labels = metadata.get("labels") if isinstance(metadata, dict) else {}
+        labels = labels if isinstance(labels, dict) else {}
         return create_task_token(
             task_id=task.id,
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
+            dispatch_id=str(labels.get("dispatchId") or "") or None,
+            dispatch_role=str(labels.get("dispatchRole") or "") or None,
+            manager_agent_id=str(labels.get("managerAgentId") or "") or None,
         )
 
     def _generate_skill_identity_token(

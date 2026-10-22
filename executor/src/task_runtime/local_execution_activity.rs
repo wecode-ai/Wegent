@@ -8,9 +8,28 @@ pub(super) fn create_local_execution(
     agent_id: &str,
     agent: &LoopItem,
     priority: &str,
-    payload: Value,
+    mut payload: Value,
 ) -> Result<i64, TaskRuntimeError> {
     let metadata = &agent.metadata;
+    if metadata
+        .get("routing_configuration_required")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "RUNNER_CONFIGURATION_REQUIRED: review the migrated agent policies".into(),
+        ));
+    }
+    if metadata
+        .get("execution_policy")
+        .is_some_and(|policy| !policy.is_null())
+    {
+        if !payload.is_object() {
+            payload = json!({});
+        }
+        payload["runnerPolicy"] = json!({"execution_policy":metadata["execution_policy"], "model_policy":metadata["model_policy"], "runtime":metadata["runtime"]});
+    }
+
     let mode = metadata
         .get("execution_mode")
         .and_then(Value::as_str)
@@ -30,6 +49,7 @@ pub(super) fn create_local_execution(
     } else {
         None
     };
+    let execution_scope = local_execution_scope(item_id, &payload);
     connection.execute(
         "INSERT INTO loop_item_executions (
             loop_item_id, cloud_project_id, agent_id, execution_environment,
@@ -42,10 +62,14 @@ pub(super) fn create_local_execution(
             project_id,
             agent_id,
             environment,
-            agent
-                .metadata
-                .get("execution_device_id")
-                .and_then(Value::as_str),
+            if metadata
+                .get("execution_policy")
+                .is_some_and(|v| !v.is_null())
+            {
+                None
+            } else {
+                metadata.get("execution_device_id").and_then(Value::as_str)
+            },
             status,
             priority_weight(priority),
             now,
@@ -55,12 +79,24 @@ pub(super) fn create_local_execution(
             } else {
                 Some(payload.to_string())
             },
-            format!("project_robot:{item_id}"),
+            execution_scope,
         ],
     )?;
     let execution_id = connection.last_insert_rowid();
     create_execution_comment(connection, execution_id, "pending", "")?;
     Ok(execution_id)
+}
+
+fn local_execution_scope(item_id: &str, payload: &Value) -> String {
+    if payload.get("dispatch_role").and_then(Value::as_str) == Some("member")
+        && payload
+            .get("coordination_round_id")
+            .and_then(Value::as_str)
+            .is_some_and(|round_id| !round_id.trim().is_empty())
+    {
+        return String::new();
+    }
+    format!("project_robot:{item_id}")
 }
 
 pub(super) fn insert_task_binding(
@@ -103,11 +139,24 @@ pub(super) fn create_execution_comment(
     let execution = execution_row(connection, execution_id)?;
     let payload = execution.execution_payload.as_ref().unwrap_or(&Value::Null);
     let trigger = payload.get("trigger_message_id").and_then(Value::as_str);
+    let workflow_task_title = payload
+        .get("workflow_task_title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&execution.task_title);
     let mut metadata = json!({
         "execution_id": execution_id,
         "previous_execution_id": execution.previous_execution_id,
         "trigger_message_id": trigger,
+        "dispatch_id": payload.get("dispatch_id"),
+        "dispatch_role": payload.get("dispatch_role"),
+        "coordination_round_id": payload.get("coordination_round_id"),
+        "coordination_manager_execution_id": payload.get("coordination_manager_execution_id"),
+        "assignment_id": payload.get("assignment_id"),
+        "dispatch_assignments": [],
         "workflow_node_id": payload.get("workflow_node_id"),
+        "workflow_task_title": workflow_task_title,
+        "automation_run_id": payload.get("automation_run_id"),
     });
     if let (Some(device), Some(task)) = (&execution.runtime_device_id, &execution.runtime_task_id) {
         metadata["runtime_address"] = json!({"deviceId": device, "taskId": task});
@@ -165,6 +214,14 @@ pub(super) fn ensure_execution_binding(
         .and_then(|payload| payload.get("workflow_node_id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
+    let task_title = execution
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("workflow_task_title"))
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&execution.task_title)
+        .to_owned();
     let metadata = json!({"project_id": execution.cloud_project_id,
         "execution_id": execution_id, "workflow_node_id": node});
     insert_task_binding(
@@ -174,9 +231,10 @@ pub(super) fn ensure_execution_binding(
         &RuntimeTaskAddress {
             device_id: device.clone(),
             task_id: task.clone(),
-            task_title: Some(execution.task_title),
+            task_title: Some(task_title),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: node,
         },
         &metadata,
@@ -234,6 +292,38 @@ pub(super) fn repair_missing_execution_activity(
 }
 
 impl LocalTaskStore {
+    pub fn update_execution_binding_runtime(
+        &self,
+        execution_id: i64,
+        execution_context: Option<&Value>,
+        model_selection: Option<&Value>,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(execution_context) = execution_context {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET metadata=json_set(COALESCE(metadata, '{}'), '$.execution_context', json(?1)),
+                     updated_at=?2
+                 WHERE resource_type='execution' AND unlinked_at IS NULL
+                   AND json_extract(metadata,'$.execution_id')=?3",
+                params![execution_context.to_string(), now(), execution_id],
+            )?;
+        }
+        if let Some(model_selection) = model_selection {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET metadata=json_set(COALESCE(metadata, '{}'), '$.model_selection', json(?1)),
+                     updated_at=?2
+                 WHERE resource_type='execution' AND unlinked_at IS NULL
+                   AND json_extract(metadata,'$.execution_id')=?3",
+                params![model_selection.to_string(), now(), execution_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Persist progress only while the execution is active; late output cannot replace a result.
     pub fn update_execution_progress(
         &self,
@@ -258,15 +348,126 @@ impl LocalTaskStore {
         status: &str,
         content: &str,
     ) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        connection.execute(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let comment_context = transaction
+            .query_row(
+                "SELECT task_id, json_extract(metadata, '$.dispatch_role')
+                 FROM loop_item_comments
+                 WHERE deleted_at IS NULL AND status IN ('pending','streaming')
+                   AND json_extract(metadata,'$.runtime_address.taskId')=?1
+                 ORDER BY id DESC LIMIT 1",
+                params![runtime_task_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        transaction.execute(
             "UPDATE loop_item_comments SET content=?1,status=?2,updated_at=?3
              WHERE id=(SELECT id FROM loop_item_comments
                  WHERE deleted_at IS NULL AND status IN ('pending','streaming')
                    AND json_extract(metadata,'$.runtime_address.taskId')=?4
-                 ORDER BY id DESC LIMIT 1)",
+             ORDER BY id DESC LIMIT 1)",
             params![content, status, now(), runtime_task_id],
         )?;
+        if matches!(status, "completed" | "failed" | "cancelled" | "canceled") {
+            if let Some((task_id, dispatch_role)) = comment_context {
+                if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
+                    transaction.execute(
+                        "UPDATE loop_items
+                         SET status='in_review', completed_at=NULL,
+                             version=version+1, updated_at=?1
+                         WHERE id=?2 AND resource_type='task' AND status='in_progress'
+                           AND NOT EXISTS (
+                               SELECT 1 FROM loop_item_comments pending_comment
+                               WHERE pending_comment.task_id=?2
+                                 AND pending_comment.deleted_at IS NULL
+                                 AND pending_comment.status IN ('pending','streaming')
+                           )
+                           AND NOT EXISTS (
+                               SELECT 1 FROM loop_item_executions active_execution
+                               WHERE active_execution.loop_item_id=?2
+                                 AND active_execution.status IN (
+                                     'queued','pending_approval','claimed','running',
+                                     'cancel_requested'
+                                 )
+                           )",
+                        params![now(), task_id],
+                    )?;
+                }
+            }
+        }
+        transaction.commit()?;
         Ok(())
     }
+}
+
+pub(super) fn comment_execution_payload(
+    connection: &Connection,
+    trigger: &LocalComment,
+    agent_id: &str,
+    mut payload: Value,
+) -> Result<Value, TaskRuntimeError> {
+    if trigger.reply_to_message_id.is_none() {
+        return Ok(payload);
+    }
+    let previous: Option<String> = connection.query_row(
+        "SELECT metadata FROM loop_item_comments
+         WHERE project_id=?1 AND task_id=?2 AND (thread_root_message_id=?3 OR message_id=?3) AND sender_type='agent'
+           AND sender_id=?4 AND deleted_at IS NULL
+         ORDER BY id DESC LIMIT 1",
+        params![trigger.project_id, trigger.task_id, trigger.thread_root_message_id, agent_id], |row| row.get(0),
+    ).optional()?;
+    let previous: Value = serde_json::from_str(&previous.ok_or_else(|| {
+        TaskRuntimeError::Invalid("The thread has no resumable execution".into())
+    })?)
+    .map_err(|_| TaskRuntimeError::Invalid("Invalid thread execution metadata".into()))?;
+    let task_id = if let Some(execution_id) = previous["execution_id"].as_i64() {
+        let execution = execution_row(connection, execution_id)?;
+        let task_id = execution
+            .runtime_task_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .or_else(|| {
+                execution
+                    .execution_payload
+                    .as_ref()
+                    .and_then(|value| value["continueTaskId"].as_str())
+            })
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid("The thread execution has not been claimed yet".into())
+            })?
+            .to_owned();
+        payload = execution.execution_payload.ok_or_else(|| {
+            TaskRuntimeError::Invalid("The thread execution configuration is unavailable".into())
+        })?;
+        task_id
+    } else {
+        // Pre-queue comments persist their session through a TaskBinding.
+        let address = &previous["runtime_address"];
+        let device = address["deviceId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| TaskRuntimeError::Invalid("The thread runner is unavailable".into()))?;
+        let task = address["taskId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| TaskRuntimeError::Invalid("The thread session is unavailable".into()))?;
+        let bound: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='execution' AND cloud_project_id=?1 AND loop_item_id=?2 AND device_id=?3 AND task_id=?4)",
+            params![trigger.project_id, trigger.task_id, device, task], |row| row.get(0),
+        )?;
+        if !bound {
+            return Err(TaskRuntimeError::Invalid(
+                "ISSUE_RUNNER_CONFLICT: the historical session is not bound to this Issue".into(),
+            ));
+        }
+        payload["resumeEnvironmentId"] = json!(device);
+        task.to_owned()
+    };
+    payload["message"] = json!(trigger.content);
+    payload["continueTaskId"] = json!(task_id);
+    payload["runtimeAction"] = json!("send");
+    payload["queueIfBusy"] = json!(true);
+    payload["clientUserMessageId"] = json!(trigger.message_id);
+    Ok(payload)
 }

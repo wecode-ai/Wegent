@@ -2,6 +2,8 @@
 sidebar_position: 34
 ---
 
+Core DSH and newly created Smart apps default to `0.2.0-rc.2`; existing apps can still select `0.1.0-rc.8` through their manifests. Client slot services now come from `@deepseek-ai/dsh-client-ui-renderer` instead of `dsh-client-runtime`. The new DSH native module loader requires a matching Electron runtime fingerprint, so Wework pins the supported Electron `44.7.0`.
+
 # Wework DSH UI Plugins
 
 Core DSH is the only plugin runtime for the Wework desktop UI.
@@ -100,7 +102,10 @@ The plugin package must declare the Wework host as a DSH client dependency:
 {
   "dsh": {
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-runtime", "@wegent/dsh-app-wework"],
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@wegent/dsh-app-wework"
+      ],
       "platform": "web"
     }
   }

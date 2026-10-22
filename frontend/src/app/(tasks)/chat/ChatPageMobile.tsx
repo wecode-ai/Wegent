@@ -18,7 +18,6 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useDevices } from '@/contexts/DeviceContext'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamEditExtension } from '@/features/tasks/hooks/useTeamEditExtension'
 import { useToast } from '@/hooks/use-toast'
@@ -31,10 +30,6 @@ import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/comp
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 import { resolveChatPageTaskType } from '@/utils/taskRouting'
-
-const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
-  ssr: false,
-})
 
 const TeamEditDialog = dynamic(() => import('@/features/settings/components/TeamEditDialog'), {
   ssr: false,
@@ -161,8 +156,6 @@ export function ChatPageMobile() {
   // Create group chat dialog state
   const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false)
 
-  // Search dialog state (controlled from page level for global shortcut support)
-  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
   const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
 
   // Toast for notifications
@@ -243,16 +236,6 @@ export function ChatPageMobile() {
     }, [refreshTasks, refreshSelectedTaskDetail]),
   })
 
-  // Toggle search dialog callback
-  const toggleSearchDialog = useCallback(() => {
-    setIsSearchDialogOpen(prev => !prev)
-  }, [])
-
-  // Global search shortcut hook
-  const { shortcutDisplayText } = useSearchShortcut({
-    onToggle: toggleSearchDialog,
-  })
-
   const handleShareButtonRender = (button: React.ReactNode) => {
     setShareButton(button)
   }
@@ -293,9 +276,6 @@ export function ChatPageMobile() {
         pageType="chat"
         isCollapsed={false}
         onToggleCollapsed={() => {}}
-        isSearchDialogOpen={isSearchDialogOpen}
-        onSearchDialogOpenChange={setIsSearchDialogOpen}
-        shortcutDisplayText={shortcutDisplayText}
       />
 
       {/* Main content area */}
@@ -357,15 +337,6 @@ export function ChatPageMobile() {
         <CreateGroupChatDialog
           open={isCreateGroupChatOpen}
           onOpenChange={setIsCreateGroupChatOpen}
-        />
-      )}
-      {/* Search Dialog - rendered at page level for global shortcut support */}
-      {isSearchDialogOpen && (
-        <SearchDialog
-          open={isSearchDialogOpen}
-          onOpenChange={setIsSearchDialogOpen}
-          shortcutDisplayText={shortcutDisplayText}
-          pageType="chat"
         />
       )}
       {rightPanelRequest && (

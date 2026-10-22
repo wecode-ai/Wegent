@@ -786,9 +786,9 @@ class TestKnowledgeServiceDeleteDocument:
 
         with (
             patch(
-                "app.services.rag.gateway_factory.get_delete_gateway",
+                "app.services.rag.gateway_factory.get_rag_gateway",
                 return_value=mock_gateway,
-            ) as mock_get_delete_gateway,
+            ) as mock_get_rag_gateway,
             patch(
                 "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
                 return_value=delete_runtime_spec,
@@ -801,7 +801,7 @@ class TestKnowledgeServiceDeleteDocument:
             )
 
         assert result.success is True
-        mock_get_delete_gateway.assert_called_once()
+        mock_get_rag_gateway.assert_called_once()
         mock_build_delete_runtime_spec.assert_called_once_with(
             db=test_db,
             knowledge_base_id=test_knowledge_base.id,

@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
@@ -52,8 +53,6 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
-    RuntimeIMNotificationPresenceResponse,
-    RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
     RuntimeModelSelection,
@@ -102,7 +101,6 @@ from app.services.device.runtime_rpc_service import (
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import (
-    IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
     im_session_service,
 )
 from app.services.object_storage import object_storage_presign_service
@@ -515,7 +513,18 @@ async def get_runtime_transcript(
         raise HTTPException(
             502, "Runtime transcript response is missing canonical turns"
         )
-    return RuntimeTranscriptResponse.model_validate(result)
+    try:
+        return RuntimeTranscriptResponse.model_validate(result)
+    except ValidationError as exc:
+        logger.error(
+            "[RuntimeWork] Invalid transcript response: device_id=%s task_id=%s fields=%s",
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            [error["loc"] for error in exc.errors()],
+        )
+        raise HTTPException(
+            502, "Runtime returned an invalid conversation response"
+        ) from exc
 
 
 async def search_runtime_work(
@@ -937,24 +946,6 @@ async def update_global_im_notification(
     return await get_im_notification_settings(db=db, user_id=user_id)
 
 
-async def update_im_notification_presence(
-    *,
-    user_id: int,
-    request: RuntimeIMNotificationPresenceUpdateRequest,
-) -> RuntimeIMNotificationPresenceResponse:
-    """Refresh Wework foreground presence for away-only global IM delivery."""
-
-    away = await im_session_service.update_im_notification_presence(
-        user_id=user_id,
-        client_id=request.client_id,
-        away=request.away,
-    )
-    return RuntimeIMNotificationPresenceResponse(
-        away=away,
-        ttlSeconds=IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
-    )
-
-
 async def subscribe_runtime_task_im_notification(
     *,
     db: Session,
@@ -1370,7 +1361,6 @@ async def create_runtime_task(
     )
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
-        request=request,
         compiled=compiled,
     )
 
@@ -1378,7 +1368,6 @@ async def create_runtime_task(
 async def _dispatch_compiled_runtime_task(
     *,
     user_id: int,
-    request: RuntimeTaskCreateRequest,
     compiled: CompiledRuntimeTaskCreate,
 ) -> RuntimeTaskCreateResponse:
     """Dispatch one already compiled runtime task."""
@@ -1398,7 +1387,7 @@ async def _dispatch_compiled_runtime_task(
         ) from exc
     response = _runtime_create_response(
         result,
-        request.runtime,
+        compiled.payload["runtime"],
         compiled.target.device_id,
         compiled.target.workspace_path,
         compiled.target.workspace_source,
@@ -1416,6 +1405,7 @@ def compile_runtime_task_create(
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
+    execution_user_id: int | None = None,
 ) -> CompiledRuntimeTaskCreate:
     """Compile a create request for a Backend-owned Executor target."""
 
@@ -1423,7 +1413,7 @@ def compile_runtime_task_create(
     _ensure_owned_device(db, user_id, target.device_id)
     return _compile_runtime_task_create(
         db=db,
-        user_id=user_id,
+        user_id=execution_user_id if execution_user_id is not None else user_id,
         request=request,
         target=target,
     )
@@ -1488,8 +1478,15 @@ def _runtime_task_create_payload(
 ) -> dict[str, Any]:
     """Compile one validated create request into the Executor wire payload."""
 
+    runtime = request.runtime
+    bots = getattr(execution_request, "bot", [])
+    if request.wegent_team_id is not None and bots:
+        runtime = {
+            "Codex": "codex",
+            "ClaudeCode": "claude_code",
+        }.get(bots[0].get("shell_type"), runtime)
     payload: dict[str, Any] = {
-        "runtime": request.runtime,
+        "runtime": runtime,
         "message": request.message,
         "title": _runtime_task_title(request),
         "executionRequest": _runtime_execution_request_payload(execution_request),
@@ -1551,7 +1548,7 @@ def _runtime_task_create_payload(
         payload["initialSupervisor"] = _materialize_initial_supervisor(
             db=db,
             user_id=user_id,
-            runtime=request.runtime,
+            runtime=runtime,
             supervisor=request.initial_supervisor,
         )
     if request.side_source:
@@ -2503,7 +2500,12 @@ def _runtime_create_response(
         source_workspace_path=workspace_path,
         workspace_source=workspace_source,
     )
-    if workspace_source == "git_worktree" and response_workspace_path is None:
+    workspace_pending = result.get("workspacePending") is True
+    if (
+        workspace_source == "git_worktree"
+        and response_workspace_path is None
+        and not workspace_pending
+    ):
         error_code = _runtime_result_error_code(result) or "worktree_prepare_failed"
         return RuntimeTaskCreateResponse(
             accepted=False,
@@ -2518,7 +2520,9 @@ def _runtime_create_response(
             errorCode=error_code,
         )
 
-    resolved_workspace_path = response_workspace_path or workspace_path
+    resolved_workspace_path = (
+        "" if workspace_pending else response_workspace_path or workspace_path
+    )
     runtime_handle = result.get("runtimeHandle") or result.get("runtime_handle")
     if not isinstance(runtime_handle, dict):
         runtime_handle = None
@@ -2538,6 +2542,7 @@ def _runtime_create_response(
         deviceId=str(result.get("deviceId") or device_id),
         taskId=str(result.get("taskId") or ""),
         workspacePath=resolved_workspace_path,
+        workspacePending=workspace_pending,
         runtime=result.get("runtime") or runtime,
         runtimeHandle=runtime_handle,
         error=result.get("error"),
@@ -3828,11 +3833,12 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
         if address.workspace_path
         else None
     )
+    team_id = _runtime_address_team_id(address)
     return RuntimeTaskAddress(
         deviceId=address.device_id,
         workspacePath=workspace_path,
         localTaskId=address.local_task_id.strip(),
-        runtimeHandle=address.runtime_handle,
+        runtimeHandle={"wegentTeam": {"id": team_id}} if team_id is not None else None,
     )
 
 
@@ -4063,6 +4069,7 @@ def _resolve_runtime_task_target(
         request.standalone_chat_workspace
         or request.workspace_source_task
         or request.runtime_project_key
+        or isinstance((request.execution or {}).get("environment"), dict)
     ):
         requested_workspace = _request_execution_workspace(request)
         return RuntimeTaskTarget(
@@ -4146,7 +4153,9 @@ def _build_team_runtime_execution_request(
     from app.services.project_automation_domain import runnable_wegent_team
 
     user = _get_user(db, user_id)
-    team = runnable_wegent_team(db, user_id, team_id)
+    team = runnable_wegent_team(
+        db, user_id, team_id, project_id=request.cloud_project_id
+    )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
     message = _message_with_application_context(
@@ -4171,6 +4180,9 @@ def _build_team_runtime_execution_request(
         prompt=message,
         message_id=1,
     )
+    model_config, model_name, force_override = _runtime_model_override(
+        db, user_id, request
+    )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
         task=task,
@@ -4180,6 +4192,9 @@ def _build_team_runtime_execution_request(
         new_session=getattr(request, "new_session", True),
         preload_skills=list(request.additional_skills),
         attachments=_runtime_create_attachment_payloads(db, user_id, request),
+        runtime_model_config=request.runtime_model_config or model_config,
+        override_model_name=model_name,
+        force_override=force_override,
     )
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_create_request(execution_request, request)
@@ -4249,7 +4264,8 @@ def _build_direct_wework_runtime_execution_request(
     from app.services.auth import create_skill_identity_token, create_task_token
 
     user = _get_user(db, user_id)
-    task_id = request.local_task_id or str(_runtime_execution_ids()[0])
+    generated_task_id, subtask_id = _runtime_execution_ids()
+    task_id = request.local_task_id or str(generated_task_id)
     title = _runtime_task_title(request)
     runtime_model_config, _, _ = _runtime_model_override(
         db,
@@ -4258,9 +4274,26 @@ def _build_direct_wework_runtime_execution_request(
     )
     model_config = dict(request.runtime_model_config or runtime_model_config or {})
     first_bot = request.bot[0] if request.bot else {}
+    origin = request.origin if isinstance(request.origin, dict) else {}
+    auth_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=user.id,
+        user_name=user.user_name,
+        dispatch_id=str(origin.get("dispatchId") or origin.get("dispatch_id") or "")
+        or None,
+        dispatch_role=str(
+            origin.get("dispatchRole") or origin.get("dispatch_role") or ""
+        )
+        or None,
+        manager_agent_id=str(
+            origin.get("managerAgentId") or origin.get("manager_agent_id") or ""
+        )
+        or None,
+    )
     execution_request = ExecutionRequest(
         task_id=task_id,
-        subtask_id=f"{task_id}-assistant",
+        subtask_id=subtask_id,
         team_id=0,
         team_name="Wework",
         team_namespace="default",
@@ -4292,14 +4325,10 @@ def _build_direct_wework_runtime_execution_request(
         collaboration_model="single",
         mode="code",
         task_mode="code",
+        mcp_servers=[],
         preload_skills=list(request.additional_skills),
         attachments=[],
-        auth_token=create_task_token(
-            task_id=0,
-            subtask_id=0,
-            user_id=user.id,
-            user_name=user.user_name,
-        ),
+        auth_token=auth_token,
         skill_identity_token=create_skill_identity_token(
             user_id=user.id,
             user_name=user.user_name,
@@ -4333,7 +4362,6 @@ def _apply_runtime_create_request(
 
     if request.local_task_id:
         execution_request.task_id = request.local_task_id
-        execution_request.subtask_id = f"{request.local_task_id}-assistant"
     if request.bot:
         execution_request.bot = request.bot
         first_bot = request.bot[0] if request.bot else {}
@@ -4484,6 +4512,13 @@ def _runtime_model_override_values(
 ) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
     """Resolve one model selection without coupling it to a request container."""
 
+    runner_provider = model_options.get("runnerModelProvider")
+    if runner_provider:
+        return (
+            {"model_id": model_id, "model_provider": str(runner_provider)},
+            None,
+            False,
+        )
     if not model_id:
         return None, None, False
     if runtime == "codex" and model_type == RUNTIME_MODEL_TYPE:
@@ -4498,7 +4533,7 @@ def _runtime_model_override_values(
             user_id=user_id,
         )
         return config, None, False
-    if runtime == "codex" and model_type in CLOUD_MODEL_TYPES:
+    if runtime in {"codex", "claude_code"} and model_type in CLOUD_MODEL_TYPES:
         from app.services.chat.trigger.request_preparation import (
             _build_cloud_gateway_model_config,
         )
@@ -4518,6 +4553,10 @@ def _runtime_model_override_values(
                 detail="Cloud model gateway is not configured",
             )
         _apply_runtime_cloud_model_options(config, model_options)
+        if runtime == "claude_code":
+            config["default_headers"][
+                "X-Wegent-Upstream-Header-wecode-executor"
+            ] = "claude"
         return config, None, False
     if runtime == "codex" and model_type is None:
         # Centralized V1 adapter for persisted robot records created before
@@ -4664,13 +4703,17 @@ def _apply_runtime_cloud_model_options(
     config["native_tool_search"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
-        default=native_by_default,
+        default=config.get("native_tool_search", native_by_default),
     )
     config["native_namespace_tools"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
-        default=native_by_default,
+        default=config.get("native_namespace_tools", native_by_default),
     )
+    mode = config.get("codex_request_mode")
+    if mode in {"standard", "passthrough"}:
+        config["native_tool_search"] = mode == "passthrough"
+        config["native_namespace_tools"] = mode == "passthrough"
     context_window = _positive_int_model_option(
         model_options,
         CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
@@ -4727,8 +4770,11 @@ def _apply_runtime_model_options(
         _reasoning_from_model_options,
         _service_tier_from_model_options,
     )
+    from app.services.wework_model_config import merge_model_reasoning
 
-    reasoning_config = _reasoning_from_model_options(payload)
+    reasoning_config = merge_model_reasoning(
+        execution_request.model_config, _reasoning_from_model_options(payload)
+    )
     if reasoning_config:
         execution_request.model_config["reasoning"] = reasoning_config
     service_tier = _service_tier_from_model_options(payload)

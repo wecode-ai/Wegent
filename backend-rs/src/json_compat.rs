@@ -3,141 +3,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Typed projections and opaque values at legacy JSON boundaries.
-use serde::{Deserialize, Deserializer, de::IgnoredAny};
+use brz_json::{OpaqueJson, raw_json, raw_null};
 use serde_json::Value;
-
-/// Legacy presence-aware input field retained for downstream compatibility.
-/// Application models should use `Option<T>` and express response omission on
-/// their serializable fields.
-#[derive(Debug, Clone)]
-pub struct JsonField<T> {
-    pub present: bool,
-    pub value: Option<T>,
-}
-
-impl<T> Default for JsonField<T> {
-    fn default() -> Self {
-        Self {
-            present: false,
-            value: None,
-        }
-    }
-}
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonField<T> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Input<T> {
-            Typed(T),
-            Other(IgnoredAny),
-        }
-        let value = match Input::deserialize(deserializer)? {
-            Input::Typed(value) => Some(value),
-            Input::Other(_) => None,
-        };
-        Ok(Self {
-            present: true,
-            value,
-        })
-    }
-}
-
-/// Freeze an already validated JSON value for an opaque response field.
-/// The response can echo it without allowing further dictionary mutation.
-/// Missing fields are represented separately by the caller's `Option`.
-pub(crate) fn raw_json(value: &serde_json::Value) -> Box<serde_json::value::RawValue> {
-    serde_json::value::to_raw_value(value).expect("JSON value serializes")
-}
-
-/// Explicit JSON null for response models. This avoids making a field
-/// dynamically typed merely because its protocol value is always null.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct JsonNull;
-
-impl serde::Serialize for JsonNull {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_unit()
-    }
-}
-
-pub(crate) fn raw_null() -> Box<serde_json::value::RawValue> {
-    serde_json::value::to_raw_value(&JsonNull).expect("JSON null serializes")
-}
-
-/// Opaque persisted JSON that retains legacy decoding behavior.
-///
-/// Some selected columns have no schema in this service and are never inspected.
-/// Keep their JSON validated and stored as raw text. The transient value preserves
-/// the previous number validation; directly decoding `RawValue` would also accept
-/// numbers the old decoder rejected.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(transparent)]
-pub struct OpaqueJson(Box<serde_json::value::RawValue>);
-
-impl<'de> Deserialize<'de> for OpaqueJson {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        serde_json::Value::deserialize(deserializer).map(Self::from)
-    }
-}
-
-impl From<serde_json::Value> for OpaqueJson {
-    fn from(value: serde_json::Value) -> Self {
-        Self(raw_json(&value))
-    }
-}
-
-impl OpaqueJson {
-    pub fn from_serializable(value: impl serde::Serialize) -> Self {
-        Self(serde_json::value::to_raw_value(&value).expect("JSON value serializes"))
-    }
-
-    pub(crate) fn is_null(&self) -> bool {
-        self.0.get() == "null"
-    }
-
-    pub(crate) fn project<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
-        serde_json::from_str(self.0.get()).ok()
-    }
-
-    pub(crate) fn to_value(&self) -> serde_json::Value {
-        serde_json::from_str(self.0.get()).expect("opaque JSON remains valid")
-    }
-
-    pub(crate) fn to_raw_value(&self) -> Box<serde_json::value::RawValue> {
-        self.0.clone()
-    }
-
-    /// Whether this value is a JSON object with at least one key. This lets
-    /// callers select an opaque object without materializing a mutable tree.
-    pub(crate) fn is_nonempty_object(&self) -> bool {
-        serde_json::from_str::<std::collections::BTreeMap<String, IgnoredAny>>(self.0.get())
-            .is_ok_and(|object| !object.is_empty())
-    }
-}
 
 /// Serialize an optional opaque value at a response boundary. Input null and
 /// a missing input key are both represented as `None`; the response model
 /// chooses either a concrete default, JSON null, or field omission.
 pub(crate) trait OptionalOpaqueJsonExt {
-    fn raw_or(&self, default: impl serde::Serialize) -> Box<serde_json::value::RawValue>;
-    fn raw_option(&self) -> Option<Box<serde_json::value::RawValue>>;
-    fn raw_with_object_null_default(&self, key: &str) -> Box<serde_json::value::RawValue>;
+    fn raw_or(&self, default: impl serde::Serialize) -> brz_json::RawJson;
+    fn raw_option(&self) -> Option<brz_json::RawJson>;
+    fn raw_with_object_null_default(&self, key: &str) -> brz_json::RawJson;
 }
 
 impl OptionalOpaqueJsonExt for Option<OpaqueJson> {
-    fn raw_or(&self, default: impl serde::Serialize) -> Box<serde_json::value::RawValue> {
+    fn raw_or(&self, default: impl serde::Serialize) -> brz_json::RawJson {
         self.as_ref().map_or_else(
-            || serde_json::value::to_raw_value(&default).expect("JSON default serializes"),
+            || brz_json::to_raw_value(&default).expect("JSON default serializes"),
             OpaqueJson::to_raw_value,
         )
     }
 
-    fn raw_option(&self) -> Option<Box<serde_json::value::RawValue>> {
+    fn raw_option(&self) -> Option<brz_json::RawJson> {
         self.as_ref().map(OpaqueJson::to_raw_value)
     }
 
-    fn raw_with_object_null_default(&self, key: &str) -> Box<serde_json::value::RawValue> {
+    fn raw_with_object_null_default(&self, key: &str) -> brz_json::RawJson {
         let Some(value) = self.as_ref() else {
             return raw_null();
         };
@@ -151,39 +41,18 @@ impl OptionalOpaqueJsonExt for Option<OpaqueJson> {
     }
 }
 
-/// Read-only projection of a legacy JSON document. Decode the complete JSON
-/// first to retain number validation, then keep only the typed fields. Valid JSON
-/// of the wrong shape is an absent projection.
-#[derive(Debug, Clone)]
-pub(crate) struct JsonProjection<T> {
-    pub value: Option<T>,
-}
-impl<T: serde::de::DeserializeOwned> From<serde_json::Value> for JsonProjection<T> {
-    fn from(value: serde_json::Value) -> Self {
-        Self {
-            value: serde_json::from_value(value).ok(),
-        }
-    }
-}
-impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for JsonProjection<T> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        serde_json::Value::deserialize(deserializer).map(Self::from)
-    }
-}
-
-impl<T: serde::de::DeserializeOwned> JsonProjection<T> {
-    pub fn from_json(value: &serde_json::Value) -> Self {
-        Self {
-            value: T::deserialize(value).ok(),
-        }
-    }
-}
-
 /// Render one JSON string scalar like Python's `json.dumps` default
 /// (`ensure_ascii=True`): ASCII stays as-is (with the standard JSON
 /// escapes), non-ASCII becomes `\uXXXX` (surrogate pairs for astral
 /// characters).
 pub fn python_json_string(value: &str) -> String {
+    render_json_string(value, true)
+}
+
+/// Render one JSON string scalar like Python's `json.dumps(..., ensure_ascii=False)`:
+/// ASCII keeps the standard JSON escapes and every non-ASCII character stays
+/// literal.
+fn render_json_string(value: &str, ensure_ascii: bool) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for character in value.chars() {
@@ -199,6 +68,7 @@ pub fn python_json_string(value: &str) -> String {
                 out.push_str(&format!("\\u{:04x}", other as u32));
             }
             other if (other as u32) < 0x7f => out.push(other),
+            other if !ensure_ascii => out.push(other),
             other => {
                 let code = other as u32;
                 if code <= 0xffff {
@@ -226,18 +96,44 @@ pub fn python_json_string(value: &str) -> String {
 /// (`json.dumps` is its default serializer), and the rendering the cached
 /// kind reader applies to `model_to_dict` output.
 pub fn python_json_value(value: &Value) -> String {
+    render_json_value(value, true, false)
+}
+
+/// Apply SQLAlchemy's Python JSON serializer to a typed metadata document.
+pub fn python_json<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
+    serde_json::to_value(value).map(|value| python_json_value(&value))
+}
+
+/// Render a JSON value like `json.dumps(value, separators=(",", ":"))`
+/// (`ensure_ascii=True`): PyJWT's JWS payload encoder
+/// (`jwt/api_jws.py:encode`), which keeps the mapping insertion order and
+/// escapes non-ASCII the same way.
+pub fn python_json_compact(value: &Value) -> String {
+    render_json_value(value, true, true)
+}
+
+/// Render a JSON value like Python's `json.dumps(..., ensure_ascii=False)`
+/// (separators `", "` / `": "`, non-ASCII kept literal). The source's
+/// `_build_subtask_content_fields` applies it to non-string message content
+/// before the value is stored.
+pub fn python_json_value_no_ascii(value: &Value) -> String {
+    render_json_value(value, false, false)
+}
+
+fn render_json_value(value: &Value, ensure_ascii: bool, compact: bool) -> String {
+    let (item_separator, key_separator) = if compact { (",", ":") } else { (", ", ": ") };
     match value {
         Value::Null => "null".to_owned(),
         Value::Bool(flag) => flag.to_string(),
         Value::Number(number) => number.to_string(),
-        Value::String(text) => python_json_string(text),
+        Value::String(text) => render_json_string(text, ensure_ascii),
         Value::Array(items) => {
             let mut out = String::from("[");
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push_str(item_separator);
                 }
-                out.push_str(&python_json_value(item));
+                out.push_str(&render_json_value(item, ensure_ascii, compact));
             }
             out.push(']');
             out
@@ -246,11 +142,11 @@ pub fn python_json_value(value: &Value) -> String {
             let mut out = String::from("{");
             for (index, (key, item)) in map.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push_str(item_separator);
                 }
-                out.push_str(&python_json_string(key));
-                out.push_str(": ");
-                out.push_str(&python_json_value(item));
+                out.push_str(&render_json_string(key, ensure_ascii));
+                out.push_str(key_separator);
+                out.push_str(&render_json_value(item, ensure_ascii, compact));
             }
             out.push('}');
             out
@@ -258,13 +154,118 @@ pub fn python_json_value(value: &Value) -> String {
     }
 }
 
+/// Python truthiness (`bool(value)`) for a decoded JSON value: `None`,
+/// `False`, numeric zero, the empty string, and empty arrays/objects are
+/// falsy; every other value is truthy.
+pub fn python_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_none_or(|number| number != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
+/// Python `str(value)` for a decoded JSON value. Containers render through
+/// `repr()`, which is also what `str()` applies to their elements.
+pub fn python_str(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(_) | Value::Object(_) => python_repr(value),
+        other => python_scalar_repr(other),
+    }
+}
+
+/// Python `repr(value)` for a decoded JSON value.
+pub fn python_repr(value: &Value) -> String {
+    match value {
+        Value::String(text) => python_string_repr(text),
+        Value::Array(items) => {
+            let parts: Vec<String> = items.iter().map(python_repr).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Value::Object(map) => {
+            let parts: Vec<String> = map
+                .iter()
+                .map(|(key, value)| format!("{}: {}", python_string_repr(key), python_repr(value)))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        }
+        other => python_scalar_repr(other),
+    }
+}
+
+/// Python `repr()` of a JSON scalar: `None`, `True`, `False`, and decimals.
+/// Floats use Rust's shortest round-trip rendering, which matches Python's
+/// `repr()` for the common integral and fractional values (only the exponent
+/// spelling of extreme magnitudes can differ).
+fn python_scalar_repr(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_owned(),
+        Value::Bool(true) => "True".to_owned(),
+        Value::Bool(false) => "False".to_owned(),
+        Value::Number(number) => {
+            if let Some(signed) = number.as_i64() {
+                signed.to_string()
+            } else if let Some(unsigned) = number.as_u64() {
+                unsigned.to_string()
+            } else {
+                let float = number.as_f64().unwrap_or_default();
+                format!("{float:?}")
+            }
+        }
+        Value::String(text) => text.clone(),
+        Value::Array(_) | Value::Object(_) => python_repr(value),
+    }
+}
+
+/// Python's single-quoted string `repr()`: single quotes unless the text
+/// contains a single quote and no double quote.
+fn python_string_repr(text: &str) -> String {
+    if text.contains('\'') && !text.contains('"') {
+        format!("\"{text}\"")
+    } else {
+        format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn python_truthiness_matches_the_source_coercions() {
+        assert!(!python_truthy(&Value::Null));
+        assert!(!python_truthy(&json!(false)));
+        assert!(python_truthy(&json!(true)));
+        assert!(!python_truthy(&json!(0)));
+        assert!(!python_truthy(&json!(0.0)));
+        assert!(python_truthy(&json!(-1)));
+        assert!(!python_truthy(&json!("")));
+        assert!(python_truthy(&json!("0")));
+        assert!(!python_truthy(&json!([])));
+        assert!(!python_truthy(&json!({})));
+        assert!(python_truthy(&json!([null])));
+    }
+
+    #[test]
+    fn python_str_matches_the_source_coercions() {
+        assert_eq!(python_str(&Value::Null), "None");
+        assert_eq!(python_str(&json!(true)), "True");
+        assert_eq!(python_str(&json!(false)), "False");
+        assert_eq!(python_str(&json!(7)), "7");
+        assert_eq!(python_str(&json!(-3)), "-3");
+        assert_eq!(python_str(&json!("ok")), "ok");
+        assert_eq!(python_str(&json!(["a", 1])), "['a', 1]");
+        assert_eq!(python_str(&json!({"k": "v"})), "{'k': 'v'}");
+    }
 
     #[test]
     fn python_json_string_escapes_non_ascii() {
-        assert_eq!(python_json_string("严笑"), "\"\\u4e25\\u7b11\"");
+        assert_eq!(python_json_string("示例"), "\"\\u793a\\u4f8b\"");
         assert_eq!(python_json_string("a\"b\\c\n"), "\"a\\\"b\\\\c\\n\"");
         assert_eq!(python_json_string("\u{1f600}"), "\"\\ud83d\\ude00\"");
         assert_eq!(python_json_string("Chat"), "\"Chat\"");
@@ -288,35 +289,19 @@ mod tests {
     }
 
     #[test]
-    fn opaque_columns_keep_legacy_number_validation() {
-        for raw in [
-            "null",
-            "\"\"",
-            "{}",
-            "[]",
-            "1",
-            "1.0",
-            "-0.0",
-            "18446744073709551615",
-            r#"{"x":null,"nested":{"v":[]}}"#,
-            "1e400",
-            "invalid",
-        ] {
-            let old = serde_json::from_str::<serde_json::Value>(raw);
-            let new = serde_json::from_str::<OpaqueJson>(raw);
-            match (old, new) {
-                (Ok(old), Ok(new)) => assert_eq!(
-                    serde_json::to_string(&old).unwrap(),
-                    serde_json::to_string(&new).unwrap()
-                ),
-                (Err(old), Err(new)) => assert_eq!(old.to_string(), new.to_string()),
-                _ => panic!("opaque JSON decoding changed for {raw}"),
-            }
-        }
-    }
-    #[test]
-    fn explicit_null_serializes_as_json_null() {
-        assert_eq!(serde_json::to_string(&JsonNull).unwrap(), "null");
-        assert_eq!(raw_null().get(), "null");
+    fn python_json_compact_matches_the_jws_payload_separators() {
+        let value = serde_json::json!({
+            "iss": "wegent",
+            "aud": "example-audience",
+            "user_name": "示例",
+            "issuer_id": 402,
+            "enabled": true,
+            "missing": null
+        });
+        assert_eq!(
+            python_json_compact(&value),
+            "{\"iss\":\"wegent\",\"aud\":\"example-audience\",\"user_name\":\"\\u793a\\u4f8b\",\
+             \"issuer_id\":402,\"enabled\":true,\"missing\":null}"
+        );
     }
 }

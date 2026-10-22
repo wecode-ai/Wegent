@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
-    env, fs,
+    fs,
     io::Write,
     path::{Path, PathBuf},
     time::{Instant, SystemTime},
@@ -20,7 +19,6 @@ const MAX_TEXT_FILE_BYTES: usize = 256 * 1024;
 const MAX_BINARY_CHUNK_BYTES: usize = 512 * 1024;
 #[cfg(test)]
 const SOCKET_IO_MAX_PAYLOAD_BYTES: usize = 1_000_000;
-pub const WORKSPACE_ROOTS_ENV: &str = "WEGENT_WORKSPACE_ROOTS";
 
 pub fn is_workspace_file_command(command_key: &str) -> bool {
     matches!(
@@ -36,28 +34,20 @@ pub async fn execute_workspace_file_command(
     command_key: &str,
     path: Option<String>,
     args: Vec<String>,
-    env_values: HashMap<String, String>,
 ) -> CommandResult {
-    execute_workspace_file_command_with_input(command_key, path, args, env_values, None).await
+    execute_workspace_file_command_with_input(command_key, path, args, None).await
 }
 
 pub async fn execute_workspace_file_command_with_input(
     command_key: &str,
     path: Option<String>,
     args: Vec<String>,
-    env_values: HashMap<String, String>,
     stdin: Option<String>,
 ) -> CommandResult {
     let started_at = Instant::now();
     let command_key = command_key.to_owned();
     match tokio::task::spawn_blocking(move || {
-        execute_blocking(
-            &command_key,
-            path.as_deref(),
-            &args,
-            &env_values,
-            stdin.as_deref(),
-        )
+        execute_blocking(&command_key, path.as_deref(), &args, stdin.as_deref())
     })
     .await
     {
@@ -74,18 +64,15 @@ fn execute_blocking(
     command_key: &str,
     path: Option<&str>,
     args: &[String],
-    env_values: &HashMap<String, String>,
     stdin: Option<&str>,
 ) -> Result<Value, String> {
     let root = resolve_workspace_directory(path)?;
-    let allowed_roots = allowed_workspace_roots(env_values)?;
-    require_allowed_root(&root, &allowed_roots)?;
 
     match command_key {
         "workspace_tree" => list_entries(&root),
-        "workspace_read_text_file" => read_text_file(&root, &allowed_roots, args),
-        "workspace_read_file_chunk" => read_file_chunk(&root, &allowed_roots, args),
-        "workspace_write_text_file" => write_text_file(&root, &allowed_roots, args, stdin),
+        "workspace_read_text_file" => read_text_file(&root, args),
+        "workspace_read_file_chunk" => read_file_chunk(&root, args),
+        "workspace_write_text_file" => write_text_file(&root, args, stdin),
         _ => Err(format!("Unsupported workspace file command: {command_key}")),
     }
 }
@@ -98,31 +85,6 @@ fn resolve_workspace_directory(path: Option<&str>) -> Result<PathBuf, String> {
         return Err("Workspace path is not a directory".to_owned());
     }
     Ok(root)
-}
-
-fn allowed_workspace_roots(env_values: &HashMap<String, String>) -> Result<Vec<PathBuf>, String> {
-    let raw_roots = env_values
-        .get(WORKSPACE_ROOTS_ENV)
-        .cloned()
-        .or_else(|| env::var(WORKSPACE_ROOTS_ENV).ok());
-    let Some(raw_roots) = raw_roots.filter(|value| !value.trim().is_empty()) else {
-        return Ok(Vec::new());
-    };
-
-    raw_roots
-        .split(if cfg!(windows) { ';' } else { ':' })
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| {
-            fs::canonicalize(value).map_err(|error| format!("Invalid workspace root: {error}"))
-        })
-        .collect()
-}
-
-fn require_allowed_root(path: &Path, allowed_roots: &[PathBuf]) -> Result<(), String> {
-    if allowed_roots.iter().any(|root| path.starts_with(root)) {
-        return Ok(());
-    }
-    Err("Workspace path is outside allowed workspace roots".to_owned())
 }
 
 fn list_entries(root: &Path) -> Result<Value, String> {
@@ -159,25 +121,13 @@ fn list_entries(root: &Path) -> Result<Value, String> {
     Ok(json!({ "path": root.to_string_lossy(), "entries": entries }))
 }
 
-fn read_text_file(
-    root: &Path,
-    allowed_roots: &[PathBuf],
-    args: &[String],
-) -> Result<Value, String> {
+fn read_text_file(root: &Path, args: &[String]) -> Result<Value, String> {
     if args.len() != 1 || args[0].trim().is_empty() {
         return Err("File name is required".to_owned());
     }
-    let target = fs::canonicalize(root.join(&args[0]))
-        .map_err(|error| format!("Failed to resolve workspace file: {error}"))?;
-    if !target.starts_with(root) {
-        return Err("File path is outside workspace".to_owned());
-    }
-    require_allowed_root(&target, allowed_roots)?;
+    let target = resolve_workspace_file(root, &args[0])?;
     let metadata =
         fs::metadata(&target).map_err(|error| format!("Failed to read file metadata: {error}"))?;
-    if !metadata.is_file() {
-        return Err("File does not exist".to_owned());
-    }
     let file = fs::File::open(&target).map_err(|error| format!("Failed to open file: {error}"))?;
     let mut bytes = Vec::with_capacity(MAX_TEXT_FILE_BYTES + 1);
     use std::io::Read;
@@ -200,12 +150,7 @@ fn read_text_file(
     }))
 }
 
-fn write_text_file(
-    root: &Path,
-    allowed_roots: &[PathBuf],
-    args: &[String],
-    stdin: Option<&str>,
-) -> Result<Value, String> {
+fn write_text_file(root: &Path, args: &[String], stdin: Option<&str>) -> Result<Value, String> {
     if args.len() != 2 || args[0].trim().is_empty() || args[1].trim().is_empty() {
         return Err("File name and expected revision are required".to_owned());
     }
@@ -213,7 +158,7 @@ fn write_text_file(
     if content.len() > MAX_TEXT_FILE_BYTES {
         return Err("File content exceeds 256 KiB".to_owned());
     }
-    let target = resolve_workspace_file(root, allowed_roots, &args[0])?;
+    let target = resolve_workspace_file(root, &args[0])?;
     let current = fs::read(&target).map_err(|error| format!("Failed to read file: {error}"))?;
     std::str::from_utf8(&current).map_err(|_| "File is not valid UTF-8".to_owned())?;
     if sha256_revision(&current) != args[1] {
@@ -257,18 +202,14 @@ fn sha256_revision(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-fn read_file_chunk(
-    root: &Path,
-    allowed_roots: &[PathBuf],
-    args: &[String],
-) -> Result<Value, String> {
+fn read_file_chunk(root: &Path, args: &[String]) -> Result<Value, String> {
     if args.len() != 2 || args[0].trim().is_empty() {
         return Err("File name and offset are required".to_owned());
     }
     let offset = args[1]
         .parse::<u64>()
         .map_err(|_| "File offset must be a non-negative integer".to_owned())?;
-    let target = resolve_workspace_file(root, allowed_roots, &args[0])?;
+    let target = resolve_workspace_file(root, &args[0])?;
     let metadata =
         fs::metadata(&target).map_err(|error| format!("Failed to read file metadata: {error}"))?;
     let mut file =
@@ -292,17 +233,12 @@ fn read_file_chunk(
     }))
 }
 
-fn resolve_workspace_file(
-    root: &Path,
-    allowed_roots: &[PathBuf],
-    name: &str,
-) -> Result<PathBuf, String> {
+fn resolve_workspace_file(root: &Path, name: &str) -> Result<PathBuf, String> {
     let target = fs::canonicalize(root.join(name))
         .map_err(|error| format!("Failed to resolve workspace file: {error}"))?;
     if !target.starts_with(root) {
         return Err("File path is outside workspace".to_owned());
     }
-    require_allowed_root(&target, allowed_roots)?;
     if !fs::metadata(&target)
         .map_err(|error| format!("Failed to read file metadata: {error}"))?
         .is_file()
@@ -357,27 +293,56 @@ fn error_result(error: String, started_at: Instant) -> CommandResult {
 mod tests {
     use super::*;
 
-    fn allowed_env(root: &Path) -> HashMap<String, String> {
-        HashMap::from([(
-            WORKSPACE_ROOTS_ENV.to_owned(),
-            root.to_string_lossy().into_owned(),
-        )])
+    #[test]
+    fn workspace_file_commands_allow_directories_without_workspace_registration() {
+        let directory = tempfile::tempdir().expect("create directory");
+        fs::write(directory.path().join("README.md"), "hello").expect("seed file");
+        let tree = execute_blocking("workspace_tree", directory.path().to_str(), &[], None)
+            .expect("list unregistered directory");
+        assert_eq!(tree["entries"][0]["name"], "README.md");
+        let text = execute_blocking(
+            "workspace_read_text_file",
+            directory.path().to_str(),
+            &["README.md".to_owned()],
+            None,
+        )
+        .expect("read text in unregistered directory");
+        assert_eq!(text["content"], "hello");
     }
 
     #[test]
-    fn workspace_file_commands_reject_missing_allowed_roots() {
-        let directory = tempfile::tempdir().expect("create workspace");
+    fn workspace_file_commands_report_missing_files() {
+        let directory = tempfile::tempdir().expect("create directory");
+        for (command_key, args) in [
+            ("workspace_read_text_file", vec!["missing.txt".to_owned()]),
+            (
+                "workspace_read_file_chunk",
+                vec!["missing.png".to_owned(), "0".to_owned()],
+            ),
+        ] {
+            let error = execute_blocking(command_key, directory.path().to_str(), &args, None)
+                .expect_err("reject missing file");
+            assert!(error.starts_with("Failed to resolve workspace file:"));
+        }
+    }
 
-        let error = execute_blocking(
-            "workspace_tree",
-            directory.path().to_str(),
-            &[],
-            &HashMap::new(),
-            None,
-        )
-        .expect_err("missing allowed roots must fail closed");
-
-        assert_eq!(error, "Workspace path is outside allowed workspace roots");
+    #[test]
+    fn workspace_file_commands_keep_file_names_within_requested_directory() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let requested = directory.path().join("test");
+        fs::create_dir(&requested).expect("create requested directory");
+        fs::write(directory.path().join("README.md"), "hello").expect("seed file");
+        for (command_key, args) in [
+            ("workspace_read_text_file", vec!["../README.md".to_owned()]),
+            (
+                "workspace_read_file_chunk",
+                vec!["../README.md".to_owned(), "0".to_owned()],
+            ),
+        ] {
+            let error = execute_blocking(command_key, requested.to_str(), &args, None)
+                .expect_err("reject file name outside requested directory");
+            assert_eq!(error, "File path is outside workspace");
+        }
     }
 
     #[test]
@@ -391,7 +356,6 @@ mod tests {
             "workspace_write_text_file",
             directory.path().to_str(),
             &["README.md".to_owned(), expected_revision],
-            &allowed_env(directory.path()),
             Some("updated"),
         )
         .expect("save file");
@@ -415,7 +379,6 @@ mod tests {
             "workspace_write_text_file",
             directory.path().to_str(),
             &["README.md".to_owned(), "sha256:stale".to_owned()],
-            &allowed_env(directory.path()),
             Some("updated"),
         )
         .expect_err("reject stale revision");
@@ -438,7 +401,6 @@ mod tests {
             "workspace_write_text_file",
             directory.path().to_str(),
             &["README.md".to_owned(), sha256_revision(b"hello")],
-            &allowed_env(directory.path()),
             Some(&content),
         )
         .expect_err("reject oversized content");
@@ -460,7 +422,6 @@ mod tests {
             "workspace_read_file_chunk",
             directory.path().to_str(),
             &["image.png".to_owned(), "0".to_owned()],
-            &allowed_env(directory.path()),
             None,
         )
         .expect("read binary chunk");

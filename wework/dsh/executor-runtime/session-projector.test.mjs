@@ -40,22 +40,7 @@ test('projects executor text, reasoning, usage, and completion into standard ses
   assert.ok(session)
   assert.deepEqual(
     session.events.map(event => event.type),
-    [
-      'turn/start',
-      'step/start',
-      'user/message',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/message',
-      'step/end',
-      'turn/end',
-    ]
+    ['turn/start', 'step/start', 'user/message', 'assistant/message', 'step/end', 'turn/end']
   )
   const message = session.events.find(event => event.type === 'assistant/message')
   assert.deepEqual(message.data.message.content, [
@@ -147,13 +132,9 @@ test('projects streamed Executor text blocks into standard assistant deltas', ()
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const deltas = session.events
-    .filter(
-      event =>
-        event.type === 'assistant/chunk' &&
-        (event.data.chunk.type === 'text-delta' || event.data.chunk.type === 'reasoning-delta')
-    )
-    .map(event => [event.data.chunk.type, event.data.chunk.text])
+  const deltas = streamChunks(projector, session)
+    .filter(chunk => chunk.type === 'text-delta' || chunk.type === 'reasoning-delta')
+    .map(chunk => [chunk.type, chunk.text])
   assert.deepEqual(deltas, [
     ['reasoning-delta', 'Inspect'],
     ['reasoning-delta', ' logs'],
@@ -178,10 +159,7 @@ test('ignores non-model workbench blocks in the standard assistant stream', () =
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  assert.equal(
-    session.events.some(event => event.type === 'assistant/chunk'),
-    false
-  )
+  assert.equal(streamChunks(projector, session).length > 0, false)
 })
 
 test('keeps parallel executor tasks in independent DSH sessions', () => {
@@ -193,8 +171,8 @@ test('keeps parallel executor tasks in independent DSH sessions', () => {
 
   const first = sessions.get(executorSessionId('device-1', 'task-a'))
   const second = sessions.get(executorSessionId('device-1', 'task-b'))
-  assert.equal(first.events.find(event => event.type === 'assistant/chunk').data.turn, 1)
-  assert.equal(second.events.find(event => event.type === 'assistant/chunk').data.turn, 1)
+  assert.equal(first.events.find(event => event.type === 'turn/start').data.turn, 1)
+  assert.equal(second.events.find(event => event.type === 'turn/start').data.turn, 1)
   assert.notEqual(first, second)
 })
 
@@ -275,11 +253,9 @@ test('projects per-call Codex usage as cumulative usage within the DSH turn', ()
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const usageEvents = session.events.filter(
-    event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage'
-  )
+  const usageEvents = streamChunks(projector, session).filter(chunk => chunk.type === 'usage')
   assert.deepEqual(
-    usageEvents.map(event => event.data.chunk.usage),
+    usageEvents.map(chunk => chunk.usage),
     [
       {
         inputTokens: 600,
@@ -306,7 +282,7 @@ test('projects per-call Codex usage as cumulative usage within the DSH turn', ()
   )
   assert.deepEqual(
     session.events.find(event => event.type === 'assistant/message').data.usage,
-    usageEvents.at(-1).data.chunk.usage
+    usageEvents.at(-1).usage
   )
 })
 
@@ -341,10 +317,8 @@ test('keeps the source usage baseline while resetting projected usage for a new 
   )
 
   const session = sessions.get(executorSessionId('device-1', 'task-1'))
-  const usageEvents = session.events.filter(
-    event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage'
-  )
-  assert.deepEqual(usageEvents.at(-1).data.chunk.usage, {
+  const usageEvents = streamChunks(projector, session).filter(chunk => chunk.type === 'usage')
+  assert.deepEqual(usageEvents.at(-1).usage, {
     inputTokens: 200,
     outputTokens: 50,
     cacheReadTokens: 600,
@@ -388,6 +362,23 @@ test('does not enqueue internal context compaction as a portable conversation tu
   assert.equal(completed[0].executorTurnId, 'user-turn-2')
 })
 
+test('resumes turn numbering from the immutable session snapshot', () => {
+  const sessions = new SessionStoreFixture()
+  const session = sessions.create(executorSessionId('device-1', 'task-1'))
+  session.append('turn/end', { turn: 4 })
+  const snapshotEvents = session.snapshotEvents.bind(session)
+  const append = session.append.bind(session)
+  sessions.values.set(session.id, { id: session.id, snapshotEvents, append })
+  const projector = new ExecutorSessionProjector(sessions)
+  projector.handle(executorEvent(1, 'response.created', {}))
+  assert.deepEqual(session.events.at(-2), {
+    type: 'turn/start',
+    data: { turn: 5 },
+    seq: 1,
+    time: session.events.at(-2).time,
+  })
+})
+
 class SessionStoreFixture {
   constructor() {
     this.values = new Map()
@@ -410,11 +401,16 @@ class SessionFixture {
     this.events = []
   }
 
+  snapshotEvents() {
+    return this.events.slice()
+  }
+
   append(type, data, options) {
     const event = {
       type,
       data: structuredClone(data),
       seq: this.events.length,
+      time: Date.now(),
       ...(options ?? {}),
     }
     this.events.push(event)
@@ -455,4 +451,10 @@ function usageBreakdown(
     outputTokens,
     reasoningOutputTokens,
   }
+}
+
+function streamChunks(projector, session) {
+  return [...projector.tasks.values()]
+    .find(state => state.session === session)
+    .stream.map(record => record.chunk)
 }

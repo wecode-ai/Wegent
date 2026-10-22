@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronDown,
@@ -18,6 +18,7 @@ import {
   Folder,
   FolderKanban,
   SquarePen,
+  Search,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useProjectContext } from '../contexts/projectContext'
@@ -38,6 +39,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import SearchDialog from '@/features/tasks/components/sidebar/SearchDialog'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import { taskApis } from '@/apis/tasks'
 import { canImportOrdinaryTaskToProject, isWorkspaceProject } from '../utils/projectClassification'
@@ -55,12 +57,32 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
     expandedProjects,
     toggleProjectExpanded,
     selectedProjectTaskId,
+    selectedProjectTask,
     setSelectedProjectTaskId,
     refreshProjects,
     isProjectSectionCollapsed,
     setProjectSectionCollapsed,
+    projectTaskPages,
+    loadProjectTasks,
   } = useProjectContext()
   const { selectTask } = useTaskSession()
+
+  useEffect(() => {
+    if (isProjectSectionCollapsed || isLoading) return
+    for (const project of projects) {
+      const page = projectTaskPages[project.id]
+      if (expandedProjects.has(project.id) && !page?.loaded && !page?.loading && !page?.error) {
+        void loadProjectTasks(project.id)
+      }
+    }
+  }, [
+    projects,
+    expandedProjects,
+    projectTaskPages,
+    loadProjectTasks,
+    isProjectSectionCollapsed,
+    isLoading,
+  ])
 
   const handleNewConversation = useCallback(
     (project: ProjectWithTasks) => {
@@ -89,6 +111,13 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedProject, setSelectedProject] = useState<ProjectWithTasks | null>(null)
+  const [searchProjectId, setSearchProjectId] = useState<number | null>(null)
+  const searchProject = projects.find(project => project.id === searchProjectId)
+  const loadSearchProjectTasks = useCallback(
+    (loadMore: boolean = false) =>
+      searchProjectId === null ? Promise.resolve() : loadProjectTasks(searchProjectId, loadMore),
+    [searchProjectId, loadProjectTasks]
+  )
 
   const sectionTitle = t('workspaceSection.title')
 
@@ -206,11 +235,19 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
                   onToggleExpand={() => toggleProjectExpanded(project.id)}
                   onEdit={() => handleEditProject(project)}
                   onDelete={() => handleDeleteProject(project)}
+                  onSearch={() => setSearchProjectId(project.id)}
                   onTaskClick={handleTaskClick}
                   selectedProjectTaskId={selectedProjectTaskId}
+                  selectedTask={
+                    selectedProjectTask?.project_id === project.id ? selectedProjectTask : null
+                  }
                   onRefreshProjects={refreshProjects}
                   isWorkspace={isWorkspaceProject(project)}
                   onNewConversation={handleNewConversation}
+                  taskPage={projectTaskPages[project.id]}
+                  onLoadTasks={() => {
+                    void loadProjectTasks(project.id, Boolean(projectTaskPages[project.id]?.loaded))
+                  }}
                 />
               </DroppableProject>
             ))
@@ -234,6 +271,22 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         onOpenChange={setDeleteDialogOpen}
         project={selectedProject}
       />
+      {searchProject && (
+        <SearchDialog
+          open
+          onOpenChange={open => {
+            if (!open) setSearchProjectId(null)
+          }}
+          projectId={searchProject.id}
+          projectName={searchProject.name}
+          projectTaskList={{
+            tasks: searchProject.tasks,
+            page: projectTaskPages[searchProject.id],
+            loadTasks: loadSearchProjectTasks,
+          }}
+          onProjectTaskSelect={task => handleTaskClick(task, searchProject)}
+        />
+      )}
     </div>
   )
 }
@@ -244,11 +297,15 @@ interface ProjectItemProps {
   onToggleExpand: () => void
   onEdit: () => void
   onDelete: () => void
+  onSearch: () => void
   onTaskClick: (projectTask: ProjectTask, project: ProjectWithTasks) => void
   selectedProjectTaskId: number | null
+  selectedTask: ProjectTask | null
   onRefreshProjects: () => Promise<void>
   isWorkspace?: boolean
   onNewConversation?: (project: ProjectWithTasks) => void
+  taskPage?: { loading: boolean; loaded: boolean; hasMore: boolean; error?: string }
+  onLoadTasks: () => void
 }
 
 function ProjectItem({
@@ -257,14 +314,22 @@ function ProjectItem({
   onToggleExpand,
   onEdit,
   onDelete,
+  onSearch,
   onTaskClick,
   selectedProjectTaskId,
+  selectedTask,
   onRefreshProjects,
   isWorkspace,
   onNewConversation,
+  taskPage,
+  onLoadTasks,
 }: ProjectItemProps) {
   const { t } = useTranslation('projects')
-  const taskCount = project.tasks?.length || 0
+  const taskCount = project.task_count
+  const visibleTasks =
+    selectedTask && !project.tasks.some(task => task.task_id === selectedTask.task_id)
+      ? [selectedTask, ...project.tasks]
+      : project.tasks
 
   // Track which task is being renamed
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
@@ -342,6 +407,14 @@ function ProjectItem({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-32">
+            <DropdownMenuItem
+              data-testid={`project-search-tasks-${project.id}`}
+              onClick={onSearch}
+              className="min-h-11 lg:min-h-8"
+            >
+              <Search className="w-3.5 h-3.5 mr-2" />
+              {t('actions.searchTasks')}
+            </DropdownMenuItem>
             {onNewConversation && (
               <DropdownMenuItem
                 data-testid="project-menu-new-conversation-btn"
@@ -385,9 +458,9 @@ function ProjectItem({
       </div>
 
       {/* Task List (when expanded) */}
-      {isExpanded && taskCount > 0 && (
+      {isExpanded && (
         <div className="ml-6 space-y-0.5">
-          {project.tasks?.map(projectTask => {
+          {visibleTasks.map(projectTask => {
             const isSelected = selectedProjectTaskId === projectTask.task_id
             const isEditing = editingTaskId === projectTask.task_id
             return (
@@ -441,11 +514,27 @@ function ProjectItem({
               </DraggableProjectTask>
             )
           })}
+          {(taskPage?.loading || taskPage?.error || taskPage?.hasMore) && (
+            <button
+              type="button"
+              data-testid={`project-tasks-load-more-${project.id}`}
+              onClick={onLoadTasks}
+              disabled={taskPage.loading}
+              className="flex h-11 min-w-[44px] w-full items-center gap-1 rounded-md px-2 text-xs text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-wait disabled:opacity-60 lg:h-8"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+              {taskPage.loading
+                ? t('common:loading')
+                : taskPage.error
+                  ? t('section.retryTasks')
+                  : t('section.loadMore')}
+            </button>
+          )}
         </div>
       )}
 
       {/* Empty State (when expanded but no tasks) */}
-      {isExpanded && taskCount === 0 && (
+      {isExpanded && taskCount === 0 && !taskPage?.loading && !taskPage?.error && (
         <div className="ml-6 px-2 py-1">
           <span className="text-xs text-text-muted">{t('section.noTasks')}</span>
         </div>

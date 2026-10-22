@@ -2,18 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Pydantic-compatible projection of `spec.videoConfig` and
-//! `spec.imageConfig` for `GET /api/models/unified`.
+//! Pydantic-compatible projection of `spec.videoConfig`, `spec.imageConfig`
+//! and `spec.embeddingConfig` for `GET /api/models/unified`.
 //!
 //! `_extract_model_info_from_crd` validates every model CRD through
 //! `app.schemas.kind.Model` and serializes the nested video and image
-//! configuration with `model_dump(exclude_none=True)`. That dump is not a raw
-//! passthrough: pydantic keeps the declared field order and per-field defaults,
-//! coerces lax input (`2` into an `Optional[float]`, `"true"` into an
+//! configuration with `model_dump(exclude_none=True)`. The public adapter
+//! `to_model_dict` additionally serializes `spec.embeddingConfig`. That dump is
+//! not a raw passthrough: pydantic keeps the declared field order and per-field
+//! defaults, coerces lax input (`2` into an `Optional[float]`, `"true"` into an
 //! `Optional[bool]`), drops unknown keys and drops every `None`. The types
-//! below mirror `app/schemas/generation.py` field for field and reproduce that
-//! dump. A conversion failure stands in for the `pydantic.ValidationError`
-//! that makes the caller fall back to its error projection.
+//! below mirror `app/schemas/generation.py` and `app/schemas/kind.py` field for
+//! field and reproduce that dump. A conversion failure stands in for the
+//! `pydantic.ValidationError` that makes the caller fall back to its error
+//! projection.
 //!
 //! Integer fields are represented as `i64`, so an integer literal outside the
 //! signed 64-bit range is rejected where pydantic would keep it as an
@@ -21,6 +23,7 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Map as JsonMap;
 use serde_json::Value as Json;
 
 /// Stands in for `pydantic.ValidationError`.
@@ -37,6 +40,60 @@ pub fn video_config_dump(raw: &Json) -> Valid<Json> {
 /// `spec.imageConfig` -> `ImageGenerationConfig.model_dump(exclude_none=True)`.
 pub fn image_config_dump(raw: &Json) -> Valid<Json> {
     dump::<ImageGenerationConfig>(raw)
+}
+
+/// `spec.embeddingConfig` -> `EmbeddingConfig.model_dump(exclude_none=True)`.
+///
+/// `EmbeddingConfig` sets `extra="allow"`, so unlike the video and image
+/// configs it keeps unknown keys. The declared fields render first in
+/// declaration order, then the remaining keys in their input order; every
+/// `None` value — declared or extra — is dropped.
+pub fn embedding_config_dump(raw: &Json) -> Valid<Json> {
+    let Json::Object(source) = raw else {
+        return Err(Invalid);
+    };
+    #[derive(Deserialize)]
+    struct Declared {
+        #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
+        dimensions: Option<i64>,
+        #[serde(
+            default = "default_encoding_format",
+            deserialize_with = "brz_json::adapters::optional_str"
+        )]
+        encoding_format: Option<String>,
+        #[serde(default, deserialize_with = "brz_json::adapters::optional_strings")]
+        additional_input_modalities: Option<Vec<String>>,
+    }
+    let declared: Declared =
+        serde_json::from_value(Json::Object(source.clone())).map_err(|_| Invalid)?;
+    let mut output = JsonMap::new();
+    if let Some(value) = declared.dimensions {
+        output.insert("dimensions".into(), Json::Number(value.into()));
+    }
+    if let Some(value) = declared.encoding_format {
+        output.insert("encoding_format".into(), Json::String(value));
+    }
+    if let Some(value) = declared.additional_input_modalities {
+        output.insert(
+            "additional_input_modalities".into(),
+            serde_json::to_value(value).map_err(|_| Invalid)?,
+        );
+    }
+    for (key, value) in source {
+        if matches!(
+            key.as_str(),
+            "dimensions" | "encoding_format" | "additional_input_modalities"
+        ) || value.is_null()
+        {
+            continue;
+        }
+        output.insert(key.clone(), value.clone());
+    }
+    Ok(Json::Object(output))
+}
+
+fn default_encoding_format() -> Option<String> {
+    Some("float".to_string())
 }
 
 fn dump<T>(raw: &Json) -> Valid<Json>
@@ -78,27 +135,27 @@ trait Validate {
 /// One option of `VideoCapabilities.aspect_ratios`.
 #[derive(Deserialize, Serialize)]
 struct AspectRatioOption {
-    #[serde(deserialize_with = "lax::required_str")]
+    #[serde(deserialize_with = "brz_json::adapters::required_str")]
     label: String,
-    #[serde(deserialize_with = "lax::required_str")]
+    #[serde(deserialize_with = "brz_json::adapters::required_str")]
     value: String,
 }
 
 /// One option of `VideoCapabilities.resolutions`.
 #[derive(Deserialize, Serialize)]
 struct ResolutionOption {
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     width: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     height: Option<i64>,
-    #[serde(deserialize_with = "lax::required_str")]
+    #[serde(deserialize_with = "brz_json::adapters::required_str")]
     label: String,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     tooltip: Option<String>,
 }
@@ -106,35 +163,35 @@ struct ResolutionOption {
 /// One entry of `VideoCapabilities.generation_modes`.
 #[derive(Deserialize, Serialize)]
 struct VideoGenerationMode {
-    #[serde(deserialize_with = "lax::required_str")]
+    #[serde(deserialize_with = "brz_json::adapters::required_str")]
     id: String,
-    #[serde(deserialize_with = "lax::required_str")]
+    #[serde(deserialize_with = "brz_json::adapters::required_str")]
     label: String,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_images: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_videos: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_audios: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_total: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_images_first_last: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_required: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     first_frame_required: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_allowed: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_allowed: Option<bool>,
 }
@@ -161,115 +218,115 @@ impl Validate for VideoGenerationMode {
 /// `VideoCapabilities`.
 #[derive(Deserialize, Serialize)]
 struct VideoCapabilities {
-    #[serde(default, deserialize_with = "lax::optional_aspect_ratios")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_objects")]
     #[serde(skip_serializing_if = "Option::is_none")]
     aspect_ratios: Option<Vec<AspectRatioOption>>,
-    #[serde(default, deserialize_with = "lax::optional_resolutions")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_objects")]
     #[serde(skip_serializing_if = "Option::is_none")]
     resolutions: Option<Vec<ResolutionOption>>,
-    #[serde(default, deserialize_with = "lax::optional_integers")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integers")]
     #[serde(skip_serializing_if = "Option::is_none")]
     durations_sec: Option<Vec<i64>>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     supports_image_input: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     supports_video_input: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     supports_audio_input: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     generate_audio: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_materials: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_images: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_images_with_video: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_videos: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_audios: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_input_required: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     reference_material_required: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_strings")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_strings")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_formats: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_max_size_mb: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_min_dimension: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_max_dimension: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_min_aspect_ratio: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_max_aspect_ratio: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_strings")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_strings")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_formats: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_max_size_mb: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_min_duration_sec: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_max_duration_sec: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_min_dimension: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_max_dimension: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_min_pixels: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_max_pixels: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_min_aspect_ratio: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_max_aspect_ratio: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_min_fps: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     video_max_fps: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_strings")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_strings")]
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_formats: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_max_size_mb: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_min_duration_sec: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_max_duration_sec: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_generation_modes")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_objects")]
     #[serde(skip_serializing_if = "Option::is_none")]
     generation_modes: Option<Vec<VideoGenerationMode>>,
 }
@@ -331,49 +388,52 @@ impl Validate for VideoCapabilities {
 #[derive(Deserialize, Serialize)]
 struct VideoGenerationConfig {
     #[serde(default = "default_video_resolution")]
-    #[serde(deserialize_with = "lax::optional_str")]
+    #[serde(deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution: Option<String>,
-    #[serde(default = "default_fps", deserialize_with = "lax::optional_integer")]
+    #[serde(
+        default = "default_fps",
+        deserialize_with = "brz_json::adapters::optional_integer"
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     fps: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_duration: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     ratio: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     duration: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     generate_audio: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     draft: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     seed: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     camera_fixed: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     watermark: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     output_format: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     omni_reference_task_type: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     priority: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_images: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_video_capabilities")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_object")]
     #[serde(skip_serializing_if = "Option::is_none")]
     capabilities: Option<VideoCapabilities>,
 }
@@ -407,28 +467,28 @@ impl Validate for VideoGenerationConfig {
 /// `ImageCapabilities`.
 #[derive(Deserialize, Serialize)]
 struct ImageCapabilities {
-    #[serde(default, deserialize_with = "lax::optional_boolean")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_boolean")]
     #[serde(skip_serializing_if = "Option::is_none")]
     supports_image_input: Option<bool>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_images: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_strings")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_strings")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_formats: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_max_size_mb: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_min_dimension: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_max_dimension: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_min_aspect_ratio: Option<f64>,
-    #[serde(default, deserialize_with = "lax::optional_number")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_number")]
     #[serde(skip_serializing_if = "Option::is_none")]
     image_max_aspect_ratio: Option<f64>,
 }
@@ -457,63 +517,66 @@ impl Validate for ImageCapabilities {
 /// `ImageGenerationConfig`.
 #[derive(Deserialize, Serialize)]
 struct ImageGenerationConfig {
-    #[serde(default = "default_image_size", deserialize_with = "lax::optional_str")]
+    #[serde(
+        default = "default_image_size",
+        deserialize_with = "brz_json::adapters::optional_str"
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     size: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_image_capabilities")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_object")]
     #[serde(skip_serializing_if = "Option::is_none")]
     capabilities: Option<ImageCapabilities>,
     #[serde(
         default = "default_sequential_image_generation",
-        deserialize_with = "lax::optional_str"
+        deserialize_with = "brz_json::adapters::optional_str"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     sequential_image_generation: Option<String>,
     #[serde(
         default = "default_max_images",
-        deserialize_with = "lax::optional_integer"
+        deserialize_with = "brz_json::adapters::optional_integer"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_images: Option<i64>,
     #[serde(
         default = "default_response_format",
-        deserialize_with = "lax::optional_str"
+        deserialize_with = "brz_json::adapters::optional_str"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<String>,
     #[serde(
         default = "default_image_output_format",
-        deserialize_with = "lax::optional_str"
+        deserialize_with = "brz_json::adapters::optional_str"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     output_format: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_integer")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_integer")]
     #[serde(skip_serializing_if = "Option::is_none")]
     output_compression: Option<i64>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     quality: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     background: Option<String>,
-    #[serde(default, deserialize_with = "lax::optional_str")]
+    #[serde(default, deserialize_with = "brz_json::adapters::optional_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     moderation: Option<String>,
     #[serde(
         default = "default_watermark",
-        deserialize_with = "lax::optional_boolean"
+        deserialize_with = "brz_json::adapters::optional_boolean"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     watermark: Option<bool>,
     #[serde(
         default = "default_optimize_prompt_mode",
-        deserialize_with = "lax::optional_str"
+        deserialize_with = "brz_json::adapters::optional_str"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     optimize_prompt_mode: Option<String>,
     #[serde(
         default = "default_image_max_reference_images",
-        deserialize_with = "lax::optional_integer"
+        deserialize_with = "brz_json::adapters::optional_integer"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     max_reference_images: Option<i64>,
@@ -581,184 +644,6 @@ fn default_optimize_prompt_mode() -> Option<String> {
 
 fn default_image_max_reference_images() -> Option<i64> {
     Some(1)
-}
-
-/// pydantic v2 "lax" input coercion for the types used by the generation
-/// schemas, matching the conversions pydantic 2.x accepts for `int`, `float`,
-/// `bool` and `str`.
-mod lax {
-    use super::{
-        AspectRatioOption, ImageCapabilities, Json, ResolutionOption, VideoCapabilities,
-        VideoGenerationMode,
-    };
-    use serde::Deserialize;
-    use serde::de::{Deserializer, Error};
-
-    /// `int` from `str`: trimmed and optionally signed, additionally accepting
-    /// an integral decimal such as `"4.0"` while rejecting `"4."`, `".5"` and
-    /// exponent notation such as `"1e3"`.
-    fn integer_from_str(raw: &str) -> Option<i64> {
-        let text = raw.trim();
-        if let Ok(value) = text.parse::<i64>() {
-            return Some(value);
-        }
-        let (whole, fraction) = text.split_once('.')?;
-        if fraction.is_empty() || !fraction.bytes().all(|byte| byte == b'0') {
-            return None;
-        }
-        whole.parse::<i64>().ok()
-    }
-
-    /// `2^63`, the exclusive magnitude bound of the `i64` representation used
-    /// for `Option[int]` fields; pydantic rejects a float beyond it.
-    const I64_BOUND: f64 = 9_223_372_036_854_775_808.0;
-
-    fn from_float(float: f64) -> Option<i64> {
-        (float.is_finite() && float.fract() == 0.0 && float > -I64_BOUND && float < I64_BOUND)
-            .then_some(float as i64)
-    }
-
-    fn integer(value: &Json) -> Option<i64> {
-        match value {
-            Json::Number(number) => match number.as_i64() {
-                Some(value) => Some(value),
-                None => from_float(number.as_f64()?),
-            },
-            Json::Bool(value) => Some(if *value { 1 } else { 0 }),
-            Json::String(text) => integer_from_str(text),
-            _ => None,
-        }
-    }
-
-    fn number(value: &Json) -> Option<f64> {
-        match value {
-            Json::Number(number) => number.as_f64(),
-            Json::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
-            Json::String(text) => text.trim().parse::<f64>().ok(),
-            _ => None,
-        }
-    }
-
-    fn boolean(value: &Json) -> Option<bool> {
-        match value {
-            Json::Bool(value) => Some(*value),
-            Json::Number(number) => match number.as_f64()? {
-                0.0 => Some(false),
-                1.0 => Some(true),
-                _ => None,
-            },
-            Json::String(text) => match text.to_lowercase().as_str() {
-                "0" | "off" | "false" | "f" | "n" | "no" => Some(false),
-                "1" | "on" | "true" | "t" | "y" | "yes" => Some(true),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn strings(value: &Json) -> Option<Vec<String>> {
-        let Json::Array(items) = value else {
-            return None;
-        };
-        items
-            .iter()
-            .map(|item| match item {
-                Json::String(text) => Some(text.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn integers(value: &Json) -> Option<Vec<i64>> {
-        let Json::Array(items) = value else {
-            return None;
-        };
-        items.iter().map(integer).collect()
-    }
-
-    fn models<T: serde::de::DeserializeOwned>(value: &Json) -> Option<Vec<T>> {
-        let Json::Array(items) = value else {
-            return None;
-        };
-        items.iter().map(model::<T>).collect()
-    }
-
-    fn model<T: serde::de::DeserializeOwned>(value: &Json) -> Option<T> {
-        // A nested model is a mapping only; serde would also accept a
-        // positional JSON array for a struct.
-        if !value.is_object() {
-            return None;
-        }
-        T::deserialize(value).ok()
-    }
-
-    fn text(value: &Json) -> Option<String> {
-        match value {
-            Json::String(text) => Some(text.clone()),
-            _ => None,
-        }
-    }
-
-    /// A field declared `Optional[...]`: an explicit `null` yields `None`, an
-    /// absent key uses the field default, and every other value is coerced.
-    macro_rules! optional {
-        ($name:ident, $target:ty, $parse:expr) => {
-            pub(super) fn $name<'de, D>(deserializer: D) -> Result<Option<$target>, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                match Json::deserialize(deserializer)? {
-                    Json::Null => Ok(None),
-                    value => Ok(Some(
-                        $parse(&value).ok_or_else(|| D::Error::custom(stringify!($name)))?,
-                    )),
-                }
-            }
-        };
-    }
-
-    optional!(optional_str, String, text);
-    optional!(optional_integer, i64, integer);
-    optional!(optional_number, f64, number);
-    optional!(optional_boolean, bool, boolean);
-    optional!(optional_strings, Vec<String>, strings);
-    optional!(optional_integers, Vec<i64>, integers);
-    optional!(
-        optional_aspect_ratios,
-        Vec<AspectRatioOption>,
-        models::<AspectRatioOption>
-    );
-    optional!(
-        optional_resolutions,
-        Vec<ResolutionOption>,
-        models::<ResolutionOption>
-    );
-    optional!(
-        optional_generation_modes,
-        Vec<VideoGenerationMode>,
-        models::<VideoGenerationMode>
-    );
-    optional!(
-        optional_video_capabilities,
-        VideoCapabilities,
-        model::<VideoCapabilities>
-    );
-    optional!(
-        optional_image_capabilities,
-        ImageCapabilities,
-        model::<ImageCapabilities>
-    );
-
-    /// A field declared `str` without a default.
-    pub(super) fn required_str<'de, D>(deserializer: D) -> Result<String, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        match Json::deserialize(deserializer)? {
-            Json::String(text) => Ok(text),
-            _ => Err(D::Error::custom("string_type")),
-        }
-    }
 }
 
 #[cfg(test)]

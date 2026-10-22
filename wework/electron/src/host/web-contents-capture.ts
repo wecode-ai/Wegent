@@ -16,8 +16,10 @@ export interface WebContentsCaptureOptions {
   debuggerFromSurface?: boolean
 }
 
+export type WebContentsCaptureTarget = Pick<WebContents, 'capturePage' | 'debugger'>
+
 export async function captureWebContentsDataUrl(
-  contents: WebContents,
+  contents: WebContentsCaptureTarget,
   options: WebContentsCaptureOptions = {}
 ): Promise<string> {
   const debuggerFromSurface = options.debuggerFromSurface ?? !options.preferDebugger
@@ -54,7 +56,7 @@ export async function captureWebContentsDataUrl(
 }
 
 async function captureDebugger(
-  contents: WebContents,
+  contents: WebContentsCaptureTarget,
   fromSurface: boolean,
   rect?: CaptureRect
 ): Promise<string> {
@@ -80,7 +82,10 @@ async function captureDebugger(
   }
 }
 
-async function captureNative(contents: WebContents, rect?: CaptureRect): Promise<string> {
+async function captureNative(
+  contents: WebContentsCaptureTarget,
+  rect?: CaptureRect
+): Promise<string> {
   const image = await withCaptureTimeout(contents.capturePage(rect), 'Electron capturePage')
   if (!image.isEmpty()) {
     const dataUrl = image.toDataURL()

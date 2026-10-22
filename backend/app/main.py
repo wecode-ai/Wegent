@@ -52,6 +52,7 @@ from app.services.auth.internal_service_token import (
     require_internal_service_token_configured,
 )
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from app.services.plugin_write_resources import close_plugin_write_resources
 from shared.telemetry.context.large_data import log_json_body
 
 # Redis lock key for startup operations (migrations + YAML init)
@@ -177,12 +178,17 @@ def _load_system_initialization_state(logger: logging.Logger) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Keep the cache available through startup, channel draining and shutdown.
+    from app.services.execution.chat_shell_client import chat_shell_clients
+
     await cache_manager.start()
     try:
-        async with _application_lifespan(app):
+        async with chat_shell_clients.lifespan(), _application_lifespan(app):
             yield
     finally:
-        await cache_manager.aclose()
+        try:
+            close_plugin_write_resources()
+        finally:
+            await cache_manager.aclose()
 
 
 @asynccontextmanager
@@ -269,6 +275,7 @@ async def _application_lifespan(app: FastAPI):
                     logger.info("✓ Alembic migrations completed successfully")
                 except subprocess.CalledProcessError as e:
                     logger.error(f"✗ Error running Alembic migrations: {e}")
+                    raise
                 except Exception as e:
                     logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
                     raise
@@ -392,11 +399,11 @@ async def _application_lifespan(app: FastAPI):
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
-    from app.core.socketio import get_sio
+    from app.core.socketio import initialize_socketio_server
     from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
     from app.services.loop_item_executions.wake import bind_socketio_loop
 
-    sio = get_sio()
+    sio = initialize_socketio_server()
     try:
         bind_socketio_loop(asyncio.get_running_loop())
     except RuntimeError:
@@ -434,11 +441,6 @@ async def _application_lifespan(app: FastAPI):
     )
 
     register_project_automation_task_completion_handler(event_bus)
-    from app.services.board_team_completion import (
-        register_board_team_completion_handler,
-    )
-
-    register_board_team_completion_handler(event_bus)
     logger.info("✓ Project automation task completion handler registered")
 
     # Register code wiki run completion handler. A version's outcome is normally

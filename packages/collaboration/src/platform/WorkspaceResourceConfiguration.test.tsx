@@ -12,9 +12,12 @@ import type {
   CollaborationAgent,
   CollaborationGroup,
   CollaborationMember,
+  CollaborationWorkspace,
+  CollaborationWorkspaceMember,
 } from "../types";
 import {
   WorkspaceCollaborationGroupsConfiguration,
+  WorkspaceMembersConfiguration,
   type WorkspaceResourceCommands,
 } from "./WorkspaceResourceConfiguration";
 
@@ -125,6 +128,51 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     });
   }
 
+  it("shows Viewer workspace members with the correct role", async () => {
+    const workspace: CollaborationWorkspace = {
+      id: "workspace-1",
+      location: "cloud",
+      name: "Shared space",
+      description: "",
+      namespace: "default",
+      access_role: "Owner",
+      member_count: 1,
+      agent_count: 0,
+      execution_environment_count: 0,
+      project_count: 0,
+      created_by_user_id: 1,
+      version: 1,
+      created_at: "2026-09-24T00:00:00Z",
+      updated_at: "2026-09-24T00:00:00Z",
+    };
+    const viewer: CollaborationWorkspaceMember = {
+      ...humanMember,
+      role: "Viewer",
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceMembersConfiguration
+          workspace={workspace}
+          members={[viewer]}
+          locale="zh-CN"
+          commands={commands}
+        />,
+      ),
+    );
+
+    const role = byTestId<HTMLSelectElement>(
+      "collaboration-workspace-member-role-7",
+    );
+    expect(role.value).toBe("Viewer");
+    expect(role.selectedOptions[0]?.textContent).toBe("只读成员");
+    await click(byTestId("collaboration-workspace-member-invite"));
+    expect(
+      byTestId<HTMLSelectElement>(
+        "collaboration-workspace-member-invite-role",
+      ).querySelector('option[value="Viewer"]'),
+    ).not.toBeNull();
+  });
+
   it("adds the current user by default and labels them as me", async () => {
     commands.createCollaborationGroup = vi.fn(async () => group);
     await act(async () =>
@@ -150,7 +198,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(byTestId("collaboration-group-leader-human-7")).not.toBeNull();
     expect(
       byTestId("collaboration-group-create-responsibility-human-7"),
-    ).not.toBeNull();
+    ).toBeNull();
     await change(
       byTestId<HTMLInputElement>("collaboration-group-name"),
       "我的协作小组",
@@ -159,13 +207,15 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
 
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "human", id: "7", responsibility: "" },
-        members: [{ kind: "human", id: "7", responsibility: "" }],
+        leader: { kind: "human", id: "7", name: "Alice", responsibility: "" },
+        members: [
+          { kind: "human", id: "7", name: "Alice", responsibility: "" },
+        ],
       }),
     );
   });
 
-  it("keeps responsibilities editable for the leader after changing the leader", async () => {
+  it("clears and hides responsibility when a member becomes the leader", async () => {
     await act(async () =>
       root.render(
         <WorkspaceCollaborationGroupsConfiguration
@@ -204,10 +254,8 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       ).value,
     ).toBe("");
     expect(
-      byTestId<HTMLInputElement>(
-        "collaboration-group-create-responsibility-agent-1",
-      ).value,
-    ).toBe("审查代码");
+      byTestId("collaboration-group-create-responsibility-agent-1"),
+    ).toBeNull();
     expect(
       container.querySelector(".collaboration-group-roster-item:first-child")
         ?.textContent,
@@ -223,7 +271,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-remove-member-human-7"));
     expect(
       byTestId("collaboration-group-create-responsibility-agent-1"),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(
       byTestId("collaboration-group-create-responsibility-human-7"),
     ).toBeNull();
@@ -235,8 +283,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "审查代码" },
-        members: [{ kind: "agent", id: "1", responsibility: "审查代码" }],
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
       }),
     );
   });
@@ -377,7 +427,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-leader-agent-1"));
     expect(
       byTestId("collaboration-group-create-responsibility-agent-1"),
-    ).not.toBeNull();
+    ).toBeNull();
     await change(
       byTestId<HTMLInputElement>(
         "collaboration-group-create-responsibility-human-7",
@@ -393,10 +443,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith({
       name: "交付小组",
       description: "负责产品交付",
-      leader: { kind: "agent", id: "1", responsibility: "" },
+      leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
       members: [
-        { kind: "agent", id: "1", responsibility: "" },
-        { kind: "human", id: "7", responsibility: "代码审查" },
+        { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        { kind: "human", id: "7", name: "Alice", responsibility: "代码审查" },
       ],
       coordinationMode: "manager",
       instructions: "",
@@ -405,6 +455,75 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         requiredTags: [],
       },
     });
+  });
+
+  it("preserves stored leader and member names when candidates are unavailable", async () => {
+    const savedGroup: CollaborationGroup = {
+      ...group,
+      leader: { ...group.leader, name: "Stored leader" },
+      members: [
+        { ...group.members[0], name: "Stored leader" },
+        { ...group.members[1], name: "Stored reviewer" },
+        {
+          kind: "human",
+          id: "7",
+          name: "Stored human",
+          responsibility: "Review",
+        },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[savedGroup]}
+          members={[]}
+          agents={[]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-save"));
+
+    expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
+      group.id,
+      expect.objectContaining({
+        leader: expect.objectContaining({ name: "Stored leader" }),
+        members: expect.arrayContaining([
+          expect.objectContaining({ id: "2", name: "Stored reviewer" }),
+          expect.objectContaining({ id: "7", name: "Stored human" }),
+        ]),
+      }),
+    );
+  });
+
+  it.each(["Me", "我"])("preserves an agent's actual name %s", async (name) => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[]}
+          agents={[{ ...codexAgent, name }, claudeAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-manage-group-1"));
+    await click(byTestId("collaboration-group-detail-save"));
+
+    expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
+      group.id,
+      expect.objectContaining({
+        leader: expect.objectContaining({ name }),
+        members: expect.arrayContaining([
+          expect.objectContaining({ id: "1", name }),
+        ]),
+      }),
+    );
   });
 
   it("edits member delegation rules, workflow stages, and environment requirements", async () => {
@@ -432,11 +551,18 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       byTestId<HTMLTextAreaElement>("collaboration-group-detail-instructions")
         .value,
     ).toBe("实现工作应该 @Codex 来完成");
+    const stageAssignee = container.querySelector<HTMLSelectElement>(
+      '[data-testid="collaboration-group-stage-stage-1"] select',
+    );
+    expect(stageAssignee?.options[0].textContent).toBe("未指定执行者");
     expect(
-      container.querySelector<HTMLSelectElement>(
-        '[data-testid="collaboration-group-stage-stage-1"] select',
-      )?.options[0].textContent,
-    ).toBe("由负责人执行");
+      [...(stageAssignee?.options ?? [])].map((option) => option.textContent),
+    ).toEqual(["未指定执行者", "@Claude Code"]);
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-group-create-responsibility-agent-1"]',
+      ),
+    ).toBeNull();
     await click(byTestId("collaboration-group-rule-mention-trigger"));
     await click(byTestId("collaboration-group-rule-mention-agent-2"));
     expect(
@@ -461,7 +587,10 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
       group.id,
       expect.objectContaining({
-        members: [{ kind: "agent", id: "1", responsibility: "Implement" }],
+        leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
         instructions: expect.stringContaining("@Claude Code"),
         stages: [
           expect.objectContaining({
@@ -498,3 +627,95 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.removeCollaborationGroup).toHaveBeenCalledWith(group.id);
   });
 });
+
+it.each([
+  { role: "Owner", ownerUserId: 1 },
+  { role: "Maintainer", ownerUserId: 1 },
+  { role: "Viewer", ownerUserId: 1 },
+  { role: "Owner", ownerUserId: undefined },
+] as const)(
+  "CP19 exposes transfer for $role with server owner $ownerUserId as appropriate",
+  async ({ role, ownerUserId }) => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const transferOwnership = vi.fn(async () => undefined);
+    const commands = {
+      transferOwnership,
+      searchUsers: vi.fn(async () => []),
+      addMember: vi.fn(),
+      updateMember: vi.fn(),
+      removeMember: vi.fn(),
+      createCollaborationGroup: vi.fn(),
+      removeCollaborationGroup: vi.fn(),
+    };
+    try {
+      await act(async () =>
+        root.render(
+          <WorkspaceMembersConfiguration
+            workspace={{
+              id: "space-1",
+              location: "cloud",
+              name: "Space",
+              description: "",
+              namespace: "default",
+              access_role: role,
+              member_count: 2,
+              agent_count: 0,
+              execution_environment_count: 0,
+              project_count: 0,
+              created_by_user_id: 1,
+              owner_user_id: ownerUserId,
+              version: 8,
+              created_at: "",
+              updated_at: "",
+            }}
+            members={[
+              {
+                id: 1,
+                user_id: 1,
+                user_name: "Owner",
+                email: null,
+                role: "Owner",
+              },
+              {
+                id: 2,
+                user_id: 7,
+                user_name: "New owner",
+                email: null,
+                role: "Developer",
+              },
+            ]}
+            locale="zh-CN"
+            commands={commands}
+          />,
+        ),
+      );
+      const choice = container.querySelector<HTMLSelectElement>(
+        '[data-testid="collaboration-workspace-transfer-user"]',
+      );
+      if (role !== "Owner" || ownerUserId === undefined) {
+        expect(choice).toBeNull();
+        expect(transferOwnership).not.toHaveBeenCalled();
+        return;
+      }
+      expect(choice).not.toBeNull();
+      await act(async () => {
+        choice!.value = "7";
+        choice!.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="collaboration-workspace-transfer-submit"]',
+          )!
+          .click(),
+      );
+      expect(transferOwnership).toHaveBeenCalledWith(7, 8);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  },
+);

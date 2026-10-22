@@ -27,8 +27,6 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
-    RuntimeIMNotificationPresenceResponse,
-    RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
     RuntimeSendResponse,
@@ -459,25 +457,6 @@ async def bind_runtime_task_im_sessions_endpoint(
     )
 
 
-@router.get(
-    "/im-notifications",
-    response_model=RuntimeIMNotificationSettingsResponse,
-    response_model_by_alias=True,
-)
-@trace_async("runtime_work.im_notifications.get", "runtime_work.api")
-async def get_im_notification_settings_endpoint(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Read global and task-level IM notification settings."""
-
-    set_span_attribute("user.id", current_user.id)
-    return await runtime_work_service.get_im_notification_settings(
-        db=db,
-        user_id=current_user.id,
-    )
-
-
 @router.put(
     "/im-notifications/global",
     response_model=RuntimeIMNotificationSettingsResponse,
@@ -495,26 +474,6 @@ async def update_global_im_notification_endpoint(
     set_span_attribute("runtime.im_notifications.global.enabled", request.enabled)
     return await runtime_work_service.update_global_im_notification(
         db=db,
-        user_id=current_user.id,
-        request=request,
-    )
-
-
-@router.put(
-    "/im-notifications/presence",
-    response_model=RuntimeIMNotificationPresenceResponse,
-    response_model_by_alias=True,
-)
-@trace_async("runtime_work.im_notifications.presence.update", "runtime_work.api")
-async def update_im_notification_presence_endpoint(
-    request: RuntimeIMNotificationPresenceUpdateRequest,
-    current_user: User = Depends(get_current_user),
-):
-    """Refresh one Wework client's foreground or away presence."""
-
-    set_span_attribute("user.id", current_user.id)
-    set_span_attribute("runtime.im_notifications.presence.away", request.away)
-    return await runtime_work_service.update_im_notification_presence(
         user_id=current_user.id,
         request=request,
     )
@@ -831,6 +790,7 @@ async def create_runtime_task_endpoint(
     "/materialize",
     response_model=RuntimeTaskMaterializeResponse,
     response_model_by_alias=True,
+    response_model_exclude_none=True,
 )
 @trace_async("runtime_work.materialize", "runtime_work.api")
 async def materialize_runtime_task_endpoint(
@@ -854,6 +814,7 @@ async def materialize_runtime_task_endpoint(
 @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
+@router.post("/llm-responses-proxy/v1/messages")
 @trace_async("runtime_work.llm_proxy", "runtime_work.api")
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,

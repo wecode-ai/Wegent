@@ -31,6 +31,7 @@ interface ToolBlockItemProps {
   durationEndAt?: number;
   fileEditDurations?: FileEditDurationsByBlock;
   forceExpanded?: boolean;
+  showThinkingContent?: boolean;
   stateKey?: string;
   onOpenWorkspaceFile?: (
     path: string,
@@ -47,6 +48,7 @@ export function ToolBlockItem({
   durationEndAt,
   fileEditDurations,
   forceExpanded = false,
+  showThinkingContent = false,
   stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
@@ -79,10 +81,8 @@ export function ToolBlockItem({
     if (block.type === "tool") onExpandedChange?.(expanded);
   }, [block.type, expanded, onExpandedChange]);
 
-  if (block.type === "thinking") {
-    return null;
-  }
-  if (block.type === "text") {
+  if (block.type === "text" || block.type === "thinking") {
+    if (block.type === "thinking" && !showThinkingContent) return null;
     return (
       <ProcessTextBlockItem
         block={block}
@@ -102,6 +102,7 @@ export function ToolBlockItem({
         block={block}
         fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
+        stateKey={stateKey}
       />
     );
   }
@@ -308,7 +309,7 @@ function ProcessTextBlockItem({
   isRunning,
   onOpenWorkspaceFile,
 }: {
-  block: Extract<ProcessingBlock, { type: "text" }>;
+  block: Extract<ProcessingBlock, { type: "text" | "thinking" }>;
   isRunning: boolean;
   onOpenWorkspaceFile?: (
     path: string,
@@ -321,13 +322,17 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-chat text-text-primary"
+      className={`min-w-0 overflow-x-hidden text-chat ${block.type === "thinking" ? "text-text-secondary" : "text-text-primary"}`}
       data-processing-block-id={block.id}
       data-message-selectable-text
       role={isRunning ? "status" : undefined}
       aria-live={isRunning ? "polite" : undefined}
       aria-label={isRunning ? t("process_text.running") : undefined}
-      data-testid="process-text-block"
+      data-testid={
+        block.type === "thinking"
+          ? "process-thinking-block"
+          : "process-text-block"
+      }
     >
       <div className="min-w-0">
         <AssistantMarkdown

@@ -3,39 +3,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `GET /api/tasks/{task_id}/runtime-check` mirroring
-//! `Wegent/backend/app/api/endpoints/adapter/tasks.py:get_task_runtime_check`.
+//! `Wegent/backend/app/api/endpoints/adapter/task_runtime.py`.
 //!
 //! Order of operations matches the recorded source traffic:
 //! 1. authenticate the Bearer user (MySQL `users` lookup),
-//! 2. load the active non-deleted task (base `tasks` table),
-//! 3. verify membership via the access store,
-//! 4. resolve the workspace ref and team (public task tables, kinds),
-//! 5. read the task streaming status (Redis),
-//! 6. return the lightweight checkpoint; message content is excluded.
+//! 2. read the authorized runtime checkpoint in one statement
+//!    (`task_access_store.get_runtime_state`), answering 404 when the task is
+//!    absent, inactive, deleted, or not visible to the viewer,
+//! 3. read the task streaming status (Redis),
+//! 4. return the lightweight checkpoint; message content is excluded.
 use anyhow::Result;
 use brz_mysql::Mysql;
 use serde::Serialize;
 
 use super::state::AppState;
-use super::tasks::{self, TaskResourceRow};
-use crate::crd::CrdDocument;
+use super::tasks;
 
 /// Mirror of `TaskRuntimeActiveStream` (`app/schemas/task.py`).
 #[derive(Debug, Serialize)]
 pub(crate) struct TaskRuntimeActiveStream {
     pub subtask_id: i64,
     pub cursor: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<String>,
 }
 
-/// Mirror of `TaskRuntimeCheck` (`app/schemas/task.py`): pydantic always
-/// emits `active_stream` (null when absent), so no skip-serialization.
+/// Mirror of `TaskRuntimeCheck` (`app/schemas/task.py`): pydantic emits every
+/// field, `status_updated_at` and `active_stream` as `null` when absent, so no
+/// field is skipped during serialization.
 #[derive(Debug, Serialize)]
 pub(crate) struct TaskRuntimeCheck {
     pub task_id: i64,
     pub task_status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub status_updated_at: Option<String>,
     pub active_stream: Option<TaskRuntimeActiveStream>,
 }
@@ -51,6 +49,13 @@ impl EndpointError {
         Self {
             status: 404,
             detail: "Task not found",
+        }
+    }
+
+    fn internal() -> Self {
+        Self {
+            status: 500,
+            detail: "Internal server error",
         }
     }
 }
@@ -75,8 +80,6 @@ async fn get_task_runtime_check(
 fn error_response(error: EndpointError) -> crate::http_compat::FastApiError {
     let status = brz_http_server::StatusCode::from_u16(error.status)
         .unwrap_or(brz_http_server::StatusCode::INTERNAL_SERVER_ERROR);
-    // The source lets unexpected dependency errors surface as plain 500s
-    // from the framework; keep a JSON body for observability.
     crate::http_compat::FastApiError::detail(status, error.detail)
 }
 
@@ -86,26 +89,19 @@ pub(crate) async fn runtime_check(
     task_id: i64,
     user_id: i64,
 ) -> Result<TaskRuntimeCheck, EndpointError> {
-    // task_kinds_service.get_task_by_id -> 404 when absent.
-    let task = tasks::get_active_non_deleted_task(&state.mysql, state.task_policy, task_id)
-        .await
-        .map_err(internal_error)?;
-    let task = task.ok_or_else(EndpointError::not_found)?;
-    // task_access_store.is_member -> 404 when not a member.
-    if !tasks::is_task_member(&state.mysql, state.task_policy, task_id, user_id)
+    // `task_access_store.get_runtime_state` -> None becomes the source's
+    // `HTTPException(404, "Task not found")`. The owner/approved-member policy
+    // runs inside that one statement.
+    let checkpoint = tasks::get_runtime_state(&*state.task_store, task_id, user_id)
         .await
         .map_err(internal_error)?
-    {
-        return Err(EndpointError::not_found());
-    }
-
-    // convert_to_task_dict resolves the workspace ref, team, and owner user;
-    // none of those values is part of the runtime-check response, but the
-    // source performs every lookup, so the target keeps the same call
-    // topology.
-    resolve_task_refs(state, &task)
-        .await
-        .map_err(internal_error)?;
+        .ok_or_else(EndpointError::not_found)?;
+    // `TaskRuntimeCheck.task_status` is a required `TaskStatus`: the source's
+    // response model rejects a checkpoint without one.
+    let Some(task_status) = checkpoint.status else {
+        tracing::error!(task_id, "runtime-check checkpoint has no task status");
+        return Err(EndpointError::internal());
+    };
 
     // Redis streaming state is best-effort: a missing client (Redis was
     // unavailable at startup) reads as no active stream.
@@ -115,11 +111,10 @@ pub(crate) async fn runtime_check(
             .map_err(internal_error)?,
         None => None,
     };
-    let checkpoint = tasks::task_checkpoint(&task).map_err(internal_error)?;
 
     Ok(TaskRuntimeCheck {
         task_id,
-        task_status: checkpoint.status,
+        task_status,
         status_updated_at: checkpoint
             .updated_at
             .map(|updated_at| format_python_datetime(&updated_at)),
@@ -131,93 +126,47 @@ pub(crate) async fn runtime_check(
     })
 }
 
-/// The workspace, team, and owner-user lookups performed by
-/// `convert_to_task_dict`. The recorded task CRD carries
-/// `workspaceRef {name, namespace}` and a public `teamRef` with
-/// `user_id = 0`; the owner user is resolved through the registered
-/// `userReader` (`AppState::user_reader`).
-async fn resolve_task_refs(
-    state: &AppState<impl Mysql, impl brz_redis::Redis>,
-    task: &TaskResourceRow,
-) -> Result<()> {
-    let crd = CrdDocument::project_opaque(&task.json);
-    let spec = crd.spec.as_ref();
-    if let Some(workspace_ref) = spec.and_then(|spec| spec.workspace_ref.as_ref()) {
-        let name = workspace_ref.name();
-        let namespace = workspace_ref.namespace();
-        if !name.is_empty() {
-            tasks::get_workspace_by_ref(&state.mysql, task.user_id, name, namespace).await?;
-        }
-    }
-    if let Some(team_ref) = spec.and_then(|spec| spec.team_ref.as_ref()) {
-        let name = team_ref.name();
-        let namespace = team_ref.namespace();
-        // `resolve_task_ref_team`: an explicit `teamRef.user_id` (the
-        // recorded public teams use `0`) selects the direct owner query;
-        // a null/missing field resolves through the public kinds reader
-        // (`kindReader.get_by_name_and_namespace`'s Team branch).
-        match team_ref.user_id.as_ref() {
-            Some(value) if !value.is_null() => {
-                let team_user_id = value.json_integer().unwrap_or(0);
-                if !name.is_empty() {
-                    tasks::resolve_team_id(&state.mysql, team_user_id, namespace, name).await?;
-                }
-            }
-            _ => {
-                // `convert_to_task_dict` passes the task owner as the
-                // viewer; the public reader resolves the owner's personal
-                // team through direct SQL.
-                let kinds_cache = crate::task_skills::kinds::KindCacheStore {
-                    mysql: &state.mysql,
-                    redis: state.redis.as_ref(),
-                    // The share-permission fallbacks (entity bindings, group
-                    // role) require the ERP directory and the entity
-                    // resolvers, which this state does not retain; only the
-                    // direct member-row pass runs here.
-                    erp: None,
-                    resolvers: None,
-                };
-                kinds_cache
-                    .resolve_team(task.user_id, namespace, name)
-                    .await?;
-            }
-        }
-    }
-    // `userReader.get_by_id` through the registered reader: the public build
-    // performs the direct SQL lookup; the application build may replace the
-    // reader (for example with a read-through cache).
-    let _ = state.user_reader.get_by_id(task.user_id).await?;
-    Ok(())
-}
-
 fn internal_error(error: anyhow::Error) -> EndpointError {
     tracing::error!(%error, "runtime-check dependency failure");
-    EndpointError {
-        status: 500,
-        detail: "Internal server error",
-    }
+    EndpointError::internal()
 }
 
-/// Render a naive datetime exactly like pydantic's default serialization:
-/// `YYYY-MM-DDTHH:MM:SS.ffffff` with microsecond precision.
+/// Render a naive datetime exactly like pydantic's default serialization of
+/// `datetime.isoformat()`: `YYYY-MM-DDTHH:MM:SS` with a six-digit fraction
+/// only when the microsecond field is non-zero.
 fn format_python_datetime(value: &chrono::NaiveDateTime) -> String {
-    value.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+    if value.and_utc().timestamp_subsec_micros() == 0 {
+        value.format("%Y-%m-%dT%H:%M:%S").to_string()
+    } else {
+        value.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn naive(value: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f").unwrap()
+    }
+
     #[test]
     fn datetime_matches_python_format() {
-        let parsed = chrono::NaiveDateTime::parse_from_str(
-            "2026-07-14T14:47:41.807109",
-            "%Y-%m-%dT%H:%M:%S%.f",
-        )
-        .unwrap();
         assert_eq!(
-            format_python_datetime(&parsed),
+            format_python_datetime(&naive("2026-07-14T14:47:41.807109")),
             "2026-07-14T14:47:41.807109"
+        );
+        // `datetime.isoformat()` drops a zero microsecond field, which is what
+        // the source's own unit test expects for a whole-second timestamp.
+        assert_eq!(
+            format_python_datetime(&naive("2026-09-18T11:50:00")),
+            "2026-09-18T11:50:00"
+        );
+        // A non-zero microsecond field keeps all six digits, trailing zeros
+        // included.
+        assert_eq!(
+            format_python_datetime(&naive("2026-09-23T16:33:25.120000")),
+            "2026-09-23T16:33:25.120000"
         );
     }
 
@@ -233,6 +182,27 @@ mod tests {
         assert_eq!(
             encoded,
             r#"{"task_id":4823952,"task_status":"COMPLETED","status_updated_at":"2026-07-14T14:47:41.807109","active_stream":null}"#
+        );
+    }
+
+    #[test]
+    fn absent_checkpoint_fields_serialize_as_null() {
+        // pydantic always emits optional response fields; only their value can
+        // be `null`. The recorded bodies carry every key.
+        let body = TaskRuntimeCheck {
+            task_id: 42,
+            task_status: "RUNNING".to_string(),
+            status_updated_at: None,
+            active_stream: Some(TaskRuntimeActiveStream {
+                subtask_id: 77,
+                cursor: 3,
+                last_activity_at: None,
+            }),
+        };
+        let encoded = serde_json::to_string(&body).unwrap();
+        assert_eq!(
+            encoded,
+            r#"{"task_id":42,"task_status":"RUNNING","status_updated_at":null,"active_stream":{"subtask_id":77,"cursor":3,"last_activity_at":null}}"#
         );
     }
 }

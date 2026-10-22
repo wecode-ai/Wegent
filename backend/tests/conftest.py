@@ -6,7 +6,8 @@ import hashlib
 import os
 import tempfile
 import uuid
-from datetime import datetime, timedelta
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Tuple
 
 import pytest
@@ -15,6 +16,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
+
+# Test crypto must be configured before parameterized modules encrypt at collection.
+os.environ["GIT_TOKEN_AES_KEY"] = "12345678901234567890123456789012"
+os.environ["GIT_TOKEN_AES_IV"] = "1234567890123456"
+os.environ["SHARE_TOKEN_AES_KEY"] = "12345678901234567890123456789012"
+os.environ["SHARE_TOKEN_AES_IV"] = "1234567890123456"
+os.environ["LOG_LEVEL"] = "INFO"
 
 from app.core.config import Settings
 from app.core.security import create_access_token, get_password_hash, pwd_context
@@ -29,6 +37,17 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+
+
+@pytest.fixture(autouse=True)
+def plugin_write_backend(monkeypatch: pytest.MonkeyPatch):
+    """Mock external coordination services while exercising transaction hooks."""
+    from app.services import plugin_write_coordination as coordination
+    from tests.plugin_write_fakes import FakePluginRedis
+
+    redis = FakePluginRedis()
+    monkeypatch.setattr(coordination, "_redis_client", lambda: redis)
+    return redis
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -242,12 +261,16 @@ def test_session_factory(test_engine):
 
 
 @pytest.fixture(scope="function")
-def test_db(test_engine, test_session_factory) -> Generator[Session, None, None]:
+def test_db(
+    test_engine, test_session_factory, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Session, None, None]:
     """
     Create a test database session with transaction rollback.
     Each test function gets a clean database state via transaction rollback.
     This is much faster than recreating tables for each test.
     """
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
+
     # Start a connection and begin a transaction
     connection = test_engine.connect()
     transaction = connection.begin()
@@ -275,12 +298,28 @@ def test_db(test_engine, test_session_factory) -> Generator[Session, None, None]
 
 
 @pytest.fixture(scope="function")
-async def async_test_db():
+def plugin_write_sessions(test_db: Session, monkeypatch: pytest.MonkeyPatch):
+    """Give plugin workers independent sessions inside the test transaction."""
+    from app.services import plugin_write_operations
+
+    connection = test_db.get_bind()
+
+    @contextmanager
+    def session() -> Generator[Session, None, None]:
+        with Session(bind=connection, join_transaction_mode="create_savepoint") as db:
+            yield db
+
+    monkeypatch.setattr(plugin_write_operations, "get_db_session", session)
+
+
+@pytest.fixture(scope="function")
+async def async_test_db(monkeypatch: pytest.MonkeyPatch):
     """
     Async test DB session for testing async service methods.
     Uses an independent in-memory SQLite database with its own tables.
     Data setup should be done via this session (not test_db).
     """
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
 
     async with engine.begin() as conn:

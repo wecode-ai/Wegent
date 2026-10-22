@@ -14,7 +14,10 @@ use tokio::sync::broadcast;
 
 use crate::{
     agents::mcp_server_elicitation_request_user_input_params,
-    codex_phase::{codex_phase_is_final, CodexAgentMessagePhaseTracker},
+    codex_phase::{
+        codex_phase_is_final, codex_phase_is_process, codex_phase_name,
+        CodexAgentMessagePhaseTracker,
+    },
     logging::log_executor_event,
     protocol::ExecutionRequest,
 };
@@ -23,10 +26,10 @@ use super::{
     codex_notifications::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
+    codex_user_input::async_question_payload_from_item,
     notification_mapping::{
-        codex_stream_debug_enabled, log_dropped_notification, log_stream_text_mapping,
-        log_text_mapping, map_text_chunk, map_tool_output_delta, notification_item_id,
-        TextChunkMapping,
+        codex_stream_debug_enabled, log_dropped_notification, map_text_chunk,
+        map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -272,6 +275,14 @@ fn map_codex_notification(
     );
 }
 
+#[cfg(test)]
+#[path = "background_terminal_tests.rs"]
+mod background_terminal_tests;
+
+#[cfg(test)]
+#[path = "subagent_event_tests.rs"]
+mod subagent_event_tests;
+
 struct EventEmitContext<'a> {
     event_tx: &'a Option<broadcast::Sender<Value>>,
     device_id: &'a str,
@@ -286,6 +297,7 @@ pub(crate) struct CodexNotificationEventMapper {
     subagent_item_ids: BTreeSet<String>,
     subagent_parent_ids: BTreeMap<String, String>,
     subagent_text_block_ids: BTreeMap<String, String>,
+    subagent_thread_ids_by_path: BTreeMap<String, String>,
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
@@ -464,6 +476,26 @@ impl CodexNotificationEventMapper {
                     notification.params,
                 );
             }
+            "item/commandExecution/terminalInteraction" => {
+                let params = notification.params;
+                if let Some(item_id) = string_field(params, "itemId") {
+                    emit_response_event(
+                        event_tx,
+                        device_id,
+                        "response.block.updated",
+                        local_task_id,
+                        request,
+                        json!({
+                            "block_id": item_id,
+                            "updates": {"render_payload": {
+                                "kind": "command_execution",
+                                "processId": params.get("processId"),
+                                "stdin": params.get("stdin"),
+                            }},
+                        }),
+                    );
+                }
+            }
             "item/plan/delta" => {
                 self.emit_plan_delta(
                     event_tx,
@@ -504,17 +536,26 @@ impl CodexNotificationEventMapper {
                 let tracked_phase = self
                     .agent_message_phases
                     .phase_for_item(notification.params);
+                let item = notification
+                    .params
+                    .get("item")
+                    .unwrap_or(notification.params);
+                let completed_phase =
+                    codex_phase_name(item).or_else(|| codex_phase_name(notification.params));
                 let active_output_matches = item_id
                     .as_deref()
                     .is_some_and(|item_id| self.active_output_item_id.as_deref() == Some(item_id));
                 let can_reuse_active_output_id = item_id.is_none()
-                    && codex_phase_is_final(tracked_phase.as_deref())
+                    && (codex_phase_is_final(tracked_phase.as_deref())
+                        || codex_phase_is_process(completed_phase.as_deref()))
                     && self.active_output_item_id.is_some();
-                let resolved_phase = if active_output_matches || can_reuse_active_output_id {
-                    Some("finalanswer".to_owned())
-                } else {
-                    tracked_phase
-                };
+                let resolved_phase = completed_phase.or_else(|| {
+                    if active_output_matches || can_reuse_active_output_id {
+                        Some("finalanswer".to_owned())
+                    } else {
+                        tracked_phase
+                    }
+                });
                 let output_item_id_fallback = can_reuse_active_output_id
                     .then(|| self.active_output_item_id.clone())
                     .flatten();
@@ -523,6 +564,10 @@ impl CodexNotificationEventMapper {
                     return;
                 }
                 if self.emit_applied_guidance(&emit_context, notification.params) {
+                    return;
+                }
+                if emit_async_request_user_input(&emit_context, notification.params) {
+                    self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
                 if self.emit_text_chunk(
@@ -569,12 +614,14 @@ impl CodexNotificationEventMapper {
                 self.emit_tool_done(&emit_context, notification.params);
             }
             "subagent/activity" => {
+                let agent_thread_id = self.subagent_activity_thread_id(notification.params);
                 emit_subagent_activity(
                     event_tx,
                     device_id,
                     local_task_id,
                     request,
                     notification.params,
+                    agent_thread_id,
                 );
             }
             "context/compaction" => {
@@ -1188,6 +1235,7 @@ impl CodexNotificationEventMapper {
         process_kind: &str,
         item_id: Option<String>,
         text: String,
+        replaces_item_id: Option<&str>,
     ) {
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
@@ -1218,7 +1266,7 @@ impl CodexNotificationEventMapper {
                 self.process_text_count
             )
         });
-        let data = json!({
+        let mut data = json!({
             "block": {
                 "id": id,
                 "type": block_type,
@@ -1229,6 +1277,9 @@ impl CodexNotificationEventMapper {
                 "timestamp": now_ms(),
             }
         });
+        if let Some(replaces_item_id) = replaces_item_id {
+            data["replacesItemId"] = Value::String(replaces_item_id.to_owned());
+        }
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
@@ -1250,14 +1301,6 @@ impl CodexNotificationEventMapper {
         match map_text_chunk(method, params, resolved_phase, output_item_id_fallback) {
             Ok(Some(TextChunkMapping::OutputDelta { item_id, delta })) => {
                 self.active_output_item_id = Some(item_id.clone());
-                log_stream_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_output_delta",
-                    resolved_phase,
-                    params,
-                    &delta,
-                );
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
@@ -1275,14 +1318,6 @@ impl CodexNotificationEventMapper {
                 if self.active_output_item_id.as_deref() == Some(item_id.as_str()) {
                     self.active_output_item_id = None;
                 }
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_output_completed",
-                    resolved_phase,
-                    params,
-                    &text,
-                );
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
@@ -1302,14 +1337,6 @@ impl CodexNotificationEventMapper {
                 item_id,
                 delta,
             })) => {
-                log_stream_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_process_delta",
-                    resolved_phase,
-                    params,
-                    &delta,
-                );
                 self.emit_process_text_delta(
                     emit_context,
                     method,
@@ -1326,20 +1353,28 @@ impl CodexNotificationEventMapper {
                 item_id,
                 text,
             })) => {
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "emit_completed_process",
-                    resolved_phase,
-                    params,
-                    &text,
-                );
+                let item_id = item_id.or_else(|| {
+                    (process_kind == "assistant_message" && codex_phase_is_process(resolved_phase))
+                        .then(|| output_item_id_fallback.map(str::to_owned))
+                        .flatten()
+                });
+                let replaces_item_id = item_id
+                    .as_deref()
+                    .filter(|item_id| {
+                        codex_phase_is_process(resolved_phase)
+                            && self.active_output_item_id.as_deref() == Some(*item_id)
+                    })
+                    .map(str::to_owned);
+                if replaces_item_id.is_some() {
+                    self.active_output_item_id = None;
+                }
                 self.emit_completed_process_text(
                     emit_context,
                     block_type,
                     process_kind,
                     item_id,
                     text,
+                    replaces_item_id.as_deref(),
                 );
                 true
             }
@@ -1532,23 +1567,6 @@ impl CodexNotificationEventMapper {
             return;
         };
 
-        log_executor_event(
-            "codex patch update mapped",
-            &[
-                ("local_task_id", local_task_id.to_owned()),
-                ("block_id", block_id.clone()),
-                (
-                    "changes",
-                    params
-                        .get("changes")
-                        .and_then(Value::as_array)
-                        .map(Vec::len)
-                        .unwrap_or_default()
-                        .to_string(),
-                ),
-            ],
-        );
-
         emit_response_event(
             event_tx,
             device_id,
@@ -1627,15 +1645,36 @@ impl CodexNotificationEventMapper {
     }
 
     fn subagent_parent_block_id(&self, params: &Value) -> Option<String> {
+        if !self.is_subagent_delta(params) {
+            return None;
+        }
         if let Some(item_id) = notification_item_id(params) {
             if let Some(parent_id) = self.subagent_parent_ids.get(&item_id) {
                 return Some(parent_id.clone());
             }
         }
+        // Native agents can share the root thread while retaining distinct activity identities.
+        if let Some(agent_thread_id) = codex_stream_agent_path(params)
+            .and_then(|path| self.subagent_thread_ids_by_path.get(&path))
+        {
+            return Some(subagent_block_id(agent_thread_id));
+        }
         stream_thread_id(params)
             .or_else(|| codex_stream_agent_path(params))
             .filter(|identity| identity != "/root")
             .map(|identity| subagent_block_id(&identity))
+    }
+
+    fn subagent_activity_thread_id(&mut self, params: &Value) -> Option<String> {
+        let path = subagent_path(params)?;
+        let thread_id = explicit_subagent_thread_id(params)
+            .or_else(|| self.subagent_thread_ids_by_path.get(&path).cloned())
+            .or_else(|| subagent_thread_id(params));
+        if let Some(thread_id) = thread_id.as_ref() {
+            self.subagent_thread_ids_by_path
+                .insert(path, thread_id.clone());
+        }
+        thread_id
     }
 
     fn is_subagent_delta(&self, params: &Value) -> bool {
@@ -1875,7 +1914,7 @@ fn limit_tool_output_delta(delta: &str) -> String {
     truncate_utf8(delta, MAX_TOOL_OUTPUT_DELTA_BYTES)
 }
 
-fn push_limited_tool_output(content: &mut String, delta: &str) {
+pub(super) fn push_limited_tool_output(content: &mut String, delta: &str) {
     content.push_str(delta);
     if content.len() <= MAX_TOOL_OUTPUT_BUFFER_BYTES {
         return;
@@ -1977,6 +2016,25 @@ fn emit_request_user_input(
             object.insert("requestId".to_owned(), request_id.clone());
         }
     }
+    emit_request_user_input_block(
+        event_tx,
+        device_id,
+        local_task_id,
+        request,
+        block_id,
+        render_payload,
+    );
+}
+
+/// Emits the interactive question block shared by every request-user-input source.
+fn emit_request_user_input_block(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    block_id: String,
+    render_payload: Value,
+) {
     emit_response_event(
         event_tx,
         device_id,
@@ -1994,6 +2052,27 @@ fn emit_request_user_input(
             }
         }),
     );
+}
+
+/// Codex asks non-blocking clarifying questions through `request_user_input_async`.
+/// The tool returns immediately, so the app-server delivers the question as an
+/// `agentMessage` carrying `questions`, and the answer comes back as the next user
+/// message instead of a runtime response. Render the structured choices as the
+/// interactive card rather than the plain-text fallback the same item also carries.
+fn emit_async_request_user_input(context: &EventEmitContext<'_>, params: &Value) -> bool {
+    let Some(render_payload) = async_question_payload_from_item(params) else {
+        return false;
+    };
+    let item_id = render_payload["itemId"].as_str().unwrap();
+    emit_request_user_input_block(
+        context.event_tx,
+        context.device_id,
+        context.local_task_id,
+        context.request,
+        format!("request-user-input-{item_id}"),
+        render_payload,
+    );
+    true
 }
 
 fn emit_codex_approval_request(
@@ -2050,22 +2129,13 @@ fn emit_codex_approval_request(
             object.insert("requestId".to_owned(), request_id.clone());
         }
     }
-    emit_response_event(
+    emit_request_user_input_block(
         event_tx,
         device_id,
-        "response.block.created",
         local_task_id,
         request,
-        json!({
-            "block": {
-                "id": block_id,
-                "type": "tool",
-                "tool_name": "request_user_input",
-                "status": "pending",
-                "timestamp": now_ms(),
-                "render_payload": render_payload,
-            }
-        }),
+        block_id,
+        render_payload,
     );
 }
 
@@ -2262,6 +2332,7 @@ fn emit_subagent_activity(
     local_task_id: &str,
     request: &ExecutionRequest,
     params: &Value,
+    agent_thread_id: Option<String>,
 ) {
     let Some(agent_path) = subagent_path(params) else {
         return;
@@ -2271,7 +2342,6 @@ fn emit_subagent_activity(
     }
 
     let kind = subagent_kind(params);
-    let agent_thread_id = subagent_thread_id(params);
     let agent_id = agent_thread_id
         .clone()
         .unwrap_or_else(|| agent_path.clone());
@@ -2530,18 +2600,32 @@ fn subagent_status(kind: &str) -> &'static str {
     }
 }
 
-fn subagent_thread_id(params: &Value) -> Option<String> {
+fn explicit_subagent_thread_id(params: &Value) -> Option<String> {
     string_field(params, "agent_thread_id")
         .or_else(|| string_field(params, "agentThreadId"))
+        .or_else(|| {
+            params.get("item").and_then(|item| {
+                string_field(item, "agent_thread_id")
+                    .or_else(|| string_field(item, "agentThreadId"))
+            })
+        })
+        .or_else(|| {
+            params.get("turn").and_then(|turn| {
+                string_field(turn, "agent_thread_id")
+                    .or_else(|| string_field(turn, "agentThreadId"))
+            })
+        })
+}
+
+fn subagent_thread_id(params: &Value) -> Option<String> {
+    explicit_subagent_thread_id(params)
         .or_else(|| string_field(params, "thread_id"))
         .or_else(|| string_field(params, "threadId"))
         .or_else(|| string_field(params, "turn_id"))
         .or_else(|| string_field(params, "turnId"))
         .or_else(|| {
             params.get("item").and_then(|item| {
-                string_field(item, "agent_thread_id")
-                    .or_else(|| string_field(item, "agentThreadId"))
-                    .or_else(|| string_field(item, "thread_id"))
+                string_field(item, "thread_id")
                     .or_else(|| string_field(item, "threadId"))
                     .or_else(|| string_field(item, "turn_id"))
                     .or_else(|| string_field(item, "turnId"))
@@ -2549,9 +2633,7 @@ fn subagent_thread_id(params: &Value) -> Option<String> {
         })
         .or_else(|| {
             params.get("turn").and_then(|turn| {
-                string_field(turn, "agent_thread_id")
-                    .or_else(|| string_field(turn, "agentThreadId"))
-                    .or_else(|| string_field(turn, "thread_id"))
+                string_field(turn, "thread_id")
                     .or_else(|| string_field(turn, "threadId"))
                     .or_else(|| string_field(turn, "turn_id"))
                     .or_else(|| string_field(turn, "turnId"))
@@ -3285,8 +3367,8 @@ mod tests {
     }
 
     #[test]
-    fn keeps_streamed_output_text_consistent_when_completion_is_reclassified() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
+    fn reclassifies_streamed_final_text_as_commentary_before_the_real_final_answer() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
@@ -3317,10 +3399,50 @@ mod tests {
                 "method": "item/completed",
                 "params": {
                     "item": {
-                        "id": "msg-progress",
                         "type": "agentMessage",
                         "phase": "commentary",
                         "text": "I will inspect."
+                    }
+                }
+            }),
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "call-1",
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "exec_command",
+                        "arguments": "{\"cmd\":\"pwd\"}"
+                    }
+                }
+            }),
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": ""
+                    }
+                }
+            }),
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }),
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done."
                     }
                 }
             }),
@@ -3337,16 +3459,44 @@ mod tests {
         let created = event_rx
             .try_recv()
             .expect("streamed output text should be emitted");
-        let completed = event_rx
+        let reclassified = event_rx
             .try_recv()
-            .expect("completed output text should be emitted");
+            .expect("reclassified process text should be emitted");
+        let tool = event_rx.try_recv().expect("tool block should be emitted");
+        let final_delta = event_rx
+            .try_recv()
+            .expect("real final output delta should be emitted");
+        let final_completed = event_rx
+            .try_recv()
+            .expect("real final output completion should be emitted");
 
         assert_eq!(created["event"], "response.output_text.delta");
         assert_eq!(created["payload"]["data"]["item_id"], "msg-progress");
         assert_eq!(created["payload"]["data"]["delta"], "I will inspect.");
-        assert_eq!(completed["event"], "response.output_text.done");
-        assert_eq!(completed["payload"]["data"]["item_id"], "msg-progress");
-        assert_eq!(completed["payload"]["data"]["text"], "I will inspect.");
+        assert_eq!(reclassified["event"], "response.block.created");
+        assert_eq!(
+            reclassified["payload"]["data"]["replacesItemId"],
+            "msg-progress"
+        );
+        assert_eq!(
+            reclassified["payload"]["data"]["block"]["id"],
+            "msg-progress"
+        );
+        assert_eq!(
+            reclassified["payload"]["data"]["block"]["content"],
+            "I will inspect."
+        );
+        assert_eq!(tool["event"], "response.block.created");
+        assert_eq!(
+            tool["payload"]["data"]["block"]["tool_name"],
+            "exec_command"
+        );
+        assert_eq!(final_delta["event"], "response.output_text.delta");
+        assert_eq!(final_delta["payload"]["data"]["item_id"], "msg-final");
+        assert_eq!(final_delta["payload"]["data"]["delta"], "Done.");
+        assert_eq!(final_completed["event"], "response.output_text.done");
+        assert_eq!(final_completed["payload"]["data"]["item_id"], "msg-final");
+        assert_eq!(final_completed["payload"]["data"]["text"], "Done.");
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -4630,6 +4780,7 @@ mod tests {
             json!({
                 "method": "item/completed",
                 "params": {
+                    "threadId": "thread-parent",
                     "item": {
                         "type": "subAgentActivity",
                         "agentPath": "/root/worker",
@@ -4647,6 +4798,17 @@ mod tests {
         assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
         assert_eq!(event["payload"]["data"]["kind"], "interacted");
         assert_eq!(event["payload"]["data"]["status"], "running");
+
+        let block = event_rx.try_recv().expect("block should be emitted");
+        assert_eq!(block["event"], "response.block.created");
+        assert_eq!(
+            block["payload"]["data"]["block"]["id"],
+            "subagent-thread-worker"
+        );
+        assert_eq!(
+            block["payload"]["data"]["block"]["agent_thread_id"],
+            "thread-worker"
+        );
     }
 
     #[test]
@@ -5185,6 +5347,65 @@ mod tests {
     }
 
     #[test]
+    fn maps_codex_async_questions_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "call-question",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "delivery": "async",
+                        "text": "Which state jitters?\n- Following\n- Reading",
+                        "questions": [
+                            {
+                                "title": "Which state jitters?",
+                                "options": ["Following", "Reading"]
+                            }
+                        ]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("async question should emit an interactive block");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["id"], "request-user-input-call-question");
+        assert_eq!(block["render_payload"]["kind"], "request_user_input");
+        assert_eq!(block["render_payload"]["delivery"], "async");
+        assert_eq!(block["render_payload"]["itemId"], "call-question");
+        assert_eq!(
+            block["render_payload"]["questions"][0]["question"],
+            "Which state jitters?"
+        );
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"][1]["label"],
+            "Reading"
+        );
+        // The plain-text fallback that accompanies the structured question must not
+        // also land in the transcript as the final answer.
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn maps_mcp_form_elicitation_to_interactive_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -5235,6 +5456,30 @@ mod tests {
             block["render_payload"]["questions"][0]["options"][1],
             json!({"label": "仅自己", "description": "owner"})
         );
+    }
+
+    #[test]
+    fn maps_mcp_url_elicitation_with_zero_request_id_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest::default();
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({"id": 0, "method": "mcpServer/elicitation/request", "params": {
+                "mode": "url", "serverName": "codex_apps", "threadId": "thread-1",
+                "turnId": "turn-1", "message": "Connect GitHub", "elicitationId": "auth-1",
+                "url": "https://chatgpt.com/connect/github"
+            }}),
+        );
+        let event = event_rx.try_recv().unwrap();
+        let payload = &event["payload"]["data"]["block"]["render_payload"];
+        assert_eq!(payload["requestId"], 0);
+        assert_eq!(payload["interactionKind"], "mcp_url");
+        assert_eq!(payload["elicitationId"], "auth-1");
+        assert_eq!(payload["url"], "https://chatgpt.com/connect/github");
+        assert_eq!(payload["questions"], json!([]));
     }
 
     #[test]

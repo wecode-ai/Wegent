@@ -1,0 +1,6 @@
+- insert:
+    - id: wework-browser-auth
+      name: '@wework/dsh-browser-auth'
+      inject:
+        - connection
+        - webServer

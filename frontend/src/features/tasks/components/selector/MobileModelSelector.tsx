@@ -21,6 +21,8 @@ import { paths } from '@/config/paths'
 import { Tag } from '@/components/ui/tag'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
+import { ModelCapabilityDescription } from '@/components/model-select/ModelCapabilityDescription'
+import { ModelSelectionGuideLink } from '@/components/model-select/ModelSelectionGuideLink'
 import {
   buildModelCascadeGroups,
   getModelDisplayName,
@@ -267,13 +269,11 @@ export default function MobileModelSelector({
             )}
             <ModelCapabilityIcons model={model} />
           </div>
-          {showPath ? (
-            <div className="mt-0.5 truncate text-[13px] text-[#8e8e93]">{path}</div>
-          ) : (
-            model.modelId && (
-              <div className="mt-0.5 truncate text-[13px] text-[#8e8e93]">{model.modelId}</div>
-            )
-          )}
+          {showPath && <div className="mt-0.5 truncate text-[13px] text-[#8e8e93]">{path}</div>}
+          <ModelCapabilityDescription
+            capability={model.capability}
+            className="mt-0.5 text-[13px]"
+          />
         </div>
         {isSelected && <Check className="ml-3 h-5 w-5 flex-shrink-0 text-[#007aff]" />}
       </button>
@@ -487,10 +487,11 @@ export default function MobileModelSelector({
           )}
         </div>
 
-        {/* Footer - compact single row */}
+        {/* Footer */}
         {!isSearchFocused && (
           <div className="px-4 pb-4 pt-2">
-            <div className="flex items-center justify-end">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <ModelSelectionGuideLink className="mr-auto" />
               {/* Settings link */}
               <button
                 type="button"

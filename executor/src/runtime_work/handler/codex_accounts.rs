@@ -57,9 +57,9 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn codex_auth_mutation_error(error: CodexAuthMutationError) -> AppIpcError {
+fn codex_auth_mutation_error(error: CodexIdleMutationError) -> AppIpcError {
     match error {
-        CodexAuthMutationError::Busy {
+        CodexIdleMutationError::Busy {
             active_turn_count,
             pending_request_count,
         } => AppIpcError::new(
@@ -69,7 +69,7 @@ fn codex_auth_mutation_error(error: CodexAuthMutationError) -> AppIpcError {
                  ({active_turn_count} active turns, {pending_request_count} pending requests)"
             ),
         ),
-        CodexAuthMutationError::Update(error) => {
+        CodexIdleMutationError::Update(error) => {
             AppIpcError::new("codex_account_switch_failed", error)
         }
     }

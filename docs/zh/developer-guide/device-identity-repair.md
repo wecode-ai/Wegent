@@ -19,12 +19,23 @@ sidebar_position: 90
 - `app_device_id`：桌面 IPC 身份，不替代逻辑设备 ID。
 - `execution_target_id`：后端对 app 记录返回 `app-record-<主键>`，用于精确执行路由；界面仍展示原 `device_id`。
 
+App 的 WebSocket 注册会话、执行队列领取和唤醒房间必须使用注册确认的同一个
+`app-record-<主键>`。不能在领取任务时改用 `app_device_id`：多个安装共享 IPC 别名时，
+别名无法唯一解析，执行器会收到 `Runner is no longer authorized`，Issue 无法开始执行。
+发布此修复后需要重新建立执行器连接，以更新已有注册会话；无需删除设备或修改历史记录。
+桌面 E2E 的 `collaboration-app-queue-identity` 检查点使用两个共享别名的真实执行器，
+验证云端 Issue 自动领取、完成、记录路由和单次执行。
+
 新配置的生成和保存受文件锁保护，采用同目录临时文件原子替换。配置损坏或保存失败会明确报错，
 不使用所有安装共用的兜底 ID，也不丢弃旧配置重新生成身份。
 
 注册按用户、默认命名空间、设备 ID、Runtime 和 IPC 身份匹配。完全相同的历史重复记录选择稳定主键；
 不同安装保留各自记录、在线状态与执行路由。无法确认归属时拒绝注册或路由，不按显示名猜测。
 注册使用已有用户行的事务锁，并用 Redis 锁覆盖注册到上线、删除的竞争窗口，不依赖新增唯一索引。
+注册中的设备身份查询不再重复加范围锁，避免 MySQL `REPEATABLE READ` 下不同用户首次注册时，
+因共享索引间隙锁而在插入阶段死锁。
+注册服务在获取用户行锁前结束认证读取事务，独立提交注册结果。这样身份查询使用锁后的新快照，
+不会因之前的认证读取而遗漏刚完成的注册。该事务边界不改变数据库全局隔离级别。
 
 ## 设备记录删除
 
@@ -62,6 +73,8 @@ macOS 空闲任务的可用内存计算包含可回收文件缓存，避免在�
 | 对话与桌面 | 从 Wework 设备发起对话、回复与追问；真实桌面首次注册得到 UUID 和记录路由 |
 
 `frontend/e2e/tests/devices/app-device-identity.spec.ts` 由平台 CI 的 chromium 分片执行；
+同一分片还执行 `backend/tests/integration/device_registration_mysql.py`，在真实 MySQL 中同步两个用户的
+首次身份查询后并发插入，并验证同一用户八路首次注册在预先建立认证快照后仍只创建一条记录。
 `tasks/agent-conversation-regression.spec.ts` 的 app 对话由 executor-chromium job 执行。
 桌面验证扩展已有共享 runner 的 `remote-device-onboarding` 检查点，由桌面 CI 执行。
 单元测试覆盖归属、未完成任务保护、历史引用及并发持久化。交付时另行记录实际执行结果，不以覆盖存在代替通过证明。

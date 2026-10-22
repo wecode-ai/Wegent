@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { bundledPluginUpgradeFixture } from '../modules/bundled-plugin-upgrades.mjs'
 import { execFile } from 'node:child_process'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -66,8 +67,28 @@ export async function createDesktopScenario({
   resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
+  executorHome,
+  electronUserDataDirectory,
 }) {
   const developerPluginVersion = await readBundledPluginVersion('wework-plugin-developer')
+  const upgradeFixture = bundledPluginUpgradeFixture(
+    join(executorHome, 'codex'),
+    await Promise.all(
+      ['wework-space', 'smart-app-builder', 'wework-plugin-developer'].map(async name => ({
+        name,
+        version: await readBundledPluginVersion(name),
+        sourcePath:
+          name === 'wework-plugin-developer'
+            ? resolve(scenarioDirectory, '../../../dsh/plugin-developer/codex-plugin')
+            : resolve(
+                scenarioDirectory,
+                '../../../resources/bundled-plugins/wework-personal/plugins',
+                name
+              ),
+      }))
+    ),
+    workbenchReadyTimeoutMs
+  )
   const pluginRoot = join(resultDir, 'plugin-development-project')
   const controlRegistry = join(resultDir, 'desktop-control-instances')
   await mkdir(pluginRoot, { recursive: true })
@@ -84,6 +105,9 @@ export async function createDesktopScenario({
   const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
   return {
+    async prepareApp() {
+      await upgradeFixture.prepare()
+    },
     appEnvironment: {
       WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
       WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
@@ -91,6 +115,22 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      const mainAssets = join(
+        electronUserDataDirectory,
+        'dsh-core/profiles/wework-core/node_modules/@wegent/dsh-app-wework/web/assets'
+      )
+      const sharedAssets = await realpath(mainAssets)
+      const originalAssets = (await readdir(sharedAssets)).sort()
+      assert.ok(originalAssets.length > 0, 'The main application has no static assets')
+      if (process.platform === 'win32') {
+        assert.equal(
+          (await lstat(mainAssets)).isSymbolicLink(),
+          false,
+          'Windows managed package assets must be owned files for safe pnpm cleanup'
+        )
+      }
+      await upgradeFixture.verify(control)
+      await upgradeFixture.verifyUninstall(control)
       await control.command('waitFor', '[data-testid="plugins-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
@@ -175,6 +215,20 @@ export async function createDesktopScenario({
         visible: true,
       })
       await captureScreenshot(control, 'plugin-development-02-debug-opened.png', 'body')
+      // Scaffolding requires an empty directory; isolate Git before creating its first task.
+      await execFileAsync('git', ['init', pluginRoot])
+      await execFileAsync('git', ['-C', pluginRoot, 'add', '.'])
+      await execFileAsync('git', [
+        '-C',
+        pluginRoot,
+        '-c',
+        'user.name=Wework Desktop E2E',
+        '-c',
+        'user.email=desktop-e2e@wework.local',
+        'commit',
+        '-m',
+        'test: initialize isolated plugin project',
+      ])
       control.setScenario('plugin_development')
       await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -212,6 +266,24 @@ export async function createDesktopScenario({
       )
       const isolatedWindowLabel = isolatedReady.windowLabel
       const isolatedInstanceId = isolatedWindowLabel.slice('plugin-development-'.length)
+      assert.deepEqual(
+        (await readdir(sharedAssets)).sort(),
+        originalAssets,
+        'Starting plugin development deleted the main application static assets'
+      )
+      if (process.platform === 'win32') {
+        const isolatedAssets = join(
+          electronUserDataDirectory,
+          'plugin-development',
+          isolatedInstanceId,
+          'user-data/dsh-core/profiles/wework-core/node_modules/@wegent/dsh-app-wework/web/assets'
+        )
+        assert.equal(
+          (await lstat(isolatedAssets)).isSymbolicLink(),
+          false,
+          'Windows development package assets must not link to shared components'
+        )
+      }
       const installedDeveloperManifestPath = join(
         resultDir,
         'electron-user-data',

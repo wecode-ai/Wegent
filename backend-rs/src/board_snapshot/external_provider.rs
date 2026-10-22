@@ -261,7 +261,7 @@ pub(crate) fn issue_list_url(
 
 /// `urllib.parse.quote(repository, safe='')`: percent-encode every byte
 /// except unreserved characters.
-fn url_encode_path(value: &str) -> String {
+pub(crate) fn url_encode_path(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(value.len());
     for &byte in value.as_bytes() {
@@ -293,8 +293,16 @@ fn open_state(task_provider: &str) -> &'static str {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProviderIssue {
     #[serde(default)]
+    #[allow(
+        dead_code,
+        reason = "provider response field retained for the issue schema; the board-snapshot path does not key on it"
+    )]
     pub number: Option<i64>,
     #[serde(default)]
+    #[allow(
+        dead_code,
+        reason = "provider response field retained for the issue schema; the board-snapshot path does not key on it"
+    )]
     pub iid: Option<i64>,
     #[serde(default)]
     pub state: Option<String>,
@@ -310,6 +318,10 @@ pub(crate) struct PullRequestMarker {}
 
 impl ProviderIssue {
     /// `_number(issue)`: `number` (github) or `iid` (gitlab).
+    #[allow(
+        dead_code,
+        reason = "kept for the issue-number projection; the board-snapshot path does not consume it"
+    )]
     pub(crate) fn number(&self) -> i64 {
         self.number.or(self.iid).unwrap_or(0)
     }
@@ -337,12 +349,27 @@ pub(crate) async fn list_issues(
     zinfo_key: &str,
     project: &ProjectRow,
 ) -> Result<Vec<ProviderIssue>, String> {
+    list_issue_values(client, zinfo_key, project)
+        .await?
+        .into_iter()
+        .map(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
+        .collect()
+}
+
+/// The raw issue objects behind [`list_issues`]. The loop-items external read
+/// projects the full issue (labels, title, body, dates) rather than only the
+/// issue number, so it consumes the raw values.
+pub(crate) async fn list_issue_values(
+    client: &HttpClient,
+    zinfo_key: &str,
+    project: &ProjectRow,
+) -> Result<Vec<serde_json::Value>, String> {
     let task_provider = project.task_provider();
     let (config, token) = resolve_provider_config(zinfo_key, project)?;
     let repository = provider_repository(&config)?;
 
     let state = open_state(&task_provider);
-    let mut results: Vec<ProviderIssue> = Vec::new();
+    let mut results: Vec<serde_json::Value> = Vec::new();
     for page in 1..=100u32 {
         let url = issue_list_url(&task_provider, &config, &repository, state, page)?;
         let mut request = client
@@ -367,17 +394,20 @@ pub(crate) async fn list_issues(
         if !status.is_success() {
             return Err(format!("HTTP status {status}"));
         }
-        let batch: Vec<ProviderIssue> =
+        let batch: Vec<serde_json::Value> =
             serde_json::from_slice(&body).map_err(|error| error.to_string())?;
         let batch_size = batch.len();
-        for issue in batch {
+        for value in batch {
+            let Ok(issue) = serde_json::from_value::<ProviderIssue>(value.clone()) else {
+                continue;
+            };
             if issue.is_closed() {
                 continue;
             }
             if task_provider == "github" && issue.is_pull_request() {
                 continue;
             }
-            results.push(issue);
+            results.push(value);
         }
         if batch_size < ISSUE_LIST_PAGE_SIZE as usize {
             break;

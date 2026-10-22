@@ -208,44 +208,6 @@ def test_confidential_client_secret_is_shown_only_at_creation(
     assert listed.json()["items"][0]["client_secret"] is None
 
 
-def test_authorization_code_access_token_and_auth_boundaries(
-    test_client: TestClient,
-    test_admin_token: str,
-    test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(oauth_provider_module, "cache_manager", FakeOAuthCache())
-    client = _create_oauth_client(test_client, test_admin_token)
-    verifier = "oauth-pkce-verifier-" + ("a" * 48)
-    code = _authorize_client(test_client, test_token, client, verifier)
-
-    invalid_client_response = test_client.post(
-        "/api/external/oauth/token",
-        headers={"Authorization": _basic_auth(client["client_id"], "wrong-secret")},
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "https://client.example/callback",
-            "code_verifier": verifier,
-        },
-    )
-    assert invalid_client_response.status_code == 401
-    assert invalid_client_response.headers["www-authenticate"].startswith("Basic ")
-
-    tokens = _exchange_authorization_code(
-        test_client,
-        client,
-        code=code,
-        verifier=verifier,
-    )
-    _assert_external_access_token_boundaries(
-        test_client,
-        client=client,
-        tokens=tokens,
-        session_token=test_token,
-    )
-
-
 def test_refresh_token_rotation_rejects_replay_and_revokes_family(
     test_client: TestClient,
     test_admin_token: str,

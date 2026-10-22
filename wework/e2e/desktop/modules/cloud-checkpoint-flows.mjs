@@ -1,7 +1,7 @@
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
@@ -18,6 +18,11 @@ import {
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
+import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
+import {
+  createCloudAttachmentVerification,
+  verifyCloudWorkspacePathMentions,
+} from './cloud-attachment-flow.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -128,7 +133,9 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
-  await control.command('click', '[data-testid="remote-project-source-existing"]')
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -151,15 +158,12 @@ async function createCloudProjectFixture(control, workspacePath) {
     projectMenusBeforeCreate,
     'The cloud checkpoint project was not shown in the sidebar'
   )
-  const projectId = projectMenuTestId.slice('project-menu-'.length)
-  await control.command('waitFor', `[data-testid="project-device-status-${projectId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS * 2,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+  const projectUiId = projectMenuTestId.slice('project-menu-'.length)
+  const projectRowSelector = `[data-testid="project-row-${projectUiId}"]`
   await control.command(
     'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -168,17 +172,39 @@ async function createCloudProjectFixture(control, workspacePath) {
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   return {
     composerSelector: ACTIVE_COMPOSER_SELECTOR,
-    projectId,
+    projectUiId,
     projectRowSelector,
   }
 }
 
-async function verifyCloudProjectCreationSources(control, workspacePath) {
+export async function openRuntimeProjectEditor(control, projectId) {
+  await control.command('hover', `[data-testid="project-row-${projectId}"]`)
+  await control.command('click', `[data-testid="project-menu-${projectId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="project-menu-${projectId}"][aria-expanded="true"]`,
+    { stableMs: COMPOSER_READY_STABILITY_MS }
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="edit-project-${projectId}"], [data-testid="rename-project-${projectId}"]`
+  )
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]')
+}
+
+async function verifyCloudProjectCreationSources(
+  control,
+  workspacePath,
+  cloudEnvironment,
+  restartDesktopApp,
+  codexHome
+) {
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
   const homePath = join(resultDir, 'cloud-executor-home')
+  await cloudEnvironment.createOfflineLocalSidebarAlias()
 
   const createProjectAndSnapshotMenus = async sourceTestId => {
     const previousMenus = new Set(
@@ -192,7 +218,9 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
       value: CLOUD_DEVICE_ID,
     })
-    await control.command('click', `[data-testid="${sourceTestId}"]`)
+    await control.command('clickWhenEnabled', `[data-testid="${sourceTestId}"]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     return previousMenus
   }
 
@@ -207,11 +235,143 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     value: 'cloud-blank-project',
   })
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  await waitForCloudProject(
+  const blankProjectMenu = await waitForStableCloudProjectMenu(
     control,
     blankMenus,
     'Creating a blank cloud project did not add it to the sidebar'
   )
+  const projectId = blankProjectMenu.slice('project-menu-'.length)
+  await openRuntimeProjectEditor(control, projectId)
+  await control.command('waitFor', '[data-testid="add-local-project-folders"]', { enabled: true })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="project-folders-upgrade-hint"]')
+    ),
+    0,
+    'A capable owning runtime must retain folder editing without an upgrade hint'
+  )
+  await control.command('fill', '[data-testid="local-project-name-input"]', {
+    value: 'Cloud edited project',
+  })
+  await control.command('click', '[data-testid="add-local-project-folders"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]')
+  await control.command('fill', '[data-testid="device-folder-path-input"]', { value: homePath })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await control.command('click', '[data-testid="make-primary-root-1"]')
+  await control.command('click', '[data-testid="local-project-settings-ai-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-instructions-input"]', {
+    enabled: true,
+  })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="project-ai-settings-upgrade-hint"]')
+    ),
+    0,
+    'A capable owning runtime must retain AI editing without an upgrade hint'
+  )
+  await control.command('fill', '[data-testid="local-project-instructions-input"]', {
+    value: 'Cloud project instructions survive restart.',
+  })
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('click', '[data-testid="local-project-add-quick-phrase-button"]')
+  await control.command('fill', '[data-testid="local-project-quick-phrase-title-input"]', {
+    value: 'Cloud review',
+  })
+  await control.command('fill', '[data-testid="local-project-quick-phrase-content-input"]', {
+    value: 'Review the cloud project changes.',
+  })
+  await control.command('click', '[data-testid="local-project-quick-phrase-save-button"]')
+  await control.command('click', '[data-testid="local-project-settings-plugins-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-plugin-search"]', { enabled: true })
+  await control.command('waitFor', '[data-testid="local-project-plugins-loading"]', {
+    visible: false,
+  })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="project-plugins-upgrade-hint"]')
+    ),
+    0,
+    'A real capable cloud runtime must advertise or confirm project plugin support'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        '[data-testid="local-project-edit-dialog"] [role="alert"]'
+      )
+    ),
+    0,
+    'The cloud project plugin tab failed to read inventory from its owning executor'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', { visible: false })
+  await control.command('waitFor', `[data-testid="project-row-${projectId}"]`, {
+    text: 'Cloud edited project',
+  })
+  const savedStateDeadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let state
+  let saved
+  while (Date.now() < savedStateDeadline) {
+    state = JSON.parse(
+      await readFile(join(cloudEnvironment.remoteCodexHome, '.codex-global-state.json'), 'utf8')
+    )
+    saved = Object.values(state['local-projects'] || {}).find(
+      project => project.name === 'Cloud edited project'
+    )
+    if (saved?.aiSettings?.instructions === 'Cloud project instructions survive restart.') break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(saved, 'Cloud project settings were not saved to the owning executor')
+  assert.equal(saved.aiSettings.instructions, 'Cloud project instructions survive restart.')
+  assert.equal(saved.aiSettings.quickPhrases[0].title, 'Cloud review')
+  assert.deepEqual(
+    state['project-writable-roots'][saved.id].map(root => root.path),
+    [homePath, join(homePath, 'cloud-blank-project')]
+  )
+  const mirrorDeadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let mirror
+  while (Date.now() < mirrorDeadline) {
+    const localState = JSON.parse(
+      await readFile(join(codexHome, '.codex-global-state.json'), 'utf8')
+    )
+    mirror = localState['remote-projects']?.find(project => project.projectKey === saved.id)
+    if (mirror?.label === saved.name) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(mirror, 'The confirmed owner save did not reach the local IPC sidebar')
+  assert.equal(mirror.label, saved.name)
+  assert.equal(mirror.hostId, CLOUD_DEVICE_ID)
+  assert.deepEqual(mirror.roots, [homePath, join(homePath, 'cloud-blank-project')])
+  assert.equal(mirror.aiSettings.instructions, saved.aiSettings.instructions)
+  assert.deepEqual(mirror.aiSettings.quickPhrases, saved.aiSettings.quickPhrases)
+  await restartDesktopApp()
+  await control.command('waitFor', `[data-testid="project-row-${projectId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    text: 'Cloud edited project',
+  })
+  const restartedLocalState = JSON.parse(
+    await readFile(join(codexHome, '.codex-global-state.json'), 'utf8')
+  )
+  const restartedMirror = restartedLocalState['remote-projects'].find(
+    project => project.id === mirror.id
+  )
+  assert.deepEqual(restartedMirror, mirror, 'Restart changed the stable sidebar mirror')
+  await openRuntimeProjectEditor(control, projectId)
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-name-input"]'),
+    'Cloud edited project'
+  )
+  await control.command('click', '[data-testid="local-project-settings-ai-tab"]')
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-instructions-input"]'),
+    'Cloud project instructions survive restart.'
+  )
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-settings-quick-phrases-panel"]', {
+    text: 'Cloud review',
+  })
+  await control.command('click', '[data-testid="close-local-project-edit-dialog"]')
 
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspacePath })
   const gitMenus = await createProjectAndSnapshotMenus('remote-project-source-git')
@@ -305,47 +465,6 @@ async function waitForGitCloneProject(control, previousProjectMenus, targetPath,
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
-}
-
-async function verifyCloudWorkspacePathMentions({ composerSelector, control, workspacePath }) {
-  const folderName = 'cloud-context-folder'
-  const folderPath = join(workspacePath, folderName)
-  await mkdir(folderPath, { recursive: true })
-  await writeFile(join(folderPath, 'nested.txt'), 'cloud workspace path context\n')
-
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-  await control.command('fill', composerSelector, { value: `@${folderName}` })
-  await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
-    text: folderName,
-  })
-  const folderChipSelector = `[data-testid="composer-path-chip-${folderName}"]`
-  await control.command('waitFor', folderChipSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', folderChipSelector, {
-      value: 'data-composer-path-kind',
-    }),
-    'folder',
-    'The cloud workspace folder mention was not rendered as a folder reference'
-  )
-
-  await control.command('fill', composerSelector, { value: '@auth' })
-  await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
-    text: 'auth.ts',
-  })
-  const fileChipSelector = '[data-testid="composer-path-chip-auth-ts"]'
-  await control.command('waitFor', fileChipSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', fileChipSelector, {
-      value: 'data-composer-path-kind',
-    }),
-    'file',
-    'The cloud workspace file mention was not rendered as a file reference'
-  )
 }
 
 async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
@@ -590,7 +709,7 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'workspace-tabs') {
     setPhase('cloud-workspace-tab-isolation')
-    await verifyWorkspaceTabIsolation(control)
+    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
     return
   }
 
@@ -651,7 +770,13 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'cloud-project-creation') {
     setPhase('cloud-project-creation-sources')
-    await verifyCloudProjectCreationSources(control, workspacePath)
+    await verifyCloudProjectCreationSources(
+      control,
+      workspacePath,
+      cloudEnvironment,
+      restartDesktopApp,
+      codexHome
+    )
     return
   }
 
@@ -661,7 +786,7 @@ async function verifyCloudCheckpoint({
     return
   }
 
-  const { composerSelector, projectRowSelector } = await createCloudProjectFixture(
+  const { composerSelector, projectRowSelector, projectUiId } = await createCloudProjectFixture(
     control,
     workspacePath
   )
@@ -706,6 +831,7 @@ async function verifyCloudCheckpoint({
         composerSelector,
         control,
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,
@@ -781,7 +907,17 @@ async function verifyCloudCheckpoint({
       })
       return
     }
-    case 'workspace-attachments':
+    case 'workspace-attachments': {
+      const verification = createCloudAttachmentVerification({
+        cloudEnvironment,
+        composerSelector,
+        control,
+        projectRowSelector,
+        projectUiId,
+        workspacePath,
+      })
+      setPhase('cloud-files-outside-workspace')
+      await verifyCloudFileAccessOutsideWorkspace({ cloudEnvironment, workspacePath })
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,
@@ -789,20 +925,22 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
-        runtimeAttachmentRoot: join(
-          resultDir,
-          'cloud-executor-home',
-          'workspace',
-          'attachments',
-          'runtime'
-        ),
+        ...verification,
         workspacePath,
       })
       setPhase('cloud-pasted-zip')
-      await verifyPastedZipAttachment({ composerSelector, control })
+      await verifyPastedZipAttachment({
+        composerSelector,
+        control,
+        prepareConversation: verification.prepareConversation,
+      })
       setPhase('cloud-workspace-path-mentions')
-      await verifyCloudWorkspacePathMentions({ composerSelector, control, workspacePath })
+      await verifyCloudWorkspacePathMentions(
+        { composerSelector, control, workspacePath },
+        verification.prepareConversation
+      )
       return
+    }
     case 'rendering-extensions':
       setPhase('cloud-tool-block-order')
       await verifyToolBlockChronologicalOrder({ composerSelector, control })

@@ -188,7 +188,7 @@ function dispatchBrowserOcclusionChange(id: string, occluded: boolean) {
 
 describe('WorkspaceBrowserPanel', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     resetEmbeddedBrowserDownloadStoreForTests()
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
@@ -575,7 +575,9 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() =>
       expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
     )
-    expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('workspace-browser-annotation-close-button')
+    ).toBeInTheDocument()
     expect(input).toHaveValue('https://example.com/')
   })
 
@@ -2143,6 +2145,249 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
   })
 
+  test.each(['success', 'failure'] as const)(
+    'redacts sensitive URL details from browser open %s diagnostics',
+    async outcome => {
+      mockBrowserHostRect()
+      const url =
+        'https://alice:private-password@example.test/private-document?token=private-token#private-section'
+      const infoLog = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+      if (outcome === 'failure') {
+        embeddedBrowserMocks.openEmbeddedBrowser.mockRejectedValueOnce(
+          new Error(`Failed to open ${url}`)
+        )
+        embeddedBrowserMocks.readEmbeddedBrowserPageState.mockRejectedValue(
+          new Error('Browser unavailable')
+        )
+      } else {
+        embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+          nativeLabel: 'workspace-browser-native-1',
+          title: null,
+          url,
+          isLoading: false,
+        })
+      }
+      const view = render(
+        <WorkspaceBrowserPanel
+          active
+          openRequest={{
+            id: 'private-link',
+            baseLabel: 'workspace-browser',
+            label: 'workspace-browser',
+            source: 'user',
+            disposition: 'new-tab',
+            url,
+          }}
+        />
+      )
+      try {
+        if (outcome === 'failure') {
+          await screen.findByTestId('workspace-browser-error', {}, { timeout: 2000 })
+        }
+        const stage = outcome === 'failure' ? 'native_open_failed' : 'native_open_succeeded'
+        await waitFor(() =>
+          expect(infoLog).toHaveBeenCalledWith(
+            '[Wework] Embedded browser open diagnostic',
+            expect.stringContaining(`"stage":"${stage}"`)
+          )
+        )
+        const diagnostics = JSON.stringify(
+          [...infoLog.mock.calls, ...errorLog.mock.calls],
+          (_key, value) => (value instanceof Error ? `${value.name}: ${value.message}` : value)
+        )
+        for (const sensitiveValue of [
+          'alice',
+          'private-password',
+          'private-document',
+          'private-token',
+          'private-section',
+        ]) {
+          expect(diagnostics).not.toContain(sensitiveValue)
+        }
+        expect(infoLog).toHaveBeenCalledWith(
+          '[Wework] Embedded browser open diagnostic',
+          expect.stringContaining('"url":"https://example.test"')
+        )
+        if (outcome === 'failure') {
+          expect(errorLog).toHaveBeenCalledWith(
+            '[Wework] Embedded browser open failed',
+            expect.stringContaining('"error":"Error"')
+          )
+        }
+      } finally {
+        view.unmount()
+        infoLog.mockRestore()
+        errorLog.mockRestore()
+      }
+    }
+  )
+
+  test.each(
+    (['user', 'popup', 'restore', 'agent'] as const).flatMap(initialSource =>
+      (['user', 'popup', 'restore'] as const).map(source => ({ initialSource, source }))
+    )
+  )(
+    'navigates to the latest $source request received while a $initialSource browser is opening',
+    async ({ initialSource, source }) => {
+      mockBrowserHostRect()
+      const opening = createDeferred<{
+        nativeLabel: string
+        title: null
+        url: string
+        isLoading: boolean
+      }>()
+      const nativeState = {
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: initialSource === 'agent' ? 'about:blank' : 'https://first.example.test/',
+        isLoading: false,
+      }
+      embeddedBrowserMocks.openEmbeddedBrowser.mockReturnValueOnce(opening.promise)
+      embeddedBrowserMocks.readEmbeddedBrowserPageState.mockImplementation(async () => ({
+        ...nativeState,
+      }))
+      embeddedBrowserMocks.navigateEmbeddedBrowser.mockImplementation(async (url: string) => {
+        nativeState.url = url
+      })
+      const request = {
+        id: 'first-link',
+        baseLabel: 'workspace-browser',
+        label: 'workspace-browser',
+        source: initialSource,
+        disposition: 'new-tab' as const,
+        url: 'https://first.example.test/',
+      }
+      const view = render(<WorkspaceBrowserPanel active openRequest={request} />)
+      await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce())
+      const bounds = { x: 500, y: 120, width: 400, height: 300 }
+      if (initialSource === 'agent') {
+        expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+          'about:blank',
+          bounds,
+          'workspace-browser',
+          true,
+          true,
+          false
+        )
+      } else {
+        expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+          request.url,
+          bounds,
+          'workspace-browser'
+        )
+      }
+
+      view.rerender(
+        <WorkspaceBrowserPanel
+          active
+          openRequest={{
+            ...request,
+            id: 'second-link',
+            source,
+            url: 'https://second.example.test/',
+          }}
+        />
+      )
+      await act(async () => opening.resolve({ ...nativeState }))
+
+      await waitFor(() => {
+        expect(embeddedBrowserMocks.navigateEmbeddedBrowser).toHaveBeenCalledWith(
+          'https://second.example.test/',
+          'workspace-browser'
+        )
+      })
+      expect(nativeState.url).toBe('https://second.example.test/')
+      expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue(nativeState.url)
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce()
+    }
+  )
+
+  test('ignores close requests from a replaced native browser', async () => {
+    mockBrowserHostRect()
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const onNativeLabelChange = vi.fn()
+    render(
+      <WorkspaceBrowserPanel
+        active
+        onNativeLabelChange={onNativeLabelChange}
+        openRequest={{
+          id: 'current-link',
+          baseLabel: 'workspace-browser',
+          label: 'workspace-browser',
+          source: 'user',
+          disposition: 'new-tab',
+          url: 'https://example.com/',
+        }}
+      />
+    )
+    await waitFor(() => {
+      expect(onNativeLabelChange).toHaveBeenCalledWith('workspace-browser-native-1')
+    })
+
+    act(() => handleClose({ label: 'workspace-browser', nativeLabel: 'replaced-browser' }))
+
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
+    expect(onNativeLabelChange).not.toHaveBeenCalledWith(null)
+  })
+
+  test('closes only its own native browser when an abandoned open finishes', async () => {
+    mockBrowserHostRect()
+    let activeNativeLabel: string | null = 'workspace-browser-native-1'
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockImplementation(
+      async (_label: string, expectedNativeLabel?: string) => {
+        if (!expectedNativeLabel || expectedNativeLabel === activeNativeLabel) {
+          activeNativeLabel = null
+        }
+      }
+    )
+    const opening = createDeferred<{
+      nativeLabel: string
+      title: null
+      url: string
+      isLoading: boolean
+    }>()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockReturnValueOnce(opening.promise)
+    const request = {
+      id: 'abandoned-link',
+      baseLabel: 'workspace-browser',
+      label: 'workspace-browser',
+      source: 'user' as const,
+      disposition: 'new-tab' as const,
+      url: 'https://first.example.test/',
+    }
+    const abandoned = render(<WorkspaceBrowserPanel active openRequest={request} />)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce())
+    abandoned.unmount()
+    render(
+      <WorkspaceBrowserPanel
+        active
+        openRequest={{ ...request, id: 'replacement-link', url: 'https://example.com/' }}
+      />
+    )
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      opening.resolve({
+        nativeLabel: 'abandoned-native-browser',
+        title: null,
+        url: request.url,
+        isLoading: false,
+      })
+    })
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledExactlyOnceWith(
+      'workspace-browser',
+      'abandoned-native-browser'
+    )
+    expect(activeNativeLabel).toBe('workspace-browser-native-1')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
+  })
+
   test('opens an external request in a hidden browser while the panel is inactive', async () => {
     mockBrowserHostRect()
     const openRequest = {
@@ -2248,26 +2493,6 @@ describe('WorkspaceBrowserPanel', () => {
     view.unmount()
 
     expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
-  })
-
-  test('consumes a close request by logical label when the native label is stale', async () => {
-    let handleClose!: (event: { label: string; nativeLabel: string }) => void
-    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
-      handleClose = handler
-      return Promise.resolve(vi.fn())
-    })
-    render(<WorkspaceBrowserPanel active label="workspace-browser-runtime-1" />)
-    await screen.findByTestId('workspace-browser-native-view')
-
-    act(() => {
-      handleClose({
-        label: 'workspace-browser-runtime-1',
-        nativeLabel: 'embedded-browser-native-stale',
-      })
-    })
-
-    expect(screen.queryByTestId('workspace-browser-native-view')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('')
   })
 
   test('consumes a close request while its task pane is inactive', async () => {

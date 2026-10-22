@@ -4,6 +4,7 @@ import {
   preserveProcessingBlockTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
+import { preserveCommandExecutionOutput } from "./command-execution";
 
 import { getLatestThinkingContent } from "./workbench-message-reducer";
 
@@ -188,13 +189,15 @@ export function orderRuntimeConversationTurns(
 export function runtimeConversationTurnTimestamp(
   turn: RuntimeConversationTurn,
 ): number | undefined {
-  for (const item of turn.items) {
-    const value =
-      item.type === "user_message"
-        ? item.message.createdAt
-        : item.type === "assistant_text"
-          ? item.createdAt
-          : item.block.createdAt;
+  const itemTimestamps = turn.items.map((item) =>
+    item.type === "user_message"
+      ? item.message.createdAt
+      : item.type === "assistant_text"
+        ? item.createdAt
+        : item.block.createdAt,
+  );
+  // Failed turns can have no items while retaining their lifecycle timestamps.
+  for (const value of [...itemTimestamps, turn.startedAt, turn.completedAt]) {
     const timestamp =
       typeof value === "number" ? value : Date.parse(value ?? "");
     if (Number.isFinite(timestamp)) return timestamp;
@@ -468,9 +471,9 @@ export function mergeRuntimeConversationItem(
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
-  const snapshotBlock = preserveRequestUserInputResponse(
+  const snapshotBlock = preserveCommandExecutionOutput(
     local.block,
-    snapshot.block,
+    preserveRequestUserInputResponse(local.block, snapshot.block),
   );
 
   if (

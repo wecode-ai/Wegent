@@ -5,6 +5,10 @@ import {
   getAppPreferences,
   type AppPreferences,
 } from '@/desktop/appPreferences'
+import {
+  NOTIFICATION_PREFERENCES_CHANGED_EVENT,
+  readActiveNotificationPreferences,
+} from '@/features/notifications/notificationPreferences'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -18,9 +22,14 @@ import {
 import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
+import { standInOrigin } from '@/features/notifications/standInNotifications'
+import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
+import type { StandInExecutorApi } from '@/api/standIn'
+import type { WorkbenchServices } from './workbenchServices'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
+  RuntimeTaskLifecycleSnapshot,
 } from './runtimeTaskLifecycle'
 
 export interface RuntimeTaskReminderItem {
@@ -29,6 +38,7 @@ export interface RuntimeTaskReminderItem {
   task: RuntimeTaskSummary
   workspace: RuntimeDeviceWorkspace
   projectName: string
+  lifecycle?: RuntimeTaskLifecycleSnapshot
 }
 
 export interface RuntimeTaskReminderState {
@@ -123,12 +133,19 @@ export function useRuntimeTaskReminders({
   runtimeWork,
   lifecycleStore,
   lifecycleSnapshot,
+  standInApi,
+  runtimeApi,
 }: {
   runtimeWork: RuntimeWorkListResponse | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   lifecycleSnapshot: RuntimeTaskLifecycleStoreSnapshot
+  standInApi?: StandInExecutorApi
+  runtimeApi?: WorkbenchServices['runtimeWorkApi']
 }): RuntimeTaskReminderState {
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
+  const [notificationPreferences, setNotificationPreferences] = useState(
+    readActiveNotificationPreferences
+  )
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set())
   const previousUnreadTaskKeysRef = useRef<ReadonlySet<string>>(new Set())
   const windowFocusedRef = useRef(isMainWindowFocused())
@@ -137,6 +154,17 @@ export function useRuntimeTaskReminders({
     return subscribeMainWindowFocus(focused => {
       windowFocusedRef.current = focused
     })
+  }, [])
+
+  useEffect(() => {
+    const refreshNotificationPreferences = () =>
+      setNotificationPreferences(readActiveNotificationPreferences())
+    window.addEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, refreshNotificationPreferences)
+    return () =>
+      window.removeEventListener(
+        NOTIFICATION_PREFERENCES_CHANGED_EVENT,
+        refreshNotificationPreferences
+      )
   }, [])
 
   useEffect(() => {
@@ -159,12 +187,32 @@ export function useRuntimeTaskReminders({
     }
   }, [])
 
-  const items = useMemo(() => collectRuntimeTaskReminderItems(runtimeWork), [runtimeWork])
+  const sidebarItems = useMemo(() => collectRuntimeTaskReminderItems(runtimeWork), [runtimeWork])
+  const items = useUnlistedStandInTasks(sidebarItems, lifecycleSnapshot, standInApi, runtimeApi)
   const itemsByKey = useMemo(() => new Map(items.map(item => [item.key, item])), [items])
   const visibleUnreadTaskKeys = useMemo(
-    () => getVisibleRuntimeTaskUnreadKeys(items, lifecycleSnapshot.unreadTaskKeys),
-    [items, lifecycleSnapshot.unreadTaskKeys]
+    () =>
+      getVisibleRuntimeTaskUnreadKeys(
+        items.filter(item => notificationPreferences.tasks.in_app || standInOrigin(item)),
+        lifecycleSnapshot.unreadTaskKeys
+      ),
+    [items, lifecycleSnapshot.unreadTaskKeys, notificationPreferences.tasks.in_app]
   )
+
+  useEffect(() => {
+    if (notificationPreferences.tasks.in_app) return
+    for (const item of items) {
+      if (standInOrigin(item)) continue
+      if (lifecycleSnapshot.unreadTaskKeys.has(item.key)) {
+        lifecycleStore.markRead(item.address)
+      }
+    }
+  }, [
+    items,
+    lifecycleSnapshot.unreadTaskKeys,
+    lifecycleStore,
+    notificationPreferences.tasks.in_app,
+  ])
 
   useEffect(() => {
     const previousUnreadTaskKeys = previousUnreadTaskKeysRef.current
@@ -178,9 +226,10 @@ export function useRuntimeTaskReminders({
     for (const key of lifecycleSnapshot.runningTaskKeys) {
       notifiedTaskKeysRef.current.delete(key)
     }
-    if (!preferences.taskCompletionNotificationsEnabled) return
+    if (!notificationPreferences.tasks.system) return
     if (windowFocusedRef.current) return
     for (const item of newlyUnreadItems) {
+      if (standInOrigin(item)) continue
       if (notifiedTaskKeysRef.current.has(item.key)) continue
       notifiedTaskKeysRef.current.add(item.key)
       logRuntimeTaskReminderState('system-notification-send', {
@@ -199,7 +248,7 @@ export function useRuntimeTaskReminders({
     itemsByKey,
     lifecycleSnapshot.runningTaskKeys,
     lifecycleSnapshot.unreadTaskKeys,
-    preferences.taskCompletionNotificationsEnabled,
+    notificationPreferences.tasks.system,
   ])
 
   return useMemo(

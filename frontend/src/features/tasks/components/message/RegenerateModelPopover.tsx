@@ -140,11 +140,6 @@ export function RegenerateModelPopover({
                   : t('correction.user_model')}
               </span>
             )}
-            renderModelMeta={model =>
-              model.modelId ? (
-                <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
-              ) : null
-            }
           />
         )}
       </PopoverContent>

@@ -19,6 +19,7 @@ import type { ProjectAgentConfigurationHost } from "./types";
 const project: CollaborationProject = {
   id: "8869148083931743937",
   workspace_id: "workspace-1",
+  workspace_access_role: "Owner",
   public_id: "project-public-1",
   project_key: "RD",
   name: "研发项目",
@@ -55,6 +56,7 @@ function projectAgent(
     wegent_team_id: 12,
     status: "active",
     version: 1,
+    can_edit: true,
     ...values,
   };
 }
@@ -129,19 +131,6 @@ function element(testId: string): HTMLElement {
 async function click(testId: string) {
   await act(async () => {
     element(testId).click();
-  });
-}
-
-async function change(testId: string, value: string) {
-  const target = element(testId) as HTMLInputElement | HTMLSelectElement;
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(
-      Object.getPrototypeOf(target),
-      "value",
-    )?.set;
-    setter?.call(target, value);
-    target.dispatchEvent(new Event("change", { bubbles: true }));
-    target.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
@@ -220,50 +209,6 @@ const hostedCreationHost: ProjectAgentConfigurationHost = {
   renderDialog({ children, testIds }) {
     return <div data-testid={testIds.dialog}>{children}</div>;
   },
-  renderModePicker({ onChange, options }) {
-    return (
-      <div>
-        {options.map((option) => (
-          <button
-            data-testid={option.testId}
-            key={option.value}
-            onClick={() => onChange(option.value)}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    );
-  },
-  renderSelect({ ariaLabel, onChange, options, testId, value }) {
-    return (
-      <select
-        aria-label={ariaLabel}
-        data-testid={testId}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    );
-  },
-  renderPrimaryAction({ children, disabled, onClick, testId }) {
-    return (
-      <button
-        data-testid={testId}
-        disabled={disabled}
-        onClick={onClick}
-        type="button"
-      >
-        {children}
-      </button>
-    );
-  },
 };
 
 describe("ProjectAgentConfiguration", () => {
@@ -321,6 +266,28 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
+  it("keeps the project list visible when the deferred candidate catalog fails", async () => {
+    const { api } = createApi();
+    api.resources!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("Catalog unavailable"));
+    await render(api);
+    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    await click("project-agent-add");
+    expect(element("project-agent-candidates-error").textContent).toContain(
+      "Catalog unavailable",
+    );
+    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+    api.resources!.list = vi
+      .fn()
+      .mockResolvedValue({ agents: [], execution_environments: [] });
+    await click("project-agent-candidates-retry");
+    expect(
+      document.querySelector('[data-testid="project-agent-candidates-error"]'),
+    ).toBeNull();
+  });
+
   it("separates a shared Agent source from its executor type", async () => {
     const { api } = createApi();
     await render(api);
@@ -331,17 +298,59 @@ describe("ProjectAgentConfiguration", () => {
     expect(text).not.toContain("Wegent");
   });
 
+  it("shows project bindings to a guest without loading Space source catalogs", async () => {
+    const { api, list } = createApi();
+    await render(api, { ...project, workspace_access_role: null });
+
+    expect(list).toHaveBeenCalledWith(project.id, { includeArchived: true });
+    expect(element("project-agent-row-project-agent-1").textContent).toContain(
+      "已有智能体",
+    );
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-testid="project-agent-add"]'),
+    ).toBeNull();
+  });
+
+  it("checks actual space membership when v1 project responses omit permission sources", async () => {
+    const { api } = createApi();
+    api.workspaces!.list = vi.fn(
+      async () =>
+        [{ id: project.workspace_id, access_role: "Maintainer" }] as never,
+    );
+    await render(api, { ...project, workspace_access_role: undefined });
+    expect(api.workspaces!.list).toHaveBeenCalledOnce();
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    await click("project-agent-add");
+    expect(api.workspaces!.listAgents).toHaveBeenCalledWith(
+      project.workspace_id,
+    );
+    expect(element("project-agent-add")).toBeTruthy();
+  });
+
+  it("keeps a v1 project guest out of the space catalog", async () => {
+    const { api } = createApi();
+    api.workspaces!.list = vi.fn(async () => []);
+    await render(api, { ...project, workspace_access_role: undefined });
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+  });
+
   it("adds an existing Agent without exposing a duplicate inline creator", async () => {
-    const { api, create } = createApi();
+    const { api, create } = createApi({ agents: [] });
     await render(api);
 
     await click("project-agent-add");
-    await change("project-agent-wegent-team", "12");
+    await click("project-agent-option-12");
     await click("project-agent-wegent-create");
     expect(create).toHaveBeenNthCalledWith(1, project.id, {
       name: "研发团队",
       runtime: "wegent",
       wegentTeamId: 12,
+      shareWithWorkspace: true,
     });
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
 
@@ -378,6 +387,57 @@ describe("ProjectAgentConfiguration", () => {
     expect(element("project-agent-dialog")).toBeTruthy();
   });
 
+  it.each(["allowed", "denied", "failed"] as const)(
+    "waits for legacy source access before consuming a host add action: %s",
+    async (result) => {
+      const { api } = createApi();
+      let resolveAccess!: (workspaces: never[]) => void;
+      let rejectAccess!: (cause: Error) => void;
+      api.workspaces!.list = vi.fn(
+        () =>
+          new Promise<never[]>((resolve, reject) => {
+            resolveAccess = resolve;
+            rejectAccess = reject;
+          }),
+      );
+      const onConsumed = vi.fn();
+      const onError = vi.fn();
+      await act(async () => {
+        root.render(
+          <ProjectAgentConfiguration
+            api={api}
+            openComposerRequestId={18}
+            onOpenComposerRequestConsumed={onConsumed}
+            project={{ ...project, workspace_access_role: undefined }}
+            onError={onError}
+            translate={(_key, fallback) => fallback}
+          />,
+        );
+      });
+      expect(onConsumed).not.toHaveBeenCalled();
+      expect(api.resources!.list).not.toHaveBeenCalled();
+      expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+      await act(async () => {
+        if (result === "failed") rejectAccess(new Error("Space access failed"));
+        else
+          resolveAccess(
+            result === "allowed" ? [{ id: project.workspace_id } as never] : [],
+          );
+      });
+      expect(onConsumed).toHaveBeenCalledExactlyOnceWith(18);
+      if (result === "allowed") {
+        expect(element("project-agent-dialog")).toBeTruthy();
+      } else {
+        expect(
+          container.querySelector('[data-testid="project-agent-dialog"]'),
+        ).toBeNull();
+        expect(api.resources!.list).not.toHaveBeenCalled();
+        expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledTimes(result === "failed" ? 1 : 0);
+      }
+    },
+  );
+
   it("excludes cloud Agent resources from local projects", async () => {
     const cloudAgent = { ...workspaceAgent, location: "cloud" as const };
     const { api } = createApi({
@@ -407,6 +467,52 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
+  it("reuses the current-device Agent without inventing a Team binding", async () => {
+    const binding = {
+      name: "current-device-agent",
+      displayName: "当前设备智能体",
+      runtime: "codex",
+      executionPolicy: { mode: "project_pool" },
+      modelPolicy: { mode: "user_select" },
+      capabilityMode: "follow_device",
+      model: null,
+    };
+    const { api, create } = createApi({
+      resourceAgents: [
+        {
+          ...workspaceAgent,
+          id: "current-device-resource",
+          name: "当前设备智能体",
+          location: "local",
+          team_id: undefined,
+          project_binding_input: binding,
+        },
+      ],
+      workspaceAgents: [],
+    });
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          host={{ ...hostedCreationHost, supportsExistingAgentSelection: true }}
+          project={{ ...project, project_store: "local" }}
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback}
+        />,
+      );
+    });
+
+    await click("project-agent-add");
+    await click("project-agent-option-current-device-resource");
+    await click("project-agent-wegent-create");
+
+    expect(create).toHaveBeenCalledWith(project.id, binding);
+    expect(create.mock.calls[0][1]).not.toHaveProperty("wegentTeamId");
+    expect(element("project-agent-row-created-codex").textContent).toContain(
+      "当前设备智能体",
+    );
+  });
+
   it("creates a project Agent through the resource-library host and binds it to the project", async () => {
     const { api, create } = createApi({ workspaceAgents: [] });
     await renderHosted(api);
@@ -434,6 +540,7 @@ describe("ProjectAgentConfiguration", () => {
       name: "空间新智能体",
       runtime: "wegent",
       wegentTeamId: 91,
+      shareWithWorkspace: true,
     });
     expect(element("project-agent-row-created-wegent")).toBeTruthy();
   });
@@ -561,10 +668,27 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
+  it("keeps a shared Agent usable without exposing unauthorized configuration edits", async () => {
+    const { api } = createApi({
+      agents: [projectAgent({ can_edit: false })],
+    });
+    await renderHosted(api);
+
+    expect(element("project-agent-row-project-agent-1")).toBeTruthy();
+    expect(
+      document.querySelector(
+        '[data-testid="project-agent-edit-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
+
   it("archives an existing project agent with optimistic concurrency", async () => {
     const { api, update } = createApi();
     await render(api);
 
+    vi.mocked(api.agents.list).mockResolvedValue([
+      projectAgent({ status: "archived", version: 2 }),
+    ]);
     await click("project-agent-archive-project-agent-1");
 
     expect(update).toHaveBeenCalledWith(project.id, "project-agent-1", {
@@ -573,9 +697,9 @@ describe("ProjectAgentConfiguration", () => {
     });
     expect(
       document.querySelector(
-        '[data-testid="project-agent-row-project-agent-1"]',
+        '[data-testid="project-agent-unavailable-project-agent-1"]',
       ),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 
   it("does not expose archive for a protected project agent", async () => {
@@ -687,5 +811,24 @@ describe("ProjectAgentConfiguration", () => {
       document.querySelector('[data-testid="project-agent-dialog"]'),
     ).toBeNull();
     expect(element("project-agent-list")).toBeTruthy();
+  });
+  it("CP09 exposes revoked bindings and allows administrators to share and re-enable them", async () => {
+    const { api, update } = createApi({
+      agents: [
+        projectAgent({
+          status: "archived",
+          canUse: false,
+          unavailableReason: "resource_sharing_required",
+        }),
+      ],
+    });
+    await render(api);
+    expect(element("project-agent-unavailable-project-agent-1")).toBeTruthy();
+    await click("project-agent-reactivate-project-agent-1");
+    expect(update).toHaveBeenCalledWith(project.id, "project-agent-1", {
+      version: 1,
+      status: "active",
+      shareWithWorkspace: true,
+    });
   });
 });

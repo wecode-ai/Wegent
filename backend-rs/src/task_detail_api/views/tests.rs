@@ -255,3 +255,19 @@ fn knowledge_base_context_keeps_stored_document_count() {
     ));
     assert_eq!(brief.document_count.get(), "99");
 }
+
+/// A public model without the whitelist switch stays selectable for every
+/// user; an active `allowedUsers` list admits only the listed names, and an
+/// unknown or missing user is denied (`is_public_model_allowed_for_user`).
+#[test]
+fn public_model_whitelist_admits_only_listed_users() {
+    let open = json!({"spec": {"allowedUsers": ["someone-else"]}});
+    assert!(public_model_admitted(&open, Some("wuding")));
+    assert!(public_model_admitted(&open, None));
+
+    let restricted = json!({"spec": {"allowedUsersEnabled": true, "allowedUsers": [" ziping6 "]}});
+    assert!(public_model_admitted(&restricted, Some("ziping6")));
+    assert!(!public_model_admitted(&restricted, Some("wuding")));
+    assert!(!public_model_admitted(&restricted, None));
+    assert!(!public_model_admitted(&restricted, Some("")));
+}

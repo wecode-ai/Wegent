@@ -1,5 +1,6 @@
 export {
   AssistantMarkdown,
+  stripUnsupportedContentReferenceCitations,
   type AssistantMarkdownProps,
 } from "./AssistantMarkdown";
 export {

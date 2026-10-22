@@ -99,9 +99,20 @@ LOCAL_DEVICE_COMMANDS='{"repo_status":"git status","repo_files":{"command":"ls -
 
 调用方应把这两个命令绑定到当前 LocalTask 的 `deviceId + workspacePath` 上，而不是绑定中心库 Task API。这样即使本地运行时任务没有 `TaskResource`/`Subtask`，审核和撤销也会发生在生成 artifact 的同一台设备和同一个工作区。
 
-### 工作区文件命令根目录
+### 工作区文件访问
 
-`workspace_tree` 和 `workspace_read_text_file` 会拒绝任何不在允许工作区根目录内的路径。Backend 在每次请求时按用户和设备推导允许的根目录（绝不信任客户端传入的 `WEGENT_WORKSPACE_ROOTS`），来源有两类：workspace `source` 为 `local_path` 或 `device_path` 的 WeWork 项目，以及运行时 `DeviceWorkspace` 映射。`local_path` 表示用户本机 local executor 上的目录；`device_path` 表示绑定到具体 cloud 或 remote 设备的沙箱目录。后者让运行时本地任务即使没有指向该目录的项目配置，也能浏览和预览自己工作区内的文件。
+`workspace_tree`、`workspace_read_text_file` 和 `workspace_read_file_chunk` 可以浏览和读取设备上的任意目录，不要求目录属于已登记的项目或任务工作区。该规则适用于本机、云设备和远程设备，WeWork 本地 IPC 与 Backend 命令 RPC 的行为一致。
+
+```mermaid
+flowchart LR
+    WeWork -->|本机| IPC[Executor IPC]
+    WeWork -->|云设备或远程设备| Backend[Backend 校验设备归属]
+    Backend --> RPC[Socket.IO 命令 RPC]
+    IPC --> Files[按系统权限读取请求目录]
+    RPC --> Files
+```
+
+文件访问不再使用 `WEGENT_WORKSPACE_ROOTS` 白名单，也不会为了读取文件查询项目配置、`DeviceWorkspace` 映射或 `runtime.tasks.list`。设备归属、支持的命令和在线状态仍会在 Backend 分发命令前校验；实际文件读取仍受目标设备进程的系统权限约束。文件名必须解析到请求指定的目录内，文件大小、分块读取和超时限制保持不变。
 
 ## Executor 行为
 

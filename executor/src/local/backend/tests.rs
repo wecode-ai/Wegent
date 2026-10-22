@@ -18,9 +18,13 @@ use std::{
 struct RuntimeWorkPollTransport {
     pull_calls: Arc<AtomicUsize>,
     accepted_tasks: Arc<AtomicUsize>,
+    fail_first_pull: Arc<AtomicBool>,
     cleanup_enabled: Arc<AtomicBool>,
     claimed_cleanups: Arc<AtomicUsize>,
     accepted_cleanups: Arc<AtomicUsize>,
+    disconnect_calls: Arc<AtomicUsize>,
+    close_handler: Arc<TestMutex<Option<ConnectionClosedHandler>>>,
+    close_during_registration: Arc<AtomicBool>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -29,19 +33,27 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     }
 
     fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            self.disconnect_calls.fetch_add(1, AtomicOrdering::AcqRel);
+            Ok(())
+        })
     }
 
     fn call<'a>(
         &'a self,
         event: &'a str,
-        _payload: Value,
+        payload: Value,
         _timeout: Duration,
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             match event {
+                "device:register" => Ok(json!({"success": true})),
                 "runtime.tasks.pull" => {
+                    assert!(payload["runner_catalog"]["models"].is_array());
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    if pull_index == 0 && self.fail_first_pull.swap(false, AtomicOrdering::AcqRel) {
+                        return Err("first queued execution failed preflight".to_owned());
+                    }
                     let task = if pull_index == 1 {
                         json!({
                             "execution_id": "execution-1",
@@ -86,11 +98,25 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
         })
     }
 
-    fn emit<'a>(&'a self, _event: &'a str, _payload: Value) -> TransportFuture<'a, ()> {
-        Box::pin(async { Ok(()) })
+    fn emit<'a>(&'a self, event: &'a str, _payload: Value) -> TransportFuture<'a, ()> {
+        Box::pin(async move {
+            if event == "device:heartbeat"
+                && self
+                    .close_during_registration
+                    .swap(false, AtomicOrdering::AcqRel)
+            {
+                let on_close = self.close_handler.lock().unwrap().clone().unwrap();
+                on_close();
+            }
+            Ok(())
+        })
     }
 
     fn on(&self, _event: &str, _handler: EventHandler) {}
+
+    fn on_close(&self, handler: ConnectionClosedHandler) {
+        *self.close_handler.lock().unwrap() = Some(handler);
+    }
 }
 
 struct BlockingCapacityRuntimeWorkHandler {
@@ -118,6 +144,7 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
             match data.get("method").and_then(Value::as_str) {
+                Some("runtime.runner.catalog") => Ok(json!({"models": []})),
                 Some("runtime.capacity.get") => {
                     let call_index = self.capacity_calls.fetch_add(1, AtomicOrdering::AcqRel);
                     if call_index == 0 {
@@ -171,6 +198,7 @@ fn backend_config(device_id: &str) -> LocalBackendConfig {
         runtime_transfer_host: "127.0.0.1".to_string(),
         heartbeat_interval: Duration::from_secs(30),
         heartbeat_timeout: Duration::from_secs(10),
+        runtime_work_poll_interval: Duration::from_secs(5),
         registration_timeout: Duration::from_secs(10),
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),
@@ -213,7 +241,7 @@ async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
     let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
 
     let work = client
-        .pull_runtime_work(Duration::from_secs(1))
+        .pull_runtime_work(Duration::from_secs(1), json!({"models": []}))
         .await
         .unwrap();
     let intent = &work.workspace_cleanup_intents[0];
@@ -236,9 +264,7 @@ async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
 async fn app_sidecar_runner_does_not_start_session_gateway() {
     let _guard = env_lock();
     let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
     env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::remove_var("DEVICE_PUBLIC_BASE_URL");
     let (event_tx, _) = broadcast::channel(8);
     let event_hub = ExecutorEventHub::new(event_tx.clone());
     event_hub.ensure_started();
@@ -258,16 +284,13 @@ async fn app_sidecar_runner_does_not_start_session_gateway() {
     assert_eq!(session_handler.public_base_url, "http://localhost:0");
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-    restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
 }
 
 #[tokio::test]
 async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
     let _guard = env_lock();
     let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
     env::set_var("DEVICE_SESSION_GATEWAY_ENABLED", "true");
-    env::remove_var("DEVICE_PUBLIC_BASE_URL");
     let runner = LocalBackendRunner::new_for_app_sidecar(
         backend_config("local-device"),
         SocketIoTransport::default(),
@@ -279,16 +302,13 @@ async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
     assert_eq!(session_handler.public_base_url, "http://localhost:0");
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-    restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
 }
 
 #[tokio::test]
 async fn remote_backend_runner_starts_session_gateway() {
     let _guard = env_lock();
     let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
     env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::remove_var("DEVICE_PUBLIC_BASE_URL");
     let runner = LocalBackendRunner::new(
         backend_config("remote-device"),
         SocketIoTransport::default(),
@@ -300,7 +320,6 @@ async fn remote_backend_runner_starts_session_gateway() {
     assert_eq!(session_handler.public_base_url, "http://localhost:17888");
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-    restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
 }
 
 #[tokio::test]
@@ -336,8 +355,94 @@ async fn runtime_work_poll_coalesces_notification_received_while_locked() {
 
     assert_eq!(handler.capacity_calls.load(AtomicOrdering::Acquire), 2);
     assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
-    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 3);
+    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 2);
     assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn runtime_work_poll_continues_after_one_pull_preflight_failure() {
+    let transport = RuntimeWorkPollTransport::default();
+    transport
+        .fail_first_pull
+        .store(true, AtomicOrdering::Release);
+    let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
+    let handler = Arc::new(BlockingCapacityRuntimeWorkHandler::new());
+    handler.release_first_capacity.notify_one();
+
+    drain_available_runtime_work(&client, &(handler.clone() as Arc<dyn RuntimeWorkHandler>)).await;
+
+    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 2);
+    assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
+    assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailable() {
+    let transport = RuntimeWorkPollTransport::default();
+    let connection_status = Arc::new(AtomicBool::new(true));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
+            .with_connection_status(Arc::clone(&connection_status));
+
+    let mark_disconnected = async {
+        sleep(Duration::from_millis(10)).await;
+        connection_status.store(false, Ordering::Release);
+    };
+    let (stable_connection, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(runner.heartbeat_until_reconnect(), mark_disconnected)
+    })
+    .await
+    .expect("connection status should trigger reconnect before the heartbeat interval");
+
+    assert!(!stable_connection);
+    assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat() {
+    let transport = RuntimeWorkPollTransport::default();
+    let connection_status = Arc::new(AtomicBool::new(true));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
+            .with_connection_status(Arc::clone(&connection_status));
+    runner.register_handlers();
+    let on_close = transport
+        .close_handler
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the runner must observe transport closure");
+
+    on_close();
+
+    assert!(!connection_status.load(Ordering::Acquire));
+    let stable_connection =
+        tokio::time::timeout(Duration::from_secs(1), runner.heartbeat_until_reconnect())
+            .await
+            .expect("closed transport must reconnect before the heartbeat interval");
+    assert!(!stable_connection);
+    assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn socket_close_during_registration_cannot_publish_ready_status() {
+    let transport = RuntimeWorkPollTransport::default();
+    transport
+        .close_during_registration
+        .store(true, AtomicOrdering::Release);
+    let connection_status = Arc::new(AtomicBool::new(false));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
+            .with_connection_status(Arc::clone(&connection_status));
+    runner.register_handlers();
+
+    let result = runner.connect_and_register().await;
+
+    assert!(result.is_err(), "a closed registration cannot become ready");
+    assert!(!connection_status.load(Ordering::Acquire));
+
+    runner.connect_and_register().await.unwrap();
+    assert!(connection_status.load(Ordering::Acquire));
 }
 
 #[test]
@@ -357,26 +462,14 @@ fn normalizes_backend_context_for_local_task_mcp() {
 }
 
 #[test]
-fn heartbeat_reports_runtime_capacity_and_installation_identity() {
+fn heartbeat_reports_installation_identity_without_scheduler_capacity() {
     let client =
         LocalBackendClient::new(backend_config("local-device"), SocketIoTransport::default());
-    client.set_runtime_capacity(Some(json!({
-        "limit": 4,
-        "active": 2,
-        "active_task_ids": ["task-1", "task-2"],
-        "queued": 1,
-    })));
 
     let payload = client.heartbeat_payload();
 
     assert_eq!(payload["runtime_instance_id"], "runtime-1");
-    assert_eq!(payload["runtime_capacity"]["limit"], 4);
-    assert_eq!(payload["runtime_capacity"]["active"], 2);
-    assert_eq!(
-        payload["runtime_capacity"]["active_task_ids"],
-        json!(["task-1", "task-2"])
-    );
-    assert_eq!(payload["runtime_capacity"]["queued"], 1);
+    assert!(payload.get("runtime_capacity").is_none());
 }
 
 #[test]

@@ -305,6 +305,21 @@ fn file_change_from_codex_change(change: &Value, workspace_path: &str) -> Option
     )
 }
 
+/// Preserve native content for web tools without changing workbench summaries.
+pub(crate) fn codex_file_change_content(
+    change: &Value,
+    workspace_path: &str,
+) -> Option<(String, Value)> {
+    let file = file_change_from_codex_change(change, workspace_path)?;
+    let text = raw_string_field(change, "diff")?;
+    let field = if file["change_type"] == "created" && !looks_like_unified_diff(&text) {
+        "content"
+    } else {
+        "diff"
+    };
+    Some((file["path"].as_str()?.to_owned(), json!({field: text})))
+}
+
 fn file_change_from_patch_change(
     path: &str,
     change: &Value,

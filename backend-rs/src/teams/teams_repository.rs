@@ -24,7 +24,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// `users` column list rendered by `db.query(User)` (SQLAlchemy labels every
 /// column `users_<name>`).
@@ -57,8 +57,11 @@ pub const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
 /// Re-export of the team-union query functions for the teams modules'
 /// existing `repo::` call sites.
 pub use super::team_union::{
-    AccessibleTeamsQuery, TeamListFilter, accessible_teams, kinds_by_refs, public_kinds_by_names,
-    team_count, users_by_ids,
+    AccessibleTeamsQuery, TeamListFilter, accessible_default_team, accessible_teams,
+    latest_distinct_team_rows, team_count,
+};
+pub use super::team_union_lookups::{
+    kinds_by_refs, public_kinds_by_names, user_by_id, users_by_ids,
 };
 
 /// `namespace` column list rendered by `db.query(Namespace)`.
@@ -82,11 +85,6 @@ pub const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_use
 /// (`_build_accessible_teams_query`). The outer SQLAlchemy query aliases every
 /// column `anon_1_<name>`; the replay engine matches and delivers those
 /// recorded aliases, so each field decodes by its recorded alias.
-///
-/// Decoding is field-driven, so the union's `restricted_guest_access` column
-/// stays projected for statement identity without a field here: the source
-/// only consumes it for `team_usage_summary`, whose effect is not observable
-/// in the recorded traffic.
 #[derive(Debug, FromMysqlRow)]
 pub struct TeamRow {
     #[mysql(rename = "anon_1_team_id")]
@@ -110,6 +108,9 @@ pub struct TeamRow {
     /// 0 for public teams.
     #[mysql(rename = "anon_1_context_user_id")]
     pub context_user_id: i64,
+    /// Restricted group access requires response filtering unless the requester owns it.
+    #[mysql(rename = "anon_1_restricted_guest_access")]
+    pub restricted_guest_access: i64,
     /// `native` / `user_share` / `namespace_authorization`.
     #[mysql(rename = "anon_1_access_source")]
     pub access_source: String,
@@ -158,7 +159,7 @@ pub struct UserSummaryRow {
     #[allow(dead_code)]
     pub users_email: Option<String>,
     #[allow(dead_code)]
-    pub users_git_info: brz_mysql::Json<crate::json_compat::OpaqueJson>,
+    pub users_git_info: brz_mysql::Json<brz_json::OpaqueJson>,
     #[allow(dead_code)]
     pub users_is_active: i8,
     #[allow(dead_code)]

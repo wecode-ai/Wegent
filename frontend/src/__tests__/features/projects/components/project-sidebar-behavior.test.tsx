@@ -8,7 +8,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ProjectDeleteDialog } from '@/features/projects/components/ProjectDeleteDialog'
 import { ProjectSection } from '@/features/projects/components/ProjectSection'
 import TaskMenu from '@/features/tasks/components/sidebar/TaskMenu'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectTask, ProjectWithTasks } from '@/types/api'
 
 const pushMock = jest.fn()
 const replaceMock = jest.fn()
@@ -21,6 +21,12 @@ const toggleProjectExpandedMock = jest.fn()
 const setProjectSectionCollapsedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
+const loadProjectTasksMock = jest.fn()
+let selectedProjectTaskMock: ProjectTask | null = null
+let projectTaskPagesMock: Record<
+  number,
+  { loading: boolean; loaded: boolean; hasMore: boolean; error?: string }
+> = {}
 let isWorkspaceEnabledMock = true
 
 const pathlessProject: ProjectWithTasks = {
@@ -81,6 +87,7 @@ const workspaceProject: ProjectWithTasks = {
 }
 
 const projects = [pathlessProject, workspaceProject]
+const originalPathlessTasks = pathlessProject.tasks
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -134,7 +141,8 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     toggleProjectExpanded: toggleProjectExpandedMock,
     isProjectSectionCollapsed: false,
     setProjectSectionCollapsed: setProjectSectionCollapsedMock,
-    selectedProjectTaskId: null,
+    selectedProjectTaskId: selectedProjectTaskMock?.task_id ?? null,
+    selectedProjectTask: selectedProjectTaskMock,
     setSelectedProjectTaskId: setSelectedProjectTaskIdMock,
     refreshProjects: refreshProjectsMock,
     createProject: jest.fn(),
@@ -144,6 +152,8 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     removeTaskFromProject: removeTaskFromProjectMock,
     projectTaskIds: new Set([101, 202]),
     isWorkspaceEnabled: isWorkspaceEnabledMock,
+    projectTaskPages: projectTaskPagesMock,
+    loadProjectTasks: loadProjectTasksMock,
   }),
 }))
 
@@ -160,6 +170,45 @@ jest.mock('@/features/projects/components/ProjectCreateDialog', () => ({
     open ? <div data-testid="project-create-dialog-mode">{mode}</div> : null,
 }))
 
+jest.mock('@/features/tasks/components/sidebar/SearchDialog', () => ({
+  __esModule: true,
+  default: ({
+    open,
+    projectId,
+    projectName,
+    onOpenChange,
+    onProjectTaskSelect,
+  }: {
+    open: boolean
+    projectId: number
+    projectName: string
+    onOpenChange: (open: boolean) => void
+    onProjectTaskSelect: (task: ProjectTask) => void
+  }) =>
+    open ? (
+      <div data-testid="project-search-dialog" data-project-id={projectId}>
+        {projectName}
+        <button
+          type="button"
+          data-testid="select-project-search-result"
+          onClick={() => {
+            onOpenChange(false)
+            onProjectTaskSelect({
+              task_id: 909,
+              task_title: 'Task outside the loaded group page',
+              task_status: 'COMPLETED',
+              project_id: projectId,
+              device_id: projectId === 1 ? 'device-2' : undefined,
+              is_group_chat: false,
+            })
+          }}
+        >
+          Select result
+        </button>
+      </div>
+    ) : null,
+}))
+
 jest.mock('@/components/common/TaskInlineRename', () => ({
   TaskInlineRename: () => <input aria-label="rename task" />,
 }))
@@ -169,6 +218,13 @@ describe('project sidebar behavior', () => {
     jest.clearAllMocks()
     deleteProjectMock.mockResolvedValue(true)
     isWorkspaceEnabledMock = true
+    selectedProjectTaskMock = null
+    loadProjectTasksMock.mockResolvedValue(undefined)
+    projectTaskPagesMock = {
+      1: { loading: false, loaded: true, hasMore: false },
+      2: { loading: false, loaded: true, hasMore: false },
+    }
+    pathlessProject.tasks = originalPathlessTasks
   })
 
   test('renders the unified project section expanded by default', () => {
@@ -212,6 +268,83 @@ describe('project sidebar behavior', () => {
 
     fireEvent.click(screen.getByTestId('create-workspace-project-menu-item'))
     expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('workspace')
+  })
+
+  test.each([
+    [1, 'pathless-project', '/devices/chat?taskId=909'],
+    [2, 'workspace-project', '/devices/chat?taskId=909&projectId=2&deviceId=device-1'],
+  ])('searches only project %s and keeps its task navigation', (id, name, target) => {
+    const onTaskSelect = jest.fn()
+    render(<ProjectSection onTaskSelect={onTaskSelect} />)
+
+    fireEvent.click(screen.getByTestId(`project-search-tasks-${id}`))
+    expect(screen.getByTestId('project-search-dialog')).toHaveAttribute(
+      'data-project-id',
+      String(id)
+    )
+    expect(screen.getByTestId('project-search-dialog')).toHaveTextContent(String(name))
+    fireEvent.click(screen.getByTestId('select-project-search-result'))
+
+    expect(setSelectedProjectTaskIdMock).toHaveBeenCalledWith(909)
+    expect(pushMock).toHaveBeenCalledWith(target)
+    expect(onTaskSelect).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('project-search-dialog')).not.toBeInTheDocument()
+  })
+
+  test('loads an expanded group without mistaking unloaded tasks for an empty group', () => {
+    pathlessProject.tasks = []
+    projectTaskPagesMock[1] = { loading: false, loaded: false, hasMore: false }
+
+    render(<ProjectSection />)
+
+    expect(loadProjectTasksMock).toHaveBeenCalledWith(1)
+    expect(screen.queryByText('section.noTasks')).not.toBeInTheDocument()
+  })
+
+  test('loads the next page using one load more control', () => {
+    projectTaskPagesMock[1] = { loading: false, loaded: true, hasMore: true }
+
+    render(<ProjectSection />)
+    fireEvent.click(screen.getByTestId('project-tasks-load-more-1'))
+
+    expect(loadProjectTasksMock).toHaveBeenCalledWith(1, true)
+    expect(screen.getByText('pathless task')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-tasks-load-more-2')).not.toBeInTheDocument()
+  })
+
+  test('shows a selected task outside the loaded page without duplicating fetched tasks', () => {
+    selectedProjectTaskMock = {
+      task_id: 151,
+      task_title: 'older selected task',
+      task_status: 'COMPLETED',
+      project_id: 1,
+      is_group_chat: false,
+    }
+    const { rerender } = render(<ProjectSection />)
+
+    expect(screen.getByText('older selected task').parentElement).toHaveClass('bg-primary/10')
+    expect(screen.getByText('pathless task')).toBeInTheDocument()
+
+    pathlessProject.tasks = [...originalPathlessTasks, selectedProjectTaskMock]
+    rerender(<ProjectSection />)
+    expect(screen.getAllByText('older selected task')).toHaveLength(1)
+  })
+
+  test('retries the failed page and disables the control during loading', () => {
+    projectTaskPagesMock[1] = {
+      loading: false,
+      loaded: true,
+      hasMore: true,
+      error: 'Request failed',
+    }
+    const { rerender } = render(<ProjectSection />)
+
+    fireEvent.click(screen.getByText('section.retryTasks'))
+    expect(loadProjectTasksMock).toHaveBeenCalledWith(1, true)
+
+    projectTaskPagesMock[1] = { loading: true, loaded: true, hasMore: true }
+    rerender(<ProjectSection />)
+    expect(screen.getByTestId('project-tasks-load-more-1')).toBeDisabled()
   })
 
   test('starts a new conversation inside either a group or a workspace project', () => {

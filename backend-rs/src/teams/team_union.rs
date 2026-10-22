@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! The accessible-team UNION query and related kinds/user lookups for
-//! `GET /api/teams` (`_build_accessible_teams_query`, its `.count()` form,
-//! and the preload lookups over `kinds` / `users`).
+//! The accessible-team UNION query and preload lookups for `GET /api/teams`
+//! (`_build_accessible_teams_query`, its `.count()` form, and the shared
+//! identity re-ranking `_query_latest_distinct_team_rows` the
+//! `GET /api/users/recent-teams` fallback reuses).
 //!
 //! Split from `teams_repository` to keep each file under the 1000-line
 //! source-review limit; the statements and their ordering contracts are
-//! unchanged.
+//! unchanged. The `kinds` / `users` preload lookups live in
+//! `team_union_lookups`.
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 
-use super::teams_repository::{
-    BindingArg, KIND_COLUMNS, KindRow, TeamRow, USER_COLUMNS, UserSummaryRow, placeholders,
-};
+use super::teams_repository::{BindingArg, TeamRow, placeholders};
 
 /// One source `build_team_list_filters` predicate, appended to every union
 /// branch after its own predicates.
@@ -29,6 +29,10 @@ pub enum TeamListFilter {
     HasBindMode,
     /// `mode != "all"`: the bind-mode text carries the mode name.
     BindModeLike(String),
+    /// `resolve_default_team` identity filter: `Kind.name == name`.
+    NameEquals(String),
+    /// `resolve_default_team` identity filter: `Kind.namespace == namespace`.
+    NamespaceEquals(String),
 }
 
 /// `_resource_json_text(db, "$.spec.bind_mode")` on MySQL.
@@ -67,6 +71,8 @@ impl TeamListFilter {
             Self::BindModeLike(_) => {
                 format!("({BIND_MODE_TEXT} IN (?, ?) OR {BIND_MODE_TEXT} LIKE ?)")
             }
+            Self::NameEquals(_) => "kinds.name = ?".to_string(),
+            Self::NamespaceEquals(_) => "kinds.namespace = ?".to_string(),
         }
     }
 
@@ -79,6 +85,8 @@ impl TeamListFilter {
                 BindingArg::Str("null".to_string()),
                 BindingArg::Str(format!("%\"{mode}\"%")),
             ],
+            Self::NameEquals(name) => vec![BindingArg::Str(name.clone())],
+            Self::NamespaceEquals(namespace) => vec![BindingArg::Str(namespace.clone())],
             Self::DefaultNamespace | Self::SystemOwner | Self::HasBindMode => Vec::new(),
         }
     }
@@ -151,6 +159,73 @@ where
     }
     let row: CountRow = mysql.fetch_one(sql.as_str(), body.args).await?;
     Ok(Some(row.count_1))
+}
+
+/// `_query_latest_distinct_team_rows` (the `get_recent_accessible_teams`
+/// fallback): the accessible-team page re-ranked by `(team_name,
+/// team_namespace)`, excluding the identities already selected from recent
+/// tasks.
+///
+/// The source wraps `base_query` (the ranked union deduplicated to
+/// `access_row_number = 1`) in a `row_number()` partition over the team
+/// identity and keeps `identity_row_number = 1`; `excluded_identities` is the
+/// `NOT IN` tuple list of identities `_query_recent_team_kinds` already
+/// selected. Returns `None` when the union builds no branch.
+pub async fn latest_distinct_team_rows<M>(
+    mysql: &M,
+    query: AccessibleTeamsQuery<'_>,
+    excluded_identities: &[(String, String)],
+) -> MysqlResult<Option<Vec<TeamRow>>>
+where
+    M: Mysql,
+{
+    let Some(body) = union_body(&query) else {
+        return Ok(None);
+    };
+    let sql = latest_distinct_sql(&body, query.limit, excluded_identities);
+    let rows: Vec<TeamRow> = mysql.fetch_all(sql.as_str(), body.args).await?;
+    Ok(Some(rows))
+}
+
+/// Render `_query_latest_distinct_team_rows` for an already-rendered union
+/// body: the base query re-projected under bare column names, re-ranked by
+/// identity, and filtered by `excluded_identities`.
+fn latest_distinct_sql(
+    body: &UnionBody,
+    limit: i64,
+    excluded_identities: &[(String, String)],
+) -> String {
+    let exclusion = if excluded_identities.is_empty() {
+        String::new()
+    } else {
+        let tuples = excluded_identities
+            .iter()
+            .map(|(name, namespace)| {
+                format!(
+                    "({}, {})",
+                    crate::sql_support::quote_sql_literal(name),
+                    crate::sql_support::quote_sql_literal(namespace)
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(", ");
+        format!(" AND ((anon_1.team_name, anon_1.team_namespace) NOT IN ({tuples}))")
+    };
+    format!(
+        "SELECT {}, anon_1.identity_row_number AS anon_1_identity_row_number \n\
+         FROM (SELECT {}, row_number() OVER (PARTITION BY anon_2.team_name, \
+         anon_2.team_namespace ORDER BY anon_2.team_updated_at DESC, \
+         anon_2.team_id DESC) AS identity_row_number \n\
+         FROM (SELECT {} \n{}) AS anon_2) AS anon_1 \n\
+         WHERE anon_1.identity_row_number = 1{} \
+         ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC \n LIMIT {}",
+        ranked_columns_sql("anon_1"),
+        bare_columns_sql("anon_2"),
+        bare_columns_sql("anon_3"),
+        ranked_from_sql(body, "anon_3", false),
+        exclusion,
+        limit,
+    )
 }
 
 /// Render the `restricted_guest_access` label of a union branch.
@@ -368,19 +443,12 @@ fn union_body(query: &AccessibleTeamsQuery<'_>) -> Option<UnionBody> {
     })
 }
 
-/// The source's `base_query`: the ranked query minus pagination, optionally
-/// restricted to shared or non-default teams (`shared_only`).
-///
-/// `alias` is the ranked subquery's alias: `anon_1` for the page query and
-/// `anon_2` when the whole base query is wrapped by `count(*)`.
-fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
-    let shared_only_filter = if shared_only {
-        format!(" AND ({alias}.team_namespace != 'default' OR {alias}.share_status = 2)")
-    } else {
-        String::new()
-    };
+/// The ranked subquery's projected columns, aliased `{alias}_<column>`
+/// exactly like the recorded SQLAlchemy rendering. Shared by the page, count,
+/// and default-resolve load queries.
+fn ranked_columns_sql(alias: &str) -> String {
     format!(
-        "SELECT {alias}.team_id AS {alias}_team_id, \
+        "{alias}.team_id AS {alias}_team_id, \
          {alias}.team_user_id AS {alias}_team_user_id, \
          {alias}.team_name AS {alias}_team_name, \
          {alias}.team_namespace AS {alias}_team_namespace, \
@@ -390,8 +458,40 @@ fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
          {alias}.share_status AS {alias}_share_status, \
          {alias}.context_user_id AS {alias}_context_user_id, \
          {alias}.restricted_guest_access AS {alias}_restricted_guest_access, \
-         {alias}.access_source AS {alias}_access_source \
-         FROM (SELECT combined_teams.team_id AS team_id, \
+         {alias}.access_source AS {alias}_access_source"
+    )
+}
+
+/// The ranked subquery's columns re-projected under their own names, as
+/// SQLAlchemy re-labels them when an enclosing query selects the subquery
+/// directly (`_query_latest_distinct_team_rows`).
+fn bare_columns_sql(alias: &str) -> String {
+    format!(
+        "{alias}.team_id AS team_id, {alias}.team_user_id AS team_user_id, \
+         {alias}.team_name AS team_name, {alias}.team_namespace AS team_namespace, \
+         {alias}.team_json AS team_json, {alias}.team_created_at AS team_created_at, \
+         {alias}.team_updated_at AS team_updated_at, {alias}.share_status AS share_status, \
+         {alias}.context_user_id AS context_user_id, \
+         {alias}.restricted_guest_access AS restricted_guest_access, \
+         {alias}.access_source AS access_source"
+    )
+}
+
+/// The ranked subquery (deduplicated to `access_row_number = 1`) as the FROM
+/// clause shared by every resolver, aliased `alias`.
+///
+/// `alias` is the ranked subquery's alias: `anon_1` for the page and
+/// default-resolve queries and `anon_2` when the whole base query is wrapped
+/// by `count(*)`. `shared_only` restricts the ranked query to shared or
+/// non-default teams.
+fn ranked_from_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
+    let shared_only_filter = if shared_only {
+        format!(" AND ({alias}.team_namespace != 'default' OR {alias}.share_status = 2)")
+    } else {
+        String::new()
+    };
+    format!(
+        "FROM (SELECT combined_teams.team_id AS team_id, \
          combined_teams.team_user_id AS team_user_id, \
          combined_teams.team_name AS team_name, \
          combined_teams.team_namespace AS team_namespace, \
@@ -413,127 +513,71 @@ fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
     )
 }
 
-/// Team-owner user summaries. `ids` must be in the source's Python-set
-/// order; the SQL renders the same full column
-/// list `db.query(User)` produces.
-pub async fn users_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<UserSummaryRow>>
-where
-    M: Mysql,
-{
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let sql = format!(
-        "SELECT {USER_COLUMNS} \
-         FROM users \
-         WHERE users.id IN ({})",
-        placeholders(ids.len()),
-    );
-    mysql.fetch_all(sql.as_str(), ids.to_vec()).await
+/// The source's `base_query`: the ranked query minus pagination, optionally
+/// restricted to shared or non-default teams (`shared_only`).
+fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
+    format!(
+        "SELECT {} {}",
+        ranked_columns_sql(alias),
+        ranked_from_sql(body, alias, shared_only),
+    )
 }
 
-/// Bots by `(user_id, name, namespace)` triples (personal bots) or
-/// `(name, namespace)` pairs (group bots). `refs` keeps the caller's
-/// construction order, duplicates included, exactly like the source's
-/// `all_bot_refs` list.
-/// One bound argument of a `kinds_by_refs` query. The source renders
-/// `kinds.user_id` as an integer literal and `kinds.name` / `kinds.namespace`
-/// as quoted strings; the replay matcher compares bound values by token kind,
-/// so the user id must bind as an integer exactly like the recorded rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum KindRefArg {
-    Int(i64),
-    Str(String),
+/// The source `resolve_default_team` candidate query:
+/// `base_query.with_entities(ranked.team_id)` ordered by
+/// `(team_user_id == 0) DESC, team_updated_at DESC, team_id DESC LIMIT 1`.
+fn default_candidate_sql(body: &UnionBody) -> String {
+    format!(
+        "SELECT anon_1.team_id AS anon_1_team_id {} \
+         ORDER BY anon_1.team_user_id = 0 DESC, anon_1.team_updated_at DESC, \
+         anon_1.team_id DESC LIMIT 1",
+        ranked_from_sql(body, "anon_1", false),
+    )
 }
 
-impl brz_mysql::MysqlValue for KindRefArg {
-    fn write(self, writer: &mut brz_mysql::MysqlValueWriter) -> MysqlResult<()> {
-        match self {
-            Self::Int(value) => value.write(writer),
-            Self::Str(value) => value.write(writer),
-        }
-    }
-    fn encoded_size_hint(&self) -> usize {
-        match self {
-            Self::Int(value) => value.encoded_size_hint(),
-            Self::Str(value) => value.encoded_size_hint(),
-        }
-    }
+/// The source `resolve_default_team` reload query:
+/// `base_query.filter(ranked.team_id == candidate).order_by(...).offset(0).limit(1)`.
+fn default_load_sql(body: &UnionBody) -> String {
+    format!(
+        "SELECT {} {} AND anon_1.team_id = ? \
+         ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 0, 1",
+        ranked_columns_sql("anon_1"),
+        ranked_from_sql(body, "anon_1", false),
+    )
 }
 
-/// Bot/shell/model kinds by `(user_id, name, namespace)` triples (personal
-/// kinds) or `(name, namespace)` pairs (group kinds). `refs` keeps the
-/// caller's construction order, duplicates included, exactly like the source's
-/// `all_bot_refs` list.
-pub async fn kinds_by_refs<M>(
+/// The default-team resolution (`resolve_default_team`): run the candidate
+/// query, then reload that single team row.
+///
+/// Returns `None` when the union has no branch or the candidate query finds no
+/// row (the source returns `None` without reloading). The returned vector has
+/// at most one row.
+pub async fn accessible_default_team<M>(
     mysql: &M,
-    kind: &str,
-    refs: &[(i64, String, String)],
-    with_user: bool,
-) -> MysqlResult<Vec<KindRow>>
+    query: AccessibleTeamsQuery<'_>,
+) -> MysqlResult<Option<Vec<TeamRow>>>
 where
     M: Mysql,
 {
-    if refs.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut conditions = Vec::with_capacity(refs.len());
-    for _ in refs {
-        conditions.push(if with_user {
-            "kinds.user_id = ? AND kinds.name = ? AND kinds.namespace = ?"
-        } else {
-            "kinds.name = ? AND kinds.namespace = ?"
-        });
-    }
-    // SQLAlchemy renders `or_(*conditions)` without parentheses when there is
-    // exactly one condition (recorded single group-bot / single-ref queries),
-    // and with parentheses around the joined group otherwise.
-    let joined = conditions.join(" OR ");
-    let condition_sql = if conditions.len() == 1 {
-        joined
-    } else {
-        format!("({joined})")
+    let Some(body) = union_body(&query) else {
+        return Ok(None);
     };
-    let sql = format!(
-        "SELECT {KIND_COLUMNS} \
-         FROM kinds \
-         WHERE kinds.kind = ? AND kinds.is_active = true AND {condition_sql}"
-    );
-    let mut args: Vec<KindRefArg> = Vec::with_capacity(refs.len() * 3 + 1);
-    args.push(KindRefArg::Str(kind.to_string()));
-    for (user_id, name, namespace) in refs {
-        if with_user {
-            args.push(KindRefArg::Int(*user_id));
-        }
-        args.push(KindRefArg::Str(name.clone()));
-        args.push(KindRefArg::Str(namespace.clone()));
+    #[derive(Debug, FromMysqlRow)]
+    struct TeamIdRow {
+        #[mysql(rename = "anon_1_team_id")]
+        anon_1_team_id: i64,
     }
-    mysql.fetch_all(sql.as_str(), args).await
-}
-
-/// Public kinds by name (`user_id = 0`). `names` keeps the caller's order.
-pub async fn public_kinds_by_names<M>(
-    mysql: &M,
-    kind: &str,
-    names: &[String],
-) -> MysqlResult<Vec<KindRow>>
-where
-    M: Mysql,
-{
-    if names.is_empty() {
-        return Ok(Vec::new());
-    }
-    let sql = format!(
-        "SELECT {KIND_COLUMNS} \
-         FROM kinds \
-         WHERE kinds.kind = ? AND kinds.user_id = 0 \
-         AND kinds.is_active = true AND kinds.name IN ({})",
-        placeholders(names.len()),
-    );
-    let mut args: Vec<String> = Vec::with_capacity(names.len() + 1);
-    args.push(kind.to_string());
-    args.extend(names.iter().cloned());
-    mysql.fetch_all(sql.as_str(), args).await
+    let candidate: Option<TeamIdRow> = mysql
+        .fetch_optional(default_candidate_sql(&body).as_str(), body.args.clone())
+        .await?;
+    let Some(candidate) = candidate else {
+        return Ok(None);
+    };
+    let load_sql = default_load_sql(&body);
+    let mut args = body.args;
+    args.push(BindingArg::Int(candidate.anon_1_team_id));
+    let rows: Vec<TeamRow> = mysql.fetch_all(load_sql.as_str(), args).await?;
+    Ok(Some(rows))
 }
 
 #[cfg(test)]
@@ -674,6 +718,45 @@ mod tests {
     }
 
     #[test]
+    fn latest_distinct_reranks_by_identity_and_excludes_selected() {
+        let groups = vec!["alpha".to_string()];
+        let filters: Vec<TeamListFilter> = Vec::new();
+        let query = query("all", &groups, &[3], &[], &filters);
+        let body = union_body(&query).unwrap();
+        let excluded = [("dev-team".to_string(), "default".to_string())];
+        let sql = latest_distinct_sql(&body, 4, &excluded);
+
+        // The base query is re-projected under bare column names, then
+        // re-ranked by `(team_name, team_namespace)` and deduplicated to
+        // `identity_row_number = 1`.
+        assert!(
+            sql.starts_with("SELECT anon_1.team_id AS anon_1_team_id, "),
+            "{sql}"
+        );
+        assert!(sql.contains("anon_1.identity_row_number AS anon_1_identity_row_number"));
+        assert!(sql.contains(
+            "row_number() OVER (PARTITION BY anon_2.team_name, anon_2.team_namespace ORDER BY anon_2.team_updated_at DESC, anon_2.team_id DESC) AS identity_row_number"
+        ));
+        assert!(sql.contains("SELECT anon_3.team_id AS team_id, "));
+        assert!(sql.contains("WHERE anon_3.access_row_number = 1) AS anon_2) AS anon_1"));
+        assert!(sql.contains(
+            "WHERE anon_1.identity_row_number = 1 AND ((anon_1.team_name, anon_1.team_namespace) NOT IN (('dev-team', 'default')))"
+        ));
+        assert!(
+            sql.ends_with("ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC \n LIMIT 4")
+        );
+        // The reused union body keeps the `restricted_guest_access` label the
+        // fallback previously dropped.
+        assert!(sql.contains("0 AS restricted_guest_access"));
+        assert!(sql.contains("kinds.namespace IN (NULL) AND (1 != 1) AS restricted_guest_access"));
+
+        // An empty exclusion set drops the `NOT IN` clause entirely.
+        let unexcluded = latest_distinct_sql(&body, 3, &[]);
+        assert!(!unexcluded.contains("(anon_1.team_name, anon_1.team_namespace) NOT IN"));
+        assert!(unexcluded.ends_with("DESC \n LIMIT 3"));
+    }
+
+    #[test]
     fn list_filters_append_to_every_branch() {
         let groups = vec!["alpha".to_string()];
         let filters = vec![TeamListFilter::OwnerUserId, TeamListFilter::HasBindMode];
@@ -739,8 +822,8 @@ mod tests {
     #[test]
     fn authorization_branch_compares_namespace_ids_as_integers() {
         let groups = vec![
-            "PM_agent".to_string(),
-            "test-dev".to_string(),
+            "team-b".to_string(),
+            "team-d".to_string(),
             "tqt-analyze-group".to_string(),
             "tqt-server".to_string(),
         ];
@@ -763,5 +846,52 @@ mod tests {
         ));
         // The same statement backs the count form.
         assert!(count_sql(&query).contains("CAST(resource_members.entity_id AS SIGNED INTEGER)"));
+    }
+
+    #[test]
+    fn default_identity_filters_render_name_and_namespace() {
+        let filters = vec![
+            TeamListFilter::HasBindMode,
+            TeamListFilter::BindModeLike("chat".to_string()),
+            TeamListFilter::NameEquals("wegent-chat".to_string()),
+            TeamListFilter::NamespaceEquals("default".to_string()),
+        ];
+        let query = query("all", &[], &[], &[], &filters);
+        let body = union_body(&query).unwrap();
+        // The identity predicates append to every branch after the mode ones.
+        assert!(
+            body.sql
+                .ends_with("AND kinds.name = ? AND kinds.namespace = ?")
+        );
+        assert!(
+            body.args
+                .contains(&BindingArg::Str("wegent-chat".to_string()))
+        );
+        assert!(body.args.contains(&BindingArg::Str("default".to_string())));
+    }
+
+    #[test]
+    fn default_team_queries_render_the_source_shapes() {
+        let filters = vec![TeamListFilter::NameEquals("wegent-chat".to_string())];
+        let query = query("all", &[], &[], &[], &filters);
+        let body = union_body(&query).unwrap();
+
+        let candidate = default_candidate_sql(&body);
+        assert!(candidate.starts_with(
+            "SELECT anon_1.team_id AS anon_1_team_id FROM (SELECT combined_teams.team_id"
+        ));
+        assert!(candidate.contains(
+            "WHERE anon_1.access_row_number = 1 ORDER BY anon_1.team_user_id = 0 DESC, \
+             anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 1"
+        ));
+        // The candidate query keys off `team_user_id = 0`, not the page order.
+        assert!(!candidate.contains("LIMIT 0,"));
+
+        let load = default_load_sql(&body);
+        assert!(load.starts_with("SELECT anon_1.team_id AS anon_1_team_id, "));
+        assert!(load.contains(
+            "WHERE anon_1.access_row_number = 1 AND anon_1.team_id = ? ORDER BY \
+             anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 0, 1"
+        ));
     }
 }

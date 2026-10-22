@@ -61,6 +61,33 @@ function event(
 describe('plugin invocation telemetry', () => {
   beforeEach(() => resetPluginInvocationTelemetryForTest())
 
+  test('attributes a locally present plugin before cloud device acknowledgement', () => {
+    const events: string[] = []
+    const stop = subscribeBusinessEvents(value => events.push(value.name))
+    publishPluginInvocationCatalog(
+      'device-1',
+      [
+        plugin({
+          installState: 'not_installed',
+          sourcePayload: { localPresent: true },
+        }),
+      ],
+      []
+    )
+    observeRuntimePluginInvocation(
+      event('response.block.created', {
+        block: {
+          id: 'local-call',
+          type: 'tool',
+          tool_name: 'mcp__private_server__search',
+          status: 'done',
+        },
+      })
+    )
+    stop()
+    expect(events).toEqual(['plugin_invocation_succeeded'])
+  })
+
   test('does not let a failing telemetry observer interrupt plugin invocation handling', () => {
     const events: string[] = []
     const stopBroken = subscribeBusinessEvents(() => {

@@ -15,24 +15,10 @@ from app.schemas.dsh_plugin_storage import (
     DshStorageDescriptor,
     DshStorageGlobalWrite,
     DshStorageRecordWrite,
-    DshStorageSnapshot,
 )
 from app.services.dsh_plugin_storage import dsh_plugin_storage_service
 
 router = APIRouter()
-
-
-@router.post("/units/{unit}/load", response_model=DshStorageSnapshot)
-def load_unit(
-    unit: str,
-    descriptor: DshStorageDescriptor,
-    package_name: str = Query(alias="package"),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return dsh_plugin_storage_service.load_unit(
-        db, current_user.id, package_name, unit, descriptor
-    )
 
 
 @router.put(

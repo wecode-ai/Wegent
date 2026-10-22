@@ -17,8 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.services import model_credential_service
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
+from app.services.wework_model_config import wework_model_config_options
+from shared.utils.crypto import CryptoConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,24 @@ LLM_PROXY_STREAM_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
+}
+RUNTIME_METADATA_HEADERS = {
+    "openai-beta",
+    "originator",
+    "session-id",
+    "thread-id",
+    "user-agent",
+    "x-client-request-id",
+    "x-codex-beta-features",
+    "x-codex-installation-id",
+    "x-codex-parent-thread-id",
+    "x-codex-turn-metadata",
+    "x-codex-turn-state",
+    "x-codex-window-id",
+    "x-openai-internal-codex-responses-lite",
+    "x-openai-memgen-request",
+    "x-openai-subagent",
+    "x-responsesapi-include-timing-metrics",
 }
 
 
@@ -214,6 +235,15 @@ def _extract_custom_upstream_headers(request: Request) -> dict[str, str]:
     return custom_headers
 
 
+def _extract_runtime_metadata_headers(request: Request) -> dict[str, str]:
+    """Preserve non-secret Runtime request identity across the cloud gateway."""
+    return {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() in RUNTIME_METADATA_HEADERS
+    }
+
+
 def _merge_headers_case_insensitive(
     *header_sources: dict[str, str],
 ) -> dict[str, str]:
@@ -294,7 +324,7 @@ def resolve_llm_proxy_model_config(
     namespace: str,
     resource_user_id: int,
 ) -> dict[str, Any]:
-    """Resolve one authorized Model CRD by its complete resource identity."""
+    """Resolve and validate an authorized Model CRD by its complete identity."""
     if model_type not in SUPPORTED_MODEL_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -324,11 +354,34 @@ def resolve_llm_proxy_model_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
         )
-    return extract_and_process_model_config(
-        model_spec=kind.json.get("spec", {}),
-        user_id=current_user.id,
-        user_name=current_user.user_name or "",
-    )
+    model_spec = kind.json.get("spec", {})
+    try:
+        config = extract_and_process_model_config(
+            model_spec=model_spec,
+            user_id=current_user.id,
+            user_name=current_user.user_name or "",
+        )
+    except CryptoConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud model credentials are unavailable; check the encryption configuration",
+        ) from error
+    model_config = model_spec.get("modelConfig")
+    upstream_api_format = None
+    if (
+        isinstance(model_config, dict)
+        and model_config.get("codex_request_mode") == "passthrough"
+    ):
+        upstream_api_format = resolve_llm_proxy_protocol(model_name, config)
+    try:
+        wework_model_config_options(
+            model_config, upstream_api_format=upstream_api_format
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return model_credential_service.with_model_api_key_template(config, model_spec)
 
 
 def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
@@ -388,6 +441,18 @@ async def proxy_llm_responses(
 
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
+    # Validate the endpoint before invoking a deployment credential service.
+    resolve_llm_proxy_protocol(model_name, model_config)
+    try:
+        api_key = await model_credential_service.resolve_model_provider_api_key(
+            model_config, current_user
+        )
+    except model_credential_service.ModelCredentialError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model credentials unavailable",
+        ) from None
+    model_config = {**model_config, "api_key": api_key}
     upstream_path, auth_headers = _resolve_upstream_target(model_name, model_config)
     upstream_url = _join_upstream_url(provider_base_url, upstream_path)
 
@@ -397,9 +462,11 @@ async def proxy_llm_responses(
         else {}
     )
     custom_headers = _extract_custom_upstream_headers(request)
+    runtime_headers = _extract_runtime_metadata_headers(request)
     provider_headers = _merge_headers_case_insensitive(
         configured_headers,
         custom_headers,
+        runtime_headers,
     )
     protocol_headers: dict[str, str] = dict(auth_headers)
     content_type = request.headers.get("content-type")

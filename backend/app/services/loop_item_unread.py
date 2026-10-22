@@ -12,6 +12,7 @@ from app.models.delivery import LoopItem
 
 CONTENT_REVISION_KEY = "content_revision"
 READ_REVISIONS_KEY = "read_revisions"
+ACTIVITY_READ_SEQUENCES_KEY = "activity_read_sequences"
 INITIAL_CONTENT_REVISION = 1
 
 
@@ -31,6 +32,16 @@ def is_unread(metadata: object, user_id: int) -> bool:
         return True
     read_revision = read_revisions.get(str(user_id))
     return not isinstance(read_revision, int) or read_revision < revision
+
+
+def activity_read_sequence(metadata: object, user_id: int) -> int:
+    if not isinstance(metadata, dict):
+        return 0
+    sequences = metadata.get(ACTIVITY_READ_SEQUENCES_KEY)
+    if not isinstance(sequences, dict):
+        return 0
+    value = sequences.get(str(user_id))
+    return value if isinstance(value, int) and value >= 0 else 0
 
 
 def initialize_content_revision(metadata: object, actor_user_id: int) -> dict:
@@ -56,48 +67,87 @@ def advance_content_revision(
     return next_metadata
 
 
-def _mysql_read_revision_expression(metadata: object, revision_path: str) -> object:
+def _mysql_read_revision_expression(
+    metadata: object, revision_path: str, default: int = INITIAL_CONTENT_REVISION
+) -> object:
     """Return a JSON_SET-compatible numeric revision expression for MySQL."""
 
     extracted = func.json_unquote(func.json_extract(metadata, revision_path))
-    return cast(func.coalesce(extracted, str(INITIAL_CONTENT_REVISION)), Integer)
+    return cast(func.coalesce(extracted, str(default)), Integer)
+
+
+def _mysql_set_user_cursor(
+    metadata: object, key: str, user_id: int, value: object
+) -> object:
+    """Initialize the cursor object before atomically setting a user's value."""
+
+    cursor_path = f"$.{key}"
+    cursors = func.json_extract(metadata, cursor_path)
+    cursor_object = case(
+        (func.json_type(cursors) == "OBJECT", cursors),
+        else_=func.json_object(),
+    )
+    return func.json_set(
+        metadata,
+        cursor_path,
+        cursor_object,
+        f'{cursor_path}."{user_id}"',
+        value,
+    )
 
 
 def _mysql_mark_read_expression(metadata: object, user_id: int) -> object:
     """Build one atomic JSON expression that also repairs legacy metadata."""
 
-    read_revisions_path = f"$.{READ_REVISIONS_KEY}"
-    user_path = f'{read_revisions_path}."{user_id}"'
-    revision_path = f"$.{CONTENT_REVISION_KEY}"
-    read_revisions = func.json_extract(metadata, read_revisions_path)
-    read_revisions_object = case(
-        (func.json_type(read_revisions) == "OBJECT", read_revisions),
-        else_=func.json_object(),
-    )
-    return func.json_set(
+    return _mysql_set_user_cursor(
         metadata,
-        read_revisions_path,
-        read_revisions_object,
-        user_path,
-        _mysql_read_revision_expression(metadata, revision_path),
+        READ_REVISIONS_KEY,
+        user_id,
+        _mysql_read_revision_expression(metadata, f"$.{CONTENT_REVISION_KEY}"),
     )
 
 
-def mark_loop_item_read(db: Session, *, item_id: str, user_id: int) -> None:
+def mark_loop_item_read(
+    db: Session,
+    *,
+    item_id: str,
+    user_id: int,
+    activity_sequence: int | None = None,
+) -> None:
     """Atomically advance one user's read cursor without touching item version/time."""
 
     path = f'$.{READ_REVISIONS_KEY}."{user_id}"'
+    activity_path = f'$.{ACTIVITY_READ_SEQUENCES_KEY}."{user_id}"'
     revision_path = f"$.{CONTENT_REVISION_KEY}"
     dialect = db.get_bind().dialect.name
     if dialect == "mysql":
         metadata = func.coalesce(LoopItem.metadata_json, func.json_object())
         next_metadata = _mysql_mark_read_expression(metadata, user_id)
+        if activity_sequence is not None:
+            existing_sequence = _mysql_read_revision_expression(
+                metadata, activity_path, 0
+            )
+            next_metadata = _mysql_set_user_cursor(
+                next_metadata,
+                ACTIVITY_READ_SEQUENCES_KEY,
+                user_id,
+                func.greatest(existing_sequence, activity_sequence),
+            )
     else:
         metadata = func.coalesce(LoopItem.metadata_json, "{}")
         revision = func.coalesce(
             func.json_extract(metadata, revision_path), INITIAL_CONTENT_REVISION
         )
         next_metadata = func.json_set(metadata, path, revision)
+        if activity_sequence is not None:
+            existing_sequence = func.coalesce(
+                func.json_extract(metadata, activity_path), 0
+            )
+            next_metadata = func.json_set(
+                next_metadata,
+                activity_path,
+                func.max(existing_sequence, activity_sequence),
+            )
 
     db.query(LoopItem).filter(LoopItem.id == item_id).update(
         {

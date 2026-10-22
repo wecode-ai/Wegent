@@ -769,6 +769,14 @@ def test_delete_task_accepts_archived_tasks(
     with (
         patch.object(task_kinds_service, "_cleanup_task_memories"),
         patch.dict("sys.modules", {"app.services.execution": execution_module}),
+        patch(
+            "app.core.async_utils.execute_async_safely",
+            return_value=(None, None),
+        ) as execute_async,
+        patch(
+            "app.services.adapters.task_kinds.operations.executor_kinds_service.delete_executor_task_sync",
+            return_value={"status": "success"},
+        ) as delete_executor,
     ):
         task_kinds_service.delete_task(
             test_db,
@@ -782,3 +790,7 @@ def test_delete_task_accepts_archived_tasks(
     assert task.is_active == TaskResource.STATE_DELETED
     assert {subtask.status for subtask in subtasks} == {SubtaskStatus.DELETE}
     assert all(subtask.executor_deleted_at is True for subtask in subtasks)
+    execute_async.assert_called_once_with(
+        runtime_client.get_sandbox, str(task.id), timeout=30.0
+    )
+    delete_executor.assert_called_once_with("executor-1", "default")

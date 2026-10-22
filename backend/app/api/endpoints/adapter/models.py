@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.constants import SUPPORTED_CLIENT_ORIGINS
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.model import (
@@ -21,8 +21,10 @@ from app.schemas.model import (
     ModelListResponse,
     ModelUpdate,
 )
+from app.services import model_credential_service
 from app.services.adapters import public_model_service
-from app.services.model_aggregation_service import ModelType, model_aggregation_service
+from app.services.model_aggregation_service import model_aggregation_service
+from app.services.model_connection_service import _test_llm_connection
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -65,84 +67,6 @@ def list_model_names(
     """
     data = public_model_service.list_model_names(
         db=db, current_user=current_user, shell_type=shell_type
-    )
-    return {"data": data}
-
-
-@router.get("/unified")
-def list_unified_models(
-    shell_type: Optional[str] = Query(
-        None, description="Shell type to filter compatible models (Agno, ClaudeCode)"
-    ),
-    include_config: bool = Query(
-        False, description="Whether to include full config in response"
-    ),
-    scope: str = Query(
-        "personal",
-        description="Query scope: 'personal' (default), 'group', or 'all'",
-    ),
-    group_name: Optional[str] = Query(
-        None, description="Group name (required when scope='group')"
-    ),
-    model_category_type: Optional[str] = Query(
-        None,
-        description="Filter by model category type (llm, tts, stt, embedding, rerank)",
-    ),
-    client_origin: Optional[str] = Query(
-        None,
-        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
-        description="Optional client surface requesting the model list",
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get unified list of all available models with scope support.
-
-    This endpoint aggregates models from:
-    - Public models (type='public'): Shared across all users
-    - User-defined models (type='user'): Private to the current user or group
-    - Runtime models (type='runtime'): Derived from enabled user runtime config
-
-    Scope behavior:
-    - scope='personal' (default): personal models + public models
-    - scope='group': group models + public models (requires group_name)
-    - scope='all': personal + public + all user's groups
-
-    Each model includes a 'type' field to identify its source, which is
-    important for avoiding naming conflicts when binding models.
-
-    Parameters:
-    - shell_type: Optional shell type to filter compatible models
-    - include_config: Whether to include full model config in response
-    - scope: Query scope ('personal', 'group', or 'all')
-    - group_name: Group name (required when scope='group')
-    - model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank)
-    - client_origin: Optional client surface requesting the model list
-
-    Response:
-    {
-      "data": [
-        {
-          "name": "model-name",
-          "type": "public" | "user" | "group" | "runtime",
-          "displayName": "Human Readable Name",
-          "provider": "openai" | "claude",
-          "modelId": "gpt-4",
-          "modelCategoryType": "llm" | "tts" | "stt" | "embedding" | "rerank"
-        }
-      ]
-    }
-    """
-    data = model_aggregation_service.list_available_models(
-        db=db,
-        current_user=current_user,
-        shell_type=shell_type,
-        include_config=include_config,
-        scope=scope,
-        group_name=group_name,
-        model_category_type=model_category_type,
-        client_origin=client_origin,
     )
     return {"data": data}
 
@@ -316,6 +240,8 @@ def get_compatible_models(
             if not model_kind.json:
                 continue
             model_crd = ModelCRD.model_validate(model_kind.json)
+            if model_crd.spec.modelType != "llm":
+                continue
             model_config = model_crd.spec.modelConfig
             if isinstance(model_config, dict):
                 env = model_config.get("env", {})
@@ -352,107 +278,6 @@ def get_compatible_models(
             continue
 
     return {"models": compatible_models}
-
-
-@router.get("/error-recommendations")
-def get_error_recommendations(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """Get model recommendations for specific error types.
-
-    Reads from ERROR_MODEL_RECOMMENDATIONS env var and filters against
-    public models only (platform-level recommendations).
-
-    Returns empty data on any failure (missing env var, invalid JSON,
-    invalid config) — the frontend falls back to a simple retry button.
-
-    Configured entries are preserved even when the filtered model list is empty.
-    This allows the frontend to distinguish between an explicitly configured
-    empty recommendation and a missing error type, which is required for the
-    default_errors fallback behavior.
-    """
-    from app.core.config import settings
-
-    config = _load_error_recommendations_config(settings.ERROR_MODEL_RECOMMENDATIONS)
-    if not config:
-        return {"data": {}}
-
-    # Use only public models (user_id=0) — platform-level recommendations
-    public_models = public_model_service.get_models(
-        db=db, skip=0, limit=1000, current_user=current_user
-    )
-    public_by_name = {m["name"]: m for m in public_models}
-
-    return {"data": _build_error_recommendations_response(config, public_by_name)}
-
-
-def _load_error_recommendations_config(raw: str) -> dict[str, dict[str, Any]]:
-    """Parse ERROR_MODEL_RECOMMENDATIONS into a config mapping."""
-    import json
-
-    if not raw:
-        return {}
-
-    try:
-        config = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("ERROR_MODEL_RECOMMENDATIONS is not valid JSON")
-        return {}
-
-    if not isinstance(config, dict):
-        return {}
-
-    return {
-        error_type: entry
-        for error_type, entry in config.items()
-        if isinstance(error_type, str) and isinstance(entry, dict)
-    }
-
-
-def _build_error_recommendations_response(
-    config: dict[str, dict[str, Any]],
-    public_by_name: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Convert recommendation config to frontend response data."""
-    return {
-        error_type: _build_error_recommendation_entry(entry, public_by_name)
-        for error_type, entry in config.items()
-    }
-
-
-def _build_error_recommendation_entry(
-    entry: dict[str, Any],
-    public_by_name: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Filter configured model names against public models."""
-    configured_names = entry.get("models", [])
-    if not isinstance(configured_names, list):
-        configured_names = []
-
-    matched_models = [
-        _public_model_to_recommendation(public_by_name[name])
-        for name in configured_names
-        if isinstance(name, str) and name in public_by_name
-    ]
-
-    return {
-        "description": entry.get("description", ""),
-        "models": matched_models,
-    }
-
-
-def _public_model_to_recommendation(model: dict) -> dict:
-    """Convert a public model dict to the UnifiedModel shape expected by the frontend."""
-    return {
-        "name": model["name"],
-        "type": "public",
-        "displayName": model.get("displayName"),
-        "provider": model.get("provider"),
-        "modelId": model.get("model_id"),
-        "modelCategoryType": model.get("model_category_type", "llm"),
-        "isAdvanced": model.get("is_advanced", False),
-    }
 
 
 @router.get("/{model_id}", response_model=ModelDetail)
@@ -500,7 +325,7 @@ def delete_model(
 
 
 @router.post("/test-connection")
-def test_model_connection(
+async def test_model_connection(
     test_data: dict,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -541,305 +366,30 @@ def test_model_connection(
         custom_headers = {}
 
     try:
-        return _test_llm_connection(
+        # Caller-controlled connection URLs must never select server credentials.
+        if isinstance(api_key, str) and "${" in api_key:
+            return {
+                "success": False,
+                "message": "Connection tests require a literal API key",
+            }
+        resolved_key = model_credential_service.validate_model_api_key(
+            api_key, required=True
+        )
+        return await run_in_threadpool(
+            _test_llm_connection,
             provider_type=provider_type,
             model_id=model_id,
-            api_key=api_key,
+            api_key=resolved_key,
             base_url=base_url,
             custom_headers=custom_headers,
             model_category_type=model_category_type,
         )
 
+    except model_credential_service.ModelCredentialError:
+        return {"success": False, "message": "Model credentials unavailable"}
     except Exception as e:
         logger.error(f"Model connection test failed: {str(e)}")
         return {"success": False, "message": f"Connection failed: {str(e)}"}
-
-
-def _test_llm_connection(
-    provider_type: str,
-    model_id: str,
-    api_key: str,
-    base_url: Optional[str],
-    custom_headers: dict,
-    model_category_type: str,
-) -> dict:
-    """Test LLM API connection using LangChain.
-
-    Supports OpenAI, OpenAI Responses API, Anthropic, and Gemini providers.
-
-    Args:
-        provider_type: Provider type (openai, openai-responses, anthropic, gemini)
-        model_id: The model ID to test
-        api_key: API key for the provider
-        base_url: Optional base URL for the API
-        custom_headers: Optional custom HTTP headers
-        model_category_type: Type of model (llm, embedding, tts, stt, rerank)
-    """
-    # Handle non-LLM model types
-    if model_category_type == "embedding":
-        return _test_embedding_connection(
-            provider_type, model_id, api_key, base_url, custom_headers
-        )
-    elif model_category_type == "image" and provider_type == "gpt-image":
-        from openai import OpenAI
-
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url.rstrip("/") if base_url else None,
-            default_headers=custom_headers or None,
-        )
-        client.models.retrieve(model_id)
-        return {
-            "success": True,
-            "message": f"Successfully connected to GPT Image model {model_id}",
-        }
-    elif model_category_type == "tts":
-        return {
-            "success": True,
-            "message": f"TTS model {model_id} configured. Audio synthesis test requires actual audio output.",
-        }
-    elif model_category_type == "stt":
-        return {
-            "success": True,
-            "message": f"STT model {model_id} configured. Audio transcription test requires actual audio input.",
-        }
-    elif model_category_type == "rerank":
-        return {
-            "success": True,
-            "message": f"Rerank model {model_id} configured. Please verify with actual rerank request.",
-        }
-
-    # LLM test using LangChain
-    if provider_type == "openai":
-        from langchain_openai import ChatOpenAI
-
-        chat_kwargs = {
-            "model": model_id,
-            "api_key": api_key,
-            "max_tokens": 128,
-        }
-        if base_url:
-            chat_kwargs["base_url"] = base_url
-        if custom_headers:
-            chat_kwargs["default_headers"] = custom_headers
-
-        chat = ChatOpenAI(**chat_kwargs)
-        chat.invoke("hi")
-        return {
-            "success": True,
-            "message": f"Successfully connected to {model_id} using Chat Completions API",
-        }
-
-    elif provider_type == "openai-responses":
-        from langchain_openai import ChatOpenAI
-
-        chat_kwargs = {
-            "model": model_id,
-            "api_key": api_key,
-            "max_tokens": 128,
-            "use_responses_api": True,
-        }
-        if base_url:
-            chat_kwargs["base_url"] = base_url
-        if custom_headers:
-            chat_kwargs["default_headers"] = custom_headers
-
-        chat = ChatOpenAI(**chat_kwargs)
-        chat.invoke("hi")
-        return {
-            "success": True,
-            "message": f"Successfully connected to {model_id} using Responses API",
-        }
-
-    elif provider_type == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
-        chat_kwargs = {
-            "model": model_id,
-            "api_key": api_key,
-            "max_tokens": 128,
-        }
-        if base_url:
-            chat_kwargs["base_url"] = base_url
-        if custom_headers:
-            chat_kwargs["default_headers"] = custom_headers
-
-        chat = ChatAnthropic(**chat_kwargs)
-        chat.invoke("hi")
-        return {
-            "success": True,
-            "message": f"Successfully connected to {model_id}",
-        }
-
-    elif provider_type == "gemini":
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        chat_kwargs = {
-            "model": model_id,
-            "google_api_key": api_key,
-            "max_output_tokens": 128,
-        }
-        # Note: ChatGoogleGenerativeAI doesn't support custom base_url or headers directly
-        # For custom endpoints, users should use environment variables
-
-        chat = ChatGoogleGenerativeAI(**chat_kwargs)
-        chat.invoke("hi")
-        return {
-            "success": True,
-            "message": f"Successfully connected to {model_id}",
-        }
-
-    elif provider_type == "gemini-deep-research":
-        # Test Gemini Interaction API (Deep Research) by calling /v1beta/interactions
-        import httpx
-
-        # Determine the base URL for Gemini Interaction API
-        # Default to Google's API if not provided
-        interaction_base_url = (
-            base_url.rstrip("/")
-            if base_url
-            else "https://generativelanguage.googleapis.com"
-        )
-        interaction_url = f"{interaction_base_url}/v1beta/interactions"
-
-        # Build headers with API key
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        }
-        # Merge custom headers if provided
-        if custom_headers:
-            headers.update(custom_headers)
-
-        # Build test payload following the Gemini Interaction API format
-        payload = {
-            "background": True,
-            "agent": model_id,  # e.g., "deep-research-pro-preview-12-2025"
-            "input": "hello",
-        }
-
-        try:
-            # Make a test request to create an interaction
-            # This should return 200 OK with an interaction ID if successful
-            response = httpx.post(
-                interaction_url,
-                json=payload,
-                headers=headers,
-                timeout=30.0,
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                interaction_id = result.get("id", "unknown")
-                return {
-                    "success": True,
-                    "message": f"Successfully connected to Gemini Deep Research API. Interaction ID: {interaction_id}",
-                }
-            else:
-                error_msg = (
-                    response.text[:200]
-                    if response.text
-                    else f"HTTP {response.status_code}"
-                )
-                return {
-                    "success": False,
-                    "message": f"Gemini Deep Research API error: {error_msg}",
-                }
-        except httpx.RequestError as e:
-            return {
-                "success": False,
-                "message": f"Failed to connect to Gemini Deep Research API: {str(e)}",
-            }
-
-    else:
-        return {
-            "success": False,
-            "message": f"Unsupported provider type: {provider_type}",
-        }
-
-
-def _test_embedding_connection(
-    provider_type: str,
-    model_id: str,
-    api_key: str,
-    base_url: Optional[str],
-    custom_headers: dict,
-) -> dict:
-    """Test embedding model connection using LangChain."""
-    if provider_type in ["openai", "openai-responses"]:
-        from langchain_openai import OpenAIEmbeddings
-
-        embeddings = OpenAIEmbeddings(
-            model=model_id,
-            api_key=api_key,
-            base_url=base_url or "https://api.openai.com/v1",
-            default_headers=custom_headers if custom_headers else None,
-            check_embedding_ctx_length=False,
-        )
-        embeddings.embed_query("test")
-        return {
-            "success": True,
-            "message": f"Successfully connected to embedding model {model_id}",
-        }
-
-    elif provider_type == "gemini":
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model=model_id,
-            google_api_key=api_key,
-        )
-        embeddings.embed_query("test")
-        return {
-            "success": True,
-            "message": f"Successfully connected to embedding model {model_id}",
-        }
-
-    elif provider_type == "custom":
-        """Test custom OpenAI-compatible embedding API connection."""
-        from langchain_openai import OpenAIEmbeddings
-
-        if not base_url:
-            return {
-                "success": False,
-                "message": "base_url is required for custom provider",
-            }
-
-        # Construct embeddings endpoint
-        embeddings_base_url = base_url.rstrip("/")
-        if embeddings_base_url.endswith("/embeddings"):
-            embeddings_base_url = embeddings_base_url[: -len("/embeddings")]
-        # Build kwargs for OpenAIEmbeddings
-        embeddings_kwargs = {
-            "model": model_id,
-            "api_key": api_key,
-            "base_url": embeddings_base_url,
-            "check_embedding_ctx_length": False,
-        }
-
-        # Add custom headers if provided
-        if custom_headers and isinstance(custom_headers, dict):
-            embeddings_kwargs["default_headers"] = custom_headers
-
-        try:
-            embeddings = OpenAIEmbeddings(**embeddings_kwargs)
-            embeddings.embed_query("test")
-            return {
-                "success": True,
-                "message": f"Successfully connected to custom embedding model {model_id}",
-            }
-        except Exception as e:
-            logger.error(f"Custom embedding connection test failed: {str(e)}")
-            return {
-                "success": False,
-                "message": f"Custom embedding connection failed: {str(e)}",
-            }
-
-    else:
-        return {
-            "success": False,
-            "message": f"Embedding not supported for provider: {provider_type}",
-        }
 
 
 @router.post("/fetch-available-models")

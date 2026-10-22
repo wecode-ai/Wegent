@@ -4,7 +4,7 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 
 describe('buildWorkItemRuntimeContext', () => {
-  test('keeps the project store in the runtime task origin', () => {
+  test('keeps the project store and private Issue boundary in the runtime context', () => {
     const context = buildWorkItemRuntimeContext(
       {
         id: 'project-1',
@@ -14,8 +14,7 @@ describe('buildWorkItemRuntimeContext', () => {
       {
         id: 'ISSUE-1',
         title: 'Manual task',
-      } as CloudLoopItem,
-      'stage-2'
+      } as CloudLoopItem
     )
 
     expect(context.origin).toMatchObject({
@@ -23,5 +22,10 @@ describe('buildWorkItemRuntimeContext', () => {
       loopItemId: 'ISSUE-1',
       projectStore: 'backend',
     })
+    expect(context.additionalContext?.projectSpaceIssue?.value).toContain('"id":"project-1"')
+    expect(context.additionalContext?.projectSpaceIssue?.value).toContain('"id":"ISSUE-1"')
+    expect(context.additionalContext?.projectSpaceIssue?.value).toContain(
+      'must not advance its status or change its assignee'
+    )
   })
 })

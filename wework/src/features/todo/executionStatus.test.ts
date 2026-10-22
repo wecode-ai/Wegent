@@ -5,6 +5,7 @@ import {
   isExecutionCancellable,
   isExecutionFailed,
   isExecutionTerminal,
+  reconcileExecutionStatus,
 } from './executionStatus'
 
 describe('executionStatus', () => {
@@ -53,5 +54,12 @@ describe('executionStatus', () => {
     expect(isExecutionTerminal('unknown')).toBe(false)
     expect(isExecutionCancellable('running')).toBe(true)
     expect(isExecutionCancellable('cancelling')).toBe(false)
+  })
+
+  it('keeps terminal facts authoritative while preferring newer observed active state', () => {
+    expect(reconcileExecutionStatus('cancelled', 'streaming')).toBe('cancelled')
+    expect(reconcileExecutionStatus('running', 'completed')).toBe('completed')
+    expect(reconcileExecutionStatus('queued', 'streaming')).toBe('streaming')
+    expect(reconcileExecutionStatus('running', null)).toBe('running')
   })
 })

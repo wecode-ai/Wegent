@@ -8,10 +8,14 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
-Both macOS arm64 and x64 releases use the Apple Silicon `macos-14` runner. The
-x64 build verifies Rosetta 2 and then installs x64 Node.js through
-`actions/setup-node`. Before installing dependencies, the workflow checks that
-the running Node.js architecture matches the target. Harness Runtime native
+macOS arm64 releases use the Apple Silicon `macos-14` runner; x64 releases use
+the native Intel `macos-15-intel` runner. Before installing dependencies, the
+workflow checks that host hardware and Node.js architectures match the target,
+preventing release tools from running through Rosetta translation. Intel builds
+can take longer; do not restore translation solely to shorten compilation.
+Package preparation logs each subprocess command, PID, and completion state,
+and retains exit codes or signals to identify failures during parallel preparation.
+Harness Runtime native
 dependencies follow the running Node.js architecture, so selecting an Electron
 Builder target alone cannot cross-build the complete runtime. If the
 architectures differ, correct the Node.js architecture and rebuild; do not
@@ -21,6 +25,45 @@ When formal macOS arm64 package verification fails, the workflow prunes large
 temporary runtime directories and uploads desktop E2E diagnostics retained for
 seven days. Use those logs to establish the root cause instead of hiding a
 failure through reruns or weaker E2E assertions.
+
+## macOS app icons
+
+macOS bundles include both the existing `wework/resources/icons/icon.icns` and
+an `Assets.car` generated during packaging. `CFBundleIconName=Wework` registers the app
+icon in the catalog. macOS 27 adds another background and shrinks the artwork
+when it adapts an unregistered ICNS icon; registering the catalog prevents this
+extra processing. Every catalog size comes directly from the current ICNS,
+preserving its macOS 15 corners, padding, and artwork. Do not revert the icon or
+use Icon Composer to regenerate the bitmaps for older systems.
+
+Electron Packager local bundles, Electron Builder installers, and online
+updates must place the catalog at `Contents/Resources/Assets.car` and retain
+the ICNS referenced by `CFBundleIconFile`. macOS packaging requires full Xcode.
+Packager compiles the current ICNS before packaging; Builder compiles it in
+`beforePack` for both installers and online updates. Compilation failures stop
+packaging. Generated files live in the ignored
+`wework/electron/resources/macos/` directory and are not committed.
+
+```mermaid
+flowchart LR
+  ICNS[Existing ICNS artwork] --> Compiler[iconutil and actool]
+  Compiler --> Catalog[Generated Assets.car]
+  Catalog --> Packager[Local app bundle]
+  Catalog --> Builder[Installer and online update]
+```
+
+After changing the ICNS, check compilation and output on a Mac with full Xcode:
+
+```bash
+node wework/electron/scripts/compile-macos-app-icon.mjs
+pnpm --dir wework/electron test scripts/macos-app-icon.test.mjs
+```
+
+The script extracts all ten ICNS size representations and compiles a standard
+`.appiconset`. It also updates the source and artifact SHA-256 hashes in
+`app-icon.json` in the generated directory. Atomic replacement prevents parallel
+installer and online-update builds from reading partial files. Regression tests
+compile the catalog and verify all ten representations and both hashes.
 
 ## Version and artifacts
 
@@ -53,16 +96,10 @@ version. A channel that has not published an Electron release may omit its YAML
 manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
-Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
-and NSIS installer. On macOS, Wework atomically stores every successful full or
-differential download as a verified baseline containing the ZIP, blockmap,
-version, architecture, URL, and SHA-512. Later updates use only this local
-baseline and never guess the previous blockmap URL from the new artifact name.
-A first update or an incomplete or invalid baseline downloads the full package
-and establishes a new baseline. A failed differential verification performs
-only one full-download recovery. The release workflow must fail when any
-required blockmap is missing. Differential plans, cumulative transferred bytes,
-and fallback reasons are written to `app-update.log`.
+Wework disables `electron-updater` differential downloads and old ZIP caching.
+macOS and Windows clients download only the compressed full Host update,
+avoiding low-reuse Range request bursts, duplicate traffic, and extra disk
+usage. Component updates still reuse unchanged components by content hash.
 
 The release workflow emits only Electron YAML update manifests and component
 manifests. macOS and Windows use Electron's ZIP and NSIS update paths. Linux
@@ -122,6 +159,20 @@ Release. External Core DSH, Codex, and DWS archives live centrally in
 Core DSH, Codex, or DWS binaries. Every publication Release contains complete
 installers and its component manifests, and uploads only archive hashes that
 are not already available at the appropriate location.
+
+Before uploading a version Release component, the workflow checks any existing
+asset's upload state, size, and SHA-256. An exact match is reused without
+overwriting the immutable component. If GitHub CLI reports an upload error,
+the script queries the asset list again and continues only when the remote
+asset is fully uploaded and exactly matches the local archive. Missing,
+incomplete, or mismatched assets still block publication, and the original
+CLI error remains in the logs.
+
+After checking out the release source, the publish job uses the shared
+`setup-node-workspace` action to prepare Node.js, pnpm, and workspace
+dependencies before running release scripts. Harness Runtime archive
+collection uses the `tar` package declared by Wework; dependencies installed
+in build jobs are not automatically available in the publish job.
 
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
@@ -195,8 +246,10 @@ clients without this capability first receive one migration host package that
 still contains the managed components, preventing missing runtime resources
 after the upgrade. Component manifests and archives must be published before
 the Electron YAML so a visible host update never references unavailable
-components. Complete installers always contain every component for first-time
-offline installation.
+components. The `WeWorkHostUpdate` ZIP must use normal compression rather than
+the `store` mode that only wraps the original bytes. Formal Release E2E reads
+the ZIP summary and rejects an uncompressed host update artifact. Complete
+installers always contain every component for first-time offline installation.
 
 The client accepts only a component manifest that exactly matches the running
 Electron application version, channel, platform, and architecture. A
@@ -217,9 +270,8 @@ downloads, and repeated checks for the same version and channel share that
 task, and a check cannot clear an active download. Missing components download
 with at most three workers; Wework writes the `pending` set only after every
 archive passes size, archive-hash, and extracted-content verification. Progress
-covers component downloads, host download, verification, and installation
-readiness, and includes bytes transferred before a failed differential attempt.
-The local Squirrel.Mac handoff of the cached ZIP is not counted as network
+covers component downloads, host download, and installation readiness. The
+local Squirrel.Mac handoff of the downloaded ZIP is not counted as network
 traffic.
 
 When one component download encounters an explicitly transient transport
@@ -369,3 +421,38 @@ workflow repairs an incomplete equal version and fails for an incomplete newer
 version instead of overwriting it with an older release. Component archives
 are never overwritten and are uploaded only when their content-addressed asset
 name is absent.
+
+## Component preparation I/O concurrency
+
+Formal package verification requires `component-update` to stage the complete
+component set within its existing budget. Release scripts and Electron share
+one hashing implementation: read at most eight files concurrently per directory
+tree, then feed records to the hash in sorted path order. Directory records,
+file digests, and path separators remain consistent, preserving existing
+component digests. Unsupported entries such as symbolic links still fail
+validation. Independent components validate and prepare their caches in
+parallel; missing downloads and pending-state publication follow only after
+all preparations succeed. Do not increase E2E timeouts or omit digest checks
+to hide serial I/O costs.
+
+## Runner capacity for formal package verification
+
+The shared runner executes all three formal-package checkpoints with a concurrency
+limit of one: `release-package-startup`, `component-update`, and `app-update-full`.
+Each isolated signed app unpacks its own Core Runtime. With three concurrent cold
+starts, release logs show approximately 121 seconds per unpack, and two apps exhaust
+the existing controller connection or first UI-action budget. Address this resource
+contention by limiting formal verification concurrency, without reruns or larger
+timeouts. Regular desktop CI shards and concurrency remain unchanged, as do formal
+scenario code, assertions, and timeouts.
+
+## Apple ticket-service transport errors
+
+Notarization submission, stapling, and ticket validation share bounded transport
+retries: three attempts by default, with five- and ten-second delays. Only recognized
+connection loss and timeout failures qualify; notarization rejection, invalid tickets,
+and other validation failures stop immediately. CloudKit lookups made by
+`stapler validate` can also fail with `NSURLErrorDomain -1005`. A failed lookup must
+not be treated as a missing ticket and trigger another notarization submission.
+Exhausted transport attempts still fail the release, and final ticket validation is
+always required.

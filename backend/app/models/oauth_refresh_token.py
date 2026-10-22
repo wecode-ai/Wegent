@@ -6,7 +6,15 @@
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -90,7 +98,7 @@ class OAuthRefreshToken(Base):
         DateTime,
         nullable=False,
         default=func.now(),
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         comment="Creation time",
     )
 

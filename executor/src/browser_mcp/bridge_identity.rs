@@ -97,17 +97,11 @@ fn default_identity() -> BridgeIdentity {
 }
 
 fn runtime_file_path() -> Option<PathBuf> {
-    if let Some(path) = non_empty_env(BRIDGE_RUNTIME_FILE_ENV) {
-        return Some(PathBuf::from(path));
-    }
-    if let Some(home) = non_empty_env("WEGENT_EXECUTOR_HOME") {
-        return Some(PathBuf::from(home).join(BRIDGE_RUNTIME_FILE));
-    }
-    non_empty_env("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".wegent-executor")
-            .join(BRIDGE_RUNTIME_FILE)
-    })
+    Some(
+        non_empty_env(BRIDGE_RUNTIME_FILE_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| crate::config::paths::executor_home().join(BRIDGE_RUNTIME_FILE)),
+    )
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -134,9 +128,26 @@ fn process_is_alive(pid: u32) -> bool {
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn process_is_alive(pid: u32) -> bool {
-    pid != 0
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: the owned handle is queried and closed in this scope.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code = 0;
+        let alive = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == 259;
+        CloseHandle(handle);
+        alive
+    }
 }
 
 #[cfg(test)]

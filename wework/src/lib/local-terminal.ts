@@ -134,6 +134,7 @@ export interface LocalTerminalSnapshot {
   session_id: string
   sequence: number
   data: string
+  running: boolean
 }
 
 export interface StartLocalHarnessOptions extends StartLocalTerminalOptions {
@@ -779,6 +780,7 @@ export async function connectLocalTerminal(
     const snapshot = await getLocalTerminalSnapshot(sessionId)
     lastSequence = snapshot.sequence
     onOutput(snapshot, 'snapshot')
+    if (!snapshot.running) onExit({ session_id: sessionId })
     snapshotLoaded = true
     pendingOutput.sort((left, right) => left.sequence - right.sequence).forEach(handleOutput)
     console.info('Local terminal connection stage succeeded', {

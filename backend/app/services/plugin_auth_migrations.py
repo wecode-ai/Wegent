@@ -4,7 +4,7 @@ import json
 import secrets
 import time
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
@@ -36,8 +36,15 @@ class PluginAuthMigrationService:
 
     @trace_sync("plugin_auth.migration.create", "backend.plugin_auth")
     def create(
-        self, db: Session, *, user_id: int, request: PluginMigrationCreate
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        request: PluginMigrationCreate,
+        automatic: bool = False,
+        local_login: bool = False,
     ) -> PluginMigrationResponse:
+        self.connections._coordinate_owner(db, user_id)
         identity = resolve_runtime_route_identity(
             db, user_id=user_id, submitted_device_id=request.device_id
         )
@@ -63,31 +70,86 @@ class PluginAuthMigrationService:
         )
         if resumed is not None:
             return resumed
-        name = secrets.token_hex(32)
-        expires_at = int(time.time()) + MIGRATION_TTL_SECONDS
-        db.add(
-            Kind(
+        spec = {
+            **request.model_dump(),
+            "device_id": device_id,
+            "binding": binding,
+            "source_identity": self.connections._source_identity(
+                plugin.json["spec"]["source"]
+            ),
+            "auth_definition": definition.model_dump(exclude_none=True),
+            "expires_at": int(time.time()) + MIGRATION_TTL_SECONDS,
+        }
+        if automatic:
+            spec.update(automatic=True, local_login=local_login)
+        return self._write_intent(db, user_id, spec)
+
+    @staticmethod
+    def automatic_query(
+        db: Session, user_id: int, *, source: str, connector_slug: str, device_id: str
+    ) -> Query:
+        """Include consumed rows so each source/connector/device keeps one slot."""
+        return db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == MIGRATION_KIND,
+            Kind.namespace == CONNECTION_NAMESPACE,
+            Kind.json["spec"]["automatic"].as_boolean().is_(True),
+            Kind.json["spec"]["source_identity"].as_string() == source,
+            Kind.json["spec"]["connector_slug"].as_string() == connector_slug,
+            Kind.json["spec"]["device_id"].as_string() == device_id,
+        )
+
+    def _write_intent(
+        self, db: Session, user_id: int, spec: dict
+    ) -> PluginMigrationResponse:
+        # Slot rotation and enrollment share the transaction's Redis coordination.
+        row = None
+        if spec.get("automatic"):
+            row = (
+                self.automatic_query(
+                    db,
+                    user_id,
+                    source=spec["source_identity"],
+                    connector_slug=spec["connector_slug"],
+                    device_id=spec["device_id"],
+                )
+                .populate_existing()
+                .order_by(Kind.updated_at.desc(), Kind.id.desc())
+                .first()
+            )
+        if row is not None and self._reusable(row, spec):
+            if spec.get("local_login") and not row.json["spec"].get("local_login"):
+                row.json = {"spec": {**row.json["spec"], "local_login": True}}
+                db.flush()
+            return PluginMigrationResponse(
+                id=row.name, expires_at=row.json["spec"]["expires_at"]
+            )
+        if row is None:
+            row = Kind(
                 kind=MIGRATION_KIND,
                 namespace=CONNECTION_NAMESPACE,
                 user_id=user_id,
-                name=name,
-                is_active=True,
-                json={
-                    "spec": {
-                        **request.model_dump(),
-                        "device_id": device_id,
-                        "binding": binding,
-                        "source_identity": self.connections._source_identity(
-                            plugin.json["spec"]["source"]
-                        ),
-                        "auth_definition": definition.model_dump(exclude_none=True),
-                        "expires_at": expires_at,
-                    }
-                },
+            )
+            db.add(row)
+        # The database row is stable; the single-use intent identifier is not.
+        row.name = secrets.token_hex(32)
+        row.is_active = True
+        row.json = {"spec": spec}
+        db.flush()
+        return PluginMigrationResponse(id=row.name, expires_at=spec["expires_at"])
+
+    @staticmethod
+    def _reusable(row: Kind, spec: dict) -> bool:
+        current = row.json["spec"]
+        return (
+            row.is_active
+            and current["expires_at"] > time.time()
+            and all(
+                current.get(key) == value
+                for key, value in spec.items()
+                if key not in {"expires_at", "local_login"}
             )
         )
-        db.flush()
-        return PluginMigrationResponse(id=name, expires_at=expires_at)
 
     @trace_sync("plugin_auth.migration.consume", "backend.plugin_auth")
     def consume(
@@ -144,7 +206,7 @@ class PluginAuthMigrationService:
         from app.services.plugin_auth_source_sync import PluginAuthSourceSync
 
         sync = PluginAuthSourceSync(self.connections)
-        sync.remember(
+        connection = sync.remember(
             db,
             user_id,
             connection.id,
@@ -156,22 +218,14 @@ class PluginAuthMigrationService:
     def _validated(
         self, db: Session, user_id: int, device_id: str, migration_id: str
     ) -> tuple[Kind, Kind, PluginAccountAuthDefinition]:
-        if self._query(db, user_id, migration_id).first() is None:
-            raise PluginAccountAuthError("plugin_auth_migration_expired", 403)
-        self.connections._lock_owner(db, user_id)
-        row = (
-            self._query(db, user_id, migration_id)
-            .populate_existing()
-            .with_for_update()
-            .first()
-        )
+        self.connections._coordinate_owner(db, user_id)
+        row = self._query(db, user_id, migration_id).populate_existing().first()
         if row is None or row.json["spec"]["expires_at"] <= time.time():
             raise PluginAccountAuthError("plugin_auth_migration_expired", 403)
         spec = row.json["spec"]
         if spec.get("automatic"):
             from app.services.plugin_auth_automation import PluginAuthAutomationService
 
-            self.connections._lock_owner(db, user_id)
             if not PluginAuthAutomationService(self.connections).enabled(db, user_id):
                 raise PluginAccountAuthError("plugin_auth_automation_disabled", 403)
         logical_id, binding = self.connections._device_binding(db, user_id, device_id)
@@ -202,6 +256,7 @@ class PluginAuthMigrationService:
     def prepare(
         self, db: Session, *, user_id: int, device_id: str, migration_id: str
     ) -> dict:
+        self.connections._coordinate_owner(db, user_id)
         from app.services.plugin_auth_transfers import PluginAuthTransferService
 
         transfers = PluginAuthTransferService(self.connections)

@@ -2753,9 +2753,9 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     monkeypatch.setattr(
         project_automation_domain,
         "runnable_wegent_team",
-        lambda db, user_id, team_id: team,
+        lambda db, user_id, team_id, *, project_id: team,
     )
-    execution_request = SimpleNamespace(workspace={})
+    execution_request = SimpleNamespace(workspace={}, subtask_id=123456)
     builder = MagicMock()
     builder.build.return_value = execution_request
     monkeypatch.setattr(execution, "TaskRequestBuilder", lambda db: builder)
@@ -2795,6 +2795,7 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
         "path": "/srv/workspaces/Wegent",
     }
     assert execution_request.task_id == "runtime-team-1"
+    assert execution_request.subtask_id == 123456
     assert execution_request.device_id == "cloud-device-1"
     assert test_db.query(TaskResource).count() == 0
 
@@ -2849,6 +2850,98 @@ def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
 
     assert payload["schemaVersion"] == 2
     assert "wegentTeamId" not in payload
+
+
+@pytest.mark.parametrize(
+    ("requested_runtime", "shell_type", "expected_runtime"),
+    [("claude_code", "Codex", "codex"), ("codex", "ClaudeCode", "claude_code")],
+)
+def test_team_create_uses_compiled_shell_not_workbench_default(
+    test_db, test_user, monkeypatch, requested_runtime, shell_type, expected_runtime
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    supervisor = {
+        "mode": "auto",
+        "modelSelection": {"modelName": "supervisor-model", "modelType": "cloud"},
+        "intervalSeconds": 60,
+    }
+    supervisor_resolver = Mock(return_value=supervisor)
+    monkeypatch.setattr(
+        runtime_work_service, "_materialize_initial_supervisor", supervisor_resolver
+    )
+    payload = runtime_work_service._runtime_task_create_payload(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="local-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime=requested_runtime,
+            message="Run the assigned agent",
+            initialSupervisor=supervisor,
+        ),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="local-device-1", workspace_path="/srv/workspaces/Wegent"
+        ),
+        execution_request=SimpleNamespace(
+            team_id=42,
+            bot=[{"shell_type": shell_type}],
+            attachments=[],
+            to_dict=lambda: {
+                "team_id": 42,
+                "bot": [{"shell_type": shell_type}],
+                "model_config": {"model_id": "configured-team-model"},
+            },
+        ),
+    )
+
+    assert payload["runtime"] == expected_runtime
+    assert payload["executionRequest"]["model_config"]["model_id"] == (
+        "configured-team-model"
+    )
+    assert supervisor_resolver.call_args.kwargs["runtime"] == expected_runtime
+
+
+@pytest.mark.asyncio
+async def test_team_create_response_uses_compiled_runtime(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    compiled = runtime_work_service.CompiledRuntimeTaskCreate(
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="local-device-1", workspace_path="/srv/workspaces/Wegent"
+        ),
+        payload={"runtime": "codex"},
+        team_id=42,
+    )
+    monkeypatch.setattr(
+        runtime_work_service, "compile_runtime_task_create", lambda **kwargs: compiled
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(return_value={"accepted": True, "taskId": "runtime-team-1"}),
+    )
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="local-device-1",
+            runtime="claude_code",
+            message="Run the assigned agent",
+        ),
+    )
+
+    assert response.runtime == "codex"
+    assert response.runtime_handle["wegentTeam"] == {"id": 42}
 
 
 def test_runtime_create_payload_preserves_additional_skill_refs(
@@ -3002,6 +3095,29 @@ def test_runtime_create_response_rejects_invalid_executor_worktree_path(
     assert response.model_dump(by_alias=True)["errorCode"] == "worktree_prepare_failed"
 
 
+def test_runtime_create_response_accepts_pending_project_workspace():
+    from app.services import runtime_work_service
+
+    response = runtime_work_service._runtime_create_response(
+        {
+            "success": True,
+            "accepted": True,
+            "taskId": "runtime-1",
+            "workspacePath": "",
+            "workspacePending": True,
+        },
+        "codex",
+        "device-1",
+        "/repo/Wegent",
+        "git_worktree",
+    )
+
+    assert response.accepted is True
+    assert response.workspace_pending is True
+    assert response.workspace_path == ""
+    assert response.error_code is None
+
+
 def test_runtime_create_response_keeps_non_worktree_workspace_fallback():
     from app.services import runtime_work_service
 
@@ -3067,6 +3183,31 @@ def test_direct_runtime_task_target_applies_requested_worktree_source(
 
     assert target.device_id == "device-1"
     assert target.workspace_path == "/repo/Wegent"
+    assert target.workspace_source == "git_worktree"
+
+
+def test_runtime_target_accepts_runner_preparation_without_a_workspace_path(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    target = runtime_work_service._resolve_runtime_task_target(
+        test_db,
+        test_user.id,
+        RuntimeTaskCreateRequest(
+            deviceId="device-1",
+            runtime="codex",
+            message="prepare and run",
+            execution={
+                "workspace": {"source": "git_worktree"},
+                "environment": {"environmentId": "project-1", "repositories": []},
+            },
+        ),
+    )
+    assert target.device_id == "device-1"
+    assert target.workspace_path == ""
     assert target.workspace_source == "git_worktree"
 
 
@@ -5010,6 +5151,54 @@ def test_build_runtime_send_execution_request_preserves_selected_model_and_catal
     assert execution_request.to_dict()["runtime_permission_profile"] == ":workspace"
 
 
+def test_cloud_model_override_keeps_anthropic_resource_with_codex_capability_metadata(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    model = _codex_provider_model(
+        test_db, 0, name="deepseek-v4-flash(claude)", api_model_id="deepseek-v4-flash"
+    )
+    model.json = {
+        **model.json,
+        "spec": {
+            "protocol": "claude",
+            "modelConfig": {
+                "env": {
+                    "model": "claude",
+                    "model_id": "deepseek-v4-flash",
+                    "base_url": "https://api.deepseek.com/anthropic",
+                    "api_key": "provider-secret",
+                }
+            },
+        },
+    }
+    test_db.commit()
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="Read this Issue",
+        modelId=model.name,
+        modelType="public",
+        modelOptions={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        },
+    )
+
+    config, _, _ = runtime_work_service._runtime_model_override(
+        db=test_db, user_id=test_user.id, request=request
+    )
+
+    assert config["model_id"] == model.name
+    assert config["codex_catalog_model_id"] == "wework-gpt-5.6-sol"
+    assert config["upstream_api_format"] == "anthropic-messages"
+    assert config["native_namespace_tools"] is False
+    assert config["native_tool_search"] is False
+    assert config["api_key"] != "provider-secret"
+
+
 def test_runtime_model_override_rejects_incomplete_cloud_identity(
     test_db,
     test_user,
@@ -5310,9 +5499,11 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
     assert "executionRequest" not in payload
 
 
+@pytest.mark.parametrize("local_task_id", [None, "runtime-local-1"])
 def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path(
     test_db,
     test_user,
+    local_task_id,
 ):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
@@ -5331,6 +5522,7 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
         modelType=runtime_work_service.RUNTIME_MODEL_TYPE,
         deviceId="device-1",
         workspacePath="/repo/Wegent",
+        taskId=local_task_id,
     )
 
     execution_request = runtime_work_service._build_runtime_execution_request(
@@ -5346,6 +5538,19 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     )
 
     assert execution_request.team_id == 0
+    followup = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request.model_copy(update={"local_task_id": execution_request.task_id}),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+        ),
+    )
+    assert followup.task_id == execution_request.task_id
+    assert followup.subtask_id != execution_request.subtask_id
+    assert followup.subtask_id > 0
+    assert execution_request.subtask_id > 0
     assert execution_request.bot == []
     assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
     from app.services.auth import verify_skill_identity_token
@@ -5365,11 +5570,15 @@ def test_runtime_address_team_binding_is_additive() -> None:
     bound = RuntimeTaskAddress(
         deviceId="device-1",
         taskId="team-task",
-        runtimeHandle={"wegentTeam": {"id": 7}},
+        runtimeHandle={"wegentTeam": {"id": 7}, "privateField": "must-not-forward"},
     )
 
     assert runtime_work_service._runtime_address_team_id(legacy) is None
     assert runtime_work_service._runtime_address_team_id(bound) == 7
+    normalized = runtime_work_service._normalized_address(bound)
+    assert runtime_work_service._runtime_address_team_id(normalized) == 7
+    assert normalized.runtime_handle == {"wegentTeam": {"id": 7}}
+    assert runtime_work_service._normalized_address(legacy).runtime_handle is None
 
 
 @pytest.mark.asyncio
@@ -5525,6 +5734,91 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
     assert all(
         server.get("name") != "wework_space" for server in execution_request.mcp_servers
     )
+
+
+def test_build_runtime_execution_request_uses_managed_project_space_tools_for_issue(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="处理当前 Issue",
+        deviceId="device-1",
+        workspacePath="/repo/Wegent",
+        cloudProjectId="project-1",
+        origin={
+            "type": "board_task",
+            "cloudProjectId": "project-1",
+            "loopItemId": "ISSUE-1",
+        },
+        additionalContext={
+            "projectSpaceIssue": {
+                "kind": "application",
+                "value": "Current project project-1 and Issue ISSUE-1.",
+            }
+        },
+    )
+
+    execution_request = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request,
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+            project=None,
+            workspace_source="local_path",
+        ),
+    )
+
+    assert execution_request.mcp_servers == []
+
+
+@pytest.mark.parametrize("dispatch_role", ["manager", "executor", "member"])
+def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_roles(
+    test_db,
+    test_user,
+    dispatch_role,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="处理当前 Issue",
+        deviceId="device-1",
+        workspacePath="/repo/Wegent",
+        cloudProjectId="project-1",
+        origin={
+            "type": "board_task",
+            "cloudProjectId": "project-1",
+            "loopItemId": "ISSUE-1",
+            "dispatchRole": dispatch_role,
+        },
+        additionalContext={
+            "projectSpaceIssue": {
+                "kind": "application",
+                "value": "Current project project-1 and Issue ISSUE-1.",
+            }
+        },
+    )
+
+    execution_request = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request,
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+            project=None,
+            workspace_source="local_path",
+        ),
+    )
+
+    assert execution_request.mcp_servers == []
 
 
 def test_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (

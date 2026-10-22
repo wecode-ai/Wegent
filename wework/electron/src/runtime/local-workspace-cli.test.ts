@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { parseLocalWorkspaceOpenRequest } from './local-workspace-cli.js'
 
@@ -9,7 +10,7 @@ describe('parseLocalWorkspaceOpenRequest', () => {
         '/workspace'
       )
     ).toEqual({
-      path: '/workspace/project',
+      path: resolve('/workspace/project'),
       label: 'Demo',
     })
   })

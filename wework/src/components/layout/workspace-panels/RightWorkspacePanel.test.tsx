@@ -83,6 +83,73 @@ function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePane
 }
 
 describe('RightWorkspacePanel workspace target errors', () => {
+  test.each([
+    { userAgent: 'Macintosh', review: '⌥⌘R', browser: '⌘T', chat: '⌥⌘S', files: '⌥⌘F' },
+    {
+      userAgent: 'Windows',
+      review: 'Alt+Ctrl+R',
+      browser: 'Ctrl+T',
+      chat: 'Alt+Ctrl+S',
+      files: 'Alt+Ctrl+F',
+    },
+    {
+      userAgent: 'Linux',
+      review: 'Alt+Ctrl+R',
+      browser: 'Ctrl+T',
+      chat: 'Alt+Ctrl+S',
+      files: 'Alt+Ctrl+F',
+    },
+  ])('shows platform shortcuts for $userAgent', ({ userAgent, review, browser, chat, files }) => {
+    const platform = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent)
+    try {
+      renderPanel({ activeView: 'launcher', openTabs: [], allowTemporaryChat: true })
+      expect(screen.getByTestId('right-workspace-review-option')).toHaveTextContent(review)
+      expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent(browser)
+      expect(screen.getByTestId('right-workspace-chat-option')).toHaveTextContent(chat)
+      expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent(files)
+    } finally {
+      platform.mockRestore()
+    }
+  })
+
+  test.each(['pnpm dev', '/opt/homebrew/bin/zsh -lc "pnpm dev"'])(
+    'keeps an exited background terminal open with its actual command title: %s',
+    command => {
+      const tabId = 'background-terminal:task-1:command-1' as const
+      const onCloseTab = vi.fn()
+      renderPanel({
+        activeView: tabId,
+        openTabs: [tabId],
+        onCloseTab,
+        backgroundTerminals: [
+          {
+            id: 'command-1',
+            tabId,
+            command,
+            cwd: '/project',
+            running: false,
+            background: false,
+            block: {
+              id: 'command-1',
+              type: 'tool',
+              toolName: 'bash',
+              status: 'done',
+              createdAt: 1,
+            },
+          },
+        ],
+      })
+
+      expect(screen.getByTestId(`right-workspace-${tabId}-tab`)).toHaveTextContent('pnpm dev')
+      expect(screen.getByTestId(`right-workspace-${tabId}-tab`)).not.toHaveTextContent(' -lc ')
+      expect(screen.getByTestId(`right-workspace-${tabId}-tab`)).toHaveAttribute('title', command)
+      expect(screen.getByRole('region', { name: 'pnpm dev' })).toBeInTheDocument()
+      screen.getByTestId(`right-workspace-${tabId}-tab-close-button`).click()
+      expect(onCloseTab).toHaveBeenCalledWith(tabId)
+      expect(screen.queryByTestId('workspace-target-error')).not.toBeInTheDocument()
+    }
+  )
+
   test('does not mount the file error beside an active browser', () => {
     renderPanel()
 

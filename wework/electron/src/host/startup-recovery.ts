@@ -1,16 +1,8 @@
 export type StartupRecoveryMode = 'retry' | 'workbench' | 'app-state'
 
-export const WORKBENCH_RECOVERY_STORAGE_PREFIXES = [
-  'wework:workbench-split-groups:',
-  'wework:workbench-split-layout:',
-  'wework.workspaceTabs.v3:',
-  'wework.workspaceTabTransfer.v1:',
-] as const
-
 export interface StartupRecoveryDependencies {
   rendererStorage: {
     clear: () => Promise<void>
-    removeByPrefixes: (prefixes: readonly string[]) => Promise<void>
   }
   preferences: {
     clear: () => Promise<void>
@@ -20,6 +12,10 @@ export interface StartupRecoveryDependencies {
   }
   clearCache: () => Promise<void>
   clearAppStorage: () => Promise<void>
+  clearUserStorage: () => Promise<void>
+  prepareCleanup: () => Promise<void>
+  clearRuntimeFiles: () => Promise<void>
+  clearUserFiles: () => Promise<void>
   disablePlugin: (name: string) => Promise<void>
   log: (
     step: string,
@@ -43,31 +39,39 @@ export class StartupRecoveryService {
 
   run(mode: StartupRecoveryMode): Promise<void> {
     if (this.operation) return this.operation
-    this.operation = this.runOnce(mode)
+    this.operation = this.runOnce(mode).catch(error => {
+      this.operation = null
+      throw error
+    })
     return this.operation
   }
 
   disablePlugin(name: string): Promise<void> {
     if (this.operation) return this.operation
-    this.operation = this.disablePluginOnce(name)
+    this.operation = this.disablePluginOnce(name).catch(error => {
+      this.operation = null
+      throw error
+    })
     return this.operation
   }
 
   private async runOnce(mode: StartupRecoveryMode): Promise<void> {
     this.dependencies.log(`startup-recovery-${mode}-cleanup`, 'started')
     try {
-      if (mode === 'workbench') {
-        await this.dependencies.rendererStorage.removeByPrefixes(
-          WORKBENCH_RECOVERY_STORAGE_PREFIXES
+      if (mode !== 'retry') {
+        await this.dependencies.prepareCleanup()
+        await this.cleanupStep('runtime-files', this.dependencies.clearRuntimeFiles)
+        await this.cleanupStep('cache', this.dependencies.clearCache)
+        await this.cleanupStep('app-cache-storage', this.dependencies.clearAppStorage)
+      }
+      if (mode === 'app-state') {
+        await this.cleanupStep('user-browser-storage', this.dependencies.clearUserStorage)
+        await this.cleanupStep('user-files', this.dependencies.clearUserFiles)
+        await this.cleanupStep('renderer-storage', () => this.dependencies.rendererStorage.clear())
+        await this.cleanupStep('preferences', () => this.dependencies.preferences.clear())
+        await this.cleanupStep('cloud-credentials', () =>
+          this.dependencies.cloudCredentials.clear()
         )
-      } else if (mode === 'app-state') {
-        await Promise.all([
-          this.dependencies.rendererStorage.clear(),
-          this.dependencies.preferences.clear(),
-          this.dependencies.cloudCredentials.clear(),
-          this.dependencies.clearCache(),
-          this.dependencies.clearAppStorage(),
-        ])
       }
       this.dependencies.log(`startup-recovery-${mode}-cleanup`, 'completed')
     } catch (error) {
@@ -79,6 +83,20 @@ export class StartupRecoveryService {
     this.dependencies.relaunch()
     this.dependencies.log('startup-recovery-relaunch', 'completed')
     this.dependencies.shutdown()
+  }
+
+  private async cleanupStep(name: string, cleanup: () => Promise<void>): Promise<void> {
+    const step = `startup-recovery-clear-${name}`
+    this.dependencies.log(step, 'started')
+    try {
+      await cleanup()
+      this.dependencies.log(step, 'completed')
+    } catch (error) {
+      this.dependencies.log(step, 'failed', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      throw error
+    }
   }
 
   private async disablePluginOnce(name: string): Promise<void> {

@@ -122,10 +122,10 @@ export function isLoopItemExecutionActive(
   item: Pick<MyWorkItem, "status" | "execution_state">,
   isExecutionStateActive: IsExecutionStateActive,
 ): boolean {
-  return (
-    item.status === "in_progress" ||
-    isExecutionStateActive(item.execution_state)
-  );
+  if (item.execution_state != null) {
+    return isExecutionStateActive(item.execution_state);
+  }
+  return item.status === "in_progress";
 }
 
 export function isMyWorkExecutionActive(

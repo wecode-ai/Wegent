@@ -4,6 +4,12 @@ sidebar_position: 20
 
 # Knowledge Runtime 架构设计
 
+> **状态更新（2026-10）：local 模式已移除。** Backend 内的 local RAG 执行路径、`LocalRagGateway`、
+> 本地数据面、`RAG_RUNTIME_MODE` 开关，以及 remote 失败后回退到本地执行的判断都已删除。
+> 索引、检索与删除现在只在 `knowledge_runtime` 执行，`knowledge_runtime` 是 Backend 的必需依赖。
+> 原因：同一业务行为只保留一份实现，并消除"配置成 remote、实际在 Backend 本地执行"的隐藏路径。
+> 本文档以下内容保留为历史设计记录，其中 local / remote 切换与回退的描述不再反映当前实现。
+
 本文档描述 Knowledge Runtime 服务的架构设计，包括组件职责、通信协议和部署架构。
 
 ---

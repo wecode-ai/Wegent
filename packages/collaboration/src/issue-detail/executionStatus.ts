@@ -83,6 +83,17 @@ export function isExecutionTerminal(
   return display !== null && TERMINAL_DISPLAY_STATUSES.has(display);
 }
 
+export function reconcileExecutionStatus(
+  durableStatus: string | null | undefined,
+  observedStatus: string | null | undefined,
+): string | null {
+  const durable = executionDisplayStatus(durableStatus);
+  const observed = executionDisplayStatus(observedStatus);
+  if (isExecutionTerminal(durable)) return durable;
+  if (isExecutionTerminal(observed)) return observedStatus ?? observed;
+  return observedStatus ?? durable;
+}
+
 export function isExecutionCancellable(
   status: string | null | undefined,
 ): boolean {

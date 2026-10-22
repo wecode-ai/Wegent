@@ -7,6 +7,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -16,8 +17,16 @@ from app.models.user import User
 from app.schemas.kind import ArchiveInfo
 from app.services.workspace_archive import archive_service, archive_storage_service
 
+ACTIVE_TASK_STATES = [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
 
-def _create_task(test_db: Session, task_id: int, user_id: int) -> TaskResource:
+
+def _create_task(
+    test_db: Session,
+    task_id: int,
+    user_id: int,
+    *,
+    is_active: int = TaskResource.STATE_ACTIVE,
+) -> TaskResource:
     task = TaskResource(
         id=task_id,
         user_id=user_id,
@@ -34,7 +43,7 @@ def _create_task(test_db: Session, task_id: int, user_id: int) -> TaskResource:
             "spec": {},
             "status": {},
         },
-        is_active=TaskResource.STATE_ACTIVE,
+        is_active=is_active,
         project_id=0,
         is_group_chat=False,
     )
@@ -76,13 +85,17 @@ def _create_subtask(
     return subtask
 
 
+@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
 def test_manual_archive_endpoint_updates_task_archive(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     mocker,
+    task_state: int,
 ):
-    task = _create_task(test_db, task_id=1385, user_id=test_user.id)
+    task = _create_task(
+        test_db, task_id=1385, user_id=test_user.id, is_active=task_state
+    )
     _create_subtask(
         test_db,
         task_id=task.id,
@@ -146,12 +159,16 @@ def test_manual_archive_endpoint_updates_task_archive(
     assert persisted_expires_at.astimezone(expires_at.tzinfo) == expires_at
 
 
+@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
 def test_manual_archive_endpoint_returns_404_without_executor(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
+    task_state: int,
 ):
-    task = _create_task(test_db, task_id=1386, user_id=test_user.id)
+    task = _create_task(
+        test_db, task_id=1386, user_id=test_user.id, is_active=task_state
+    )
 
     response = test_client.post(f"/api/internal/workspace-archives/{task.id}/archive")
 
@@ -159,13 +176,17 @@ def test_manual_archive_endpoint_returns_404_without_executor(
     assert response.json()["detail"] == "No active executor found for task"
 
 
+@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
 def test_archive_sandbox_endpoint_uses_sandbox_runtime(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     mocker,
+    task_state: int,
 ):
-    task = _create_task(test_db, task_id=1501, user_id=test_user.id)
+    task = _create_task(
+        test_db, task_id=1501, user_id=test_user.id, is_active=task_state
+    )
     archive_info = ArchiveInfo(
         storageKey="workspace-archives/1501/archive.tar.gz",
         archivedAt=datetime.now(timezone.utc),
@@ -193,13 +214,17 @@ def test_archive_sandbox_endpoint_uses_sandbox_runtime(
     assert archive_mock.await_args.kwargs["executor_name"] == "sandbox-1501"
 
 
+@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
 def test_restore_sandbox_endpoint_uses_sandbox_runtime(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     mocker,
+    task_state: int,
 ):
-    task = _create_task(test_db, task_id=1502, user_id=test_user.id)
+    task = _create_task(
+        test_db, task_id=1502, user_id=test_user.id, is_active=task_state
+    )
     restore_mock = mocker.patch.object(
         archive_service,
         "restore_workspace",
@@ -225,3 +250,74 @@ def test_restore_sandbox_endpoint_uses_sandbox_runtime(
     restore_mock.assert_awaited_once()
     assert restore_mock.await_args.kwargs["runtime_type"] == "sandbox"
     assert restore_mock.await_args.kwargs["executor_name"] == "sandbox-1502"
+
+
+@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
+def test_restore_sandbox_without_archive_is_explicitly_skipped(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    mocker,
+    task_state: int,
+):
+    task = _create_task(
+        test_db, task_id=1503, user_id=test_user.id, is_active=task_state
+    )
+    mocker.patch.object(
+        archive_service, "restore_workspace", new=AsyncMock(return_value=None)
+    )
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
+        json={"executor_name": "sandbox-1503", "executor_namespace": "default"},
+    )
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["skipped"] is True
+
+
+@pytest.mark.parametrize("task_state", ACTIVE_TASK_STATES)
+def test_restore_sandbox_with_failed_archive_reports_failure(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    mocker,
+    task_state: int,
+):
+    task = _create_task(
+        test_db, task_id=1504, user_id=test_user.id, is_active=task_state
+    )
+    task.json = {**task.json, "status": {"archive": {"storageKey": "archive-1504"}}}
+    test_db.commit()
+    mocker.patch.object(
+        archive_service, "restore_workspace", new=AsyncMock(return_value=None)
+    )
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/restore-sandbox",
+        json={"executor_name": "sandbox-1504", "executor_namespace": "default"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "sandbox_archive_restore_failed"
+
+
+@pytest.mark.parametrize(
+    "task_state", [TaskResource.STATE_DELETED, TaskResource.STATE_ARCHIVED]
+)
+@pytest.mark.parametrize("operation", ["archive", "archive-sandbox", "restore-sandbox"])
+def test_archive_operations_reject_inactive_tasks(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    task_state: int,
+    operation: str,
+):
+    task = _create_task(
+        test_db, task_id=1505, user_id=test_user.id, is_active=task_state
+    )
+
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/{operation}",
+        json={"executor_name": "sandbox-1505", "executor_namespace": "default"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Task not found"

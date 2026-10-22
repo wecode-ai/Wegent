@@ -917,6 +917,8 @@ class TestSyncWikispaceNodes:
         async def fake_fetch(
             wikispace_mcp_url: str,
             docs_mcp_url: str | None = None,
+            wikispace_headers: dict | None = None,
+            docs_headers: dict | None = None,
         ) -> list:
             captured["wikispace_url"] = wikispace_mcp_url
             captured["docs_url"] = docs_mcp_url
@@ -964,6 +966,8 @@ class TestSyncWikispaceNodes:
         async def fake_fetch(
             wikispace_mcp_url: str,
             docs_mcp_url: str | None = None,
+            wikispace_headers: dict | None = None,
+            docs_headers: dict | None = None,
         ) -> list[dict[str, str]]:
             raise DingTalkMCPToolError("DingTalk MCP tool returned an error result")
 

@@ -3,6 +3,36 @@ import { defaultNewChatModelSelection, selectedModelExecutionFields } from './ru
 import type { UnifiedModel } from '@/types/api'
 
 describe('runtimeModelSelection', () => {
+  test.each(['standard', 'passthrough'] as const)(
+    'propagates cloud reasoning defaults and %s request mode with selected overrides',
+    mode => {
+      const model: UnifiedModel = {
+        name: 'moonshot-kimi-k3-responses',
+        type: 'public',
+        namespace: 'default',
+        resourceUserId: 0,
+        config: {
+          protocol: 'openai-responses',
+          reasoning: { effort: 'high', summary: 'detailed' },
+          codex_request_mode: mode,
+          native_tool_search: true,
+        },
+      }
+      const defaults = selectedModelExecutionFields(model, {}).modelOptions
+      expect(defaults).toMatchObject({
+        reasoning: 'high',
+        summary: 'detailed',
+        weworkCloudModelCodexRequestMode: mode,
+        weworkCloudModelNativeToolSearch: String(mode === 'passthrough'),
+        weworkCloudModelNativeNamespaceTools: String(mode === 'passthrough'),
+      })
+      expect(selectedModelExecutionFields(model, { reasoning: 'low' }).modelOptions).toMatchObject({
+        reasoning: 'low',
+        summary: 'detailed',
+      })
+    }
+  )
+
   test('sends default collaboration mode when plan mode is not selected', () => {
     expect(selectedModelExecutionFields(null, {})).toEqual({
       modelOptions: { collaborationMode: 'default' },
@@ -53,6 +83,14 @@ describe('runtimeModelSelection', () => {
         codexAuthConfigured: true,
       },
     }
+    const officialDefault: UnifiedModel = {
+      ...officialWithAuth,
+      name: 'gpt-6.1-sol',
+      config: {
+        ...officialWithAuth.config,
+        codexIsDefault: true,
+      },
+    }
     const providerModel: UnifiedModel = {
       name: 'Doubao-Seed-2.0-pro-260215',
       type: 'runtime',
@@ -84,9 +122,15 @@ describe('runtimeModelSelection', () => {
     }
 
     expect(
-      defaultNewChatModelSelection([officialWithAuth, providerModel, interfaceModel, cloudModel])
+      defaultNewChatModelSelection([
+        officialWithAuth,
+        officialDefault,
+        providerModel,
+        interfaceModel,
+        cloudModel,
+      ])
     ).toMatchObject({
-      modelName: 'gpt-5.5',
+      modelName: 'gpt-6.1-sol',
       modelType: 'runtime',
     })
     expect(
@@ -107,6 +151,36 @@ describe('runtimeModelSelection', () => {
     expect(defaultNewChatModelSelection([officialWithoutAuth, cloudModel])).toMatchObject({
       modelName: 'cloud-gpt',
       modelType: 'public',
+    })
+  })
+
+  test('uses the cloud model marked as the picker default', () => {
+    const firstCloudModel: UnifiedModel = {
+      name: 'cloud-first',
+      type: 'public',
+      provider: 'cloud',
+      config: { ui: { family: 'gpt' } },
+    }
+    const defaultCloudModel: UnifiedModel = {
+      name: 'cloud-default',
+      type: 'public',
+      provider: 'cloud',
+      config: {
+        ui: {
+          family: 'gpt',
+          defaultModel: true,
+          reasoningEfforts: ['low', 'high'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+
+    expect(defaultNewChatModelSelection([firstCloudModel, defaultCloudModel])).toMatchObject({
+      modelName: 'cloud-default',
+      modelType: 'public',
+      options: {
+        reasoning: 'high',
+      },
     })
   })
 

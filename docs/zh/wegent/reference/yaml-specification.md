@@ -196,6 +196,7 @@ spec:
   allowedUsers: ["alice", "bob"]
   modelGroup: "主分组"
   modelSubGroup: "快速"
+  capability: "响应快，适合日常问答和简单任务"
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -206,21 +207,81 @@ spec:
 
 ### 字段说明
 
-| 字段                   | 类型   | 必填 | 说明                               |
-| ---------------------- | ------ | ---- | ---------------------------------- |
-| `metadata.name`        | string | 是   | Model 的唯一标识符                 |
-| `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
-| `spec.isVisible`       | boolean | 否  | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析 |
-| `spec.allowedUsers`    | array   | 否  | 公共模型的用户名白名单；仅在 `allowedUsersEnabled` 为 `true` 时生效。开关关闭时列表保留但不限制访问 |
-| `spec.allowedUsersEnabled` | boolean | 否 | 白名单模式显式开关；设为 `true` 时严格按 `allowedUsers` 控制，名单为空则所有用户不可用；为 `false`/缺省时是普通公共模型，`allowedUsers` 被忽略 |
-| `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
-| `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
-| `spec.modelConfig`     | object | 是   | 模型配置对象                       |
-| `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
-| `spec.modelConfig.visionSidecarModel` | object | 否   | 显式引用处理图片的模型；省略时不启用视觉委托。 |
-| `spec.protocol`        | string | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。 |
-| `spec.apiFormat`       | string | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
-| `spec.isWeworkAvailable` | boolean | 否 | 是否将该模型分发到 wework 桌面客户端。 |
+| 字段                                  | 类型    | 必填 | 说明                                                                                                                                           |
+| ------------------------------------- | ------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `metadata.name`                       | string  | 是   | Model 的唯一标识符                                                                                                                             |
+| `metadata.namespace`                  | string  | 是   | 命名空间，通常为 `default`                                                                                                                     |
+| `spec.isVisible`                      | boolean | 否   | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析                                               |
+| `spec.allowedUsers`                   | array   | 否   | 公共模型的用户名白名单；仅在 `allowedUsersEnabled` 为 `true` 时生效。开关关闭时列表保留但不限制访问                                            |
+| `spec.allowedUsersEnabled`            | boolean | 否   | 白名单模式显式开关；设为 `true` 时严格按 `allowedUsers` 控制，名单为空则所有用户不可用；为 `false`/缺省时是普通公共模型，`allowedUsers` 被忽略 |
+| `spec.modelGroup`                     | string  | 否   | 模型选择器使用的一级展示分组                                                                                                                   |
+| `spec.modelSubGroup`                  | string  | 否   | `spec.modelGroup` 下的二级展示分组                                                                                                             |
+| `spec.capability`                     | string/object | 否   | 模型名称下展示的能力与适用场景说明；已发布模型使用发布信息对象的 `description` 字段。省略或留空时只显示名称，不显示真实模型 ID                  |
+| `spec.modelConfig`                    | object  | 是   | 模型配置对象                                                                                                                                   |
+| `spec.modelConfig.env`                | object  | 是   | 环境变量配置                                                                                                                                   |
+| `spec.modelConfig.ui`                 | object  | 否   | Wework 模型选择器展示、默认模型和推理强度配置。                                                                                                |
+| `spec.modelConfig.visionSidecarModel` | object  | 否   | 显式引用处理图片的模型；省略时不启用视觉委托。                                                                                                 |
+| `spec.protocol`                       | string  | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。                                                             |
+| `spec.apiFormat`                      | string  | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。                                                           |
+| `spec.isWeworkAvailable`              | boolean | 否   | 是否将该模型分发到 wework 桌面客户端。                                                                                                         |
+
+### Wework 模型选择器配置
+
+决策模型设置 `spec.modelType: decision`，并显式选择
+`spec.protocol: systemone` 或 `openai`，不设置对话用途的 `apiFormat`。
+地址、模型 ID 和凭证仍放在 `spec.modelConfig.env`，启用
+`isWeworkAvailable` 后可在智能判定工作台中选择。
+详见[决策模型与智能判定工作台](../../wework/developer-guide/wework-decision-models.md)。
+
+云端模型可以通过 `modelConfig.ui` 下发模型选择器元数据。默认模型应设置
+`defaultModel: true`，并用 `reasoningEfforts` 和
+`defaultReasoningEffort` 声明自身支持的推理强度。默认模型还可以通过
+`sliderModelsConfig.presets` 下发多套具名模型集。所有仍有可用档位的 preset 都会展示，
+`defaultPreset` 指定默认激活的模型集。
+
+每个 preset 必须提供稳定唯一的 `name`、第一行展示文案 `label` 和有序的
+`models`，还可以用 `description` 配置第二行说明。未配置 `description` 时，
+默认 preset 回退显示“推荐模型集”，其他 preset 回退显示“模型集”。
+`models` 中的 `modelName` 对应 Model 资源名或模型 ID。存在同名资源时，可同时
+提供 `modelType`、`namespace` 和 `resourceUserId` 组成完整资源身份。preset 展示在
+所属的“云端模型”等一级来源分组下，位于模型家族二级分组之前。
+条目省略 `reasoningEffort` 和 `reasoningEfforts` 时，只选择模型，不设置推理强度；
+模型无需声明推理强度。显式指定强度时，目标模型需支持对应强度，建议通过自身的
+`modelConfig.ui.reasoningEfforts` 声明。不可见、不可用的
+模型以及不受支持的强度会从 preset 中移除；裁剪后仍有有效档位时继续展示该
+preset，只有没有任何有效档位时才隐藏。
+
+```yaml
+spec:
+  isWeworkAvailable: true
+  modelConfig:
+    env:
+      model: openai
+      model_id: cloud-sol-upstream
+    ui:
+      family: cloud-openai
+      modelLabel: Cloud Sol
+      defaultModel: true
+      reasoningEfforts: [low, medium, high]
+      defaultReasoningEffort: medium
+      sliderModelsConfig:
+        defaultPreset: recommended
+        presets:
+          - name: recommended
+            label: 推荐
+            description: 日常推荐
+            models:
+              - modelName: cloud-luna
+                reasoningEffort: high
+              - modelName: cloud-sol
+                reasoningEfforts: [low, medium, high]
+          - name: quality
+            label: 高质量
+            description: 更重视质量
+            models:
+              - modelName: cloud-terra
+                reasoningEfforts: [medium, high]
+```
 
 ### 视觉委托模型引用
 
@@ -341,6 +402,9 @@ spec:
   connectionMode: websocket
   bindShell: claudecode
   isDefault: false
+  clientIp: 10.0.0.24
+  runtimeTransferHost: 10.0.0.24
+  runtimeTransferPort: 17888
   capabilities: null
   remoteConfig:
     provider: docker
@@ -348,7 +412,6 @@ spec:
     deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
     deviceName: alice-remote-a931
     backendUrl: https://backend.example.com
-    publicBaseUrl: http://localhost:17888
     createdAt: "2026-06-17T10:00:00"
 status:
   state: Available
@@ -356,21 +419,24 @@ status:
 
 ### 字段说明
 
-| 字段                  | 类型                       | 必填 | 说明                                                  |
-| --------------------- | -------------------------- | ---- | ----------------------------------------------------- |
-| `metadata.name`       | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
-| `metadata.namespace`  | string                     | 是   | 命名空间，通常为 `default`                            |
-| `spec.deviceId`       | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
-| `spec.displayName`    | string                     | 否   | 前端展示名称                                          |
-| `spec.deviceType`     | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
-| `spec.connectionMode` | `websocket`                | 是   | 设备连接后端的方式                                    |
-| `spec.bindShell`      | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
-| `spec.isDefault`      | boolean                    | 否   | 是否为同类型默认设备                                  |
-| `spec.capabilities`   | array 或 null              | 否   | 设备能力标签                                          |
-| `spec.cloudConfig`    | object                     | 否   | 云设备元数据，仅云设备使用                            |
-| `spec.remoteConfig`   | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
+| 字段                       | 类型                       | 必填 | 说明                                                  |
+| -------------------------- | -------------------------- | ---- | ----------------------------------------------------- |
+| `metadata.name`            | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
+| `metadata.namespace`       | string                     | 是   | 命名空间，通常为 `default`                            |
+| `spec.deviceId`            | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
+| `spec.displayName`         | string                     | 否   | 前端展示名称                                          |
+| `spec.deviceType`          | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
+| `spec.connectionMode`      | `websocket`                | 是   | 设备连接后端的方式                                    |
+| `spec.bindShell`           | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
+| `spec.isDefault`           | boolean                    | 否   | 是否为同类型默认设备                                  |
+| `spec.clientIp`            | string                     | 否   | Backend 从设备连接观测到的客户端 IP                   |
+| `spec.runtimeTransferHost` | string                     | 否   | Executor 上报且可供其他机器访问的设备地址             |
+| `spec.runtimeTransferPort` | integer                    | 否   | Executor session gateway 实际监听端口                 |
+| `spec.capabilities`        | array 或 null              | 否   | 设备能力标签                                          |
+| `spec.cloudConfig`         | object                     | 否   | 云设备元数据，仅云设备使用                            |
+| `spec.remoteConfig`        | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
 
-`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成；`publicBaseUrl` 是浏览器访问设备 session gateway 的地址。
+`runtimeTransferHost` 必须是其他机器可访问的地址；回环、未指定、链路本地和组播地址不会用于生成设备访问地址。`runtimeTransferPort` 由 Executor 上报；旧版 Executor 未上报该字段时，Backend 使用默认端口 `17888`。远程设备的浏览器访问地址由 Backend 生成：优先使用它观测到的设备地址，其次使用 `runtimeTransferHost`，再拼上 `runtimeTransferPort`。`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成。
 
 ---
 
@@ -526,18 +592,18 @@ KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 
 `spec.kbType = "code_wiki"` 的知识库由智能体从一个源仓库生成，下列字段**全部由系统写入**，不应手工编辑。
 
-| 字段                        | 类型    | 说明                                                                 |
-| --------------------------- | ------- | -------------------------------------------------------------------- |
-| `spec.kbType`               | string  | `notebook`、`classic` 或 `code_wiki`。**创建后不能进出 `code_wiki`** |
-| `spec.source.sourceType`    | string  | `github`、`gitlab` 或 `gitea`                                        |
-| `spec.source.sourceUrl`     | string  | 仓库地址，创建时从 URL 推导并剥除凭据                                |
-| `spec.source.projectName`   | string  | `owner/repo`                                                         |
-| `spec.source.sourceDomain`  | string  | 仓库主机                                                             |
-| `spec.publishedGenerationId`| integer | **当前生效版本的唯一权威**，0 表示尚未发布                           |
-| `spec.lastPublishedAt`      | string  | 上次发布时间，与指针同事务写入                                       |
-| `spec.lastPublishedCommit`  | string  | 生效版本所记录的 commit                                              |
-| `spec.pageOrder`            | array   | 页面路径的展示顺序；层级从路径推导，顺序只在这里                     |
-| `spec.pendingIndexCleanup`  | array   | 已删页面中尚未清理的向量库引用，下次发布时重试                       |
+| 字段                         | 类型    | 说明                                                                 |
+| ---------------------------- | ------- | -------------------------------------------------------------------- |
+| `spec.kbType`                | string  | `notebook`、`classic` 或 `code_wiki`。**创建后不能进出 `code_wiki`** |
+| `spec.source.sourceType`     | string  | `github`、`gitlab` 或 `gitea`                                        |
+| `spec.source.sourceUrl`      | string  | 仓库地址，创建时从 URL 推导并剥除凭据                                |
+| `spec.source.projectName`    | string  | `owner/repo`                                                         |
+| `spec.source.sourceDomain`   | string  | 仓库主机                                                             |
+| `spec.publishedGenerationId` | integer | **当前生效版本的唯一权威**，0 表示尚未发布                           |
+| `spec.lastPublishedAt`       | string  | 上次发布时间，与指针同事务写入                                       |
+| `spec.lastPublishedCommit`   | string  | 生效版本所记录的 commit                                              |
+| `spec.pageOrder`             | array   | 页面路径的展示顺序；层级从路径推导，顺序只在这里                     |
+| `spec.pendingIndexCleanup`   | array   | 已删页面中尚未清理的向量库引用，下次发布时重试                       |
 
 **几个不变量：**
 
@@ -777,22 +843,22 @@ spec:
 
 ### 字段说明
 
-| 字段                         | 类型    | 必填 | 说明                                                             |
-| ---------------------------- | ------- | ---- | ---------------------------------------------------------------- |
-| `metadata.name`              | string  | 是   | Connector App 的唯一 slug，工具名前缀使用该值                    |
-| `metadata.namespace`         | string  | 是   | 当前使用 `system`                                                |
-| `spec.name`                  | string  | 是   | 展示名称                                                         |
-| `spec.description`           | string  | 否   | 应用描述                                                         |
-| `spec.iconUrl`               | string  | 否   | 图标 URL                                                         |
-| `spec.enabled`               | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                  |
-| `spec.visibility`            | string  | 是   | `all` 或 `roles`                                                 |
-| `spec.allowedRoles`          | array   | 否   | `visibility: roles` 时允许访问的用户角色                         |
-| `spec.authType`              | string  | 是   | 当前仅支持 `none`                                                |
-| `spec.transport`             | string  | 是   | `streamable-http`、`sse` 或 `http`                               |
-| `spec.mcpUrl`                | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                |
-| `spec.providerHeadersEncrypted` | string | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                  |
-| `spec.toolAllowlist`         | array   | 否   | 允许暴露和调用的上游工具名                                       |
-| `spec.httpTools`             | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
+| 字段                            | 类型    | 必填 | 说明                                                              |
+| ------------------------------- | ------- | ---- | ----------------------------------------------------------------- |
+| `metadata.name`                 | string  | 是   | Connector App 的唯一 slug，工具名前缀使用该值                     |
+| `metadata.namespace`            | string  | 是   | 当前使用 `system`                                                 |
+| `spec.name`                     | string  | 是   | 展示名称                                                          |
+| `spec.description`              | string  | 否   | 应用描述                                                          |
+| `spec.iconUrl`                  | string  | 否   | 图标 URL                                                          |
+| `spec.enabled`                  | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                   |
+| `spec.visibility`               | string  | 是   | `all` 或 `roles`                                                  |
+| `spec.allowedRoles`             | array   | 否   | `visibility: roles` 时允许访问的用户角色                          |
+| `spec.authType`                 | string  | 是   | 当前仅支持 `none`                                                 |
+| `spec.transport`                | string  | 是   | `streamable-http`、`sse` 或 `http`                                |
+| `spec.mcpUrl`                   | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                 |
+| `spec.providerHeadersEncrypted` | string  | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                   |
+| `spec.toolAllowlist`            | array   | 否   | 允许暴露和调用的上游工具名                                        |
+| `spec.httpTools`                | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
 
 `providerHeadersEncrypted` 必须是加密后的 JSON 字符串。管理 API 接收明文 `provider_headers` 后会负责加密；手写 YAML 时不要提交明文 API Key、服务令牌或请求头。
 

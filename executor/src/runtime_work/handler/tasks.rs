@@ -2,61 +2,111 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(test)]
+use super::context_compaction::context_compaction_outcome;
+use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let mut request = execution_request(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        request.ephemeral = true;
-        let local_task_id = request.task_id.clone();
-        let stream_request = request.clone();
-        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
-        let mut turn_future = Box::pin(self.codex_app_server.run_turn_with_cancel(
-            request,
-            CodexAppServerTurnOptions {
-                notifications: Some(notification_tx),
-                ..CodexAppServerTurnOptions::default()
-            },
-        ));
-        let mut event_mapper = CodexNotificationEventMapper::default();
-        let result = loop {
-            tokio::select! {
-                result = &mut turn_future => break result,
-                message = notification_rx.recv() => {
-                    let Some(message) = message else {
-                        break turn_future.await;
-                    };
-                    event_mapper.map(
-                        &self.event_tx,
-                        &self.device_id,
-                        &local_task_id,
-                        &stream_request,
-                        message,
-                    );
-                }
-            }
-        };
-        while let Ok(message) = notification_rx.try_recv() {
-            event_mapper.map(
-                &self.event_tx,
-                &self.device_id,
-                &local_task_id,
-                &stream_request,
-                message,
+    pub(super) async fn create_collaboration_dispatch(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        if payload.get("dispatchKind").and_then(Value::as_str) != Some("collaboration_group") {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration dispatch kind is required",
+            ));
+        }
+        let dispatch_task_id = string_field(&payload, "dispatchTaskId")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration dispatch task identity is required",
+                )
+            })?;
+        let mut manager_request = payload
+            .get("managerRuntimeRequest")
+            .cloned()
+            .filter(Value::is_object)
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration manager Runtime request is required",
+                )
+            })?;
+        let claimed_dispatch_task_id = id_field(&manager_request, "taskId")
+            .or_else(|| id_field(&manager_request, "localTaskId"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration manager task identity is required",
+                )
+            })?;
+        if claimed_dispatch_task_id != dispatch_task_id {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration manager must run inside the claimed dispatch",
+            ));
+        }
+        let manager_task_id = format!("{dispatch_task_id}-manager-initial");
+        let member_profiles = payload
+            .get("memberRuntimeProfiles")
+            .and_then(Value::as_array)
+            .filter(|profiles| !profiles.is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration member Runtime profiles are required",
+                )
+            })?;
+        detach_collaboration_manager_from_backend_execution(&mut manager_request, &manager_task_id);
+        let manager_context = string_field(&manager_request, "message")
+            .or_else(|| string_field(&manager_request, "content"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", "collaboration manager context is required")
+            })?;
+        {
+            let manager_request_object = manager_request
+                .as_object_mut()
+                .expect("validated collaboration manager request");
+            manager_request_object.insert(
+                "collaborationDispatch".to_owned(),
+                json!({"taskId": dispatch_task_id}),
             );
-        }
-        let turn = result.map_err(|error| AppIpcError::new("model_transport_failed", error))?;
-        match turn.outcome {
-            ExecutionOutcome::Completed { content } => Ok(json!({"content": content})),
-            ExecutionOutcome::Failed { message } => {
-                Err(AppIpcError::new("model_request_failed", message))
+            let runtime_handle = manager_request_object
+                .entry("runtimeHandle")
+                .or_insert_with(|| json!({}));
+            if !runtime_handle.is_object() {
+                *runtime_handle = json!({});
             }
-            outcome => Err(AppIpcError::new(
-                "model_request_incomplete",
-                format!("text generation did not complete: {outcome:?}"),
-            )),
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    COLLABORATION_MANAGER_CONTEXT_KEY.to_owned(),
+                    Value::String(manager_context),
+                );
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    "collaborationDispatchTaskId".to_owned(),
+                    Value::String(dispatch_task_id),
+                );
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    "collaborationMemberRuntimeProfiles".to_owned(),
+                    Value::Array(member_profiles),
+                );
         }
+        self.create_task(manager_request).await
     }
 
     pub(super) async fn generate_friendly_title(
@@ -380,17 +430,23 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
-        let payload_workspace_path = workspace_path(&payload);
+        let mut payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        let deferred_environment = project_preparation::configure(&mut request, &payload)?;
+        if deferred_environment {
+            payload_workspace_path = None;
+        }
+
         if is_claude_runtime(&runtime) {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
+        self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
             &[
@@ -546,7 +602,8 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        let workspace_path = if side_source.is_none()
+        let workspace_path = if !deferred_environment
+            && side_source.is_none()
             && request.workspace_source.as_deref() == Some("git_worktree")
         {
             let git_ref = payload
@@ -597,6 +654,27 @@ impl RuntimeWorkRpcHandler {
         } else {
             source_workspace_path
         };
+        log_executor_event(
+            "runtime task workspace resolved",
+            &[
+                ("task_id", local_task_id.clone()),
+                (
+                    "requested_source",
+                    payload
+                        .pointer("/execution/workspace/source")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                (
+                    "execution_source",
+                    request.workspace_source.clone().unwrap_or_default(),
+                ),
+                ("side_source", side_source.is_some().to_string()),
+                ("source_path", request.cwd().unwrap_or_default().to_owned()),
+                ("workspace_path", workspace_path.clone()),
+            ],
+        );
         if request.project_workspace_path.as_deref() != Some(workspace_path.as_str()) {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -615,19 +693,7 @@ impl RuntimeWorkRpcHandler {
         link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         store_runtime_execution_request(&mut link.runtime_handle, &request);
-        if let (Some(runtime_handle), Some(payload_handle)) = (
-            link.runtime_handle.as_object_mut(),
-            payload
-                .get("runtimeHandle")
-                .or_else(|| payload.get("runtime_handle"))
-                .and_then(Value::as_object),
-        ) {
-            for key in ["wegentTeam"] {
-                if let Some(value) = payload_handle.get(key) {
-                    runtime_handle.insert(key.to_owned(), value.clone());
-                }
-            }
-        }
+        apply_runtime_profile_handle(&mut link.runtime_handle, &payload);
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")
@@ -712,6 +778,7 @@ impl RuntimeWorkRpcHandler {
                 local_task_id: local_task_id.clone(),
                 runtime: "codex".to_owned(),
                 request,
+                send_payload: None,
                 direct_thread_id: None,
                 fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
                 fork_thread_path: side_source.and_then(|source| source.thread_path),
@@ -725,6 +792,7 @@ impl RuntimeWorkRpcHandler {
             };
             if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
+                self.forget_runtime_model_config(&local_task_id);
                 self.supervisor_model_configs
                     .lock()
                     .expect("supervisor model config map lock should not be poisoned")
@@ -800,7 +868,8 @@ impl RuntimeWorkRpcHandler {
             "accepted": true,
             "deviceId": self.device_id,
             "taskId": local_task_id,
-            "workspacePath": workspace_path,
+            "workspacePath": if deferred_environment { "" } else { &workspace_path },
+            "workspacePending": deferred_environment,
             "runtime": runtime,
             "runtimeHandle": runtime_handle,
             "status": if queue_position.is_some() { "queued" } else { "running" },
@@ -872,6 +941,22 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    pub(super) fn record_overload_recovery_turn(&self, local_task_id: &str, turn_id: &str) {
+        self.store.update_task(local_task_id, |link| {
+            let turns = link
+                .runtime_handle
+                .as_object_mut()
+                .expect("Codex task runtime handle must be an object")
+                .entry("overloadRecoveryTurnIds")
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .expect("overload recovery turn IDs must be an array");
+            if !turns.iter().any(|value| value.as_str() == Some(turn_id)) {
+                turns.push(json!(turn_id));
+            }
+        });
+    }
+
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -891,7 +976,11 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
-        if self.is_busy_local_task(&local_task_id) {
+        let queue_if_busy = bool_field(&payload, "queueIfBusy")
+            .or_else(|| bool_field(&payload, "queue_if_busy"))
+            .unwrap_or(false);
+        let was_busy = self.is_busy_local_task(&local_task_id);
+        if was_busy && !queue_if_busy {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -929,6 +1018,24 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         if let Some(link) = existing_link.as_ref() {
+            // A failed preparation has no session yet. Retry its saved snapshot;
+            // established conversations never prepare a new project directory.
+            if link.thread_id.is_none() {
+                if let Some(definition) = link
+                    .runtime_handle
+                    .pointer("/executionRequest/deferred_project_environment")
+                {
+                    request.extra.insert(
+                        project_preparation::DEFERRED_ENVIRONMENT.into(),
+                        definition.clone(),
+                    );
+                    request.workspace_source = link
+                        .runtime_handle
+                        .pointer("/executionRequest/workspace_source")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                }
+            }
             set_runtime_task_title(&mut request, &link.title);
         }
         if let Some(link) = existing_link.as_ref() {
@@ -1008,8 +1115,13 @@ impl RuntimeWorkRpcHandler {
             }
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request, false)
-                .await?;
+            if was_busy {
+                self.queue_claude_turn(local_task_id.clone(), request)
+                    .await?;
+            } else {
+                self.spawn_claude_turn(local_task_id.clone(), request, false)
+                    .await?;
+            }
             let queue_position = self
                 .queued_local_task_position(&local_task_id)
                 .map(|position| position + 1);
@@ -1023,10 +1135,16 @@ impl RuntimeWorkRpcHandler {
                 "queuePosition": queue_position,
             }));
         }
-        let recovered_link = self
-            .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
-            .await;
-        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+        let retrying_preparation = request
+            .extra
+            .contains_key(project_preparation::DEFERRED_ENVIRONMENT);
+        let recovered_link = if retrying_preparation {
+            None
+        } else {
+            self.recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+                .await
+        };
+        let thread_id = runtime_session_id_from_payload(&payload)
             .or_else(|| {
                 existing_link
                     .as_ref()
@@ -1036,8 +1154,8 @@ impl RuntimeWorkRpcHandler {
                 recovered_link
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
-            })
-        else {
+            });
+        if thread_id.is_none() && !retrying_preparation {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1045,13 +1163,13 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id,
                 "runtime": "codex",
             }));
-        };
+        }
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
-        fields.push(("thread_id", thread_id.clone()));
+        fields.push(("thread_id", thread_id.clone().unwrap_or_default()));
         fields.push(("workspace_path", workspace_path.clone()));
         fields.push(("has_execution_request", has_execution_request.to_string()));
         fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
@@ -1066,35 +1184,30 @@ impl RuntimeWorkRpcHandler {
         ));
         log_executor_event("runtime work send prepared", &fields);
 
-        self.mark_task_running_for_send(
-            &local_task_id,
-            &thread_id,
-            &workspace_path,
-            &request,
-            &payload,
-        );
-        self.store.update_task(&local_task_id, |link| {
-            store_runtime_execution_request(&mut link.runtime_handle, &request);
-        });
         if let Some(turn_id) = retry_source_turn_id(&payload) {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
         }
         self.schedule_worktree_prune();
-        let direct_thread_id = ephemeral.then(|| thread_id.clone());
-        let resume_thread_id = (!ephemeral).then_some(thread_id);
+        let direct_thread_id = thread_id.clone().filter(|_| ephemeral);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
-        self.spawn_turn(SpawnTurnRequest {
+        let turn = SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
+            send_payload: Some(payload),
             direct_thread_id,
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id,
             initial_thread_goal,
-        })
-        .await?;
+        };
+        if was_busy {
+            self.queue_turn(turn).await?;
+        } else {
+            self.spawn_turn(turn).await?;
+        }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
             .map(|position| position + 1);
@@ -1336,6 +1449,7 @@ impl RuntimeWorkRpcHandler {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -1457,6 +1571,7 @@ impl RuntimeWorkRpcHandler {
         };
         match steer_result {
             Ok(turn_id) => {
+                self.set_interaction_status(&local_task_id, None);
                 self.record_active_codex_turn(
                     &local_task_id,
                     active_turn.execution_id,
@@ -1502,73 +1617,123 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let thread_id = match self.resume_codex_thread_for_action(&link, &thread_id).await {
+        let request = runtime_model_request(&link, &payload)?;
+        let client = match self.codex_app_server.for_request(&request) {
+            Ok(client) => client,
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
+        let handler = self.clone();
+        let action_client = client.clone();
+        client
+            .run_owned_thread_action(thread_id.clone(), async move {
+                handler
+                    .compact_codex_task(&action_client, &link, &local_task_id, &thread_id, request)
+                    .await
+            })
+            .await
+            .map_err(|error| AppIpcError::new("internal_error", error.to_string()))?
+    }
+
+    async fn compact_codex_task(
+        &self,
+        client: &CodexAppServerClient,
+        link: &RuntimeTaskLink,
+        local_task_id: &str,
+        thread_id: &str,
+        request: ExecutionRequest,
+    ) -> Result<Value, AppIpcError> {
+        let thread_id = match self
+            .resume_codex_thread_with_client(client, link, thread_id)
+            .await
+        {
             Ok(resumed_thread_id) => resumed_thread_id,
-            Err(error) => return Ok(task_action_failure(&link, error)),
+            Err(error) => return Ok(task_action_failure(link, error)),
         };
-        self.register_thread_event_route(
-            &thread_id,
-            link.local_task_id.clone(),
-            runtime_event_request_from_link(&link),
-            true,
-        );
-        let previous_turn_id = match self.read_codex_recent_turns(&thread_id).await {
+        // The compaction turn answers through the local model route, which only
+        // exists while a turn that registered it is alive. Register it for the
+        // duration of this action so compacting an idle thread still reaches a
+        // model instead of failing inside the Codex app-server.
+        let _model_route = match bind_codex_thread_model_route(&request, &thread_id) {
+            Ok(route) => route,
+            Err(error) => return Ok(task_action_failure(link, error)),
+        };
+        self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
+        let previous_turn_id = match self
+            .read_codex_recent_turns_with_client(client, &thread_id)
+            .await
+        {
             Ok(thread) => latest_codex_turn_id(&thread),
-            Err(error) => return Ok(task_action_failure(&link, error)),
+            Err(error) => return Ok(task_action_failure(link, error)),
         };
-        match self
-            .call_codex_thread_method(
+        log_executor_event(
+            "context compaction requested",
+            &[
+                ("thread_id", thread_id.clone()),
+                (
+                    "previous_turn_id",
+                    previous_turn_id.clone().unwrap_or_default(),
+                ),
+                ("dedicated_home", client.has_dedicated_home().to_string()),
+            ],
+        );
+        // History can briefly label a newly admitted turn as interrupted.
+        // Subscribe before starting it and settle only on native completion.
+        let notifications = match client.subscribe_thread_notifications(&thread_id).await {
+            Ok(receiver) => receiver,
+            Err(error) => return Ok(task_action_failure(link, error)),
+        };
+        match client
+            .request(
                 "thread/compact/start",
                 json!({"threadId": thread_id.clone()}),
             )
             .await
         {
             Ok(_) => {
-                let (turn_id, item_id) = match self
-                    .wait_for_context_compaction(&thread_id, previous_turn_id.as_deref())
-                    .await
+                let (turn_id, item_id) = match wait_for_context_compaction(
+                    |message| {
+                        if client.has_dedicated_home() {
+                            self.route_codex_notification(message.clone());
+                        }
+                    },
+                    notifications,
+                    &thread_id,
+                    previous_turn_id.as_deref(),
+                )
+                .await
                 {
                     Ok(completion) => completion,
-                    Err(error) => return Ok(task_action_failure(&link, error)),
+                    Err(error) => return Ok(task_action_failure(link, error)),
                 };
-                self.store.update_task(&local_task_id, |stored| {
+                self.store.update_task(local_task_id, |stored| {
                     stored.updated_at = now_ms();
                 });
-                let mut response = task_action_success(&link);
+                let mut response = task_action_success(link);
                 if let Some(response) = response.as_object_mut() {
                     response.insert("turnId".to_owned(), Value::String(turn_id));
                     response.insert("compactionItemId".to_owned(), Value::String(item_id));
                 }
                 Ok(response)
             }
-            Err(error) => Ok(task_action_failure(&link, error)),
+            Err(error) => Ok(task_action_failure(link, error)),
         }
-    }
-
-    async fn wait_for_context_compaction(
-        &self,
-        thread_id: &str,
-        previous_turn_id: Option<&str>,
-    ) -> Result<(String, String), String> {
-        let mut last_error = None;
-        for _ in 0..CONTEXT_COMPACTION_WAIT_ATTEMPTS {
-            match self.read_codex_recent_turns(thread_id).await {
-                Ok(thread) => {
-                    if let Some(completion) =
-                        completed_context_compaction(&thread, previous_turn_id)
-                    {
-                        return Ok(completion);
-                    }
-                }
-                Err(error) => last_error = Some(error),
-            }
-            sleep(Duration::from_millis(CONTEXT_COMPACTION_WAIT_MS)).await;
-        }
-        Err(last_error.unwrap_or_else(|| "context compaction timed out".to_owned()))
     }
 
     pub(super) async fn resume_codex_thread_for_action(
         &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+    ) -> Result<String, String> {
+        let client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(link))?;
+        self.resume_codex_thread_with_client(&client, link, thread_id)
+            .await
+    }
+
+    async fn resume_codex_thread_with_client(
+        &self,
+        client: &CodexAppServerClient,
         link: &RuntimeTaskLink,
         thread_id: &str,
     ) -> Result<String, String> {
@@ -1586,11 +1751,10 @@ impl RuntimeWorkRpcHandler {
             params.insert("path".to_owned(), Value::String(thread_path));
         }
 
-        let response = self
-            .call_codex_thread_method_without_list_invalidation(
-                "thread/resume",
-                Value::Object(params),
-            )
+        self.register_thread_event_route_from_store(thread_id);
+        self.ensure_notification_router().await;
+        let response = client
+            .request("thread/resume", Value::Object(params))
             .await?;
         Ok(response
             .get("thread")
@@ -1789,6 +1953,12 @@ impl RuntimeWorkRpcHandler {
         if queued_turn
             .request
             .extra
+            .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+        {
+            self.start_queued_turn(queued_turn);
+        } else if queued_turn
+            .request
+            .extra
             .contains_key("deferred_worktree_source_path")
         {
             self.prepare_and_start_reserved_turn(queued_turn).await?;
@@ -1899,7 +2069,7 @@ impl RuntimeWorkRpcHandler {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            link.thread_id = Some(thread_id.to_owned());
+            link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             if let Some(presentation) = presentation.clone() {
                 append_runtime_handle_user_message_presentation(
@@ -1924,6 +2094,8 @@ impl RuntimeWorkRpcHandler {
             }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
+            apply_runtime_profile_handle(&mut link.runtime_handle, payload);
+            link.interaction_status = None;
         });
         if updated.is_some() {
             return;
@@ -1941,10 +2113,77 @@ impl RuntimeWorkRpcHandler {
         link.project_instructions = request.system_prompt.clone();
         link.project_plugin_ids = project_plugin_ids(request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
+        apply_runtime_profile_handle(&mut link.runtime_handle, payload);
         if let Some(presentation) = presentation {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
         self.upsert_local_task(link);
+    }
+}
+
+fn apply_runtime_profile_handle(runtime_handle: &mut Value, payload: &Value) {
+    if let (Some(handle), Some(profile)) = (
+        runtime_handle.as_object_mut(),
+        payload
+            .get("runtimeHandle")
+            .or_else(|| payload.get("runtime_handle"))
+            .and_then(Value::as_object),
+    ) {
+        for key in [
+            "wegentTeam",
+            COLLABORATION_MANAGER_CONTEXT_KEY,
+            "collaborationDispatchTaskId",
+            "collaborationMemberRuntimeProfiles",
+        ] {
+            if let Some(value) = profile.get(key) {
+                handle.insert(key.to_owned(), value.clone());
+            }
+        }
+    }
+}
+
+fn detach_collaboration_manager_from_backend_execution(
+    manager_request: &mut Value,
+    manager_task_id: &str,
+) {
+    let Some(request) = manager_request.as_object_mut() else {
+        return;
+    };
+    request.insert(
+        "taskId".to_owned(),
+        Value::String(manager_task_id.to_owned()),
+    );
+    request.insert(
+        "localTaskId".to_owned(),
+        Value::String(manager_task_id.to_owned()),
+    );
+    if let Some(origin) = request.get_mut("origin").and_then(Value::as_object_mut) {
+        origin.remove("executionId");
+        origin.remove("execution_id");
+    }
+    let execution_request = if request.contains_key("executionRequest") {
+        request.get_mut("executionRequest")
+    } else {
+        request.get_mut("execution_request")
+    };
+    if let Some(execution_request) = execution_request.and_then(Value::as_object_mut) {
+        execution_request.insert(
+            "task_id".to_owned(),
+            Value::String(manager_task_id.to_owned()),
+        );
+        execution_request.insert(
+            "subtask_id".to_owned(),
+            Value::String(format!("{manager_task_id}-initial")),
+        );
+        if let Some(origin) = execution_request
+            .get_mut("extra")
+            .and_then(Value::as_object_mut)
+            .and_then(|extra| extra.get_mut("origin"))
+            .and_then(Value::as_object_mut)
+        {
+            origin.remove("executionId");
+            origin.remove("execution_id");
+        }
     }
 }
 
@@ -2167,26 +2406,6 @@ fn latest_codex_turn_id(thread: &Value) -> Option<String> {
         .and_then(|turn| string_field(turn, "id"))
 }
 
-fn completed_context_compaction(
-    thread: &Value,
-    previous_turn_id: Option<&str>,
-) -> Option<(String, String)> {
-    thread
-        .get("turns")
-        .and_then(Value::as_array)?
-        .iter()
-        .rev()
-        .filter_map(|turn| Some((turn, string_field(turn, "id")?)))
-        .filter(|(_, turn_id)| Some(turn_id.as_str()) != previous_turn_id)
-        .find_map(|(turn, turn_id)| {
-            turn.get("items")
-                .and_then(Value::as_array)?
-                .iter()
-                .find(|item| is_codex_context_compaction_item_type(&item_type(item)))
-                .map(|item| (turn_id, item_id(item, "context_compaction")))
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -2194,7 +2413,7 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, completed_context_compaction, normalize_friendly_title,
+        apply_runtime_task_start_failure, context_compaction_outcome, normalize_friendly_title,
     };
 
     #[test]
@@ -2211,7 +2430,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_a_new_completed_context_compaction() {
+    fn reads_a_completed_context_compaction_from_the_newest_turn() {
         let thread = json!({
             "turns": [
                 {
@@ -2220,18 +2439,179 @@ mod tests {
                 },
                 {
                     "id": "turn-compact",
+                    "status": "completed",
                     "items": [{"id": "compact-1", "type": "contextCompaction"}]
                 }
             ]
         });
 
         assert_eq!(
-            completed_context_compaction(&thread, Some("turn-before")),
-            Some(("turn-compact".to_owned(), "compact-1".to_owned()))
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Ok(("turn-compact".to_owned(), "compact-1".to_owned())))
         );
         assert_eq!(
-            completed_context_compaction(&thread, Some("turn-compact")),
+            context_compaction_outcome(&thread, Some("turn-compact")),
             None
+        );
+    }
+
+    #[test]
+    fn reports_a_compaction_turn_that_ended_without_compacting() {
+        let thread = json!({
+            "turns": [
+                {"id": "turn-before", "status": "completed", "items": []},
+                {
+                    "id": "turn-compact",
+                    "status": "failed",
+                    "error": {"message": "unexpected status 404 Not Found"},
+                    "items": [{"id": "user-1", "type": "userMessage"}]
+                }
+            ]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Err(
+                "context compaction ended without compacting: unexpected status 404 Not Found"
+                    .to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn waits_while_the_compaction_turn_is_still_running() {
+        let thread = json!({
+            "turns": [{"id": "turn-compact", "status": "inProgress", "items": []}]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+    }
+
+    #[test]
+    fn does_not_treat_a_started_compaction_item_as_completion() {
+        let thread = json!({
+            "turns": [{
+                "id": "turn-compact",
+                "status": "inProgress",
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+    }
+
+    #[test]
+    fn reports_failure_after_a_compaction_item_started() {
+        let thread = json!({
+            "turns": [{
+                "id": "turn-compact",
+                "status": "failed",
+                "error": {"message": "provider rejected compaction"},
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Err(
+                "context compaction ended without compacting: provider rejected compaction"
+                    .to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn ignores_the_turn_that_predates_compaction() {
+        let thread = json!({
+            "turns": [{"id": "turn-before", "status": "completed", "items": []}]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+        assert_eq!(
+            context_compaction_outcome(&thread, None),
+            Some(Err(
+                "context compaction ended without compacting (completed)".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn ignores_older_turns_while_the_compaction_turn_has_not_started() {
+        let thread = json!({
+            "turns": [
+                {"id": "turn-older", "status": "failed", "items": []},
+                {"id": "turn-before", "status": "completed", "items": []}
+            ]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+    }
+
+    #[test]
+    fn ignores_an_older_compaction_item_while_the_newest_turn_runs() {
+        let thread = json!({
+            "turns": [
+                {
+                    "id": "turn-older",
+                    "status": "completed",
+                    "items": [{"id": "compact-old", "type": "contextCompaction"}]
+                },
+                {"id": "turn-compact", "status": "inProgress", "items": []}
+            ]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-older")),
+            None
+        );
+    }
+
+    #[test]
+    fn reports_the_newest_turn_failure_instead_of_an_older_compaction_item() {
+        let thread = json!({
+            "turns": [
+                {
+                    "id": "turn-older",
+                    "status": "completed",
+                    "items": [{"id": "compact-old", "type": "contextCompaction"}]
+                },
+                {"id": "turn-compact", "status": "failed", "items": []}
+            ]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-older")),
+            Some(Err(
+                "context compaction ended without compacting (failed)".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn keeps_a_compacted_turn_out_of_the_failure_path() {
+        let thread = json!({
+            "turns": [{
+                "id": "turn-compact",
+                "status": "completed",
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Ok(("turn-compact".to_owned(), "compact-1".to_owned())))
         );
     }
 

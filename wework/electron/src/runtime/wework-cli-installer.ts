@@ -97,7 +97,7 @@ function windowsLauncher(cliPath: string, options: WeworkCliInstallOptions): str
   const nodeCommand = options.nodeCommand.map(windowsQuote).join(' ')
   const appCommand = options.appCommand.map(windowsQuote).join(' ')
   return `@echo off\r
-${MANAGED_MARKER}\r
+rem ${MANAGED_MARKER}\r
 if "%~1"=="-h" goto usage\r
 if "%~1"=="--help" goto usage\r
 if "%~1"=="desktop" ${nodeCommand} ${windowsQuote(cliPath)} %*\r
@@ -108,7 +108,7 @@ if not "%~2"=="" (\r
 )\r
 set "TARGET_PATH=%~f1"\r
 if "%~1"=="" set "TARGET_PATH=%CD%"\r
-if not exist "%TARGET_PATH%\\NUL" (\r
+if not exist "%TARGET_PATH%\\" (\r
   echo wework: path is not a directory: %TARGET_PATH% 1>&2\r
   exit /b 1\r
 )\r

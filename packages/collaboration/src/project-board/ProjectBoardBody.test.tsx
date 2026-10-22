@@ -4,6 +4,8 @@
 
 import { Children, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
+import { createProjectBoardSortLabels } from "./projectBoardSorting";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import {
   ProjectBoardBody,
@@ -31,9 +33,11 @@ function boardState(): ProjectBoardStatePort {
     groupBy: "status",
     groupFilter: "",
     query: "",
+    getColumnSort: () => ["priority-desc"],
     quickCreateStatus: null,
     scrollRef: { current: null },
     selectGroupBy: vi.fn(),
+    selectColumnSort: vi.fn(),
     setExternalGroupFilter: vi.fn(),
     setExternalQuery: vi.fn(),
     setGroupFilter: vi.fn(),
@@ -98,6 +102,46 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe("ProjectBoardBody", () => {
+  it("renders sorting in each lane header and preserves existing header actions", () => {
+    const options = props();
+    options.sortLabels = createProjectBoardSortLabels((key) => key);
+    options.renderColumnHeaderActions = () => (
+      <button data-testid="existing-header-action" />
+    );
+    const board = descendants(ProjectBoardBody(options)).find(
+      (node) => node.type === KanbanBoard,
+    )!;
+    const header = board.props.renderColumnHeaderActions(
+      options.columns[0],
+      [],
+    );
+    const picker = descendants(header).find(
+      (node) => node.type === ProjectBoardColumnSortPicker,
+    )!;
+    expect(
+      descendants(header).some(
+        (node) => node.props["data-testid"] === "existing-header-action",
+      ),
+    ).toBe(true);
+    expect(picker.props.columnKey).toBe("inbox");
+    expect(picker.props.value).toEqual(["priority-desc"]);
+    picker.props.onChange(["priority-desc", "created-desc"]);
+    expect(options.state.selectColumnSort).toHaveBeenCalledWith("inbox", [
+      "priority-desc",
+      "created-desc",
+    ]);
+    expect(options.state.selectGroupBy).not.toHaveBeenCalled();
+    options.isExternalBoard = true;
+    const externalBoard = descendants(ProjectBoardBody(options)).find(
+      (node) => node.type === KanbanBoard,
+    )!;
+    expect(
+      descendants(
+        externalBoard.props.renderColumnHeaderActions(options.columns[0], []),
+      ).some((node) => node.type === ProjectBoardColumnSortPicker),
+    ).toBe(false);
+  });
+
   it("owns the original toolbar, breadcrumb, scroll viewport and Kanban composition", () => {
     const tree = ProjectBoardBody(props());
     expect(tree.props["data-board-cursor-policy"]).toBe("arrow");
@@ -128,17 +172,12 @@ describe("ProjectBoardBody", () => {
       nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll"),
     ).toBeDefined();
     expect(
-      nodes.find(
-        (node) =>
-          node.props["data-testid"] === "cloud-board-horizontal-scrollbar",
-      ),
-    ).toBeDefined();
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll")
+        ?.props.className,
+    ).toContain("overflow-x-auto");
     expect(
-      nodes.find(
-        (node) =>
-          node.props["data-testid"] ===
-          "cloud-board-horizontal-scrollbar-thumb",
-      ),
-    ).toBeDefined();
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll")
+        ?.props.className,
+    ).not.toContain("[&>div]");
   });
 });

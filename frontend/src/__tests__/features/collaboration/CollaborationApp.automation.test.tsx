@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import type {
   CollaborationGroup,
@@ -88,12 +88,14 @@ describe('CollaborationApp project collaboration groups', () => {
   } = {}) {
     return {
       workspaces: {
+        list: jest.fn().mockResolvedValue([{ id: project.workspace_id }]),
         listCollaborationGroups: jest.fn().mockResolvedValue(workspaceGroups),
         listAgents: jest.fn().mockResolvedValue([]),
         listMembers: jest.fn().mockResolvedValue([]),
         listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       resources: {
+        devices: { cloud: jest.fn().mockResolvedValue([]) },
         list: jest.fn().mockResolvedValue({
           agents: [],
           execution_environments: [],
@@ -157,18 +159,31 @@ describe('CollaborationApp project collaboration groups', () => {
     }
   }
 
+  async function renderProject(api: SharedWorkspaceApi) {
+    await act(async () => {
+      render(
+        <CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />
+      )
+    })
+  }
+
   it('adds a workspace collaboration group to the project', async () => {
     const addCollaborationGroup = jest.fn().mockResolvedValue(workspaceGroup)
     const api = projectApi({ addCollaborationGroup })
 
-    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
+    await renderProject(api)
 
-    fireEvent.click(await screen.findByTestId('collaboration-project-settings-participants'))
-    fireEvent.click(await screen.findByTestId('collaboration-participants-tab-groups'))
-    fireEvent.click(await screen.findByTestId('collaboration-group-add-group-1'))
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('collaboration-project-settings-groups'))
+    })
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('collaboration-group-add-group-1'))
+    })
     await waitFor(() =>
       expect(addCollaborationGroup).toHaveBeenCalledWith(project.id, workspaceGroup.id)
     )
+    expect(api.workspaces?.listCollaborationGroups).toHaveBeenCalledWith(project.workspace_id)
+    expect(api.workspaces?.list).not.toHaveBeenCalled()
   })
 
   it('creates a project-owned collaboration group', async () => {
@@ -184,10 +199,9 @@ describe('CollaborationApp project collaboration groups', () => {
       createCollaborationGroup,
     })
 
-    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
+    await renderProject(api)
 
-    fireEvent.click(await screen.findByTestId('collaboration-project-settings-participants'))
-    fireEvent.click(await screen.findByTestId('collaboration-participants-tab-groups'))
+    fireEvent.click(await screen.findByTestId('collaboration-project-settings-groups'))
     fireEvent.click(await screen.findByTestId('collaboration-group-open-create'))
     fireEvent.change(await screen.findByTestId('collaboration-group-name'), {
       target: { value: '项目交付组' },
@@ -199,7 +213,9 @@ describe('CollaborationApp project collaboration groups', () => {
     fireEvent.click(
       await screen.findByTestId('collaboration-group-create-member-agent-agent-binding-1')
     )
-    fireEvent.click(screen.getByTestId('collaboration-group-create'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('collaboration-group-create'))
+    })
 
     await waitFor(() =>
       expect(createCollaborationGroup).toHaveBeenCalledWith(project.id, expect.anything())
@@ -215,30 +231,55 @@ describe('CollaborationApp project collaboration groups', () => {
     expect(savedInput).not.toHaveProperty('policy')
   })
 
+  it('loads human members for a group without requesting a board snapshot', async () => {
+    const api = projectApi()
+    jest
+      .mocked(api.members.list)
+      .mockResolvedValue([
+        { id: 7, user_id: 7, user_name: '新项目成员', email: '', role: 'Developer' },
+      ])
+    const host = automationHost()
+    host.location.projectSettingsSection = 'groups'
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+    fireEvent.click(await screen.findByTestId('collaboration-group-open-create'))
+    fireEvent.click(screen.getByTestId('collaboration-group-create-add-members'))
+    expect(
+      await screen.findByTestId('collaboration-group-create-member-human-7')
+    ).toHaveTextContent('新项目成员')
+    expect(api.members.list).toHaveBeenCalledWith(project.id)
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled()
+  })
+
   it('keeps automatic processing separate from collaboration participants', async () => {
     const api = projectApi()
 
-    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
+    await renderProject(api)
 
     const settings = await screen.findByTestId('project-settings-shell')
     expect(settings).toHaveTextContent('基本信息')
-    expect(settings).toHaveTextContent('协作成员')
+    expect(settings).toHaveTextContent('AI 团队')
     expect(settings).toHaveTextContent('执行环境')
     expect(settings).toHaveTextContent('自动处理')
-    expect(screen.queryByTestId('collaboration-project-settings-groups')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('collaboration-project-settings-participants'))
-    expect(await screen.findByTestId('collaboration-project-participants-page')).toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-participants-tab-agents')).toHaveAttribute(
-      'aria-selected',
-      'true'
+    expect(screen.getByTestId('collaboration-project-settings-groups')).toHaveTextContent(
+      '协作团队'
     )
 
-    fireEvent.click(screen.getByTestId('collaboration-project-settings-automatic-processing'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('collaboration-project-settings-agents'))
+    })
+    expect(await screen.findByTestId('collaboration-project-agents-page')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-project-settings-agents')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('collaboration-project-settings-automatic-processing'))
+    })
     expect(
       await screen.findByTestId('collaboration-project-automatic-processing-page')
     ).toBeInTheDocument()
-    expect(screen.queryByTestId('collaboration-project-participants-page')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-project-agents-page')).not.toBeInTheDocument()
   })
 
   it('edits common schedules without exposing Cron as the primary control', async () => {
@@ -251,18 +292,17 @@ describe('CollaborationApp project collaboration groups', () => {
         update: jest.fn(),
         remove: jest.fn(),
         runNow: jest.fn(),
-        runWorkflowNode: jest.fn(),
         listRuns: jest.fn().mockResolvedValue([]),
         cancelRun: jest.fn(),
         retryRun: jest.fn(),
       },
     })
 
-    render(<CollaborationApp api={api} host={automationHost()} locale="zh-CN" pollIntervalMs={0} />)
+    await renderProject(api)
 
-    fireEvent.click(
-      await screen.findByTestId('collaboration-project-settings-automatic-processing')
-    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('collaboration-project-settings-automatic-processing'))
+    })
     fireEvent.click(await screen.findByTestId('automatic-processing-create'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
 
@@ -281,7 +321,9 @@ describe('CollaborationApp project collaboration groups', () => {
     })
 
     expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('每周三 14:30')
-    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    })
 
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith(

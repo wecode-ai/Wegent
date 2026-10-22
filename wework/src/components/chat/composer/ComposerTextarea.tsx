@@ -28,6 +28,7 @@ import { compareComposerPluginsByUsage } from './composerPluginSort'
 import { ComposerPluginIcon } from './ComposerPluginIcon'
 import { debugComposerEvent } from './composerDebug'
 import { DesktopToolServices } from '../DesktopToolServices'
+import { useComposerDrawing } from './useComposerDrawing'
 import type { ComposerTextareaProps } from './composerTextareaTypes'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
@@ -52,6 +53,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
     const [mentionQuery, setMentionQuery] = useState('')
     const contributions = useDesktopComposerContributions(mentionQuery)
     const editorServices = useMemo(() => getDesktopComposerEditorServices(), [])
+    const { openDrawing, drawingDialog } = useComposerDrawing(props.onPasteFiles, props.disabled)
     const resolveAppLogo = useCallback(
       (app: LocalDeviceApp) =>
         resolvePluginLogo({
@@ -64,8 +66,10 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
     )
     return (
       <DesktopToolServices>
+        {drawingDialog}
         <ComposerAutocompleteInput
           {...props}
+          onDraw={props.onDraw ?? openDrawing}
           ref={ref}
           translate={translate}
           appsStore={catalog.appsStore}

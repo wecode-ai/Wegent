@@ -1,6 +1,7 @@
 const path = require('node:path')
 
 const { resolveBuildIdentity } = require('./scripts/build-identity.cjs')
+const macosAppIcon = require('./scripts/macos-app-icon.cjs')
 
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
@@ -26,7 +27,9 @@ module.exports = {
   protocols: [{ name: 'Wework', schemes: ['wework'] }],
   productName: identity.productName,
   executableName: identity.executableName,
-  compression: onlineUpdateBuild ? 'store' : 'normal',
+  compression: 'normal',
+  beforePack: macosAppIcon.prepare,
+  afterPack: require('./scripts/verify-windows-migration-lock.cjs'),
   extraMetadata: {
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
@@ -66,10 +69,12 @@ module.exports = {
     entitlements: path.resolve(__dirname, 'entitlements.mac.plist'),
     entitlementsInherit: path.resolve(__dirname, 'entitlements.mac.plist'),
     extendInfo: {
+      ...macosAppIcon.extendInfo,
       NSMicrophoneUsageDescription: `${identity.productName} uses the microphone to record audio when you use voice features.`,
     },
     ...(useCustomMacosNotarization ? { notarize: false } : {}),
-    icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
+    icon: macosAppIcon.icon,
+    extraFiles: [{ from: macosAppIcon.assetCatalog, to: 'Resources/Assets.car' }],
     signIgnore: process.env.APPLE_SIGNING_IDENTITY
       ? managedComponentResources.map(resource => '/Contents/Resources/' + resource.to + '/')
       : ['/Contents/Resources/wework-core-plugins/'],
@@ -80,6 +85,11 @@ module.exports = {
     writeUpdateInfo: false,
   },
   win: {
+    // Desktop data migration runs before managed components can be resolved.
+    extraResources:
+      onlineUpdateBuild && !onlineUpdateIncludesComponents
+        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
+        : [],
     artifactName: `${artifactPrefix}_\${version}_windows_\${arch}-setup.\${ext}`,
     electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),

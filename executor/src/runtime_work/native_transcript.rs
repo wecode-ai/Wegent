@@ -1273,7 +1273,6 @@ impl Drop for CleanupGuard {
 #[cfg(test)]
 mod tests {
     use std::io::{Seek, SeekFrom, Write};
-    use std::sync::{Mutex, OnceLock};
 
     use super::*;
 
@@ -1313,11 +1312,6 @@ mod tests {
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-
-    fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
     #[tokio::test]
@@ -1462,6 +1456,7 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         for args in [
             vec!["init"],
+            vec!["config", "core.autocrlf", "false"],
             vec!["config", "user.name", "Wegent Test"],
             vec!["config", "user.email", "test@wegent.local"],
         ] {
@@ -1545,7 +1540,7 @@ mod tests {
 
     #[test]
     fn snapshot_and_delta_restore_native_rollout_workspace_and_state() {
-        let _guard = environment_lock();
+        let _guard = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();
         let executor_home = root.path().join("executor");
         let codex_home = executor_home.join("codex");
@@ -1561,8 +1556,11 @@ mod tests {
         fs::write(
             &rollout_path,
             format!(
-                "{{\"ordinal\":0,\"timestamp\":\"2026-09-08T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"cwd\":\"{}\",\"history_mode\":\"paginated\"}}}}\n",
-                workspace.to_string_lossy()
+                "{}\n",
+                serde_json::json!({
+                    "ordinal": 0, "timestamp": "2026-09-08T00:00:00Z", "type": "session_meta",
+                    "payload": { "id": thread_id, "cwd": workspace, "history_mode": "paginated" }
+                })
             ),
         )
         .unwrap();
@@ -1738,7 +1736,12 @@ mod tests {
             .unwrap();
         assert_eq!(restored_history_mode, "paginated");
         assert!(restored_rollout.contains("\"history_mode\":\"paginated\""));
-        assert!(restored_rollout.contains(restored.workspace_path.to_string_lossy().as_ref()));
+        let restored_metadata: Value =
+            serde_json::from_str(restored_rollout.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            restored_metadata["payload"]["cwd"],
+            restored.workspace_path.to_string_lossy().as_ref()
+        );
         let continued = export_segment(ExportRequest {
             transcript_id: "transcript-1".to_owned(),
             task_id: "task-1".to_owned(),
@@ -1792,7 +1795,7 @@ mod tests {
 
     #[test]
     fn refuses_to_remove_a_workspace_outside_the_managed_restore_directory() {
-        let _guard = environment_lock();
+        let _guard = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();
         std::env::set_var("WEGENT_EXECUTOR_HOME", root.path().join("executor"));
 

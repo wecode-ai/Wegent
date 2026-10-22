@@ -393,10 +393,7 @@ pub mod test_support {
                 id: subtask.id,
                 role: subtask.role.clone(),
                 prompt: subtask.prompt.clone(),
-                result: subtask
-                    .result
-                    .clone()
-                    .map(crate::json_compat::OpaqueJson::from),
+                result: subtask.result.clone().map(brz_json::OpaqueJson::from),
                 message_id: 0,
                 sender_user_id: subtask.sender_user_id,
                 updated_at: Some(subtask.updated_at),
@@ -439,10 +436,7 @@ pub mod test_support {
                 id: subtask.id,
                 role: subtask.role.clone(),
                 prompt: subtask.prompt.clone(),
-                result: subtask
-                    .result
-                    .clone()
-                    .map(crate::json_compat::OpaqueJson::from),
+                result: subtask.result.clone().map(brz_json::OpaqueJson::from),
                 message_id: 0,
                 sender_user_id: subtask.sender_user_id,
                 updated_at: Some(subtask.updated_at),

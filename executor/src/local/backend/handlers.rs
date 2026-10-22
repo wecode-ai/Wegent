@@ -9,6 +9,19 @@ where
     T: LocalBackendTransport,
     R: TaskRunner,
 {
+    pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
+        let connection_status = Arc::clone(&self.connection_status);
+        let connection_epoch = Arc::clone(&self.connection_epoch);
+        Arc::new(move || {
+            {
+                let mut epoch = connection_epoch.lock().expect("connection epoch lock");
+                *epoch = epoch.wrapping_add(1);
+                connection_status.store(false, Ordering::Release);
+            }
+            write_executor_log_line("local backend connection closed; reconnect requested");
+        })
+    }
+
     pub(super) fn task_handler(&self) -> EventHandler {
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);
@@ -144,20 +157,7 @@ where
                                     .collect()
                             })
                             .unwrap_or_default();
-                        let env = payload
-                            .get("env")
-                            .and_then(Value::as_object)
-                            .map(|items| {
-                                items
-                                    .iter()
-                                    .filter_map(|(key, value)| {
-                                        value.as_str().map(|value| (key.clone(), value.to_owned()))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let result =
-                            execute_workspace_file_command(command_key, path, args, env).await;
+                        let result = execute_workspace_file_command(command_key, path, args).await;
                         return Some(serde_json::to_value(result).unwrap_or_else(
                             |error| json!({"success": false, "error": error.to_string()}),
                         ));
@@ -215,6 +215,12 @@ where
                         "Runtime work handler is not available",
                     ))
                 };
+                let logical_success = response
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let logical_error = response.get("error").cloned();
+                let response = encode_runtime_rpc_response(&method, response);
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
                     &[
@@ -225,19 +231,20 @@ where
                             response
                                 .get("success")
                                 .and_then(Value::as_bool)
-                                .unwrap_or(false)
+                                .unwrap_or(logical_success)
                                 .to_string(),
                         ),
                         (
                             "error",
                             response
                                 .get("error")
+                                .or(logical_error.as_ref())
                                 .map(|v| v.to_string())
                                 .unwrap_or_default(),
                         ),
                     ],
                 ));
-                Some(encode_runtime_rpc_response(&method, response))
+                Some(response)
             })
         })
     }

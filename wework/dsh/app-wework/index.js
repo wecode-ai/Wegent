@@ -1,5 +1,5 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { lstat, readlink, realpath, stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
@@ -313,12 +313,13 @@ function environmentPositiveInteger(environment, ...keys) {
   return undefined
 }
 
-function desktopWindowLabel(value) {
+export function desktopWindowLabel(value) {
   const label = Array.isArray(value) ? value[0] : value
   return typeof label === 'string' &&
     (label === 'main' ||
       label === 'popout-window' ||
       label === 'system-drag-panel' ||
+      label === 'process-explorer' ||
       /^workspace-[a-zA-Z0-9_-]+$/.test(label))
     ? label
     : 'main'
@@ -475,7 +476,29 @@ function escapeJsonForHtml(value) {
 async function isFile(path) {
   try {
     return (await stat(path)).isFile()
-  } catch {
+  } catch (error) {
+    if (process.env.VITE_WEWORK_E2E === 'true' && ['.js', '.css'].includes(extname(path))) {
+      console.error('[wework-app] Static asset stat failed', {
+        path,
+        errorCode: error?.code,
+        parent: await assetDirectoryDiagnostic(dirname(path)),
+      })
+    }
     return false
+  }
+}
+
+async function assetDirectoryDiagnostic(path) {
+  try {
+    const metadata = await lstat(path)
+    const target = metadata.isSymbolicLink() ? await readlink(path) : null
+    return {
+      directory: metadata.isDirectory(),
+      symbolicLink: metadata.isSymbolicLink(),
+      target,
+      resolved: await realpath(path).catch(error => ({ errorCode: error?.code })),
+    }
+  } catch (error) {
+    return { errorCode: error?.code }
   }
 }

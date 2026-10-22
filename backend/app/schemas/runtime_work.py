@@ -818,30 +818,6 @@ class RuntimeGlobalIMNotificationUpdateRequest(BaseModel):
     session_key: Optional[str] = Field(default=None, alias="sessionKey")
 
 
-class RuntimeIMNotificationPresenceUpdateRequest(BaseModel):
-    """Refresh one Wework client's foreground or away presence."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    client_id: str = Field(
-        ...,
-        alias="clientId",
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9._:-]+$",
-    )
-    away: bool
-
-
-class RuntimeIMNotificationPresenceResponse(BaseModel):
-    """Aggregated away state after refreshing one Wework client."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    away: bool
-    ttl_seconds: int = Field(..., alias="ttlSeconds")
-
-
 class RuntimeTaskIMNotificationSubscriptionRequest(BaseModel):
     """Subscribe a runtime task to one or more private IM sessions."""
 
@@ -1158,6 +1134,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     device_id: str = Field(..., alias="deviceId")
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: str = Field(..., alias="workspacePath")
+    workspace_pending: bool = Field(default=False, alias="workspacePending")
     runtime: RuntimeName
     runtime_handle: Optional[dict[str, Any]] = Field(
         default=None,

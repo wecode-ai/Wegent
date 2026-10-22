@@ -1,6 +1,14 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
 import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
+
+export const WORKSPACE_NAVIGATION_EVENT = 'wework:workspace-navigation'
+export interface WorkspaceNavigationDetail {
+  kind: WorkspaceTabKind
+  contentRoute: string
+}
 
 function joinBrowserPath(basePath: string | undefined, path: string): string {
   const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
@@ -16,6 +24,15 @@ export function toBrowserPath(path: string): string {
 }
 
 export function navigateTo(path: string) {
+  const [pathname, search] = path.split('?')
+  const kind = resolveDshRoute(pathname)?.workspaceTabKind
+  if (kind && !new URLSearchParams(search).has('workspaceTab')) {
+    const event = new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+      cancelable: true,
+      detail: { kind, contentRoute: path },
+    })
+    if (!window.dispatchEvent(event)) return
+  }
   const browserPath = toBrowserPath(path)
   const currentPath = `${window.location.pathname}${window.location.search}`
   if (currentPath === browserPath) return
@@ -45,6 +62,8 @@ export interface RuntimeTaskRoute {
   deviceId: string
   taskId: string
   workspacePath?: string | null
+  issueExecution?: { projectId: string; issueId: string }
+  projectSession?: { projectId: string; issueId: string }
 }
 
 export type RuntimeTaskRouteInput = RuntimeTaskRoute
@@ -70,13 +89,29 @@ export function parseRuntimeTaskRoute(path: string, search = ''): RuntimeTaskRou
   const taskIdParam = getRequiredSearchParam(searchParams, 'taskId', 'task_id')
   if (!deviceId || !taskIdParam) return null
 
-  return { deviceId, taskId: taskIdParam }
+  const issueProjectId = getRequiredSearchParam(searchParams, 'issueProjectId')
+  const issueId = getRequiredSearchParam(searchParams, 'issueId')
+  const issueExecution =
+    issueProjectId && issueId ? { projectId: issueProjectId, issueId } : undefined
+  return {
+    deviceId,
+    taskId: taskIdParam,
+    ...(issueExecution ? { issueExecution } : {}),
+    ...(issueExecution && searchParams.get('projectSession') === '1'
+      ? { projectSession: issueExecution }
+      : {}),
+  }
 }
 
 export function buildRuntimeTaskRoute(address: RuntimeTaskRouteInput): string {
   const searchParams = new URLSearchParams()
   searchParams.set('deviceId', address.deviceId)
   searchParams.set('taskId', String(address.taskId))
+  if (address.issueExecution) {
+    searchParams.set('issueProjectId', address.issueExecution.projectId)
+    searchParams.set('issueId', address.issueExecution.issueId)
+    if (address.projectSession) searchParams.set('projectSession', '1')
+  }
   return `/runtime-tasks?${searchParams.toString()}`
 }
 

@@ -43,15 +43,17 @@ pub(crate) fn pool_options() -> MysqlServiceOptions {
 /// Creates the shared MySQL service with an optional read-only pool.
 pub fn connect_read_write(master_url: &str, slave_url: Option<&str>) -> MysqlResult<MysqlService> {
     let options = pool_options();
+    let name = crate::config::optional_env_or_dotenv("MYSQL_RESOURCE_NAME")
+        .unwrap_or_else(|| "backend".to_owned());
     // Construction is lazy. Plain SQL bypasses routing; task templates use
     // the repository's explicit key. There is no feature-local policy setup.
     let service = match slave_url {
-        Some(slave_url) => {
-            MysqlService::connect_lazy_read_write_with_options(master_url, slave_url, options)?
-        }
-        None => MysqlService::connect_lazy_with_options(master_url, options)?,
+        Some(slave_url) => MysqlService::connect_lazy_read_write_named_with_options(
+            master_url, slave_url, &name, options,
+        )?,
+        None => MysqlService::connect_lazy_named_with_options(master_url, &name, options)?,
     };
-    Ok(service.with_route(crate::task_routing::NoSharding))
+    Ok(service)
 }
 
 #[cfg(test)]

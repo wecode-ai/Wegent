@@ -224,13 +224,13 @@ export class PluginDevelopmentManager {
           dsh: {
             bundle: { patch: './cordis.patch.yml' },
             client: {
-              inject: ['@deepseek-ai/dsh-client-runtime', '@wegent/dsh-app-wework'],
+              inject: ['@deepseek-ai/dsh-client-ui-renderer', '@wegent/dsh-app-wework'],
               platform: 'web',
             },
           },
           peerDependencies: {
-            '@deepseek-ai/cordis': '^4.0.1',
-            '@deepseek-ai/dsh-client-runtime': '0.1.1-rc.2',
+            '@deepseek-ai/cordis': '~4.0.4',
+            '@deepseek-ai/dsh-client-ui-renderer': '0.2.0-rc.2',
           },
           files: ['client.js', 'cordis.patch.yml', 'index.js'],
           scripts: { test: 'node --test' },

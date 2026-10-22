@@ -1066,7 +1066,14 @@ class DockerExecutor(Executor):
         executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")
         if executor_workspace:
             os.makedirs(executor_workspace, exist_ok=True)
-            cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
+            cmd.extend(
+                [
+                    "-v",
+                    f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}",
+                    "-e",
+                    f"WORKSPACE_ROOT={WORKSPACE_MOUNT_PATH}",
+                ]
+            )
 
     def _add_git_token_crypto(self, cmd: List[str]) -> None:
         """Pass through the keys that decrypt the git token in the task payload.

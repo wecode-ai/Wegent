@@ -6,10 +6,10 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.api.endpoints.adapter.tasks import get_personal_tasks_lite
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.adapters.task_kinds import task_kinds_service
 
 
 def _task_json(task_id: int, title: str, *, project_id: int | None = None) -> dict:
@@ -84,17 +84,17 @@ def test_wework_personal_lite_returns_projectless_conversations_without_label_fi
     test_db.add_all([standalone, project_task, stale_project_task])
     test_db.commit()
 
-    result = get_personal_tasks_lite(
-        page=1,
+    items, total = task_kinds_service.get_user_personal_tasks_lite(
+        skip=0,
         limit=20,
-        types="online,offline",
+        types=["online", "offline"],
         client_origin=CLIENT_ORIGIN_WEWORK,
-        current_user=test_user,
+        user_id=test_user.id,
         db=test_db,
     )
 
-    assert result["total"] == 2
-    assert [item["id"] for item in result["items"]] == [
+    assert total == 2
+    assert [item["id"] for item in items] == [
         stale_project_task.id,
         standalone.id,
     ]
@@ -128,16 +128,16 @@ def test_frontend_personal_lite_returns_history_without_active_project_tasks(
     test_db.add_all([standalone, active_project_task, cleared_project_history])
     test_db.commit()
 
-    result = get_personal_tasks_lite(
-        page=1,
+    items, total = task_kinds_service.get_user_personal_tasks_lite(
+        skip=0,
         limit=20,
-        types="online,offline",
+        types=["online", "offline"],
         client_origin=CLIENT_ORIGIN_FRONTEND,
-        current_user=test_user,
+        user_id=test_user.id,
         db=test_db,
     )
 
-    item_ids = {item["id"] for item in result["items"]}
-    assert result["total"] == 2
+    item_ids = {item["id"] for item in items}
+    assert total == 2
     assert item_ids == {standalone.id, cleared_project_history.id}
     assert active_project_task.id not in item_ids

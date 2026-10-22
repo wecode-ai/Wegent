@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
 from app.core.config import settings
+from app.services.site_application_types import list_application_types
 
 SITES_API_BASE_URL = "https://sites.example.test"
 
@@ -109,17 +110,8 @@ def test_list_sites_requires_authentication(
     assert response.status_code == 401
 
 
-def test_list_site_app_types_returns_ordered_capabilities(
-    test_client: TestClient,
-    test_token: str,
-) -> None:
-    response = test_client.get(
-        "/api/sites/app-types",
-        headers=_authorization(test_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
+def test_application_type_handlers_expose_ordered_capabilities() -> None:
+    assert list_application_types().model_dump() == {
         "items": [
             {
                 "app_type": "web",
@@ -132,6 +124,7 @@ def test_list_site_app_types_returns_ordered_capabilities(
                     "delete",
                     "configure_environment",
                     "manage_access",
+                    "view_analytics",
                 ],
                 "create": {
                     "plugin_name": "wegent-sites",
@@ -231,8 +224,7 @@ def test_list_sites_accepts_legacy_site_app_type_and_defaults_invalid_network(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={"items": [project], "next_cursor": None},
     )
@@ -348,8 +340,7 @@ def test_list_sites_fetches_until_offset_page_is_resolved(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={"items": [], "next_cursor": "page-1"},
     )
@@ -397,8 +388,7 @@ def test_list_sites_next_cursor_uses_next_offset(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/projects/search"
-            "?username=testuser&limit=100"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search?username=testuser&limit=100"
         ),
         json={
             "items": [

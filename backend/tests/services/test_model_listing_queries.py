@@ -48,6 +48,21 @@ def reference(db, source, target_type, target_id, *, status="approved", kind="Mo
     db.flush()
 
 
+def test_personal_models_use_the_current_transaction_and_exact_owner(
+    test_db, test_user
+):
+    own = make_model(test_db, test_user.id, "uncommitted-model")
+    make_model(test_db, test_user.id + 1, "other-user-model")
+    make_model(test_db, test_user.id, "inactive-model", active=False)
+    make_model(test_db, test_user.id, "group-model", namespace="group")
+
+    models = load_direct_models_by_namespace(
+        test_db, user_id=test_user.id, namespaces=["default"]
+    )
+
+    assert models == {"default": [own]}
+
+
 def test_batch_references_preserve_target_scope_and_approved_active_sources(
     test_db, test_user
 ):

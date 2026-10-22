@@ -19,6 +19,16 @@ describe('projectSpaceRoute', () => {
     expect(projectSpaceRouteParam(`${route}&itemId=issue-1`, 'itemId')).toBe('issue-1')
   })
 
+  test('builds a route focused on one project-space item', () => {
+    const route = projectSpaceContentRoute(
+      { projectStore: 'backend', projectId: 'project-1' },
+      'issue-1'
+    )
+
+    expect(route).toBe('/todo?projectStore=backend&projectId=project-1&itemId=issue-1')
+    expect(projectSpaceRouteParam(route, 'itemId')).toBe('issue-1')
+  })
+
   test('recognizes the unresolved default project-space route', () => {
     const route = defaultProjectSpaceContentRoute()
 

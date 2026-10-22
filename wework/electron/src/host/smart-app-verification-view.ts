@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -34,7 +35,8 @@ export async function verifySmartAppPage(
 ): Promise<SmartAppVerificationViewResult> {
   const target = sameOriginTarget(options.baseUrl, options.path)
   if (!target) return { issues: [runtimeIssue('SA-RUNTIME-PATH', 'Runtime path changes origin')] }
-  const createView = options.createView ?? createElectronVerificationView
+  const createView =
+    options.createView ?? (partition => createElectronVerificationView(partition, options.baseUrl))
   const view = await createView(`smart-app-verification-${randomUUID()}`)
   try {
     try {
@@ -87,10 +89,12 @@ async function waitForReadySelector(
 }
 
 async function createElectronVerificationView(
-  partition: string
+  partition: string,
+  baseUrl: string
 ): Promise<SmartAppVerificationViewHandle> {
   const { BrowserWindow, session } = await import('electron')
   const isolatedSession = session.fromPartition(partition, { cache: false })
+  await copyDshBrowserAuthentication(session.defaultSession, isolatedSession, baseUrl)
   const window = new BrowserWindow({
     show: false,
     webPreferences: {

@@ -28,6 +28,8 @@ pub struct SignedRequest {
 ///
 /// `host` is the `Host` header value, `method` the HTTP method, and `uri` the
 /// request path (no query string; object GETs and bucket HEADs carry none).
+/// The canonical signed headers are the fixed `host`/`x-amz-content-sha256`/
+/// `x-amz-date` set the unsigned-payload GET/HEAD requests carry.
 pub fn sign(
     access_key: &str,
     secret_key: &str,
@@ -37,16 +39,60 @@ pub fn sign(
     uri: &str,
     amz_date: &str,
 ) -> SignedRequest {
+    sign_headers(
+        access_key,
+        secret_key,
+        region,
+        method,
+        uri,
+        amz_date,
+        EMPTY_BODY_SHA256,
+        &[
+            ("host", host),
+            ("x-amz-content-sha256", EMPTY_BODY_SHA256),
+            ("x-amz-date", amz_date),
+        ],
+    )
+}
+
+/// Sign a request whose canonical headers are exactly `headers`.
+///
+/// Mirrors minio-py `_get_canonical_headers`: every request header except
+/// `authorization` and `user-agent`, lowercased, whitespace-collapsed, and
+/// sorted by name. `payload_sha256` is the hex `x-amz-content-sha256` digest
+/// of the request body (`sha256_hash(body)` for cleartext HTTP, `UNSIGNED-PAYLOAD`
+/// over TLS).
+#[allow(clippy::too_many_arguments)]
+pub fn sign_headers(
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    method: &str,
+    uri: &str,
+    amz_date: &str,
+    payload_sha256: &str,
+    headers: &[(&str, &str)],
+) -> SignedRequest {
     // YYYYMMDD from YYYYMMDD'T'HHMMSS'Z'.
     let date_stamp = &amz_date[..8];
-    let content_sha256 = EMPTY_BODY_SHA256;
 
-    // Canonical request: host, x-amz-content-sha256, x-amz-date.
-    let canonical_headers =
-        format!("host:{host}\nx-amz-content-sha256:{content_sha256}\nx-amz-date:{amz_date}\n");
-    let signed_headers = "host;x-amz-content-sha256;x-amz-date";
+    let mut ordered: Vec<(String, String)> = headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), collapse_spaces(value)))
+        .collect();
+    ordered.sort_by(|left, right| left.0.cmp(&right.0));
+    let signed_headers = ordered
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(";");
+    let canonical_headers = ordered
+        .iter()
+        .map(|(name, value)| format!("{name}:{value}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let canonical_request =
-        format!("{method}\n{uri}\n\n{canonical_headers}\n{signed_headers}\n{content_sha256}");
+        format!("{method}\n{uri}\n\n{canonical_headers}\n\n{signed_headers}\n{payload_sha256}");
 
     // String to sign.
     let credential_scope = format!("{date_stamp}/{region}/s3/aws4_request");
@@ -72,8 +118,27 @@ pub fn sign(
     SignedRequest {
         authorization,
         amz_date: amz_date.to_string(),
-        content_sha256: content_sha256.to_string(),
+        content_sha256: payload_sha256.to_string(),
     }
+}
+
+/// minio-py `_MULTI_SPACE_REGEX.sub(" ", value).strip()`: collapse runs of
+/// spaces and trim the ends.
+fn collapse_spaces(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut pending_space = false;
+    for character in value.trim_matches(' ').chars() {
+        if character == ' ' {
+            pending_space = true;
+        } else {
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            out.push(character);
+        }
+    }
+    out
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
@@ -96,6 +161,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 /// The current UTC `YYYYMMDD'T'HHMMSS'Z` timestamp (`x-amz-date`).
+///
+/// The value is deliberately read from the live clock, matching the source's
+/// minio-py SigV4 signing (`date = time.utcnow()`), so it differs on every
+/// request and is nondeterministic across recordings. Replay tolerates the
+/// drift through the `attachment-s3-signing-time-head` and
+/// `attachment-s3-signing-time-get` dependency rules.
 pub fn amz_timestamp_now() -> String {
     chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }
@@ -148,6 +219,59 @@ mod tests {
         assert_eq!(
             hex_sha256(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    /// A `put_object` request signs every header minio-py passes explicitly
+    /// (`_get_canonical_headers` excludes only `authorization` and
+    /// `user-agent`, then sorts by lowercased name).
+    #[test]
+    fn payload_requests_sign_the_minio_py_header_set() {
+        let signed = sign_headers(
+            "access",
+            "secret",
+            "us-east-1",
+            "PUT",
+            "/wegent/attachments/a_b_c",
+            "20261007T070352Z",
+            "b8ab4e4395c686a369c7d94c07f72155e442ec227007cabfa86067b771339658",
+            &[
+                ("host", "storage.example.invalid:9100"),
+                ("content-length", "3734"),
+                ("content-type", "text/markdown"),
+                ("x-amz-content-sha256", "b8ab4e43"),
+                ("x-amz-date", "20261007T070352Z"),
+                ("x-amz-meta-filename", "%E5%B9%B3"),
+                ("x-amz-meta-user_id", "157"),
+            ],
+        );
+        assert!(signed.authorization.contains(
+            "SignedHeaders=content-length;content-type;host;x-amz-content-sha256;\
+             x-amz-date;x-amz-meta-filename;x-amz-meta-user_id"
+        ));
+        assert_eq!(signed.amz_date, "20261007T070352Z");
+        assert_eq!(
+            signed.content_sha256,
+            "b8ab4e4395c686a369c7d94c07f72155e442ec227007cabfa86067b771339658"
+        );
+    }
+
+    /// The GET/HEAD helper keeps its fixed three-header canonical set.
+    #[test]
+    fn the_unsigned_body_helper_matches_the_simplified_form() {
+        let signed = sign(
+            "ak",
+            "sk",
+            "us-east-1",
+            "host:9000",
+            "HEAD",
+            "/wegent",
+            "20261007T070352Z",
+        );
+        assert!(
+            signed
+                .authorization
+                .contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date")
         );
     }
 }

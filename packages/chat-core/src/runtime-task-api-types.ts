@@ -67,6 +67,8 @@ export interface RuntimeProjectRef {
   kind?: 'local' | 'remote' | string
   source?: 'legacy_root' | 'local_project' | 'remote_project' | string
   stateDeviceId?: string | null
+  ownerDeviceId?: string | null
+  ownerProjectKey?: string | null
   roots?: RuntimeProjectRoot[]
   sidebarOrder?: number | null
   pinned?: boolean
@@ -155,6 +157,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  queueIfBusy?: boolean
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
@@ -212,7 +215,7 @@ export interface RuntimeGuidanceResponse {
 
 export type RuntimeGoalExecutionStatus = 'running' | 'recovering' | 'needsAttention'
 
-export type RuntimeTaskInteractionStatus = 'waitingForUserInput'
+export type RuntimeTaskInteractionStatus = 'waitingForUserInput' | 'awaitingUserReply'
 
 export interface RuntimeGoalCreateInput {
   objective: string
@@ -221,7 +224,7 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
-  type: 'board_comment' | 'board_task' | 'project_automation'
+  type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string
   rootCommentId?: string
@@ -238,6 +241,7 @@ export interface RuntimeTaskCancelResponse {
 /** Canonical creation fields shared by browser comments and the desktop workbench. */
 export interface RuntimeTaskCreateIntent {
   schemaVersion?: 1 | 2 | 3
+  wegentTeamId?: number
   runtime: RuntimeName
   message: string
   taskId?: string

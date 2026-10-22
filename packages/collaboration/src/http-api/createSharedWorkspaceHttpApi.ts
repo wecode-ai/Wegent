@@ -12,6 +12,9 @@ import {
   mapWorkspaceGitBranchDto,
   mapWorkspaceGitRepositoryDto,
 } from "../dto-mappers";
+import { filterClaudeCodeDevices } from "@wegent/chat-core/device-capabilities";
+import type { DeviceInfo } from "@wegent/chat-core/execution-project";
+import { getClientRequestCache } from "@wegent/chat-core/request-cache";
 import type {
   SharedCollaborationResourcesApi,
   SharedCollaborationWorkspacesApi,
@@ -26,10 +29,11 @@ import type {
   CollaborationGroup,
   CollaborationComment,
   CollaborationIssue,
-  CollaborationMember,
+  CollaborationWorkspaceMember,
 } from "../types";
 
 export interface SharedWorkspaceHttpTransport {
+  getCacheScope?(): unknown;
   get<T>(endpoint: string): Promise<T>;
   post<T>(endpoint: string, data?: unknown): Promise<T>;
   patch<T>(endpoint: string, data?: unknown): Promise<T>;
@@ -105,20 +109,24 @@ function keysToCamelCase(value: unknown): unknown {
       const viewKey = camelCaseKey(key);
       return [
         viewKey,
-        viewKey === "modelOptions" ? nested : keysToCamelCase(nested),
+        ["modelOptions", "modelPolicy", "executionPolicy"].includes(viewKey)
+          ? nested
+          : keysToCamelCase(nested),
       ];
     }),
   );
 }
 
-function mapWorkspaceMemberDto(input: unknown): CollaborationMember {
+function mapWorkspaceMemberDto(input: unknown): CollaborationWorkspaceMember {
   const row = record(input);
   return {
     id: Number(row.id),
     user_id: Number(row.user_id ?? row.userId),
     user_name: String(row.user_name ?? row.userName ?? ""),
     email: row.email == null ? null : String(row.email),
-    role: (row.role ?? "Developer") as CollaborationMember["role"],
+    role: (row.role === "Reporter"
+      ? "Viewer"
+      : (row.role ?? "Developer")) as CollaborationWorkspaceMember["role"],
     ...((row.capability_description ?? row.capabilityDescription) == null
       ? {}
       : {
@@ -212,8 +220,34 @@ function mapProjectAgentDto(input: unknown): WorkspaceProjectAgent {
 export function createSharedWorkspaceHttpApi(
   transport: SharedWorkspaceHttpTransport,
 ): SharedWorkspaceHttpApi {
+  const cache = getClientRequestCache(transport);
+  const get = <T>(endpoint: string, maxAgeMs?: number) => {
+    // A save-time revalidation must not join an older in-flight catalog read.
+    if (maxAgeMs === 0) cache.invalidate(endpoint);
+    return cache.get(endpoint, () => transport.get<T>(endpoint), maxAgeMs);
+  };
+  const invalidateAgents = (projectId?: string) => {
+    if (projectId)
+      cache.invalidate(`/v1/cloud-projects/${encoded(projectId)}/chat-agents`);
+    cache.invalidate("/v1/workspaces/");
+    cache.invalidate("/v1/resources");
+  };
   return {
     workspaces: {
+      async transferOwnership(workspaceId, input) {
+        return mapCollaborationWorkspaceDto(
+          await transport.post(
+            `/v1/workspaces/${encoded(workspaceId)}/transfer-ownership`,
+            workspaceHttpRequestBody(input),
+          ),
+        );
+      },
+      registerRunner(workspaceId, name) {
+        return transport.post(
+          `/v1/workspaces/${encoded(workspaceId)}/runners`,
+          { name },
+        );
+      },
       async list() {
         const response = await transport.get<{ items: unknown[] }>(
           "/v1/workspaces",
@@ -285,26 +319,30 @@ export function createSharedWorkspaceHttpApi(
           `/v1/workspaces/${encoded(workspaceId)}/members/${encoded(userId)}`,
         );
       },
-      async listAgents(workspaceId) {
-        const response = await transport.get<{ items: unknown[] }>(
+      async listAgents(workspaceId, options) {
+        const response = await get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/agents`,
+          options?.forceRefresh ? 0 : undefined,
         );
         return response.items.map((item) =>
           mapCollaborationOwnedAgentDto(record(item)),
         );
       },
       async addAgent(workspaceId, input) {
-        return mapCollaborationOwnedAgentDto(
+        const result = mapCollaborationOwnedAgentDto(
           await transport.post(
             `/v1/workspaces/${encoded(workspaceId)}/agents`,
             workspaceHttpRequestBody({ teamId: input.teamId }),
           ),
         );
+        invalidateAgents();
+        return result;
       },
       async removeAgent(workspaceId, teamId) {
         await transport.delete(
           `/v1/workspaces/${encoded(workspaceId)}/agents/${encoded(teamId)}`,
         );
+        invalidateAgents();
       },
       async listCollaborationGroups(workspaceId) {
         const response = await transport.get<{ items: unknown[] }>(
@@ -364,10 +402,36 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     resources: {
+      devices: {
+        async cloud() {
+          const response = await transport.get<{ items: DeviceInfo[] }>(
+            "/devices",
+          );
+          return filterClaudeCodeDevices(response.items).map((device) => ({
+            id: String(device.id),
+            device_id: device.id,
+            device_key: device.device_id,
+            ...(device.app_device_id
+              ? { app_device_id: device.app_device_id }
+              : {}),
+            name: device.name,
+            kind:
+              device.device_type === "cloud" || device.device_type === "remote"
+                ? ("cloud_host" as const)
+                : ("local_device" as const),
+            coding_tools: ["claude_code", "codex"],
+            // /devices lists the signed-in user's devices; the host supplies their identity.
+            owner_type: "user" as const,
+            owner_id: "",
+            owner_name: "",
+            status:
+              device.status === "busy" ? ("online" as const) : device.status,
+            updated_at: "",
+          }));
+        },
+      },
       async list() {
-        return mapCollaborationPlatformResourcesDto(
-          await transport.get("/v1/resources"),
-        );
+        return mapCollaborationPlatformResourcesDto(await get("/v1/resources"));
       },
       async removeAgent(agent) {
         if (agent.team_id == null) {
@@ -380,6 +444,7 @@ export function createSharedWorkspaceHttpApi(
         await transport.delete(
           `/teams/${encoded(agent.team_id)}?${query.toString()}`,
         );
+        invalidateAgents();
       },
     },
     gitRepositories: {
@@ -483,27 +548,32 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     agents: {
-      async list(projectId) {
-        const response = await transport.get<unknown[]>(
-          `/v1/cloud-projects/${encoded(projectId)}/chat-agents`,
+      async list(projectId, options) {
+        const response = await get<unknown[]>(
+          `/v1/cloud-projects/${encoded(projectId)}/chat-agents${options?.includeArchived ? "?include_archived=true" : ""}`,
+          options?.forceRefresh ? 0 : undefined,
         );
         return response.map(mapProjectAgentDto);
       },
       async create(projectId, input) {
-        return mapProjectAgentDto(
+        const agent = mapProjectAgentDto(
           await transport.post(
             `/v1/cloud-projects/${encoded(projectId)}/chat-agents`,
             workspaceHttpRequestBody(input),
           ),
         );
+        invalidateAgents(projectId);
+        return agent;
       },
       async update(projectId, agentId, input) {
-        return mapProjectAgentDto(
+        const agent = mapProjectAgentDto(
           await transport.patch(
             `/v1/cloud-projects/${encoded(projectId)}/chat-agents/${encoded(agentId)}`,
             workspaceHttpRequestBody(input),
           ),
         );
+        invalidateAgents(projectId);
+        return agent;
       },
     },
   };

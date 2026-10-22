@@ -251,6 +251,9 @@ export interface ProjectTaskAssignedPayload {
   itemId: string;
   itemTitle: string;
   assignerName: string;
+  projectStore?: "local" | "backend";
+  assignmentId?: string;
+  recipientUserId?: string;
 }
 export interface ChatStreamHandlers {
   scope?: ChatStreamScope;

@@ -10,12 +10,9 @@
 //! SQL sent to MySQL matches the source statement); only the fields the
 //! download path reads are exposed through accessors.
 
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
-
-use super::auth::UserRow;
-use crate::task_routing::{ByTaskId, ByUserId, TaskPolicy};
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -35,11 +32,27 @@ pub struct AttachmentMetadata {
     pub cover_url: Option<OpaqueJson>,
     pub comment_count: Option<OpaqueJson>,
     pub fetched_comment_count: Option<OpaqueJson>,
+    /// Media ids persisted by the external storage adapter.
+    pub weibo_video_upload: Option<MediaUploadReference>,
+    pub weibo_audio_upload: Option<MediaUploadReference>,
+    /// Legacy file-platform id of a knowledge-base video
+    /// (`weibo_media_service.get_download_url`).
+    pub fid: Option<OpaqueJson>,
+    /// `type_data.public_asset_type`: the admin-uploaded public team icon
+    /// marker (`admin/public_teams.py` `TEAM_ICON_ASSET_TYPE`).
+    pub public_asset_type: Option<String>,
 }
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct VideoMetadata {
     pub video_url: Option<String>,
+    pub media_id: Option<OpaqueJson>,
+    pub cover_url: Option<OpaqueJson>,
+}
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct MediaUploadReference {
+    pub media_id: Option<OpaqueJson>,
 }
 
 /// One `subtask_contexts` row (`SubtaskContext`). Each field decodes from
@@ -135,10 +148,123 @@ impl SubtaskContextRow {
             .as_deref()
             .filter(|url| !url.is_empty())
     }
+
+    /// `_attachment_cover_url(context)`: the persisted cover URL from the
+    /// decoded `type_data`, `None` for every other attachment.
+    pub fn attachment_cover_url(&self) -> Option<String> {
+        self.metadata()?.attachment_cover_url()
+    }
+}
+
+impl AttachmentMetadata {
+    /// The stored media reference: the persisted external upload reference as
+    /// `(media_type, str(media_id))`, `None` when the attachment carries none.
+    pub fn stored_media_reference(&self) -> Option<(&'static str, String)> {
+        for (media_type, upload) in [
+            ("video", &self.weibo_video_upload),
+            ("audio", &self.weibo_audio_upload),
+        ] {
+            let media_id = upload
+                .as_ref()
+                .and_then(|upload| upload.media_id.as_ref())
+                .and_then(truthy_str);
+            if let Some(media_id) = media_id {
+                return Some((media_type, media_id));
+            }
+        }
+        let media_id = self
+            .video_metadata
+            .as_ref()
+            .and_then(|video| video.media_id.as_ref())
+            .and_then(truthy_str)?;
+        Some(("video", media_id))
+    }
+
+    /// The legacy playback resolver's file-platform `fid` of a legacy video,
+    /// `None` for every other attachment.
+    pub fn legacy_weibo_fid(&self) -> Option<String> {
+        if self.storage_backend.as_deref() != Some("weibo") {
+            return None;
+        }
+        self.fid.as_ref().and_then(truthy_str)
+    }
+
+    /// `_attachment_cover_url`: the persisted cover URL, preferring the
+    /// `video_metadata.cover_url` nested value over the top-level
+    /// `type_data.cover_url`.
+    pub fn attachment_cover_url(&self) -> Option<String> {
+        if let Some(cover) = self
+            .video_metadata
+            .as_ref()
+            .and_then(|video| video.cover_url.as_ref())
+            .and_then(truthy_str)
+        {
+            return Some(cover);
+        }
+        self.cover_url.as_ref().and_then(truthy_str)
+    }
+}
+
+/// `bool(value)` and `str(value)`: the Python truthiness and string form the
+/// resolver applies to the `type_data` scalars it reads.
+fn truthy_str(value: &OpaqueJson) -> Option<String> {
+    let value = value.to_value();
+    let truthy = match &value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Number(number) => number.as_f64() != Some(0.0),
+        serde_json::Value::String(value) => !value.is_empty(),
+        serde_json::Value::Array(values) => !values.is_empty(),
+        serde_json::Value::Object(object) => !object.is_empty(),
+    };
+    truthy.then(|| python_str(&value))
+}
+
+/// `str(value)` for the JSON scalars the resolver reads.
+fn python_str(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::Null => "None".to_string(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// The Python `str()` form of one stored media-reference scalar, shared by
+/// the legacy playback resolver and the history reference resolver.
+pub fn python_media_scalar(value: &serde_json::Value) -> String {
+    python_str(value)
+}
+
+impl AttachmentMetadata {
+    /// Decode the metadata projection from a raw `type_data` JSON value
+    /// (`JsonProjection`'s tolerant decode: wrong-shape JSON is `None`).
+    pub fn from_json_value(value: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value(value.clone()).ok()
+    }
 }
 
 /// `context_service.get_context_optional`: the full source column list for
 /// `SELECT ... FROM subtask_contexts WHERE id = ? LIMIT 1`.
+pub const CONTEXT_BY_ID_QUERY: &str = "SELECT subtask_contexts.id AS subtask_contexts_id, \
+     subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
+     subtask_contexts.user_id AS subtask_contexts_user_id, \
+     subtask_contexts.context_type AS subtask_contexts_context_type, \
+     subtask_contexts.name AS subtask_contexts_name, \
+     subtask_contexts.status AS subtask_contexts_status, \
+     subtask_contexts.error_message AS subtask_contexts_error_message, \
+     subtask_contexts.binary_data AS subtask_contexts_binary_data, \
+     subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
+     subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
+     subtask_contexts.text_length AS subtask_contexts_text_length, \
+     subtask_contexts.type_data AS subtask_contexts_type_data, \
+     subtask_contexts.created_at AS subtask_contexts_created_at, \
+     subtask_contexts.updated_at AS subtask_contexts_updated_at \
+     FROM subtask_contexts \
+     WHERE subtask_contexts.id = ? \
+     LIMIT 1";
+
 pub async fn get_context_optional<M>(
     mysql: &M,
     context_id: i64,
@@ -147,26 +273,7 @@ where
     M: Mysql,
 {
     mysql
-        .fetch_optional(
-            "SELECT subtask_contexts.id AS subtask_contexts_id, \
-             subtask_contexts.subtask_id AS subtask_contexts_subtask_id, \
-             subtask_contexts.user_id AS subtask_contexts_user_id, \
-             subtask_contexts.context_type AS subtask_contexts_context_type, \
-             subtask_contexts.name AS subtask_contexts_name, \
-             subtask_contexts.status AS subtask_contexts_status, \
-             subtask_contexts.error_message AS subtask_contexts_error_message, \
-             subtask_contexts.binary_data AS subtask_contexts_binary_data, \
-             subtask_contexts.image_base64 AS subtask_contexts_image_base64, \
-             subtask_contexts.extracted_text AS subtask_contexts_extracted_text, \
-             subtask_contexts.text_length AS subtask_contexts_text_length, \
-             subtask_contexts.type_data AS subtask_contexts_type_data, \
-             subtask_contexts.created_at AS subtask_contexts_created_at, \
-             subtask_contexts.updated_at AS subtask_contexts_updated_at \
-             FROM subtask_contexts \
-             WHERE subtask_contexts.id = ? \
-             LIMIT 1",
-            (context_id,),
-        )
+        .fetch_optional(CONTEXT_BY_ID_QUERY, (context_id,))
         .await
 }
 
@@ -210,6 +317,10 @@ where
 /// (`SubtaskStore.get_by_id`/`list_by_user` projections).
 #[derive(Debug, FromMysqlRow)]
 pub struct SubtaskRow {
+    #[allow(
+        dead_code,
+        reason = "selected to match the source projection; the store compares ids before decoding"
+    )]
     pub id: i64,
     #[allow(dead_code)]
     pub user_id: i32,
@@ -219,70 +330,23 @@ pub struct SubtaskRow {
 /// `subtask_store.get_by_id`: the configured repository resolves the table
 /// from the subtask id. The public policy performs one base-table read; the
 /// private migration policy retains the fallback probe for moved rows.
-pub async fn get_subtask_by_id<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn get_subtask_by_id(
+    task_store: &dyn crate::task_store::TaskStore,
     subtask_id: i64,
-) -> MysqlResult<Option<SubtaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, task_id FROM {{subtasks}} WHERE id = ? LIMIT 1";
-    let row: Option<SubtaskRow> = mysql
-        .route(ByTaskId(subtask_id as u64))
-        .fetch_optional(sql, (subtask_id,))
-        .await?;
-    if row.is_some() {
-        return Ok(row);
-    }
-    if !task_policy.resolve_migrated_legacy {
-        return Ok(None);
-    }
-    // Legacy/migrated fallback: the base `subtasks` index row. A legacy id
-    // already routes to the base table via `ByTaskId`, so this fallback is
-    // only reached when the first query resolved to a shard table and missed.
-    let fallback: Option<SubtaskRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_id, task_id FROM subtasks WHERE id = ? LIMIT 1",
-            (subtask_id,),
-        )
-        .await?;
-    Ok(fallback)
+) -> MysqlResult<Option<SubtaskRow>> {
+    let row = task_store.get_subtask_ref(subtask_id).await?;
+    row.map(SubtaskRow::from_mysql_row).transpose()
 }
 
 /// `subtask_store.list_by_user` (limit 1): the public policy reads the base
 /// table; the private migration policy additionally checks the owner's shard
 /// and merges by descending id.
-pub async fn get_latest_subtask_by_user<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn get_latest_subtask_by_user(
+    task_store: &dyn crate::task_store::TaskStore,
     user_id: i32,
-) -> MysqlResult<Option<SubtaskRow>>
-where
-    M: Mysql,
-{
-    let base: Option<SubtaskRow> = mysql
-        .fetch_optional(
-            "SELECT id, user_id, task_id FROM subtasks WHERE user_id = ? \
-             ORDER BY id DESC LIMIT 1",
-            (user_id,),
-        )
-        .await?;
-    if !task_policy.resolve_migrated_legacy {
-        return Ok(base);
-    }
-    let shard: Option<SubtaskRow> = mysql
-        .route(ByUserId(user_id as u64))
-        .fetch_optional(
-            "SELECT id, user_id, task_id FROM {{subtasks}} WHERE user_id = ? \
-             ORDER BY id DESC LIMIT 1",
-            (user_id,),
-        )
-        .await?;
-    Ok(match (base, shard) {
-        (Some(base), Some(shard)) => Some(if base.id >= shard.id { base } else { shard }),
-        (base, shard) => base.or(shard),
-    })
+) -> MysqlResult<Option<SubtaskRow>> {
+    let row = task_store.get_latest_subtask_ref_for_user(user_id).await?;
+    row.map(SubtaskRow::from_mysql_row).transpose()
 }
 
 /// A `tasks`/`tasks_{:04}` row restricted to the ownership columns
@@ -298,34 +362,12 @@ pub struct TaskRow {
 /// `task_store.get_by_id`: the configured routed table. The public policy
 /// performs one base-table read; the private migration policy keeps the
 /// fallback probe for a shard miss.
-pub async fn get_task_by_id<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn get_task_by_id(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
-) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    let sql = "SELECT id, user_id, kind FROM {{tasks}} WHERE id = ? LIMIT 1";
-    let row: Option<TaskRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(sql, (task_id,))
-        .await?;
-    if row.is_some() {
-        return Ok(row);
-    }
-    if !task_policy.resolve_migrated_legacy {
-        return Ok(None);
-    }
-    // Legacy/migrated fallback: the base `tasks` index row. A legacy id
-    // already routes to the base table via `ByTaskId`, so this fallback is
-    // only reached when the first query resolved to a shard table and missed.
-    mysql
-        .fetch_optional(
-            "SELECT id, user_id, kind FROM tasks WHERE id = ? LIMIT 1",
-            (task_id,),
-        )
-        .await
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_task_ref(task_id).await?;
+    row.map(TaskRow::from_mysql_row).transpose()
 }
 
 /// `resource_members` approved-membership probe (`_check_task_access`).
@@ -357,21 +399,53 @@ where
 
 /// `_check_knowledge_base_access`: `None` when the attachment is not a
 /// knowledge-base document; otherwise the KB ACL verdict.
-pub async fn check_knowledge_base_access<M>(
+///
+/// The source's `db.query(KnowledgeDocument).filter(attachment_id ==
+/// id).first()` renders the full labeled projection as one statement, then
+/// the ORM's `lazy="selectin"` external-source relationship fires for the
+/// loaded document. `KnowledgeService.get_knowledge_base` is the shared KB
+/// ACL port (`knowledge_documents_content::access`), which reproduces the
+/// creator/direct-member/organization/group/entity resolution sequence.
+pub async fn check_knowledge_base_access<M, R>(
     mysql: &M,
+    redis: Option<&R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     attachment_id: i64,
     user_id: i32,
 ) -> MysqlResult<Option<bool>>
 where
     M: Mysql,
+    R: brz_redis::Redis,
 {
     #[derive(Debug, FromMysqlRow)]
     struct KnowledgeDocumentRow {
+        #[mysql(rename = "knowledge_documents_id")]
+        id: i64,
+        #[mysql(rename = "knowledge_documents_kind_id")]
         kind_id: i32,
     }
     let document: Option<KnowledgeDocumentRow> = mysql
         .fetch_optional(
-            "SELECT knowledge_documents.kind_id AS knowledge_documents_kind_id \
+            "SELECT knowledge_documents.id AS knowledge_documents_id, \
+             knowledge_documents.kind_id AS knowledge_documents_kind_id, \
+             knowledge_documents.attachment_id AS knowledge_documents_attachment_id, \
+             knowledge_documents.name AS knowledge_documents_name, \
+             knowledge_documents.file_extension AS knowledge_documents_file_extension, \
+             knowledge_documents.file_size AS knowledge_documents_file_size, \
+             knowledge_documents.status AS knowledge_documents_status, \
+             knowledge_documents.user_id AS knowledge_documents_user_id, \
+             knowledge_documents.is_active AS knowledge_documents_is_active, \
+             knowledge_documents.index_status AS knowledge_documents_index_status, \
+             knowledge_documents.index_generation AS knowledge_documents_index_generation, \
+             knowledge_documents.splitter_config AS knowledge_documents_splitter_config, \
+             knowledge_documents.source_type AS knowledge_documents_source_type, \
+             knowledge_documents.source_config AS knowledge_documents_source_config, \
+             knowledge_documents.origin AS knowledge_documents_origin, \
+             knowledge_documents.folder_id AS knowledge_documents_folder_id, \
+             knowledge_documents.summary AS knowledge_documents_summary, \
+             knowledge_documents.chunks AS knowledge_documents_chunks, \
+             knowledge_documents.created_at AS knowledge_documents_created_at, \
+             knowledge_documents.updated_at AS knowledge_documents_updated_at \
              FROM knowledge_documents \
              WHERE knowledge_documents.attachment_id = ? \
              LIMIT 1",
@@ -381,219 +455,63 @@ where
     let Some(document) = document else {
         return Ok(None);
     };
-    Ok(Some(
-        knowledge_base_allows_access(mysql, document.kind_id, user_id).await?,
-    ))
-}
-
-/// `KnowledgeService.get_knowledge_base` restricted to the ACL verdict:
-/// creator, approved direct member (RestrictedAnalyst denied), organization
-/// namespace, or group membership.
-async fn knowledge_base_allows_access<M>(
-    mysql: &M,
-    knowledge_base_id: i32,
-    user_id: i32,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct KindRow {
-        #[allow(dead_code)]
-        id: i32,
-        user_id: i32,
-        namespace: String,
-        #[allow(dead_code)]
-        json: Option<Json<OpaqueJson>>,
-    }
-    let knowledge_base: Option<KindRow> = mysql
-        .fetch_optional(
-            "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
-             kinds.namespace AS kinds_namespace, kinds.json AS kinds_json \
-             FROM kinds \
-             WHERE kinds.id = ? AND kinds.kind = 'KnowledgeBase' \
-             AND kinds.is_active = 1 LIMIT 1",
-            (knowledge_base_id,),
-        )
-        .await?;
-    let Some(knowledge_base) = knowledge_base else {
-        return Ok(false);
+    // `external_source` (`lazy="selectin"`): loads with the document row.
+    crate::knowledge_documents_content::reader::external_sources_by_document_ids(
+        mysql,
+        &[document.id],
+    )
+    .await?;
+    let Some(knowledge_base) = crate::knowledge_documents_content::access::knowledge_base_record(
+        mysql,
+        i64::from(document.kind_id),
+    )
+    .await?
+    else {
+        return Ok(Some(false));
     };
-    // Creator always has access (`_append_creator_source`).
-    if knowledge_base.user_id == user_id {
-        return Ok(true);
-    }
-    // Approved direct membership (`_append_direct_member_source`);
-    // RestrictedAnalyst is an explicit denial.
-    #[derive(Debug, FromMysqlRow)]
-    struct MemberRow {
-        role: Option<String>,
-    }
-    let member: Option<MemberRow> = mysql
-        .fetch_optional(
-            "SELECT resource_members.role AS resource_members_role \
-             FROM resource_members \
-             WHERE resource_members.resource_type IN ('KnowledgeBase') \
-             AND resource_members.resource_id = ? \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.entity_id = ? \
-             AND resource_members.status IN ('approved', 'APPROVED') \
-             LIMIT 1",
-            (knowledge_base_id, user_id.to_string()),
-        )
-        .await?;
-    if let Some(member) = member {
-        if member.role.as_deref() == Some("RestrictedAnalyst") {
-            return Ok(false);
-        }
-        return Ok(true);
-    }
-    // Organization namespace: every user has Reporter access.
-    let organization = is_organization_namespace(mysql, &knowledge_base.namespace).await?;
-    if organization {
-        return Ok(true);
-    }
-    // Group namespace: an effective role grants access.
-    if knowledge_base.namespace != "default" {
-        return group_role_grants_access(mysql, &knowledge_base.namespace, user_id).await;
-    }
-    Ok(false)
-}
-
-/// `is_organization_namespace`: the namespace row's `level` is `organization`.
-async fn is_organization_namespace<M>(mysql: &M, namespace_name: &str) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct NamespaceRow {
-        #[allow(dead_code)]
-        id: i32,
-        level: Option<String>,
-    }
-    let namespace: Option<NamespaceRow> = mysql
-        .fetch_optional(
-            "SELECT namespace.id AS namespace_id, namespace.level AS namespace_level \
-             FROM namespace \
-             WHERE namespace.name = ? AND namespace.is_active = 1 LIMIT 1",
-            (namespace_name,),
-        )
-        .await?;
-    Ok(namespace
-        .and_then(|namespace| namespace.level)
-        .is_some_and(|level| level == "organization"))
-}
-
-/// `get_effective_role_in_group` (direct membership plus parent-group
-/// inheritance) followed by the Reporter-or-above check used by the source
-/// group ACL.
-async fn group_role_grants_access<M>(mysql: &M, group_name: &str, user_id: i32) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    if let Some(role) = direct_role_in_group(mysql, group_name, user_id).await? {
-        return Ok(is_group_role_or_above(&role));
-    }
-    if group_name.contains('/') {
-        let parts: Vec<&str> = group_name.split('/').collect();
-        for index in (1..parts.len()).rev() {
-            let parent = parts[..index].join("/");
-            if let Some(role) = direct_role_in_group(mysql, &parent, user_id).await? {
-                return Ok(is_group_role_or_above(&role));
-            }
-        }
-    }
-    Ok(false)
-}
-
-async fn direct_role_in_group<M>(
-    mysql: &M,
-    group_name: &str,
-    user_id: i32,
-) -> MysqlResult<Option<String>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct NamespaceIdRow {
-        #[allow(dead_code)]
-        id: i32,
-    }
-    let namespace: Option<NamespaceIdRow> = mysql
-        .fetch_optional(
-            "SELECT namespace.id AS namespace_id FROM namespace \
-             WHERE namespace.name = ? AND namespace.is_active = 1 LIMIT 1",
-            (group_name,),
-        )
-        .await?;
-    let Some(namespace) = namespace else {
-        return Ok(None);
-    };
-    #[derive(Debug, FromMysqlRow)]
-    struct MemberRow {
-        role: Option<String>,
-    }
-    let member: Option<MemberRow> = mysql
-        .fetch_optional(
-            "SELECT resource_members.role AS resource_members_role \
-             FROM resource_members \
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.resource_id = ? \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.entity_id = ? \
-             AND resource_members.status = 'approved' \
-             LIMIT 1",
-            (namespace.id, user_id.to_string()),
-        )
-        .await?;
-    Ok(member.and_then(|member| member.role))
-}
-
-/// Group-role hierarchy check: Reporter (level 3) and above grant access.
-fn is_group_role_or_above(role: &str) -> bool {
-    fn hierarchy(role: &str) -> Option<u32> {
-        match role {
-            "Owner" => Some(0),
-            "Maintainer" => Some(1),
-            "Developer" => Some(2),
-            "Reporter" => Some(3),
-            "RestrictedAnalyst" => Some(4),
-            _ => None,
-        }
-    }
-    hierarchy(role).is_some_and(|level| level <= 3)
+    let access = crate::knowledge_documents_content::access::knowledge_base_access(
+        mysql,
+        redis,
+        resolvers,
+        &knowledge_base,
+        i64::from(user_id),
+    )
+    .await
+    .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+        reason: "knowledge base access check failed".to_owned(),
+    })?;
+    Ok(Some(access))
 }
 
 /// `_ensure_attachment_access`: uploader, task owner/member through the
 /// subtask linkage, knowledge-base ACL, or the owner-fallback subtask probe.
-pub async fn ensure_attachment_access<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+pub async fn ensure_attachment_access<R: brz_redis::Redis>(
+    task_store: &dyn crate::task_store::TaskStore,
+    mysql: &brz_mysql::MysqlService,
+    redis: Option<&R>,
+    resolvers: &crate::permissions::EntityResolvers<R>,
     context: &SubtaskContextRow,
-    current_user: &UserRow,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
+    user_id: i32,
+) -> MysqlResult<bool> {
     // 1. Uploader.
-    if context.user_id == current_user.users_id {
+    if context.user_id == user_id {
         return Ok(true);
     }
 
     let mut task_id: Option<i64> = None;
     if context.subtask_id > 0 {
         // 2. Linked attachment: find the task via the subtask.
-        if let Some(subtask) = get_subtask_by_id(mysql, task_policy, context.subtask_id).await? {
+        if let Some(subtask) = get_subtask_by_id(task_store, context.subtask_id).await? {
             task_id = Some(subtask.task_id);
         }
     } else {
         // 3. Unlinked: knowledge-base ACL first (hard verdicts), then the
         // executor-uploaded legacy fallback through the owner's subtask.
-        match check_knowledge_base_access(mysql, context.id, current_user.users_id).await? {
+        match check_knowledge_base_access(mysql, redis, resolvers, context.id, user_id).await? {
             Some(access) => return Ok(access),
             None => {
                 if let Some(subtask) =
-                    get_latest_subtask_by_user(mysql, task_policy, context.user_id).await?
+                    get_latest_subtask_by_user(task_store, context.user_id).await?
                 {
                     task_id = Some(subtask.task_id);
                 }
@@ -602,26 +520,122 @@ where
     }
 
     if let Some(task_id) = task_id {
-        return check_task_access(mysql, task_policy, task_id, current_user.users_id).await;
+        return check_task_access(task_store, mysql, task_id, user_id).await;
     }
     Ok(false)
 }
 
 /// `_check_task_access`: task owner or approved task member.
-async fn check_task_access<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+async fn check_task_access(
+    task_store: &dyn crate::task_store::TaskStore,
+    mysql: &brz_mysql::MysqlService,
     task_id: i64,
     user_id: i32,
-) -> MysqlResult<bool>
-where
-    M: Mysql,
-{
-    if let Some(task) = get_task_by_id(mysql, task_policy, task_id).await?
+) -> MysqlResult<bool> {
+    if let Some(task) = get_task_by_id(task_store, task_id).await?
         && task.kind == "Task"
         && task.user_id == user_id
     {
         return Ok(true);
     }
     is_task_member(mysql, task_id, user_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata(value: serde_json::Value) -> AttachmentMetadata {
+        serde_json::from_value(value).expect("type_data decodes")
+    }
+
+    #[test]
+    fn attachment_cover_url_prefers_video_metadata_then_the_top_level() {
+        assert_eq!(
+            metadata(serde_json::json!({
+                "video_metadata": {"cover_url": "https://media.example.test/c.jpg"},
+                "cover_url": "https://media.example.test/top.jpg",
+            }))
+            .attachment_cover_url()
+            .as_deref(),
+            Some("https://media.example.test/c.jpg")
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"cover_url": "https://a.example/c.jpg"}))
+                .attachment_cover_url()
+                .as_deref(),
+            Some("https://a.example/c.jpg")
+        );
+        // Falsy values fall through exactly like `_attachment_cover_url`.
+        for value in [
+            serde_json::json!({"video_metadata": {"cover_url": ""}}),
+            serde_json::json!({"video_metadata": {}}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(metadata(value).attachment_cover_url(), None);
+        }
+    }
+
+    #[test]
+    fn stored_media_references_report_the_python_string_form() {
+        // The stored media reference: the three persisted upload shapes, as
+        // `str(media_id)`.
+        assert_eq!(
+            metadata(serde_json::json!({
+                "weibo_video_upload": {"media_id": 1000000000000001_u64}
+            }))
+            .stored_media_reference(),
+            Some(("video", "1000000000000001".to_string()))
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"weibo_audio_upload": {"media_id": "42"}}))
+                .stored_media_reference(),
+            Some(("audio", "42".to_string()))
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"video_metadata": {"media_id": 7}}))
+                .stored_media_reference(),
+            Some(("video", "7".to_string()))
+        );
+        // `upload.get("media_id")` truthiness, and the local-storage case.
+        for value in [
+            serde_json::json!({"weibo_video_upload": {"media_id": ""}}),
+            serde_json::json!({"weibo_video_upload": {"media_id": 0}}),
+            serde_json::json!({"weibo_video_upload": {"upload_id": "E"}}),
+            serde_json::json!({"video_metadata": {"video_url": "http://a"}}),
+            serde_json::json!({
+                "mime_type": "text/markdown",
+                "storage_backend": "minio",
+                "storage_key": "attachments/c4dc99e190f2_20260924074255_1731_1344271"
+            }),
+        ] {
+            assert_eq!(metadata(value).stored_media_reference(), None);
+        }
+        assert_eq!(AttachmentMetadata::default().stored_media_reference(), None);
+    }
+
+    #[test]
+    fn legacy_weibo_fids_need_the_weibo_backend() {
+        let legacy = metadata(serde_json::json!({
+            "mime_type": "video/mp4",
+            "file_extension": ".mp4",
+            "storage_backend": "weibo",
+            "fid": 1000000000000002_u64
+        }));
+        assert_eq!(
+            legacy.legacy_weibo_fid(),
+            Some("1000000000000002".to_string())
+        );
+        assert_eq!(legacy.stored_media_reference(), None);
+        // The legacy playback resolver needs the `weibo` backend and a truthy id.
+        assert_eq!(
+            metadata(serde_json::json!({"fid": 1000000000000002_u64})).legacy_weibo_fid(),
+            None
+        );
+        assert_eq!(
+            metadata(serde_json::json!({"storage_backend": "weibo", "fid": 0})).legacy_weibo_fid(),
+            None
+        );
+        assert_eq!(AttachmentMetadata::default().legacy_weibo_fid(), None);
+    }
 }

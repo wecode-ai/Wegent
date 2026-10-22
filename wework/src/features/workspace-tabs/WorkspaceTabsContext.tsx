@@ -8,7 +8,13 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { isSettingsRoute, navigateTo, replaceTo } from '@/lib/navigation'
+import {
+  isSettingsRoute,
+  navigateTo,
+  replaceTo,
+  WORKSPACE_NAVIGATION_EVENT,
+  type WorkspaceNavigationDetail,
+} from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -24,10 +30,19 @@ import {
   type WorkspaceTabKind,
   type WorkspaceTabLabels,
 } from './workspaceTabs'
-import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
+import {
+  WorkspaceTabActivityContext,
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from './workspaceTabsContextValue'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
 import { writeSettingsReturnPath } from './settingsReturnPath'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
+import { getAppPreferences } from '@/desktop/appPreferences'
+import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
+import { navigateWorkspaceTab } from './workspaceNavigation'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -38,6 +53,8 @@ interface WorkspaceTabsState extends PersistedWorkspaceTabs {
   closedTabs: WorkspaceTab[]
 }
 
+const EMPTY_FIXED_TABS: WorkspaceTab[] = []
+
 type WorkspaceTabsAction =
   | { type: 'routeChanged'; pathname: string; search: string; labels: WorkspaceTabLabels }
   | {
@@ -46,7 +63,9 @@ type WorkspaceTabsAction =
       updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>
     }
   | { type: 'open'; tab: WorkspaceTab }
+  | { type: 'receive'; tab: WorkspaceTab }
   | { type: 'close'; tabId: string; fallback: WorkspaceTab }
+  | { type: 'detach'; tabId: string; fallback: WorkspaceTab }
   | { type: 'closeOthers'; tabId: string }
   | { type: 'restoreClosed'; restored: WorkspaceTab }
   | { type: 'move'; sourceId: string; targetId: string }
@@ -170,10 +189,20 @@ function workspaceTabsReducer(
         : undefined
       const kind = inferWorkspaceTabKind(action.pathname)
       if (requested) {
+        const title =
+          location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels)
+        if (
+          state.activeTabId === requested.id &&
+          requested.kind === kind &&
+          requested.title === title &&
+          requested.contentRoute === location.contentRoute
+        ) {
+          return state
+        }
         const updated = {
           ...requested,
           kind,
-          title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),
+          title,
           contentRoute: location.contentRoute,
         }
         return {
@@ -185,10 +214,18 @@ function workspaceTabsReducer(
       if (!location.tabId) {
         const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
         if (activeTab) {
+          const title = workspaceTabTitle(kind, location.contentRoute, action.labels)
+          if (
+            activeTab.kind === kind &&
+            activeTab.title === title &&
+            activeTab.contentRoute === location.contentRoute
+          ) {
+            return state
+          }
           const updated = {
             ...activeTab,
             kind,
-            title: workspaceTabTitle(kind, location.contentRoute, action.labels),
+            title,
             contentRoute: location.contentRoute,
           }
           return {
@@ -218,6 +255,12 @@ function workspaceTabsReducer(
         : state
     case 'open':
       return { ...state, tabs: [...state.tabs, action.tab], activeTabId: action.tab.id }
+    case 'receive':
+      return {
+        ...state,
+        tabs: [...state.tabs.filter(tab => tab.id !== action.tab.id), action.tab],
+        activeTabId: action.tab.id,
+      }
     case 'close': {
       const closingTab = state.tabs.find(tab => tab.id === action.tabId)
       if (!closingTab || closingTab.fixed) return state
@@ -225,6 +268,13 @@ function workspaceTabsReducer(
       return {
         ...next,
         closedTabs: [closingTab, ...state.closedTabs].slice(0, 10),
+      }
+    }
+    case 'detach': {
+      const next = closeWorkspaceTab(state.tabs, state.activeTabId, action.tabId, action.fallback)
+      return {
+        ...next,
+        closedTabs: state.closedTabs,
       }
     }
     case 'closeOthers': {
@@ -319,7 +369,7 @@ export function WorkspaceTabsProvider({
   storageScope,
   labels,
   startupTabKind,
-  fixedTabs = [],
+  fixedTabs = EMPTY_FIXED_TABS,
   startupTabId,
   restoreSessionTabs = true,
   children,
@@ -334,12 +384,58 @@ export function WorkspaceTabsProvider({
   )
   const stateRef = useRef(state)
 
+  useEffect(() => {
+    if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
+    const receive = (event: StorageEvent) => {
+      if (!event.key?.startsWith(WORKSPACE_TAB_RETURN_PREFIX) || !event.newValue) return
+      let tab: unknown
+      try {
+        tab = JSON.parse(event.newValue)
+      } catch {
+        return
+      }
+      if (!validTab(tab)) return
+      const key = event.key
+      const receivedTab = tab
+      void (async () => {
+        if (receivedTab.fixed) {
+          const preferences = await getAppPreferences()
+          await saveFixedWorkspaceTabs(
+            preferences.fixedWorkspaceTabs.map(preference =>
+              preference.id === receivedTab.id
+                ? fixedWorkspaceTabPreference(receivedTab)
+                : preference
+            ),
+            preferences.startupWorkspaceTabId
+          )
+        }
+        // An expired request must not move a tab whose source is still open.
+        if (!localStorage.getItem(key)) return
+        flushSync(() => dispatch({ type: 'receive', tab: receivedTab }))
+        navigateTo(workspaceTabRoute(receivedTab))
+        localStorage.removeItem(key)
+      })().catch(error => {
+        console.error('Failed to accept returned workspace tab', error)
+        if (localStorage.getItem(key)) {
+          localStorage.setItem(key, JSON.stringify({ error: String(error) }))
+        }
+      })
+    }
+    window.addEventListener('storage', receive)
+    return () => window.removeEventListener('storage', receive)
+  }, [])
+
   useLayoutEffect(() => {
     stateRef.current = state
   }, [state])
 
+  const isWorkspaceTabActive = useCallback(
+    (tabId: string) => stateRef.current.activeTabId === tabId,
+    []
+  )
+
   useEffect(() => {
-    if (fixedTabs.length > 0) dispatch({ type: 'syncFixed', tabs: fixedTabs })
+    dispatch({ type: 'syncFixed', tabs: fixedTabs })
   }, [fixedTabs])
 
   useLayoutEffect(() => {
@@ -426,6 +522,16 @@ export function WorkspaceTabsProvider({
     [labels]
   )
 
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const { kind, contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
+      event.preventDefault()
+      navigateWorkspaceTab({ ...stateRef.current, selectTab, openTab }, kind, contentRoute)
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [selectTab, openTab])
+
   const closeTab = useCallback(
     (tabId: string) => {
       const currentState = stateRef.current
@@ -434,6 +540,20 @@ export function WorkspaceTabsProvider({
       const fallback = createWorkspaceTab('task', labels)
       const next = closeWorkspaceTab(currentState.tabs, currentState.activeTabId, tabId, fallback)
       flushSync(() => dispatch({ type: 'close', tabId, fallback }))
+      dispatchWorkspaceTabsClosed([tabId])
+      const nextActive = next.tabs.find(tab => tab.id === next.activeTabId) ?? next.tabs[0]
+      navigateTo(workspaceTabRoute(nextActive))
+    },
+    [labels]
+  )
+
+  const detachTab = useCallback(
+    (tabId: string) => {
+      const currentState = stateRef.current
+      if (!currentState.tabs.some(tab => tab.id === tabId)) return
+      const fallback = createWorkspaceTab('task', labels)
+      const next = closeWorkspaceTab(currentState.tabs, currentState.activeTabId, tabId, fallback)
+      flushSync(() => dispatch({ type: 'detach', tabId, fallback }))
       dispatchWorkspaceTabsClosed([tabId])
       const nextActive = next.tabs.find(tab => tab.id === next.activeTabId) ?? next.tabs[0]
       navigateTo(workspaceTabRoute(nextActive))
@@ -491,6 +611,7 @@ export function WorkspaceTabsProvider({
       openTab,
       selectTab,
       closeTab,
+      detachTab,
       closeOtherTabs,
       restoreClosedTab,
       moveTab,
@@ -500,6 +621,7 @@ export function WorkspaceTabsProvider({
       activeTab,
       closeOtherTabs,
       closeTab,
+      detachTab,
       moveTab,
       openTab,
       restoreClosedTab,
@@ -509,5 +631,9 @@ export function WorkspaceTabsProvider({
     ]
   )
 
-  return <WorkspaceTabsContext.Provider value={value}>{children}</WorkspaceTabsContext.Provider>
+  return (
+    <WorkspaceTabActivityContext.Provider value={isWorkspaceTabActive}>
+      <WorkspaceTabsContext.Provider value={value}>{children}</WorkspaceTabsContext.Provider>
+    </WorkspaceTabActivityContext.Provider>
+  )
 }

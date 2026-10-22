@@ -122,6 +122,7 @@ const mockModel: Model = {
   contextWindow: 1048576,
   maxOutputTokens: 131072,
   costIndex: '50',
+  capability: 'Fast responses for everyday questions and complex coding tasks.',
   modelCapabilities: {
     supportsImage: true,
     supportsVideo: true,
@@ -455,6 +456,8 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelOption.parentElement).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
     expect(modelOption).toHaveClass('flex', 'items-center', 'gap-3', 'px-3')
+    expect(modelOption).toHaveTextContent(mockModel.capability!)
+    expect(modelOption).not.toHaveTextContent(mockModel.modelId)
     expect(modelTitle).toHaveClass('block', 'truncate')
     expect(modelTitle).not.toHaveClass('flex-1')
     expect(

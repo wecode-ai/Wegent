@@ -1,5 +1,8 @@
 import type { HttpClient } from './http'
-import type { ModelType, UnifiedModel, UnifiedModelListResponse, UnifiedSkill } from '@/types/api'
+import { createModelApi } from '@wegent/chat-core/model-api'
+import { getClientRequestCache } from '@wegent/chat-core/request-cache'
+import { createAgentRoutingCatalog } from './agentRoutingCatalog'
+import type { ModelType, UnifiedModel, UnifiedSkill } from '@/types/api'
 import type {
   UnifiedAgentCapabilityMode,
   UnifiedAgentDefinition,
@@ -7,7 +10,11 @@ import type {
   UnifiedAgentRuntime,
   UnifiedAgentSkillRef,
 } from './agentDefinition'
-import { parseAgentCapabilityMode } from '@wegent/collaboration'
+import {
+  parseAgentCapabilityMode,
+  type AgentExecutionPolicy,
+  type AgentModelPolicy,
+} from '@wegent/collaboration'
 
 export type {
   UnifiedAgentCapabilityMode,
@@ -48,6 +55,8 @@ export interface AgentResourceDetail {
   skills: UnifiedAgentSkillRef[]
   plugins: UnifiedAgentPluginRef[]
   mcpServers: Record<string, unknown>
+  executionPolicy?: AgentExecutionPolicy
+  modelPolicy?: AgentModelPolicy
   capabilityMode: UnifiedAgentCapabilityMode
 }
 
@@ -66,6 +75,8 @@ interface TeamDetailBot {
   system_prompt?: string | null
   mcp_servers?: Record<string, unknown> | null
   plugins?: UnifiedAgentPluginRef[] | null
+  execution_policy?: AgentExecutionPolicy
+  model_policy?: AgentModelPolicy
   capability_mode?: string | null
   skills?: string[] | null
   skill_refs?: Record<string, BotSkillRef> | null
@@ -120,6 +131,8 @@ function botCapabilityPayload(spec: UnifiedAgentSpec): Record<string, unknown> {
   return {
     shell_name: spec.runtime,
     capability_mode: spec.capabilityMode,
+    execution_policy: spec.executionPolicy,
+    model_policy: spec.modelPolicy,
     agent_config: agentConfig(spec),
     system_prompt: spec.systemPrompt.trim(),
     mcp_servers: spec.mcpServers,
@@ -173,22 +186,22 @@ function detailCapabilityMode(bot: TeamDetailBot): UnifiedAgentCapabilityMode {
   return hasManualCapabilities ? 'manual' : 'follow_device'
 }
 
-export function createAgentResourceApi(client: HttpClient) {
+export function createAgentResourceApi(
+  client: HttpClient,
+  readCatalog?: Parameters<typeof createAgentRoutingCatalog>[1]
+) {
+  const models = createModelApi(client)
+  const cache = getClientRequestCache(client)
   return {
+    ...createAgentRoutingCatalog(client, readCatalog),
     listModels(): Promise<UnifiedModel[]> {
-      const query = new URLSearchParams()
-      query.set('include_config', 'true')
-      query.set('scope', 'all')
-      query.set('model_category_type', 'llm')
-      query.set('client_origin', 'wework')
-      return client
-        .get<UnifiedModelListResponse>(`/models/unified?${query.toString()}`)
-        .then(response => response.data)
+      return models.listModels().then(response => response.data)
     },
     listSkills(): Promise<UnifiedSkill[]> {
       const query = new URLSearchParams()
       query.set('scope', 'all')
-      return client.get(`/v1/kinds/skills/unified?${query.toString()}`)
+      const endpoint = `/v1/kinds/skills/unified?${query.toString()}`
+      return cache.get(endpoint, () => client.get(endpoint))
     },
     async listOwnerGroups(): Promise<AgentResourceOwnerGroup[]> {
       const response = await client.get<GroupListResponse>('/groups?page=1&limit=100')
@@ -215,7 +228,7 @@ export function createAgentResourceApi(client: HttpClient) {
         namespace: spec.namespace,
       })
 
-      return client.post<CreatedAgentResource>('/teams', {
+      const saved = await client.post<CreatedAgentResource>('/teams', {
         name: spec.name,
         displayName: spec.displayName.trim() || undefined,
         description: '',
@@ -234,6 +247,9 @@ export function createAgentResourceApi(client: HttpClient) {
         namespace: spec.namespace,
         requires_workspace: true,
       })
+      cache.invalidate('/v1/resources')
+      cache.invalidate('/v1/workspaces/')
+      return saved
     },
     async getAgent(teamId: number): Promise<AgentResourceDetail> {
       const team = await client.get<TeamDetailResponse>(`/teams/${teamId}`)
@@ -261,6 +277,8 @@ export function createAgentResourceApi(client: HttpClient) {
         plugins: bot.plugins ?? [],
         mcpServers: bot.mcp_servers ?? {},
         capabilityMode: detailCapabilityMode(bot),
+        executionPolicy: bot.execution_policy,
+        modelPolicy: bot.model_policy,
       }
     },
     /**
@@ -272,9 +290,13 @@ export function createAgentResourceApi(client: HttpClient) {
       spec: UnifiedAgentSpec
     ): Promise<CreatedAgentResource> {
       await client.put(`/bots/${target.botId}`, botCapabilityPayload(spec))
-      return client.put<CreatedAgentResource>(`/teams/${target.teamId}`, {
+      const saved = await client.put<CreatedAgentResource>(`/teams/${target.teamId}`, {
         displayName: spec.displayName.trim(),
       })
+      cache.invalidate('/v1/resources')
+      cache.invalidate('/v1/workspaces/')
+      cache.invalidate('/v1/cloud-projects/')
+      return saved
     },
   }
 }

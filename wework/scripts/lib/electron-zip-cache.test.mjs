@@ -41,7 +41,7 @@ describe('shared Electron ZIP cache', () => {
         { platform: 'darwin' },
         '/workspace'
       )
-    ).toBe('/Users/test/Library/Caches/wegent/electron-zips')
+    ).toBe(join('/Users/test', 'Library', 'Caches', 'wegent', 'electron-zips'))
   })
 
   test('materializes a verified Electron artifact once', async () => {

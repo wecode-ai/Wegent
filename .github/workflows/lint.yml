@@ -170,14 +170,30 @@ jobs:
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
+      - name: Test CI resource logging
+        run: node --test .github/scripts/run-with-resource-logging.test.mjs
+
       - name: Test AI push gate
         run: scripts/hooks/test-ai-push-gate.sh
 
       - name: Test Wegent release policy
         run: scripts/test-publish-image-release-policy.sh
 
-      - name: Test repository policy workflow
-        run: scripts/test-repository-policy-workflow.sh
+      - name: Set up Python for standalone regression checks
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Test standalone Runtime lifecycle and image verification
+        # Command substitutes only; this does not build or run a container.
+        run: |
+          uv run --no-project python scripts/test-standalone-runtime.py
+          bash scripts/test-verify-standalone-image.sh
+
+      - name: Test repository policy
+        run: |
+          bash scripts/hooks/test-check-repository-policy.sh
+          bash scripts/test-repository-policy-workflow.sh
 
       - name: Test binary asset policy workflow
         run: bash .github/scripts/test-binary-asset-policy.sh

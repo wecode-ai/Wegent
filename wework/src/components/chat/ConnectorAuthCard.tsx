@@ -1,4 +1,8 @@
 import { ExternalLink, Loader2, QrCode } from 'lucide-react'
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { openExternalUrl } from '@/lib/external-links'
+import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   LocalConnectorAuthResult,
@@ -9,12 +13,31 @@ import { useLocalConnectorAuthSession } from '@/features/plugins/useLocalConnect
 interface ConnectorAuthCardProps {
   target: LocalConnectorAuthTarget
   title?: string
+  description?: string
   onSuccess: (result: LocalConnectorAuthResult) => void
   onCancel?: () => void
 }
 
-export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: ConnectorAuthCardProps) {
+export function ConnectorAuthCard(props: ConnectorAuthCardProps) {
+  return (
+    <ConnectorAuthCardSession
+      key={`${props.target.pluginKey}:${props.target.connectorSlug}`}
+      {...props}
+    />
+  )
+}
+
+function ConnectorAuthCardSession({
+  target,
+  title,
+  description,
+  onSuccess,
+  onCancel,
+}: ConnectorAuthCardProps) {
   const { t } = useTranslation('common')
+  const githubCli = isGithubCliTarget(target)
+  const [loginRequested, setLoginRequested] = useState(!githubCli)
+  const [openFailed, setOpenFailed] = useState(false)
   const {
     status,
     error,
@@ -26,11 +49,12 @@ export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: Connec
     retry,
     cancelActiveSession,
   } = useLocalConnectorAuthSession({
-    enabled: true,
+    enabled: loginRequested,
     target,
     t,
     onSuccess,
   })
+  const verificationUrl = githubVerificationUrl(status?.verificationUrl)
 
   const handleCancel = () => {
     cancelActiveSession()
@@ -50,14 +74,54 @@ export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: Connec
               : t('workbench.plugins_local_qr_title', '扫码登录'))}
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          {t(
-            'workbench.connector_auth_description',
-            '登录完成后会自动继续当前任务，无需在对话里输入“继续”。'
-          )}
+          {description ||
+            t(
+              'workbench.connector_auth_description',
+              '登录完成后会自动继续当前任务，无需在对话里输入“继续”。'
+            )}
         </p>
       </div>
       <div className="flex flex-col items-center gap-3 rounded-xl bg-muted/30 p-4">
-        {usesBrowser ? (
+        {githubCli ? (
+          <div
+            className="flex flex-col items-center gap-3 text-center"
+            data-testid="github-cli-auth"
+          >
+            <p className="text-sm">{t('workbench.github_cli_login_description')}</p>
+            {status?.userCode ? (
+              <code className="select-text text-code" data-testid="github-cli-device-code">
+                {status.userCode}
+              </code>
+            ) : null}
+            {!loginRequested ? (
+              <Button data-testid="github-cli-login" onClick={() => setLoginRequested(true)}>
+                {t('workbench.github_cli_login')}
+              </Button>
+            ) : verificationUrl ? (
+              <Button
+                data-testid="github-cli-open-browser"
+                onClick={async () => {
+                  setOpenFailed(false)
+                  try {
+                    const opened = await openExternalUrl(verificationUrl, { target: 'system' })
+                    if (opened === false) setOpenFailed(true)
+                  } catch {
+                    setOpenFailed(true)
+                  }
+                }}
+              >
+                {t('workbench.github_cli_open_browser')}
+              </Button>
+            ) : busy || !status ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : null}
+            {openFailed ? (
+              <p className="text-sm text-destructive" role="alert">
+                {t('workbench.github_cli_browser_failed')}
+              </p>
+            ) : null}
+          </div>
+        ) : usesBrowser ? (
           <div
             className="flex h-52 w-52 flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-background"
             data-testid="connector-auth-browser"
@@ -89,14 +153,22 @@ export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: Connec
             <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm">
-          {usesBrowser ? (
-            <ExternalLink className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <QrCode className="h-4 w-4 text-muted-foreground" />
-          )}
-          <span>{statusText}</span>
-        </div>
+        {!githubCli || loginRequested ? (
+          <div className="flex items-center gap-2 text-sm" role="status">
+            {usesBrowser ? (
+              <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <QrCode className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span>
+              {githubCli && status?.errorCode
+                ? t(`workbench.${status.errorCode}`, {
+                    defaultValue: t('workbench.gh_login_failed'),
+                  })
+                : statusText}
+            </span>
+          </div>
+        ) : null}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         {canRetry ? (

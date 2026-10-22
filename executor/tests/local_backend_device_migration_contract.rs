@@ -18,25 +18,32 @@ use tokio::{
 };
 use wegent_executor::{
     config::device::UpdateConfig,
-    emitter::EventEnvelope,
     local::{
         backend::{
-            CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceExtensionHandler,
-            DeviceExtensionRunner, DeviceUpgradeHandler, EventHandler, HttpPackageProvider,
-            LocalBackendClient, LocalBackendConfig, LocalBackendRunner, LocalBackendTransport,
-            LocalRunningTaskTracker, LocalTaskController, LocalUpgradeService,
-            ManagedLocalTaskRunner,
+            CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceUpgradeHandler, EventHandler,
+            HttpPackageProvider, LocalBackendClient, LocalBackendConfig, LocalBackendRunner,
+            LocalBackendTransport, LocalTaskController, LocalUpgradeService,
         },
         capabilities::{CapabilityPackageProvider, SkillSyncSpec},
         session::{LocalSessionHandler, PtySpawnRequest, SessionPtyManager, TerminalPty},
     },
-    process::{CommandSpec, StreamProcessEngine},
     protocol::{ExecutionRequest, TaskStatus},
-    runner::EventSink,
     server::{RunnerResult, TaskRunner},
     services::updater::UpdateResult,
 };
 
+#[cfg(unix)]
+use wegent_executor::{
+    emitter::EventEnvelope,
+    local::backend::{
+        DeviceExtensionHandler, DeviceExtensionRunner, LocalRunningTaskTracker,
+        ManagedLocalTaskRunner,
+    },
+    process::{CommandSpec, StreamProcessEngine},
+    runner::EventSink,
+};
+
+#[cfg(unix)]
 const TEST_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 
 #[path = "support/terminal_protocol_compatibility.rs"]
@@ -829,16 +836,23 @@ async fn upgrade_force_stop_aborts_when_task_cancellation_fails() {
 }
 
 #[cfg(unix)]
+fn write_agent_binding(home: &std::path::Path, shell: &str) {
+    std::fs::create_dir_all(home.join("runtime/tasks")).unwrap();
+    let marker = json!({"schema_version":5, "shell_type":shell,
+        "backend_url":"https://backend.example", "user_id":"7", "team_id":"12", "bot_id":"23"});
+    std::fs::write(home.join("agent.json"), marker.to_string()).unwrap();
+    let task = json!({"task_id":"123", "migrated_session":null});
+    std::fs::write(home.join("runtime/tasks/123.json"), task.to_string()).unwrap();
+}
+
+#[cfg(unix)]
 #[tokio::test]
-async fn default_extension_event_runs_skill_script_with_payload_environment() {
-    let workspace_root =
-        std::env::temp_dir().join(format!("wegent-extension-workspace-{}", std::process::id()));
-    let script_dir = workspace_root
-        .join("123")
-        .join(".claude")
-        .join("skills")
-        .join("sample-extension");
+async fn extension_event_runs_agent_home_skill_script_with_payload_environment() {
+    let temp = tempfile::tempdir().unwrap();
+    let agent_home = temp.path().join("agents/user7/default/design");
+    let script_dir = agent_home.join("skills/sample-extension");
     std::fs::create_dir_all(script_dir.join("bin")).unwrap();
+    write_agent_binding(&agent_home, "ClaudeCode");
     let script = script_dir.join("bin/run.sh");
     std::fs::write(
         &script,
@@ -851,8 +865,12 @@ printf '{"success":true,"action":"%s","name":"%s","foo":"%s"}' "$WEGENT_EXTENSIO
 
     let transport = RecordingTransport::default();
     let mut config = local_backend_config();
-    config.local_workspace_root = workspace_root;
-    let runner = LocalBackendRunner::new(config, transport.clone());
+    config.local_workspace_root = temp.path().join("workspace");
+    let extensions = isolated_extension_runner(temp.path(), temp.path().join("global-skills"));
+    let extensions =
+        extensions.with_authenticated_identity("https://other.example".to_owned(), "7".to_owned());
+    let runner =
+        LocalBackendRunner::new(config, transport.clone()).with_extension_handler(extensions);
     runner.register_handlers();
 
     let ack = transport.handler("device:run_extension").unwrap()(json!({
@@ -869,17 +887,25 @@ printf '{"success":true,"action":"%s","name":"%s","foo":"%s"}' "$WEGENT_EXTENSIO
     assert_eq!(ack["action"], "render");
     assert_eq!(ack["name"], "sample-extension");
     assert_eq!(ack["foo"], "baz");
+    assert!(!temp.path().join("workspace/123/.claude").exists());
+}
+
+#[cfg(unix)]
+fn isolated_extension_runner(
+    workbench_root: &std::path::Path,
+    global_skills: std::path::PathBuf,
+) -> DeviceExtensionRunner {
+    DeviceExtensionRunner::with_global_skills_root(global_skills)
+        .with_workbench_root(workbench_root.to_owned())
+        .with_authenticated_identity("https://backend.example".to_owned(), "7".to_owned())
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn device_extension_runner_runs_global_skill_script() {
-    let temp_root =
-        std::env::temp_dir().join(format!("wegent-global-extension-{}", std::process::id()));
-    let workspace_root = temp_root.join("workspace");
-    let global_skills_root = temp_root.join("home").join(".claude").join("skills");
+    let temp = tempfile::tempdir().unwrap();
+    let global_skills_root = temp.path().join("home").join(".claude").join("skills");
     let script_dir = global_skills_root.join("sample-extension");
-    let _ = std::fs::remove_dir_all(&temp_root);
     std::fs::create_dir_all(script_dir.join("bin")).unwrap();
     let script = script_dir.join("bin/run.sh");
     std::fs::write(
@@ -891,7 +917,8 @@ printf '{"success":true,"scope":"global"}'
     .unwrap();
     make_executable(&script);
 
-    let runner = DeviceExtensionRunner::with_global_skills_root(workspace_root, global_skills_root);
+    let runner = DeviceExtensionRunner::with_global_skills_root(global_skills_root)
+        .with_task_skills_resolver(|_, _| panic!("Global extensions must not resolve task Homes"));
     let ack = runner
         .handle_run_extension(json!({
             "extension_name": "sample-extension",
@@ -905,6 +932,72 @@ printf '{"success":true,"scope":"global"}'
 
     assert_eq!(ack["success"], true, "{ack}");
     assert_eq!(ack["scope"], "global");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn task_extension_rejects_unknown_home_and_symlinked_script_escape() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("agents/user7/default/design");
+    let extension = home.join("skills/sample-extension");
+    std::fs::create_dir_all(&extension).unwrap();
+    write_agent_binding(&home, "Codex");
+    let marker = temp.path().join("must-not-run");
+    let outside = temp.path().join("outside.sh");
+    std::fs::write(
+        &outside,
+        format!(
+            "touch '{}'\nprintf '{{\"success\":true}}'\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&outside, extension.join("run.sh")).unwrap();
+    let runner = isolated_extension_runner(temp.path(), temp.path().join("global-skills"));
+    let mut payload = json!({"extension_name":"sample-extension","action":"render",
+        "task_id":456,"script_path":"run.sh","payload":{}});
+    let missing = runner.handle_run_extension(payload.clone()).await;
+    assert_eq!(missing["success"], false);
+    assert!(missing["message"]
+        .as_str()
+        .unwrap()
+        .contains("no prepared agent Home"));
+    payload["task_id"] = json!(123);
+    let escaped = runner.handle_run_extension(payload).await;
+    assert_eq!(escaped["success"], false);
+    assert!(escaped["message"]
+        .as_str()
+        .unwrap()
+        .contains("escapes extension directory"));
+    assert!(!marker.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn task_extension_cannot_self_assert_user_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("agents/user7/default/design");
+    std::fs::create_dir_all(&home).unwrap();
+    write_agent_binding(&home, "Codex");
+    let runner = DeviceExtensionRunner::with_global_skills_root(temp.path().join("global"))
+        .with_workbench_root(temp.path().to_owned());
+    let payload = json!({"task_id":123, "extension_name":"sample", "action":"run",
+        "script_path":"run.sh", "backend_url":"https://backend.example", "user_id":7});
+    let unbound = runner.handle_run_extension(payload.clone()).await;
+    assert_eq!(unbound["success"], false);
+    assert!(unbound["message"].as_str().unwrap().contains("binding"));
+    for backend in ["https://backend.example", "https://other.example"] {
+        let result = runner
+            .clone()
+            .with_authenticated_identity(backend.to_owned(), "8".to_owned())
+            .handle_run_extension(payload.clone())
+            .await;
+        assert_eq!(result["success"], false);
+        assert!(result["message"]
+            .as_str()
+            .unwrap()
+            .contains("no prepared agent Home"));
+    }
 }
 
 #[cfg(unix)]
@@ -1170,6 +1263,8 @@ impl LocalBackendTransport for RecordingTransport {
             .unwrap()
             .push((event.to_owned(), handler));
     }
+
+    fn on_close(&self, _: wegent_executor::local::backend::ConnectionClosedHandler) {}
 }
 
 #[derive(Clone, Default)]
@@ -1177,17 +1272,20 @@ struct RecordingTaskRunner {
     submitted: Arc<Mutex<Vec<ExecutionRequest>>>,
 }
 
+#[cfg(unix)]
 #[derive(Clone, Default)]
 struct RecordingEventSink {
     events: Arc<Mutex<Vec<EventEnvelope>>>,
 }
 
+#[cfg(unix)]
 impl RecordingEventSink {
     fn events(&self) -> Vec<EventEnvelope> {
         self.events.lock().unwrap().clone()
     }
 }
 
+#[cfg(unix)]
 impl EventSink for RecordingEventSink {
     type SendFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 
@@ -1468,6 +1566,7 @@ fn local_backend_config() -> LocalBackendConfig {
         runtime_transfer_host: "192.0.2.10".to_owned(),
         heartbeat_interval: Duration::from_secs(30),
         heartbeat_timeout: Duration::from_secs(10),
+        runtime_work_poll_interval: Duration::from_secs(2),
         registration_timeout: Duration::from_secs(10),
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),

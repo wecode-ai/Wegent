@@ -16,6 +16,7 @@ use wegent_executor::local::{
     app_ipc::{app_ipc_stdio_ready_log_line, AppIpcError, AppIpcServer, RuntimeWorkHandler},
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
+use wegent_executor::task_runtime::LocalTaskStore;
 
 const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -323,7 +324,7 @@ async fn app_ipc_lists_store_reads_manifest_and_saves_plugin_example() {
     )
     .unwrap();
     fs::write(
-        capabilities.join("manifest.json"),
+        capabilities.join("manifest-v2.json"),
         r#"{"plugins":{"example@wegent":{"name":"example","marketplace":"wegent","store_path":"store/plugins/example@wegent"}}}"#,
     )
     .unwrap();
@@ -748,13 +749,20 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
                 "todo": {
                     "title": "Parent",
                     "status": "inbox",
-                    "priority": "high"
+                    "priority": "high",
+                    "start_at": "2026-10-10T01:00:00Z",
+                    "due_at": "2026-10-12T09:00:00Z"
                 }
             }),
         )
         .await
         .unwrap();
     let parent_id = parent["id"].as_str().unwrap();
+    assert_eq!(
+        parent["metadata"]["start_at"],
+        json!("2026-10-10T01:00:00Z")
+    );
+    assert_eq!(parent["metadata"]["due_at"], json!("2026-10-12T09:00:00Z"));
 
     let child = server
         .dispatch(
@@ -804,6 +812,27 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(updated["status"], "completed");
     assert!(updated["completed_at"].is_string());
 
+    let rescheduled = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": updated["version"],
+                    "start_at": null,
+                    "due_at": "2026-10-15T09:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(rescheduled["metadata"]["start_at"].is_null());
+    assert_eq!(
+        rescheduled["metadata"]["due_at"],
+        json!("2026-10-15T09:00:00Z")
+    );
+
     let conflict = server
         .dispatch(
             "todos.update",
@@ -820,6 +849,31 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
 
+    let incomplete_archive = server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(incomplete_archive.code, "bad_request");
+
+    let completed_child = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": child["id"],
+                "todo": {
+                    "version": child["version"],
+                    "status": "completed"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed_child["status"], "completed");
+
     server
         .dispatch(
             "todos.archive",
@@ -832,6 +886,39 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .await
         .unwrap();
     assert!(todos.as_array().unwrap().is_empty());
+
+    let archived = server
+        .dispatch(
+            "todos.archived.list",
+            json!({"project_id": project_id, "limit": 20}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived["items"].as_array().unwrap().len(), 1);
+    assert_eq!(archived["items"][0]["id"], parent["id"]);
+    assert!(archived["items"][0]["archived_at"].is_string());
+
+    let restored = server
+        .dispatch(
+            "todos.restore",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored.as_array().unwrap().len(), 2);
+    let todos = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert_eq!(todos.as_array().unwrap().len(), 2);
+
+    server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
 
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
     let current_project = projects
@@ -852,64 +939,6 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(projects[0]["id"], "default-work-items");
     assert_eq!(projects[0]["name"], "我的任务");
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
-}
-
-#[tokio::test]
-async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
-    let _lock = env_lock().await;
-    let executor_home = tempfile::tempdir().unwrap();
-    let _executor_home = EnvGuard::set(
-        "WEGENT_EXECUTOR_HOME",
-        &executor_home.path().display().to_string(),
-    );
-    let reconciliations = Arc::new(Mutex::new(0));
-    let server = AppIpcServer::new().with_runtime_work_handler(ProjectionRuntimeHandler {
-        reconciliations: Arc::clone(&reconciliations),
-    });
-    let project = server
-        .dispatch(
-            "projects.create",
-            json!({
-                "name": "Bound Runtime",
-                "project_key": "BOUND",
-                "task_provider": "local"
-            }),
-        )
-        .await
-        .unwrap();
-    let task = server
-        .dispatch(
-            "todos.create",
-            json!({
-                "project_id": project["id"],
-                "todo": {"title": "Track running task"}
-            }),
-        )
-        .await
-        .unwrap();
-
-    server
-        .dispatch(
-            "todos.bind",
-            json!({
-                "project_id": project["id"],
-                "item_id": task["id"],
-                "task": {
-                    "device_id": "local-device",
-                    "task_id": "runtime-running-1",
-                    "task_title": "Track running task"
-                }
-            }),
-        )
-        .await
-        .unwrap();
-
-    server
-        .dispatch("todos.list", json!({"project_id": project["id"]}))
-        .await
-        .unwrap();
-
-    assert_eq!(*reconciliations.lock().unwrap(), 2);
 }
 
 #[tokio::test]
@@ -1212,21 +1241,14 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         .await
         .unwrap();
 
-    let claimed = server
-        .dispatch(
-            "executions.claim_next",
-            json!({
-                "claim": {
-                    "execution_device_id": "local-device",
-                    "lease_seconds": 300
-                }
-            }),
-        )
-        .await
+    let claimed = LocalTaskStore::open(executor_home.path().join("data/tasks.sqlite"))
+        .unwrap()
+        .claim_next_execution_for_runtime(Some("local-device"), "runtime-1", 300)
+        .unwrap()
         .unwrap();
-    let execution_id = claimed["id"].as_i64().unwrap();
-    assert_eq!(claimed["status"], "claimed");
-    assert_eq!(claimed["display_state"], "starting");
+    let execution_id = claimed.id;
+    assert_eq!(claimed.status, "claimed");
+    assert_eq!(claimed.display_state, "starting");
 
     // Crash the run out-of-band: expire the lease without a terminal event.
     let connection =
@@ -1332,6 +1354,21 @@ async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
         .get("credential")
         .is_none());
     assert!(!project.to_string().contains("github-secret"));
+
+    let schedule_error = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {
+                    "title": "Scheduled external task",
+                    "start_at": "2026-10-11T00:00:00Z"
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(schedule_error.code, "provider_unavailable");
 
     let connection =
         rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
@@ -1580,24 +1617,26 @@ async fn app_ipc_lists_and_reads_workspace_files_locally() {
 }
 
 #[tokio::test]
-async fn app_ipc_rejects_workspace_files_outside_allowed_roots() {
+async fn app_ipc_reads_workspace_files_outside_previous_allowed_roots() {
     let allowed_workspace = unique_dir("workspace-files-allowed");
     fs::create_dir_all(&allowed_workspace).unwrap();
     let allowed_workspace = fs::canonicalize(allowed_workspace).unwrap();
-    let blocked_workspace = unique_dir("workspace-files-blocked");
-    fs::create_dir_all(&blocked_workspace).unwrap();
-    let blocked_workspace = fs::canonicalize(blocked_workspace).unwrap();
+    let external_directory = unique_dir("workspace-files-external");
+    fs::create_dir_all(&external_directory).unwrap();
+    let external_directory = fs::canonicalize(external_directory).unwrap();
+    fs::write(external_directory.join("sunset.png"), b"image").unwrap();
     let server = AppIpcServer::new();
 
     let response = server
         .handle_line(
             &json!({
                 "type": "request",
-                "id": "req-blocked-tree",
+                "id": "req-external-file",
                 "method": "device.execute_command",
                 "params": {
-                    "command_key": "workspace_tree",
-                    "path": blocked_workspace.display().to_string(),
+                    "command_key": "workspace_read_file_chunk",
+                    "path": external_directory.display().to_string(),
+                    "args": ["sunset.png", "0"],
                     "env": {"WEGENT_WORKSPACE_ROOTS": allowed_workspace.display().to_string()},
                 }
             })
@@ -1607,14 +1646,14 @@ async fn app_ipc_rejects_workspace_files_outside_allowed_roots() {
         .unwrap();
 
     assert_eq!(response["ok"], true);
-    assert_eq!(response["result"]["success"], false);
+    assert_eq!(response["result"]["success"], true);
     assert_eq!(
-        response["result"]["error"],
-        json!("Workspace path is outside allowed workspace roots")
+        response["result"]["stdout"]["content_base64"],
+        json!("aW1hZ2U=")
     );
 
     let _ = fs::remove_dir_all(allowed_workspace);
-    let _ = fs::remove_dir_all(blocked_workspace);
+    let _ = fs::remove_dir_all(external_directory);
 }
 
 #[tokio::test]
@@ -1876,33 +1915,6 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         "turn_file_changes_review must run through the native handler"
     );
 
-    let commit_message_response = server
-        .handle_line(
-            &json!({
-                "type": "request",
-                "id": "req-commit-message",
-                "method": "device.execute_command",
-                "params": {
-                    "command_key": "git_generate_commit_message",
-                    "path": "/tmp/project"
-                }
-            })
-            .to_string(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(commit_message_response["ok"], true);
-    assert_eq!(commit_message_response["result"]["success"], false);
-    assert_eq!(
-        commit_message_response["result"]["stdout"]["success"],
-        false
-    );
-    assert_eq!(
-        seen_request.lock().unwrap().as_ref(),
-        None,
-        "native commit message generation must not dispatch through the generic command handler"
-    );
     let push_response = server
         .handle_line(
             &json!({
@@ -2499,27 +2511,6 @@ impl RuntimeWorkHandler for RuntimeHandler {
     }
 }
 
-struct ProjectionRuntimeHandler {
-    reconciliations: Arc<Mutex<usize>>,
-}
-
-impl RuntimeWorkHandler for ProjectionRuntimeHandler {
-    fn handle_runtime_rpc<'a>(
-        &'a self,
-        _data: Value,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
-        Box::pin(async { Ok(json!({})) })
-    }
-
-    fn reconcile_bound_task_statuses<'a>(
-        &'a self,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            *self.reconciliations.lock().unwrap() += 1;
-        })
-    }
-}
-
 struct CapacityRuntimeHandler;
 
 impl RuntimeWorkHandler for CapacityRuntimeHandler {
@@ -2639,90 +2630,4 @@ impl DeviceCommandHandler for CaptureCommandHandler {
             CommandResult::ok(".\n..\nsrc/\nREADME.md\n")
         })
     }
-}
-
-#[tokio::test]
-async fn local_project_automation_ipc_runs_cancels_and_retries_without_backend() {
-    use wegent_executor::task_runtime::{LocalTaskStore, ProjectUpdate};
-    let _lock = env_lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _executor_home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
-    let store = LocalTaskStore::open(home.path().join("data/tasks.sqlite")).unwrap();
-    let project = store
-        .create_project(serde_json::from_value(json!({"name":"Local automation"})).unwrap())
-        .unwrap();
-    let agent = store
-        .create_chat_agent(
-            &project.id,
-            serde_json::from_value(json!({"name":"Local Agent"})).unwrap(),
-        )
-        .unwrap();
-    store.update_project(&project.id, ProjectUpdate {
-        version:project.version,
-        automatic_processing_rules:Some(json!([{"id":"rule","targetKind":"agent","targetId":agent.id,"triggerType":"event","eventType":"task.tag_added","eventConfig":{"tags":["ready"]},"enabled":true}])),
-        ..Default::default()
-    }).unwrap();
-    let task = store
-        .create_task(
-            &project.id,
-            serde_json::from_value(json!({"title":"Process locally"})).unwrap(),
-        )
-        .unwrap();
-    let server = AppIpcServer::new();
-    let runs = server
-        .dispatch(
-            "projects.automation.run",
-            json!({"project_id":project.id,"automation_id":"rule","issue_id":task.id}),
-        )
-        .await
-        .unwrap();
-    let run_id = &runs[0]["id"];
-    assert_eq!(runs[0]["status"], "queued");
-    let comments = server
-        .dispatch(
-            "todos.comment.list",
-            json!({"project_id":project.id,"task_id":task.id}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(comments.as_array().unwrap().len(), 1);
-    assert_eq!(comments[0]["status"], "pending");
-    let stopped = server
-        .dispatch(
-            "projects.automation.cancel",
-            json!({"project_id":project.id,"run_id":run_id}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(stopped["executions"][0]["status"], "cancelled");
-    let comments = server
-        .dispatch(
-            "todos.comment.list",
-            json!({"project_id":project.id,"task_id":task.id}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(comments[0]["status"], "cancelled");
-    let retried = server
-        .dispatch(
-            "projects.automation.retry",
-            json!({"project_id":project.id,"run_id":run_id}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(retried[0]["status"], "queued");
-    assert_ne!(&retried[0]["id"], run_id);
-    let persisted = AppIpcServer::new()
-        .dispatch(
-            "projects.automation.runs",
-            json!({"project_id":project.id,"automation_id":"rule"}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(persisted.as_array().unwrap().len(), 2);
-    assert!(persisted
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|run| run["id"] == *run_id && run["status"] == "cancelled"));
 }

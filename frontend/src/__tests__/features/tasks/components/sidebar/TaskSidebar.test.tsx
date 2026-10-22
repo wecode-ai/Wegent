@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import TaskSidebar, { SIDEBAR_NAV_CONFIG } from '@/features/tasks/components/sidebar/TaskSidebar'
+import ResizableSidebar from '@/features/tasks/components/sidebar/ResizableSidebar'
 import type { Task } from '@/types/api'
 
 const createTask = (overrides: Partial<Task>): Task => ({
@@ -117,6 +118,13 @@ jest.mock('@/lib/runtime-config', () => ({
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => mockTaskSessionContext,
 }))
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: null }),
+}))
+
+jest.mock('@/apis/tasks', () => ({ taskApis: { searchTasks: jest.fn() } }))
+jest.mock('@/apis/projects', () => ({ projectApis: { getProjectTasks: jest.fn() } }))
 
 jest.mock('@/features/inbox', () => ({
   useInboxUnreadCount: () => ({
@@ -269,6 +277,55 @@ describe('TaskSidebar scroll structure', () => {
 
   afterEach(() => {
     SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed = true
+  })
+
+  it.each([
+    ['devices', 0],
+    ['knowledge', 1],
+  ] as const)(
+    'opens search from the %s sidebar without page search props',
+    async (pageType, index) => {
+      mockTaskSessionContext.personalTasks = [createTask({ id: 1, title: 'Existing conversation' })]
+      const setMobileSidebarOpen = jest.fn()
+      render(
+        <TaskSidebar
+          isMobileSidebarOpen={index === 1}
+          setIsMobileSidebarOpen={setMobileSidebarOpen}
+          pageType={pageType}
+        />
+      )
+
+      expect(screen.queryByTestId('task-sidebar-search-button')).not.toBeInTheDocument()
+      fireEvent.click(screen.getAllByTestId('task-history-search-button')[index])
+
+      expect(await screen.findByRole('dialog')).toBeVisible()
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+      expect(screen.getByTestId('task-search-input')).toBeInTheDocument()
+      expect(setMobileSidebarOpen).toHaveBeenCalledWith(false)
+    }
+  )
+
+  it('keeps search shortcuts available after collapsing the resizable sidebar', async () => {
+    const sidebarProps = {
+      isMobileSidebarOpen: false,
+      setIsMobileSidebarOpen: jest.fn(),
+    }
+    const { rerender } = render(
+      <ResizableSidebar>
+        <TaskSidebar {...sidebarProps} />
+      </ResizableSidebar>
+    )
+    rerender(
+      <ResizableSidebar isCollapsed>
+        <TaskSidebar {...sidebarProps} isCollapsed />
+      </ResizableSidebar>
+    )
+
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true, metaKey: true })
+
+    expect(await screen.findByRole('dialog')).toBeVisible()
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true, metaKey: true })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   it('keeps secondary navigation fixed by default', () => {

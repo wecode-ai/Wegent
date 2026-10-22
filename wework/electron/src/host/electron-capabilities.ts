@@ -1,3 +1,5 @@
+import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { setReducedMotion } from './e2e-media-preferences.js'
 import {
   app,
   BrowserWindow,
@@ -32,6 +34,7 @@ import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
+import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
@@ -56,6 +59,12 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
+import type { ApplicationMenu, ApplicationMenuCapabilityState } from './application-menu.js'
+import { openApplicationLogDirectory } from './application-log-directory.js'
+import {
+  showRetainedNotification,
+  type ElectronNotificationHandle,
+} from './notification-lifecycle.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -105,9 +114,28 @@ export function coreGrantedCapabilities(
   return capabilities.filter(capability => !workbenchOnly.has(capability))
 }
 
+function assertE2EEnabled(control: string): void {
+  if (process.env.VITE_WEWORK_E2E !== 'true') {
+    throw new HostCapabilityError('e2e_disabled', `${control} are disabled`)
+  }
+}
+
+/** Host-side process explorer the capability router exposes to the renderer. */
+export interface ProcessExplorerHostService {
+  snapshot: () => Promise<ProcessSnapshot>
+}
+
 export interface ElectronDesktopServices {
+  executorHome: string
+  processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
+  applicationMenu?: () => ApplicationMenu | null
+  updateApplicationMenuCapabilities?: (
+    label: string,
+    capabilities: ApplicationMenuCapabilityState
+  ) => void
+  updateApplicationMenuLanguage?: (language: string) => void
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   quitApplication: () => void
@@ -124,34 +152,49 @@ export interface ElectronDesktopServices {
   weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
-interface ElectronNotificationHandle {
-  once(event: 'click', listener: () => void): void
-  show(): void
-}
-
 interface ElectronNotificationInput {
   title: string
   body: string
+  url?: string
   taskAddressId?: string
+}
+
+export function activateElectronNotification(
+  input: ElectronNotificationInput,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>
+): void {
+  if (input.url) {
+    console.info('[notification] opening notification destination')
+    navigation.openScheme(input.url)
+  } else if (input.taskAddressId) {
+    navigation.openRuntimeTask(input.taskAddressId)
+  }
 }
 
 export function showElectronNotification(
   input: ElectronNotificationInput,
-  openRuntimeTask: (taskAddressId: string) => void,
+  navigation: Pick<ElectronDesktopServices, 'openScheme' | 'openRuntimeTask'>,
   createNotification: (options: {
     title: string
     body: string
   }) => ElectronNotificationHandle = options => new Notification(options)
 ): void {
+  if (input.url && !input.url.startsWith('wework://')) {
+    throw new HostCapabilityError(
+      'invalid_notification_url',
+      'Notification links must use wework://'
+    )
+  }
   const notification = createNotification({
     title: input.title,
     body: input.body,
   })
-  const taskAddressId = input.taskAddressId
-  if (taskAddressId) {
-    notification.once('click', () => openRuntimeTask(taskAddressId))
-  }
-  notification.show()
+  showRetainedNotification(
+    notification,
+    input.url || input.taskAddressId
+      ? () => activateElectronNotification(input, navigation)
+      : undefined
+  )
 }
 
 export interface CoreDshPluginService {
@@ -177,11 +220,31 @@ export interface PluginDevelopmentService {
   validate(sourceRoot: string): Promise<unknown>
 }
 
+export interface ProcessExplorerWindowSnapshot {
+  exists: boolean
+  visible: boolean
+  applicationPid: number
+  url: string
+  windowLabel: string
+  windowWidth: number
+  windowHeight: number
+  alwaysOnTop: boolean
+  menuBarVisible: boolean
+  testIds: string[]
+  text: string
+  layout: {
+    viewportWidth: number
+    tableClientWidth: number
+    tableScrollWidth: number
+  }
+}
+
 export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
+  closeStartupSplash: () => boolean
   completeSystemDragDrop: (payload: {
     action: 'new-chat' | 'follow-up' | 'stash'
     text: string | null
@@ -192,6 +255,11 @@ export interface ElectronE2EHost {
   focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
+  openProcessExplorer: () => void | Promise<void>
+  setProcessExplorerAlwaysOnTop: (alwaysOnTop: boolean) => { alwaysOnTop: boolean }
+  processExplorerWindowSnapshot: () => Promise<ProcessExplorerWindowSnapshot>
+  setProcessExplorerWindowSize: (width: number, height: number) => void
+  closeProcessExplorerWindow: () => void
   dockVisible: () => boolean
   getSystemDragContext: () => { conversationTitle: string | null }
   runtimeDiagnostics: () => {
@@ -207,7 +275,11 @@ export interface ElectronE2EHost {
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
+  showMain: () => Promise<void>
+  closeWorkspace: (label: string) => void
+  openPopoutTaskInMain: (taskAddressId: string) => void
   popoutWindowSnapshot: () => {
+    bounds: { width: number; height: number } | null
     exists: boolean
     focused: boolean
     visible: boolean
@@ -215,6 +287,7 @@ export interface ElectronE2EHost {
     webContentsId: number | null
   }
   setSystemDragContext: (context: { conversationTitle: string | null }) => void
+  setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
@@ -246,12 +319,32 @@ export function createElectronCapabilityRouter(
     captureTarget: () => null,
     cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
+    closeStartupSplash: () => false,
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
     focusMainWindow: () => undefined,
     focusWindow: () => undefined,
     hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
+    openProcessExplorer: () =>
+      Promise.reject(new Error('The process explorer window is unavailable')),
+    setProcessExplorerAlwaysOnTop: () => ({ alwaysOnTop: false }),
+    processExplorerWindowSnapshot: async () => ({
+      exists: false,
+      visible: false,
+      applicationPid: process.pid,
+      url: '',
+      windowLabel: '',
+      windowWidth: 0,
+      windowHeight: 0,
+      alwaysOnTop: false,
+      menuBarVisible: false,
+      testIds: [],
+      text: '',
+      layout: { viewportWidth: 0, tableClientWidth: 0, tableScrollWidth: 0 },
+    }),
+    setProcessExplorerWindowSize: () => undefined,
+    closeProcessExplorerWindow: () => undefined,
     dockVisible: () => true,
     getSystemDragContext: () => ({ conversationTitle: null }),
     runtimeDiagnostics: () => ({
@@ -268,7 +361,13 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
+    showMain: () => Promise.reject(new Error('Main window is unavailable')),
+    closeWorkspace: () => {
+      throw new Error('Workspace windows are unavailable')
+    },
+    openPopoutTaskInMain: () => undefined,
     popoutWindowSnapshot: () => ({
+      bounds: null,
       exists: false,
       focused: false,
       visible: false,
@@ -276,6 +375,7 @@ export function createElectronCapabilityRouter(
       webContentsId: null,
     }),
     setSystemDragContext: () => undefined,
+    setPopoutMode: () => undefined,
     setSystemSleepEnabled: () => undefined,
     setSystemSleepTaskActive: () => undefined,
     showPopout: () => Promise.reject(new Error('Popout Window is unavailable')),
@@ -286,14 +386,27 @@ export function createElectronCapabilityRouter(
   }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
-  const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const attachments = new LocalAttachmentStore(
+    join(desktopServices.executorHome, 'workspace', 'attachments', 'draft')
+  )
   const filePreviewLog = new RotatingLog({
     path: join(app.getPath('logs'), 'file-preview.log'),
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
+  const modelLoadingLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'model-loading.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   let activeIsolatedClipboardLease: string | null = null
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
+  registerModelConfigurationCapabilities(
+    router,
+    window,
+    desktopServices.secureStorage,
+    desktopServices.events
+  )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
   router.register('navigation.pendingSchemes', () => desktopServices.pendingSchemes.read())
@@ -320,6 +433,11 @@ export function createElectronCapabilityRouter(
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
+  router.register('diagnostics.modelLoading', params => {
+    const events = params.events
+    if (!Array.isArray(events) || events.length > 200) invalidParam('events')
+    return modelLoadingLog.write('supervisor', JSON.stringify({ events }))
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
@@ -475,28 +593,26 @@ export function createElectronCapabilityRouter(
   })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const nativePayloads = clipboard
-      .availableFormats()
-      .filter(format => /(file|filename|uri)/i.test(format))
-      .flatMap(format => {
-        const values: string[] = []
-        try {
-          values.push(clipboard.read(format))
-        } catch {
-          // Some native formats can only be read as buffers.
-        }
-        try {
-          const buffer = clipboard.readBuffer(format)
-          if (buffer.length > 0) {
-            values.push(buffer.toString('utf8'), buffer.toString('utf16le'))
-          }
-        } catch {
-          // Ignore unsupported clipboard encodings.
-        }
-        return values
-      })
+    const items = await clipboard.read().catch(() => [])
+    const nativePayloads = await Promise.all(
+      items.flatMap(item =>
+        item.types
+          .filter(format => /(file|filename|uri)/i.test(format))
+          .map(async format => {
+            try {
+              const payload = await item.getType(format)
+              if (!('arrayBuffer' in payload)) return []
+              const buffer = Buffer.from(await payload.arrayBuffer())
+              return [buffer.toString('utf8'), buffer.toString('utf16le')]
+            } catch {
+              // Native clipboard formats may become unavailable during a read.
+              return []
+            }
+          })
+      )
+    )
     return inspectWorkspacePaths([
-      ...extractFilePathsFromNativePayloads(nativePayloads),
+      ...extractFilePathsFromNativePayloads(nativePayloads.flat()),
       ...fallbackPaths,
     ])
   })
@@ -524,9 +640,9 @@ export function createElectronCapabilityRouter(
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     return clipboard.readText()
   })
-  router.register('isolatedClipboard.writeText', params => {
+  router.register('isolatedClipboard.writeText', async params => {
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
-    clipboard.writeText(rawStringParam(params, 'text'))
+    await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
   router.register('computerUse.status', () => computerUse.status())
@@ -542,10 +658,14 @@ export function createElectronCapabilityRouter(
   router.register('computerUse.stopCurrentAction', () => computerUse.stopCurrentAction())
   registerDesktopServiceCapabilities(router, desktopServices, {
     openLogDirectory: async () => {
-      const logDirectory = app.getPath('logs')
-      await mkdirDirectory(logDirectory)
-      const error = await shell.openPath(logDirectory)
-      if (error) throw new HostCapabilityError('open_log_directory_failed', error)
+      try {
+        await openApplicationLogDirectory()
+      } catch (error) {
+        throw new HostCapabilityError(
+          'open_log_directory_failed',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
     },
     openDevTools: () => {
       const contents = requiredWindow(window).webContents
@@ -554,6 +674,8 @@ export function createElectronCapabilityRouter(
       }
       contents.openDevTools({ mode: 'detach', activate: true })
     },
+    openProcessExplorer: () => e2eHost.openProcessExplorer(),
+    setProcessExplorerAlwaysOnTop: value => e2eHost.setProcessExplorerAlwaysOnTop(value),
   })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
@@ -583,8 +705,19 @@ export function createElectronCapabilityRouter(
     return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
-  router.register('e2e.activateRuntimeTaskNotification', params => {
-    desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
+  router.register('e2e.closeStartupSplash', () => {
+    if (!e2eHost.closeStartupSplash()) {
+      throw new HostCapabilityError(
+        'e2e_startup_splash_unavailable',
+        'The startup splash is not open'
+      )
+    }
+  })
+  router.register('e2e.activateNotification', params => {
+    activateElectronNotification(
+      { title: '', body: '', url: stringParam(params, 'url') },
+      desktopServices
+    )
   })
   router.register('e2e.focusMainWindow', async () => {
     await e2eHost.focusMainWindow()
@@ -626,10 +759,34 @@ export function createElectronCapabilityRouter(
       stringParam(params, 'key'),
       () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
       process.env,
-      phase as E2EKeyPhase
+      phase as E2EKeyPhase,
+      booleanParam(params, 'focus') ?? true
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.getProcessExplorerWindowSnapshot', () => {
+    assertE2EEnabled('Process Explorer test controls')
+    return e2eHost.processExplorerWindowSnapshot()
+  })
+  router.register('e2e.setProcessExplorerWindowSize', params => {
+    assertE2EEnabled('Process Explorer test controls')
+    e2eHost.setProcessExplorerWindowSize(
+      numberParam(params, 'width'),
+      numberParam(params, 'height')
+    )
+  })
+  router.register('e2e.closeProcessExplorerWindow', () => {
+    assertE2EEnabled('Process Explorer test controls')
+    e2eHost.closeProcessExplorerWindow()
+  })
+  router.register('e2e.setReducedMotion', async params => {
+    const contents = e2eHost.captureTarget('main')
+    if (!contents || contents.isDestroyed()) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
+    }
+    await setReducedMotion(contents, stringParam(params, 'preference'))
+    return null
+  })
   router.register('e2e.getRendererHeapUsage', async () => {
     const contents = e2eHost.captureTarget('main')
     if (!contents || contents.isDestroyed()) {
@@ -652,9 +809,11 @@ export function createElectronCapabilityRouter(
     const popout = e2eHost.popoutWindowSnapshot()
     return {
       mainFocused: target.isFocused(),
+      mainVisible: target.isVisible(),
       popoutExists: popout.exists,
       popoutFocused: popout.focused,
       popoutVisible: popout.visible,
+      popoutBounds: popout.bounds,
       popoutWindowId: popout.windowId,
       popoutWebContentsId: popout.webContentsId,
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
@@ -701,7 +860,21 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('window.dismissPopout', () => e2eHost.dismissPopout())
+  router.register('window.openPopoutTaskInMain', params =>
+    e2eHost.openPopoutTaskInMain(stringParam(params, 'taskAddressId'))
+  )
+  router.register('window.setPopoutMode', params => {
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'composer' && mode !== 'menu' && mode !== 'conversation') {
+      invalidParam('mode')
+    }
+    e2eHost.setPopoutMode(mode)
+  })
   router.register('window.showPopout', () => e2eHost.showPopout())
+  router.register('window.showMain', () => e2eHost.showMain())
+  router.register('window.closeWorkspace', params =>
+    e2eHost.closeWorkspace(stringParam(params, 'label'))
+  )
   router.register('window.minimize', () => requiredWindow(window).minimize())
   router.register('window.toggleMaximize', () => {
     const target = requiredWindow(window)
@@ -753,23 +926,37 @@ export function createElectronCapabilityRouter(
       {
         title,
         body,
+        url: optionalStringParam(params, 'url')?.trim() || undefined,
         taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
       },
-      desktopServices.openRuntimeTask
+      desktopServices
     )
   })
   router.register('preferences.get', () => preferences.read())
-  router.register('preferences.update', async params => {
-    const patch = params.patch
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-      invalidParam('patch')
-    }
-    const preferencePatch = patch as Record<string, unknown>
+  const updatePreferences = async (preferencePatch: Record<string, unknown>) => {
     const updated = desktopServices.updatePreferences
       ? await desktopServices.updatePreferences(preferencePatch)
       : await preferences.update(preferencePatch)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
+    }
+    desktopServices.events.publish('preferences.changed', updated)
+    return updated
+  }
+  router.register('preferences.update', params => {
+    const patch = params.patch
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      invalidParam('patch')
+    }
+    return updatePreferences(patch as Record<string, unknown>)
+  })
+  router.register('runtime.changeWorkbenchMode', async (params, context) => {
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'focus' && mode !== 'developer') invalidParam('mode')
+    const previousMode = (await preferences.read()).workbenchMode
+    const updated = await updatePreferences({ workbenchMode: mode })
+    if (previousMode !== mode) {
+      context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
     }
     return updated
   })
@@ -809,8 +996,8 @@ export function createElectronCapabilityRouter(
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
-  router.register('runtime.restartCoreDsh', () => {
-    e2eHost.scheduleCoreDshRestart()
+  router.register('runtime.restartCoreDsh', (_params, context) => {
+    context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
     return { scheduled: true }
   })
   router.register('shell.openExternal', async params => {
@@ -877,10 +1064,10 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.list', () => requiredSmartApps(smartApps).list())
   router.register('smartApps.createDirectory', params =>
     requiredSmartApps(smartApps).createDirectory({
-      parentPath: stringParam(params, 'parentPath'),
+      parentPath: rawStringParam(params, 'parentPath'),
       name: stringParam(params, 'name'),
       displayName: stringParam(params, 'displayName'),
-      description: stringParam(params, 'description'),
+      description: rawStringParam(params, 'description'),
       template: stringParam(params, 'template'),
     })
   )
@@ -927,6 +1114,8 @@ export function createElectronCapabilityRouter(
       modelBaseUrl: nullableStringParam(params, 'modelBaseUrl'),
       contextBaseUrl: nullableStringParam(params, 'contextBaseUrl'),
       contextToken: nullableStringParam(params, 'contextToken'),
+      decisionBaseUrl: nullableStringParam(params, 'decisionBaseUrl'),
+      decisionProtocolVersion: nullableNumberParam(params, 'decisionProtocolVersion'),
     })
   )
   router.register('smartApps.stop', params =>
@@ -1001,6 +1190,15 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.takeContextToken', params =>
     requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
   )
+  router.register('smartApps.storeDecisionToken', params =>
+    requiredSmartApps(smartApps).storeDecisionToken(
+      stringParam(params, 'installationId'),
+      stringParam(params, 'token')
+    )
+  )
+  router.register('smartApps.takeDecisionToken', params =>
+    requiredSmartApps(smartApps).takeDecisionToken(stringParam(params, 'installationId'))
+  )
   return router
 }
 
@@ -1027,7 +1225,15 @@ export function registerAppUpdateCapabilities(
   router.register('appUpdate.check', params =>
     requiredAppUpdates(appUpdates).check(updateChannelParam(params))
   )
-  router.register('appUpdate.download', () => requiredAppUpdates(appUpdates).download())
+  // A download outlives any single host request, and every host request is
+  // bounded by a fixed timeout. Start the download and let callers follow
+  // appUpdate.downloadProgress until it reports a terminal phase.
+  router.register('appUpdate.download', () => {
+    void requiredAppUpdates(appUpdates)
+      .download()
+      .catch(() => undefined)
+    return null
+  })
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )
@@ -1042,10 +1248,42 @@ export function registerDesktopServiceCapabilities(
   developer: {
     openLogDirectory: () => void | Promise<void>
     openDevTools: () => void | Promise<void>
+    openProcessExplorer: () => void | Promise<void>
+    setProcessExplorerAlwaysOnTop: (alwaysOnTop: boolean) => { alwaysOnTop: boolean }
   }
 ): void {
+  router.register('applicationMenu.popup', params => {
+    const menu = services.applicationMenu?.()
+    if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
+    menu.popup(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('applicationMenu.setCapabilities', params => {
+    const label = stringParam(params, 'windowLabel')
+    services.updateApplicationMenuCapabilities?.(label, capabilityStateParam(params))
+  })
+  router.register('applicationMenu.setLanguage', params => {
+    services.updateApplicationMenuLanguage?.(stringParam(params, 'language'))
+  })
+  const testMenu = () => {
+    assertE2EEnabled('Application menu test controls')
+    const menu = services.applicationMenu?.()
+    if (!menu) throw new HostCapabilityError('menu_unavailable', 'Application menu is unavailable')
+    return menu
+  }
+  router.register('e2e.getApplicationMenuSnapshot', () => testMenu().snapshot())
+  router.register('e2e.activateApplicationMenu', params =>
+    testMenu().activateForTesting(
+      stringParam(params, 'id'),
+      optionalStringParam(params, 'windowLabel') ?? 'main'
+    )
+  )
   router.register('developer.openLogDirectory', () => developer.openLogDirectory())
   router.register('developer.openDevTools', () => developer.openDevTools())
+  router.register('developer.openProcessExplorer', () => developer.openProcessExplorer())
+  router.register('processExplorer.setAlwaysOnTop', params =>
+    developer.setProcessExplorerAlwaysOnTop(booleanParam(params, 'alwaysOnTop') ?? false)
+  )
+  router.register('diagnostics.processSnapshot', () => services.processExplorer.snapshot())
   router.register('maintenance.cleanupTemporaryImages', () =>
     services.cleanupStaleTemporaryImages()
   )
@@ -1241,11 +1479,6 @@ export function registerPluginDevelopmentCapabilities(
   )
 }
 
-async function mkdirDirectory(path: string): Promise<void> {
-  const { mkdir } = await import('node:fs/promises')
-  await mkdir(path, { recursive: true })
-}
-
 function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRequest {
   const request = recordParam(params, 'request')
   const attachments = request.attachments
@@ -1262,6 +1495,7 @@ function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRe
     taskContext: request.taskContext ?? null,
     screenshotDataUrl: nullableStringValue(request.screenshotDataUrl, 'request.screenshotDataUrl'),
     composerDiagnostics: request.composerDiagnostics ?? null,
+    conversationDiagnostics: request.conversationDiagnostics ?? null,
     attachments: attachments.map((attachment, index) => {
       const record = objectValue(attachment, `request.attachments[${index}]`)
       return {
@@ -1319,16 +1553,6 @@ export function registerBrowserHistoryCapabilities(
   )
   router.register('browser.historyRemove', params =>
     browser.removeHistory(stringArrayParam(params, 'ids') ?? [])
-  )
-}
-
-function localAttachmentRoot(): string {
-  const executorHome = process.env.WEGENT_EXECUTOR_HOME?.trim()
-  return join(
-    executorHome || join(app.getPath('home'), '.wework'),
-    'workspace',
-    'attachments',
-    'draft'
   )
 }
 
@@ -1504,6 +1728,26 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean | u
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') invalidParam(key)
   return value
+}
+
+/**
+ * Parses the capability map reported by the renderer. Unknown keys are
+ * accepted so a newer renderer can add capabilities without a host update,
+ * but every declared value must be a boolean.
+ */
+function capabilityStateParam(
+  params: Record<string, unknown>,
+  key = 'capabilities'
+): ApplicationMenuCapabilityState {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  const state: ApplicationMenuCapabilityState = {}
+  for (const [name, entry] of Object.entries(record)) {
+    if (typeof entry !== 'boolean') invalidParam(key)
+    state[name as keyof ApplicationMenuCapabilityState] = entry
+  }
+  return state
 }
 
 function stringRecordParam(params: Record<string, unknown>, key: string): Record<string, string> {

@@ -2,7 +2,6 @@ import { PluginPickerMenu as SharedPluginPickerMenu } from '@wegent/collaboratio
 import { useContext } from 'react'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
-import { prefetchLocalConnectorAuthForPluginNames } from '@/features/plugins/prefetchLocalConnectorAuth'
 import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
@@ -57,8 +56,6 @@ export function PluginPickerMenu(props: {
           registerComposerMentionIcon(reference, { url: logo.url, contrastPad: logo.contrastPad })
         props.onInsertReference(reference)
         showTrialGuide?.(displayAppName(app), app)
-        if (catalog.prefetchLocalAuth)
-          void prefetchLocalConnectorAuthForPluginNames([composerAppPluginKey(app)])
         const recent = [...readRecentPluginAppIds().keys()]
         window.localStorage.setItem(
           RECENT_PLUGIN_APPS_KEY,

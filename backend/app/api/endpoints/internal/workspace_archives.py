@@ -42,6 +42,7 @@ class SandboxRestoreResponse(BaseModel):
 
     success: bool
     task_id: int
+    skipped: bool = False
 
 
 class ArchiveDownloadUrlResponse(BaseModel):
@@ -57,7 +58,7 @@ def _get_active_task(db: Session, task_id: int) -> TaskResource:
     task = task_store.get_task_by_states(
         db,
         task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
+        states=TaskResource.is_active_query(),
     )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -154,7 +155,13 @@ async def restore_sandbox_workspace(
         runtime_type="sandbox",
     )
 
-    return SandboxRestoreResponse(success=bool(restored), task_id=task_id)
+    if restored:
+        return SandboxRestoreResponse(success=True, task_id=task_id)
+    status = (task.json or {}).get("status") or {}
+    archive = status.get("archive") or {}
+    if not archive.get("storageKey"):
+        return SandboxRestoreResponse(success=True, task_id=task_id, skipped=True)
+    raise HTTPException(status_code=409, detail="sandbox_archive_restore_failed")
 
 
 @router.get("/{task_id}/download-url", response_model=ArchiveDownloadUrlResponse)

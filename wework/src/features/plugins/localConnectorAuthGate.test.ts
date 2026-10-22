@@ -1,120 +1,14 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import {
   connectorAuthMessageText,
-  enrichInstalledPluginsForLocalAuth,
   extractConnectorAuthConnectorSlug,
-  filterLocalRequirements,
-  findLocalConnectorsForMessage,
   latestConnectorAuthMessage,
-  listLocalConnectors,
-  listMentionedPluginNames,
-  messageNeedsConnectorPreflight,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
-import type { InstalledPlugin } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
-function pluginWithLocalQr(overrides?: Partial<InstalledPlugin>): InstalledPlugin {
-  return {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'InstalledPlugin',
-    metadata: { name: 'weibo-api-wiki', namespace: 'wegent', labels: { id: '1' } },
-    spec: {
-      source: {
-        type: 'marketplace',
-        providerKey: 'marketplace',
-        pluginKey: 'weibo-api-wiki',
-      },
-      origin: 'market',
-      pluginId: 1,
-      releaseId: 1,
-      desiredVersion: '0.3.1',
-      updatePolicy: 'manual',
-      displayName: '微博开放平台内部WIKI',
-      description: 'wiki',
-      version: '0.3.1',
-      installState: 'installed',
-      enabled: true,
-      components: {
-        skills: [],
-        commands: [],
-        agents: [],
-        apps: [],
-        hooks: [],
-        mcps: [],
-        connectors: [
-          {
-            slug: 'weibo-wiki',
-            authPolicy: 'on_install',
-            localAuth: {
-              kind: 'local_qr',
-              health: ['scripts/run-weibo-wiki.sh', 'health'],
-              start: ['scripts/run-weibo-wiki.sh', 'auth', 'start'],
-              poll: ['scripts/run-weibo-wiki.sh', 'auth', 'status', '--wait-seconds', '0'],
-            },
-          },
-        ],
-        lsps: [],
-        monitors: [],
-        bins: [],
-      },
-      ...overrides?.spec,
-    },
-    ...overrides,
-  } as InstalledPlugin
-}
-
-describe('localConnectorAuthGate', () => {
-  test('does not start local login preflight for an account-managed connector', () => {
-    const plugin = pluginWithLocalQr()
-    plugin.spec.components.connectors![0].accountAuth = {
-      protocolVersion: 1,
-      credentialType: 'oauth2',
-      adapter: 'scripts/account-auth.py',
-    }
-    expect(listLocalConnectors([plugin])).toEqual([])
-    expect(findLocalConnectorsForMessage('plugin://weibo-api-wiki@wegent', [plugin])).toEqual([])
-  })
-
-  test('lists local qr connectors', () => {
-    const items = listLocalConnectors([pluginWithLocalQr()])
-    expect(items).toHaveLength(1)
-    expect(items[0]?.connectorSlug).toBe('weibo-wiki')
-  })
-
-  test('finds connectors from plugin mention', () => {
-    const items = findLocalConnectorsForMessage(
-      '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent) 查 users/show',
-      [pluginWithLocalQr()]
-    )
-    expect(items).toHaveLength(1)
-    expect(items[0]?.pluginKey).toBe('weibo-api-wiki')
-  })
-
-  test('only preflights explicit plugin mentions', () => {
-    expect(messageNeedsConnectorPreflight('继续分析这个问题')).toBe(false)
-    expect(
-      messageNeedsConnectorPreflight(
-        '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent) 查 users/show'
-      )
-    ).toBe(true)
-    expect(
-      messageNeedsConnectorPreflight(
-        JSON.stringify({
-          error: 'connector_auth_required',
-          pluginKey: 'weibo-api-wiki',
-          connectorSlug: 'weibo-wiki',
-        })
-      )
-    ).toBe(false)
-    expect(
-      messageNeedsConnectorPreflight(
-        'Investigate why the online Connector authentication fails before creating a task.'
-      )
-    ).toBe(false)
-  })
-
+describe('local connector authorization recovery messages', () => {
   test('detects connector_auth_required payloads', () => {
     expect(
       messageRequiresConnectorAuth(
@@ -125,12 +19,12 @@ describe('localConnectorAuthGate', () => {
       messageRequiresConnectorAuth(
         '微博开放平台内部 WIKI 的登录会话已失效，需要通过 Wework 主机连接器重新认证。界面会显示二维码登录卡片'
       )
-    ).toBe(true)
+    ).toBe(false)
     expect(
       messageRequiresConnectorAuth(
         '目前尚未登录微博开放平台内部 WIKI。Wework 宿主正在通过 weibo-wiki Connector 发起身份认证。请在界面出现二维码卡片后完成扫码登录'
       )
-    ).toBe(true)
+    ).toBe(false)
     expect(messageRequiresConnectorAuth('all good')).toBe(false)
   })
 
@@ -149,33 +43,16 @@ describe('localConnectorAuthGate', () => {
     })
   })
 
-  test('resolves auth hint from connector slug prose without product-specific maps', () => {
-    const hint = resolveLocalConnectorAuthHint(
-      'Login expired. Host is starting weibo-wiki Connector authentication. Complete the QR card when it appears.'
-    )
-    expect(hint).toEqual({
-      pluginKey: 'weibo-wiki',
-      connectorSlug: 'weibo-wiki',
-      displayName: 'weibo-wiki',
+  test.each([
+    '- `pluginKey`: `github`\n- `connectorSlug`: `wework-github-cli`',
+    '**pluginKey** : **github**\n**connectorSlug** : **wework-github-cli**',
+    'pluginKey = github\nconnectorSlug = wework-github-cli',
+  ])('resolves Markdown-formatted auth identity: %s', identity => {
+    expect(resolveLocalConnectorAuthHint(`connector_auth_required\n${identity}`)).toEqual({
+      pluginKey: 'github',
+      connectorSlug: 'wework-github-cli',
+      displayName: 'github',
     })
-  })
-
-  test('matches installed plugins by connector slug when pluginKey is absent', () => {
-    const items = filterLocalRequirements([pluginWithLocalQr()], {
-      connectorSlug: 'weibo-wiki',
-    })
-    expect(items).toHaveLength(1)
-    expect(items[0]?.pluginKey).toBe('weibo-api-wiki')
-  })
-
-  test('does not list every local connector when identity is missing', () => {
-    expect(filterLocalRequirements([pluginWithLocalQr()], {})).toEqual([])
-    expect(
-      filterLocalRequirements([pluginWithLocalQr()], {
-        pluginKey: null,
-        connectorSlug: null,
-      })
-    ).toEqual([])
   })
 
   test('does not treat generic connector query failures as auth resume', () => {
@@ -260,112 +137,29 @@ describe('localConnectorAuthGate', () => {
     expect(candidate?.text).not.toContain('xxxx')
   })
 
-  test('extracts connector slug and filters requirements', () => {
-    const text = JSON.stringify({
-      error: 'connector_auth_required',
-      pluginKey: 'weibo-api-wiki',
-      connectorSlug: 'weibo-wiki',
-    })
-    expect(extractConnectorAuthConnectorSlug(text)).toBe('weibo-wiki')
-    const items = filterLocalRequirements([pluginWithLocalQr()], {
-      pluginKey: 'weibo-api-wiki',
-      connectorSlug: 'weibo-wiki',
-    })
-    expect(items).toHaveLength(1)
-    expect(items[0]?.connectorSlug).toBe('weibo-wiki')
+  test.each([
+    'need_login',
+    'connector_auth_required pluginKey=weibo-api-wiki',
+    'connector_auth_required connectorSlug=weibo-wiki',
+    'Login expired. Host is starting weibo-wiki Connector authentication.',
+    '以下是扫码登录配置：pluginKey=weibo-api-wiki connectorSlug=weibo-wiki',
+  ])('requires both plugin and connector identities: %s', text => {
+    expect(resolveLocalConnectorAuthHint(text)).toBeNull()
   })
 
-  test('lists mentioned plugin names from plugin:// uris', () => {
-    expect(
-      listMentionedPluginNames(
-        '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent) 查 users/show'
-      )
-    ).toEqual(['weibo-api-wiki'])
-    expect(listMentionedPluginNames('继续分析这个问题')).toEqual([])
-  })
-
-  test('enriches installed plugins that omit localAuth connectors', async () => {
-    const bare = pluginWithLocalQr({
-      spec: {
-        ...pluginWithLocalQr().spec,
-        components: {
-          skills: [],
-          commands: [],
-          agents: [],
-          apps: [],
-          hooks: [],
-          mcps: [],
-          connectors: [],
-          lsps: [],
-          monitors: [],
-          bins: [],
-        },
+  test('does not reopen an old authorization request after a new user message', () => {
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'old-auth',
+        role: 'assistant',
+        content: 'connector_auth_required pluginKey=wiki connectorSlug=wiki',
       },
-    })
-    const readDetail = vi.fn(async () => pluginWithLocalQr())
-    const enriched = await enrichInstalledPluginsForLocalAuth([bare], readDetail)
-    expect(readDetail).toHaveBeenCalledTimes(1)
-    expect(listLocalConnectors(enriched)).toHaveLength(1)
+      { id: 'new-user', role: 'user', content: 'Ask a different question' },
+    ]
+    expect(latestConnectorAuthMessage(messages)).toBeNull()
   })
 
-  test('skips detail reads for plugins outside the enrich allow-list', async () => {
-    const bare = pluginWithLocalQr({
-      spec: {
-        ...pluginWithLocalQr().spec,
-        components: {
-          skills: [],
-          commands: [],
-          agents: [],
-          apps: [],
-          hooks: [],
-          mcps: [],
-          connectors: [],
-          lsps: [],
-          monitors: [],
-          bins: [],
-        },
-      },
-    })
-    const other = pluginWithLocalQr({
-      metadata: { name: 'documents', namespace: 'wegent', labels: { id: '2' } },
-      spec: {
-        ...pluginWithLocalQr().spec,
-        source: {
-          type: 'marketplace',
-          providerKey: 'marketplace',
-          pluginKey: 'documents',
-        },
-        displayName: 'Documents',
-        components: {
-          skills: [],
-          commands: [],
-          agents: [],
-          apps: [],
-          hooks: [],
-          mcps: [],
-          connectors: [],
-          lsps: [],
-          monitors: [],
-          bins: [],
-        },
-      },
-    })
-    const readDetail = vi.fn(async () => pluginWithLocalQr())
-    const enriched = await enrichInstalledPluginsForLocalAuth([bare, other], readDetail, {
-      shouldEnrich: plugin => plugin.spec.source.pluginKey === 'weibo-api-wiki',
-    })
-    expect(readDetail).toHaveBeenCalledTimes(1)
-    expect(listLocalConnectors(enriched)).toHaveLength(1)
-  })
-
-  test('lists browser oauth connectors', () => {
-    const plugin = pluginWithLocalQr()
-    plugin.spec.components.connectors![0]!.localAuth = {
-      kind: 'browser_oauth',
-      health: ['scripts/local-auth.sh', 'health'],
-      start: ['scripts/local-auth.sh', 'login'],
-      poll: [],
-    }
-    expect(listLocalConnectors([plugin])).toHaveLength(1)
+  test('preserves the explicit connector slug', () => {
+    expect(extractConnectorAuthConnectorSlug('connectorSlug=wiki-login')).toBe('wiki-login')
   })
 })

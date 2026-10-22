@@ -35,7 +35,7 @@ async fn connector_tools(
             FastApiError::internal()
         })?;
     let catalog: Vec<apps::ConnectorApp> = rows.iter().map(apps::row_to_app).collect();
-    let tools = service::list_tools(&catalog, user).await;
+    let tools = service::list_tools(&state.mysql, &catalog, user).await?;
     Ok(ConnectorToolListResponse { tools })
 }
 

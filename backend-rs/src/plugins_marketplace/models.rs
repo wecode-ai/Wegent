@@ -7,8 +7,8 @@
 //! Field order and defaults mirror `PluginMarketplaceItem` and nested models
 //! in `app/schemas/installed_plugin.py`, because FastAPI serializes the
 //! response model and the API consumers observe that exact shape.
+use brz_json::RawJson;
 use serde::Serialize;
-use serde_json::value::RawValue;
 
 /// Optional Wework workbench runtime contribution of a plugin.
 #[derive(Debug, Serialize)]
@@ -20,8 +20,8 @@ pub struct WorkbenchPluginComponent {
     pub pinned_to_client_version: bool,
     #[serde(rename = "clientVersion")]
     pub client_version: Option<String>,
-    pub frontend: Option<Box<RawValue>>,
-    pub desktop: Option<Box<RawValue>>,
+    pub frontend: Option<RawJson>,
+    pub desktop: Option<RawJson>,
 }
 
 /// Optional opaque fields are populated by presence: explicit JSON null is
@@ -29,24 +29,24 @@ pub struct WorkbenchPluginComponent {
 #[derive(Debug, Serialize)]
 pub struct PathComponent {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<Box<RawValue>>,
+    pub name: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<Box<RawValue>>,
+    pub path: Option<RawJson>,
 }
 #[derive(Debug, Serialize)]
 pub struct SkillComponent {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<Box<RawValue>>,
+    pub name: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<Box<RawValue>>,
+    pub description: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<Box<RawValue>>,
+    pub path: Option<RawJson>,
 }
 #[derive(Debug, Serialize)]
 pub struct McpComponent {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<Box<RawValue>>,
-    pub server: Box<RawValue>,
+    pub name: Option<RawJson>,
+    pub server: RawJson,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,24 +73,24 @@ pub struct AccountAuthComponent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub export_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_environment: Option<Box<RawValue>>,
+    pub local_environment: Option<RawJson>,
 }
 /// The legacy normalizer passes these values through without type coercion.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalAuthComponent {
-    pub kind: Box<RawValue>,
-    pub health: Box<RawValue>,
-    pub start: Box<RawValue>,
-    pub poll: Box<RawValue>,
-    pub logout: Box<RawValue>,
-    pub tool: Box<RawValue>,
-    pub qr_field: Box<RawValue>,
-    pub status_field: Box<RawValue>,
-    pub ok_values: Box<RawValue>,
-    pub poll_interval_seconds: Box<RawValue>,
-    pub timeout_seconds: Box<RawValue>,
-    pub logout_on_uninstall: Box<RawValue>,
+    pub kind: RawJson,
+    pub health: RawJson,
+    pub start: RawJson,
+    pub poll: RawJson,
+    pub logout: RawJson,
+    pub tool: RawJson,
+    pub qr_field: RawJson,
+    pub status_field: RawJson,
+    pub ok_values: RawJson,
+    pub poll_interval_seconds: RawJson,
+    pub timeout_seconds: RawJson,
+    pub logout_on_uninstall: RawJson,
 }
 
 /// Normalized `components` object of a marketplace item.
@@ -108,7 +108,7 @@ pub struct Components {
     pub lsps: Vec<PathComponent>,
     pub monitors: Vec<PathComponent>,
     pub bins: Vec<PathComponent>,
-    pub settings: Option<Box<RawValue>>,
+    pub settings: Option<RawJson>,
     pub workbench: Option<WorkbenchPluginComponent>,
 }
 
@@ -191,7 +191,7 @@ pub struct MarketplaceItem {
     pub source_type: String,
     pub interface: Option<PluginInterface>,
     pub components: Components,
-    pub manifest: Box<RawValue>,
+    pub manifest: RawJson,
     #[serde(rename = "ownerUserId")]
     pub owner_user_id: i64,
     #[serde(rename = "ownerDisplayName")]

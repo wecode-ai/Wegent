@@ -2,6 +2,17 @@ import { test, expect } from '../fixtures/test-fixtures'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from '../utils/api-client'
 
+const FIXTURE_CONCURRENCY = 16
+
+async function runInBatches<T, R>(values: T[], operation: (value: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  for (let offset = 0; offset < values.length; offset += FIXTURE_CONCURRENCY) {
+    const batch = values.slice(offset, offset + FIXTURE_CONCURRENCY)
+    results.push(...(await Promise.all(batch.map(operation))))
+  }
+  return results
+}
+
 test('finds older agents in management and chat after creating 205 agents', async ({
   page,
   request,
@@ -23,17 +34,27 @@ test('finds older agents in management and chat after creating 205 agents', asyn
   const botId = (bot.data as { id: number }).id
 
   try {
-    for (let index = 0; index < 205; index += 1) {
-      const team = await api.createTeam({
-        name: `${testPrefix}-agent-${index}`,
-        bots: [{ bot_id: botId, role: 'leader', bot_prompt: '' }],
-        bind_mode: ['chat'],
-        namespace: 'default',
-        requires_workspace: false,
-      })
-      expect(team.status).toBe(201)
-      created.push(team.data as { id: number; name: string })
+    const teamResults = await runInBatches(
+      Array.from({ length: 205 }, (_, index) => index),
+      index =>
+        api.createTeam({
+          name: `${testPrefix}-agent-${index}`,
+          bots: [{ bot_id: botId, role: 'leader', bot_prompt: '' }],
+          bind_mode: ['chat'],
+          namespace: 'default',
+          requires_workspace: false,
+        })
+    )
+    const creationErrors: string[] = []
+    for (const [index, team] of teamResults.entries()) {
+      if (team.status === 201) {
+        created.push(team.data as { id: number; name: string })
+      } else {
+        creationErrors.push(`Team ${index}: ${team.status}`)
+      }
     }
+    expect(creationErrors, 'Pagination fixtures must be created').toEqual([])
+
     const oldest = created[0]
     const firstPage = await api.get<{ items: Array<{ id: number }> }>(
       '/api/teams?page=1&limit=100&scope=all'
@@ -88,13 +109,15 @@ test('finds older agents in management and chat after creating 205 agents', asyn
     await page.goto(`/chat?teamId=${oldest.id}`)
     await expect(page.getByTestId('selected-team-badge')).toContainText(oldest.name)
   } finally {
-    const cleanupErrors: string[] = []
-    for (const team of created) {
-      const result = await api.delete(
+    const cleanupResults = await runInBatches(created, async team => ({
+      team,
+      result: await api.delete(
         `/api/teams/${team.id}?force=true&confirm_name=${encodeURIComponent(team.name)}`
-      )
-      if (result.status !== 200) cleanupErrors.push(`Team ${team.id}: ${result.status}`)
-    }
+      ),
+    }))
+    const cleanupErrors = cleanupResults.flatMap(({ team, result }) =>
+      result.status === 200 ? [] : [`Team ${team.id}: ${result.status}`]
+    )
     const result = await api.delete(`/api/bots/${botId}?force=true`)
     if (result.status !== 200) cleanupErrors.push(`Bot ${botId}: ${result.status}`)
     expect(cleanupErrors, 'Pagination fixtures must be removed').toEqual([])

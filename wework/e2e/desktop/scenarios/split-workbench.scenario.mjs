@@ -201,8 +201,6 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     /\bcomposer-prosemirror-editor\b/,
     'The split workbench did not render the ProseMirror composer'
   )
-  await verifyComposerLineNavigation(control)
-  await verifyComposerMarkdownEditing(control)
   const beforePaste = '0123456789'
   const pastedText = 'PASTED'
   const afterPaste = 'abcdefghij'
@@ -320,6 +318,10 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     1,
     'Clearing the multiline composer did not restore a single empty paragraph'
   )
+  // Native input activates the window, so run it after the inactive-caret checks.
+  await verifyComposerLineNavigation(control)
+  await verifyComposerMarkdownEditing(control)
+  await control.command('fill', COMPOSER, { value: '' })
 }
 
 async function verifyComposerLineNavigation(control) {
@@ -393,6 +395,63 @@ async function verifyComposerMarkdownEditing(control) {
   assert.match(await control.command('getValue', COMPOSER), /replaced/)
   assert.equal(Number(await control.command('getElementCount', `${COMPOSER} table`)), 1)
   const url = 'http://example.com/file_name?q=hello_world'
+  for (const [value, selector, html] of [
+    ['~~example~~', 's', '<s>example</s>'],
+    ['`example`', 'code', '<code>example</code>'],
+    ['**example**', 'strong', '<strong>example</strong>'],
+    ['*example*', 'em', '<em>example</em>'],
+    ['***example***', 'strong em', '<strong><em>example</em></strong>'],
+  ]) {
+    for (const source of ['markdown', 'rich-text']) {
+      console.log(`[composer-formatting] ${source}: ${value}`)
+      await control.command('fill', COMPOSER, { value: '' })
+      await control.command('pasteText', COMPOSER, {
+        value: source === 'rich-text' ? html : value,
+        mimeType: source === 'rich-text' ? 'text/html' : 'text/plain',
+      })
+      assert.equal(await control.command('getValue', COMPOSER), value)
+      await control.command('nativePress', COMPOSER, { key: 'x' })
+      assert.equal(
+        await control.command('getValue', COMPOSER),
+        `${value}x`,
+        `${source}: typing after ${selector} must not inherit its formatting`
+      )
+      assert.equal(await control.command('getText', `${COMPOSER} ${selector}`), 'example')
+      await control.command('setSelectionOffset', `${COMPOSER} ${selector}`, { value: '3' })
+      await control.command('nativePress', COMPOSER, { key: 'x' })
+      assert.equal(await control.command('getText', `${COMPOSER} ${selector}`), 'exaxmple')
+      assert.equal(
+        await control.command('getValue', COMPOSER),
+        `${value.replace('example', 'exaxmple')}x`,
+        `${source}: editing inside ${selector} must preserve its formatting`
+      )
+    }
+  }
+  for (const [value, selector, expected, normalized = value] of [
+    ['*some **bold** text*', 'strong', '*some **bold**x text*'],
+    ['**some *italic* text**', 'em', '**some *italic*x text**'],
+    [
+      '[*some **bold** text*](https://example.com)',
+      'strong',
+      '*[some **bold**x text](https://example.com)*',
+      '*[some **bold** text](https://example.com)*',
+    ],
+  ]) {
+    await control.command('fill', COMPOSER, { value: '' })
+    await control.command('pasteText', COMPOSER, { value })
+    assert.equal(await control.command('getValue', COMPOSER), normalized)
+    const innerText = await control.command('getText', `${COMPOSER} ${selector}`)
+    await control.command('setSelectionOffset', `${COMPOSER} ${selector}`, {
+      value: String(innerText.length),
+    })
+    await control.command('nativePress', COMPOSER, { key: 'x' })
+    assert.equal(
+      await control.command('getValue', COMPOSER),
+      expected,
+      'Typing past an inner formatting boundary must preserve the outer formatting'
+    )
+    assert.equal(await control.command('getText', `${COMPOSER} ${selector}`), innerText)
+  }
   await control.command('fill', COMPOSER, { value: url })
   await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
   await control.command('click', `${COMPOSER} [data-testid="composer-text-link"]`)
@@ -773,6 +832,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         })
       )
+      console.log(`[split-workbench] sidebar drag timings: ${JSON.stringify(splitResult)}`)
       const splitDurationMs = splitResult.durationMs
       assert.equal(
         typeof splitDurationMs,

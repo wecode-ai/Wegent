@@ -4,12 +4,17 @@
 
 """Helpers for reading Task execution workspace metadata."""
 
-from typing import Any, Optional
-
-from app.models.task import TaskResource
+from typing import Any, Optional, Protocol
 
 
-def task_execution_workspace(task: TaskResource) -> dict[str, Any]:
+class TaskJsonResource(Protocol):
+    """Task metadata supplied by either an entity or a narrow read projection."""
+
+    @property
+    def json(self) -> Any: ...
+
+
+def task_execution_workspace(task: TaskJsonResource) -> dict[str, Any]:
     task_json = task.json if isinstance(task.json, dict) else {}
     spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
@@ -21,14 +26,14 @@ def task_execution_workspace(task: TaskResource) -> dict[str, Any]:
     return workspace
 
 
-def task_execution_workspace_path(task: TaskResource) -> Optional[str]:
+def task_execution_workspace_path(task: TaskJsonResource) -> Optional[str]:
     path = task_execution_workspace(task).get("path")
     if not isinstance(path, str):
         return None
     return path.strip() or None
 
 
-def task_execution_workspace_source(task: TaskResource) -> Optional[str]:
+def task_execution_workspace_source(task: TaskJsonResource) -> Optional[str]:
     source = task_execution_workspace(task).get("source")
     if not isinstance(source, str):
         return None

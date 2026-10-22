@@ -18,7 +18,7 @@
 //!    `preferences.quick_access.teams` and each favorite team becomes a
 //!    `QuickLaunchFavoriteAgent` (missing teams are skipped).
 use crate::json_compat::OptionalOpaqueJsonExt;
-use crate::json_compat::{JsonProjection, OpaqueJson};
+use brz_json::{JsonProjection, OpaqueJson};
 #[cfg(test)]
 use serde_json::Value;
 
@@ -98,7 +98,7 @@ struct SystemFunctionResponse {
     #[serde(rename = "type")]
     kind: &'static str,
     name: String,
-    bind_mode: Vec<Box<serde_json::value::RawValue>>,
+    bind_mode: Vec<brz_json::RawJson>,
     recommended_mode: &'static str,
 }
 #[derive(serde::Serialize)]
@@ -113,9 +113,9 @@ struct FavoriteAgentResponse {
     title: String,
     description: Option<String>,
     icon: Option<String>,
-    bind_mode: Vec<Box<serde_json::value::RawValue>>,
+    bind_mode: Vec<brz_json::RawJson>,
     recommended_mode: &'static str,
-    agent_type: Box<serde_json::value::RawValue>,
+    agent_type: brz_json::RawJson,
 }
 #[derive(serde::Serialize)]
 struct QuickLaunchResponse {
@@ -406,13 +406,13 @@ impl LaunchTeamInput {
             _ => "both",
         }
     }
-    fn bind_modes(&self) -> Vec<Box<serde_json::value::RawValue>> {
+    fn bind_modes(&self) -> Vec<brz_json::RawJson> {
         self.spec
             .as_ref()
             .and_then(|spec| spec.bind_mode.as_ref())
             .into_iter()
             .flatten()
-            .map(|mode| serde_json::value::to_raw_value(mode).expect("bind mode serializes"))
+            .map(|mode| brz_json::to_raw_value(mode).expect("bind mode serializes"))
             .collect()
     }
 }

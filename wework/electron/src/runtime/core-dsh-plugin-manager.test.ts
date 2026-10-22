@@ -58,6 +58,9 @@ describe('CoreDshPluginManager', () => {
     await expect(fixture.manager().setEnabled('@wegent/dsh-app-wework', false)).rejects.toThrow(
       'built-in Core DSH plugin'
     )
+    await expect(fixture.manager().setEnabled('@wework/dsh-browser-auth', false)).rejects.toThrow(
+      'built-in Core DSH plugin'
+    )
     await fixture.remove()
   })
 
@@ -78,6 +81,9 @@ describe('CoreDshPluginManager', () => {
     const pnpmCalls = runCommand.mock.calls.filter(([, args]) => args.includes('update'))
     expect(pnpmCalls).toHaveLength(1)
     expect(pnpmCalls[0]?.[2]?.cwd).toBe(fixture.profileRoot)
+    expect(pnpmCalls[0]?.[1]).toEqual(
+      expect.arrayContaining(['--store-dir', join(fixture.profileRoot, '..', '..', 'pnpm-store')])
+    )
     const preflightCall = runCommand.mock.calls.find(([, args]) => args.includes('--dump-config'))
     expect(preflightCall?.[2]?.cwd).toBe(fixture.runtimeRoot)
     await fixture.remove()
@@ -141,6 +147,9 @@ describe('CoreDshPluginManager', () => {
     expect(runCommand.mock.calls.some(([, args]) => args.includes(`link:${source}`))).toBe(true)
     expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
       JSON.stringify(source)
+    )
+    expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
+      '- id: client-hmr\n  disabled: false'
     )
     expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
     await fixture.remove()

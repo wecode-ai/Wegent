@@ -2,6 +2,19 @@ import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleSnapshot } from './types'
 
+export function summarizeRuntimeTaskExecution(task: RuntimeTaskSummary | null) {
+  if (!task) return null
+  return {
+    taskId: task.taskId,
+    status: task.status ?? null,
+    running: task.running ?? null,
+    threadStatus: task.threadStatus ?? null,
+    turnStatus: task.turnStatus ?? null,
+    completedAt: task.completedAt ?? null,
+    updatedAt: task.updatedAt ?? null,
+  }
+}
+
 export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
 
 export { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
@@ -95,10 +108,18 @@ export function shouldReplaceRuntimeTaskProjection(
   const candidateCompleted = isRuntimeTaskAuthoritativeCompletion(candidate)
 
   if (currentCompleted !== candidateCompleted) {
-    if (candidateCompleted) return true
+    if (candidateCompleted) {
+      if (!isRuntimeTaskExecutionRunning(current)) return true
+      // Completion belongs to its turn, not to a later metadata refresh.
+      // Native completion timestamps may have only second precision.
+      const completedAt = runtimeTaskTimestamp(candidate.completedAt)
+      const currentTime = runtimeTaskProjectionTime(current)
+      return completedAt === 0 || Math.floor(completedAt / 1000) >= Math.floor(currentTime / 1000)
+    }
     if (!isRuntimeTaskConfirmedActive(candidate)) return false
     const candidateTime = runtimeTaskProjectionTime(candidate)
-    return candidateTime === 0 || candidateTime > runtimeTaskTimestamp(current.completedAt)
+    // Native completion can be second-precision while the accepted start is milliseconds.
+    return candidateTime === 0 || candidateTime > runtimeTaskProjectionTime(current)
   }
 
   if (current.optimistic === true && candidate.optimistic !== true) {

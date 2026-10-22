@@ -2,6 +2,8 @@
 sidebar_position: 34
 ---
 
+Core DSH 和新建智能应用默认使用 `0.2.0-rc.2`；已有应用可继续按 manifest 选择 `0.1.0-rc.8`。新版客户端 slot 服务由 `@deepseek-ai/dsh-client-ui-renderer` 提供，不再依赖 `dsh-client-runtime`。新版 DSH 的原生模块加载器要求匹配的 Electron 运行时指纹，Wework 固定使用其支持的 Electron `44.7.0`。
+
 # Wework DSH UI 插件
 
 Wework 的桌面 UI 以 Core DSH 为唯一插件运行时。`@wegent/dsh-app-wework`
@@ -87,7 +89,10 @@ React 组件作为 `ctx.wework.ui.register` 的第四个参数注册；宿主按
 {
   "dsh": {
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-runtime", "@wegent/dsh-app-wework"],
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@wegent/dsh-app-wework"
+      ],
       "platform": "web"
     }
   }

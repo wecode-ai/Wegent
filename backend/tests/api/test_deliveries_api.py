@@ -13,7 +13,6 @@ from typing import Any, BinaryIO
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -23,7 +22,6 @@ from app.models.cloud_project import CloudProject, LoopItemTaskBinding
 from app.models.delivery import (
     Delivery,
     LoopItem,
-    ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectIncomingEvent,
 )
@@ -31,16 +29,15 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanView
 from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
     DeliveryStorageUnavailableError,
 )
-from app.services.issue_workflow_planning import issue_workflow_planning_service
-from app.services.project_automations import project_automation_execution
+from app.services.loop_items.service import loop_item_service
 from app.services.project_incoming_hooks import project_incoming_hook_service
+from tests.utils.collaboration import authorize_project
 
 
 class FakeDeliveryStorage:
@@ -156,6 +153,7 @@ def delivery_project(test_db: Session, test_user: User) -> CloudProject:
         created_by_user_id=test_user.id,
         storage_prefix=f"projects/{public_id}",
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -164,6 +162,82 @@ def delivery_project(test_db: Session, test_user: User) -> CloudProject:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_completed_todo_subtree_can_be_archived_listed_and_restored(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Completed parent", "status": "completed"},
+    ).json()
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Completed child",
+            "status": "completed",
+            "parent_id": parent["id"],
+        },
+    ).json()
+
+    archived = test_client.delete(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=_auth(test_token),
+    )
+    assert archived.status_code == 204
+
+    archive_page = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/archived-loop-items",
+        headers=_auth(test_token),
+    )
+    assert archive_page.status_code == 200
+    assert [item["id"] for item in archive_page.json()["items"]] == [parent["id"]]
+    assert archive_page.json()["items"][0]["archived_at"]
+
+    child_restore = test_client.post(
+        f"/api/v1/loop-items/{child['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert child_restore.status_code == 409
+
+    restored = test_client.post(
+        f"/api/v1/loop-items/{parent['id']}/restore",
+        headers=_auth(test_token),
+    )
+    assert restored.status_code == 200
+    assert {item["id"] for item in restored.json()["items"]} == {
+        parent["id"],
+        child["id"],
+    }
+
+
+def test_incomplete_todo_subtree_cannot_be_archived(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Completed parent", "status": "completed"},
+    ).json()
+    test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Incomplete child", "parent_id": parent["id"]},
+    )
+
+    response = test_client.delete(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only completed TODO subtrees can be archived"
 
 
 def test_external_loop_items_forward_assignee_filters(
@@ -188,6 +262,7 @@ def test_external_loop_items_forward_assignee_filters(
             "provider_config": {"repository": "octo/example"},
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
@@ -214,6 +289,112 @@ def test_external_loop_items_forward_assignee_filters(
     assert captured == {"assignee_type": "user", "assignee_id": str(test_user.id)}
 
 
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_external_loop_items_reject_unsupported_schedule_changes(
+    operation: str,
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+) -> None:
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EXTSCHEDULE",
+        name="External schedule",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    authorize_project(test_db, project)
+    test_db.add(project)
+    test_db.commit()
+
+    if operation == "create":
+        response = test_client.post(
+            f"/api/v1/cloud-projects/{project.id}/loop-items",
+            headers=_auth(test_token),
+            json={"title": "Scheduled issue", "start_at": "2026-10-11T00:00:00Z"},
+        )
+    else:
+        response = test_client.patch(
+            "/api/v1/loop-items/EXTSCHEDULE-7",
+            headers=_auth(test_token),
+            json={"version": 1, "due_at": "2026-10-12T00:00:00Z"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Scheduling is not supported by this Issue provider"
+    )
+
+
+def test_external_loop_item_update_allows_unchanged_null_schedule_fields(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.schemas.delivery import LoopItemUpdate
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="EXTNULLSCHEDULE",
+        name="External null schedule",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={
+            "task_provider": "github",
+            "provider_config": {"repository": "octo/example"},
+        },
+    )
+    authorize_project(test_db, project)
+    test_db.add(project)
+    test_db.commit()
+
+    issue = {"number": 7, "title": "Old title"}
+    response = {
+        "can_view_detail": True,
+        "can_edit": True,
+        "start_at": None,
+        "due_at": None,
+        "assignee_user_id": None,
+    }
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        MagicMock(return_value=issue),
+    )
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_response",
+        MagicMock(return_value=response),
+    )
+    update_issue = MagicMock(return_value={**issue, "title": "New title"})
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    result = external_loop_item_provider.update(
+        test_db,
+        "EXTNULLSCHEDULE-7",
+        test_user.id,
+        LoopItemUpdate(
+            version=1,
+            title="New title",
+            start_at=None,
+            due_at=None,
+        ),
+    )
+
+    assert result == response
+    update_issue.assert_called_once_with(project, 7, {"title": "New title"})
+
+
 def test_external_loop_item_comments_reject_unauthorized_private_project_access(
     test_client: TestClient,
     test_db: Session,
@@ -236,6 +417,7 @@ def test_external_loop_item_comments_reject_unauthorized_private_project_access(
             "provider_config": {"repository": "octo/private"},
         },
     )
+    authorize_project(test_db, project)
     unauthorized_user = User(
         user_name="external-comments-outsider",
         password_hash=get_password_hash("outsider-password"),
@@ -282,6 +464,7 @@ def test_external_loop_item_comments_return_empty_list_for_authorized_user(
             "provider_config": {"repository": "octo/empty"},
         },
     )
+    authorize_project(test_db, project)
     test_db.add(project)
     test_db.commit()
 
@@ -385,6 +568,11 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
+    bindings = test_client.get(
+        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    )
+    assert bindings.status_code == 200
+    assert bindings.json() == [binding.json()]
 
     response = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
@@ -396,14 +584,17 @@ def test_board_snapshot_returns_first_screen_dependencies(
     assert [entry["id"] for entry in snapshot["items"]] == [item["id"]]
     assert snapshot["task_bindings"] == [binding.json()]
     assert snapshot["members"][0]["user_id"] == test_user.id
-    assert snapshot["members"][0]["role"] == "Owner"
+    assert snapshot["members"][0]["role"] == "Maintainer"
     assert snapshot["agents"] == []
 
 
+@pytest.mark.parametrize("other_lane_first", [False, True])
 def test_loop_item_reorder_orders_one_lane(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
+    test_db: Session,
+    other_lane_first: bool,
 ) -> None:
     headers = _auth(test_token)
 
@@ -419,6 +610,14 @@ def test_loop_item_reorder_orders_one_lane(
     first = create("First")
     second = create("Second")
     other_lane = create("Other lane", status="pending")
+    initial_order = (
+        [other_lane, first, second] if other_lane_first else [first, second, other_lane]
+    )
+    for rank, item in enumerate(initial_order):
+        test_db.query(LoopItem).filter(LoopItem.id == item["id"]).update(
+            {LoopItem.sort_order: rank}
+        )
+    test_db.commit()
 
     response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
@@ -434,24 +633,34 @@ def test_loop_item_reorder_orders_one_lane(
         second["id"],
         first["id"],
     ]
-    assert [item["sort_order"] for item in response.json()["items"]] == [0, 1]
+    assert len({item["sort_order"] for item in response.json()["items"]}) == 2
 
     listed = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items", headers=headers
     ).json()["items"]
     inbox_ids = [item["id"] for item in listed if item["status"] == "inbox"]
     assert inbox_ids == [second["id"], first["id"]]
-    # The other lane keeps its own ordering state.
+    # Status lanes are projections of one canonical sibling order.
+    assert sorted(item["sort_order"] for item in listed) == [0, 1, 2]
     assert (
-        next(item for item in listed if item["id"] == other_lane["id"])["sort_order"]
-        == 0
+        next(item for item in listed if item["id"] == other_lane["id"])["status"]
+        == "pending"
     )
 
-    # Moving a TODO to another lane resets its manual position to the top.
-    moved = test_client.patch(
+    refreshed_second = next(item for item in listed if item["id"] == second["id"])
+    assert refreshed_second["version"] == second["version"] + 1
+    stale = test_client.patch(
         f"/api/v1/loop-items/{second['id']}",
         headers=headers,
         json={"version": second["version"], "status": "pending"},
+    )
+    assert stale.status_code == 409
+
+    # Continue from the refreshed version after a persisted reorder.
+    moved = test_client.patch(
+        f"/api/v1/loop-items/{second['id']}",
+        headers=headers,
+        json={"version": refreshed_second["version"], "status": "pending"},
     )
     assert moved.status_code == 200
     assert moved.json()["sort_order"] == 0
@@ -486,18 +695,9 @@ def test_loop_item_parent_must_be_in_same_project(
         created_by_user_id=test_user.id,
         storage_prefix=f"projects/{public_id}",
     )
+    authorize_project(test_db, other)
     test_db.add(other)
     test_db.flush()
-    test_db.add(
-        ResourceMember(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=other.id,
-            entity_id=str(test_user.id),
-            user_id=test_user.id,
-            role="Owner",
-            status=MemberStatus.APPROVED.value,
-        )
-    )
     test_db.commit()
 
     response = test_client.post(
@@ -533,9 +733,36 @@ def test_delivery_returns_service_unavailable_without_repeating_cleanup(
     assert response.json()["detail"] == "Delivery object storage is unavailable"
 
 
+def test_delivery_without_storage_credentials_returns_503(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import settings
+    from app.services.delivery.storage import DeliveryStorage
+
+    monkeypatch.setattr(settings, "ATTACHMENT_S3_ACCESS_KEY", "")
+    monkeypatch.setattr(settings, "ATTACHMENT_S3_SECRET_KEY", "")
+    monkeypatch.setattr(delivery_service, "storage", DeliveryStorage())
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unconfigured delivery storage"},
+    ).json()["id"]
+    response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "handoff"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Delivery object storage is unavailable"
+
+
 def test_delivery_flow_creates_immutable_snapshot(
     test_client: TestClient,
     test_token: str,
+    test_db: Session,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
     monkeypatch: pytest.MonkeyPatch,
@@ -554,6 +781,9 @@ def test_delivery_flow_creates_immutable_snapshot(
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "local-device",
         "taskId": "runtime-task-1",
@@ -603,6 +833,13 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert finalized.json()["status"] == "delivered"
     assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
     assert published_events == [(item_id, "delivery_finalized")]
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "inbox"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+    assert (item.metadata_json or {}).get("status_history", []) == initial_history
 
     detail = test_client.get(
         f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
@@ -622,180 +859,163 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert immutable.status_code == 409
 
 
-def test_delivery_does_not_accept_human_assigned_issue(
-    test_client: TestClient,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Human review is required",
-            "status": "pending",
-            "assignee_user_id": delivery_project.created_by_user_id,
-        },
-    )
-    assert created.status_code == 201
-    item = created.json()
-    assert item["human_work"] is not None
-    started = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/work/start",
-        headers=_auth(test_token),
-        json={"version": item["version"]},
-    )
-    assert started.status_code == 200, started.text
-
-    draft = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/deliveries",
-        headers=_auth(test_token),
-        json={"markdown": "# Work evidence"},
-    )
-    assert draft.status_code == 201, draft.text
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
-        headers=_auth(test_token),
-    )
-    assert finalized.status_code == 200, finalized.text
-    latest = test_client.get(
-        f"/api/v1/loop-items/{item['id']}", headers=_auth(test_token)
-    ).json()
-    assert latest["status"] == "in_progress"
-    assert latest["current_delivery_id"] == draft.json()["id"]
-
-
-def test_reporter_assignee_can_attach_evidence_while_working(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    member_name = f"human-evidence-{uuid.uuid4().hex[:8]}"
-    member = User(
-        user_name=member_name,
-        password_hash=get_password_hash("member-password"),
-        email=f"{member_name}@example.com",
-        is_active=True,
-    )
-    test_db.add(member)
-    test_db.flush()
-    test_db.add(
-        ResourceMember.create(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=delivery_project.id,
-            entity_id=str(member.id),
-            status=MemberStatus.APPROVED.value,
-        )
-    )
-    test_db.commit()
-    member_token = create_access_token(data={"sub": member_name})
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Evidence", "status": "pending"},
-    ).json()
-    assigned = test_client.post(
-        f"/api/v1/loop-items/{created['id']}/assignments",
-        headers=_auth(test_token),
-        json={"target_type": "human", "target_id": str(member.id)},
-    ).json()["issue"]
-    started = test_client.post(
-        f"/api/v1/loop-items/{created['id']}/work/start",
-        headers=_auth(member_token),
-        json={"version": assigned["version"]},
-    )
-    assert started.status_code == 200, started.text
-
-    uploaded = test_client.post(
-        f"/api/v1/loop-items/{created['id']}/attachments",
-        headers=_auth(member_token),
-        files={"file": ("evidence.txt", b"verified", "text/plain")},
-    )
-    assert uploaded.status_code == 201, uploaded.text
-    removed = test_client.delete(
-        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}",
-        headers=_auth(member_token),
-    )
-    assert removed.status_code == 204, removed.text
-
-
-def test_workflow_delivery_rejects_empty_fulfillments(
+def test_collaboration_human_delivery_closes_assignment_without_completing_issue(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
 ) -> None:
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "nodes": [
-                {
-                    "id": "backend",
-                    "name": "Backend",
-                    "kind": "my_task",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "composer",
-                    "required_deliverables": [
-                        {
-                            "id": "backend-wiki",
-                            "name": "Backend Wiki",
-                            "description": "",
-                            "value_type": "text",
-                        }
-                    ],
-                }
-            ],
-        },
-    }
-    test_db.commit()
-    item = test_client.post(
+    item_response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Workflow delivery"},
-    ).json()
+        json={"title": "Review CPU evidence", "status": "in_progress"},
+    )
+    assert item_response.status_code == 201
+    item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
-        "deviceId": "local-device",
-        "taskId": "backend-task",
-        "taskTitle": "Implement backend",
-        "workflowNodeId": "backend",
+        "deviceId": "human-device",
+        "taskId": "human-runtime-task",
+        "taskTitle": "Review CPU evidence",
+        "humanAssignmentId": "human-assignment-1",
+        "dispatchId": "dispatch-1",
+        "dispatchRoundId": "round-1",
+        "assignmentId": "review-cpu",
     }
-    binding = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/tasks",
         headers=_auth(test_token),
         json=source_task,
     )
-    assert binding.status_code == 201
-    draft = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/deliveries",
+    assert binding_response.status_code == 201
+    assert binding_response.json()["human_assignment_id"] == "human-assignment-1"
+
+    draft_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
         headers=_auth(test_token),
-        json={"markdown": "# Backend", "source_task": source_task},
+        json={
+            "markdown": "# Review\nEvidence accepted.",
+            "source_task": source_task,
+        },
     )
-    assert draft.status_code == 201
-    delivery_id = draft.json()["id"]
+    assert draft_response.status_code == 201
+    delivery_id = draft_response.json()["id"]
 
     finalized = test_client.post(
         f"/api/v1/deliveries/{delivery_id}/finalize",
         headers=_auth(test_token),
-        json={"fulfillments": []},
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["status"] == "delivered"
+    assert finalized.json()["source_task_snapshot"] == {
+        "taskId": "human-runtime-task",
+        "deviceId": "human-device",
+        "userId": item_response.json()["created_by_user_id"],
+        "backendTaskId": None,
+        "humanAssignmentId": "human-assignment-1",
+        "dispatchId": "dispatch-1",
+        "dispatchRoundId": "round-1",
+        "assignmentId": "review-cpu",
+    }
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "in_progress"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+
+
+def test_direct_human_ai_delivery_does_not_change_issue_status(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    item_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Prepare release notes", "status": "inbox"},
+    )
+    assert item_response.status_code == 201
+    item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
+    source_task = {
+        "deviceId": "human-device",
+        "taskId": "direct-human-runtime-task",
+        "taskTitle": "Prepare release notes",
+        "humanAssignmentId": "direct-human-assignment-1",
+        "dispatchId": "direct-human:assignment-1",
+        "dispatchRoundId": "direct",
+        "assignmentId": "assignment-1",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201
+
+    draft_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={
+            "markdown": "# Release notes\nReady for review.",
+            "source_task": source_task,
+        },
+    )
+    assert draft_response.status_code == 201
+    delivery_id = draft_response.json()["id"]
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=_auth(test_token),
     )
 
-    assert finalized.status_code == 422
-    assert (
-        finalized.json()["detail"]
-        == "Workflow Delivery must fulfill at least one required deliverable"
+    assert finalized.status_code == 200
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "inbox"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+    assert (item.metadata_json or {}).get("status_history", []) == initial_history
+    assert "human_work" not in item.metadata_json
+
+
+def test_delivery_response_reads_expired_orm_fields(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Serialize expired delivery"},
+    ).json()["id"]
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "handoff"},
     )
-    detail = test_client.get(
-        f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
-    )
-    assert detail.status_code == 200
-    assert detail.json()["status"] == "draft"
+    assert draft.status_code == 201
+
+    delivery = test_db.get(Delivery, draft.json()["id"])
+    assert delivery is not None
+    test_db.expire(delivery)
+
+    response = deliveries_endpoint._delivery_response(test_db, delivery)
+
+    assert response.id == delivery.id
+    assert response.loop_item_id == item_id
+    assert response.status == "draft"
 
 
 def test_pull_request_delivery_creates_change_request_binding(
@@ -967,168 +1187,6 @@ def test_project_workflow_is_snapshotted_into_new_issue(
     assert [node["status"] for node in workflow["nodes"]] == ["ready", "blocked"]
 
 
-@pytest.mark.parametrize("target_status", ["pending", "in_review"])
-def test_crossing_processing_boundary_starts_orchestrated_issue_workflow(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-    target_status: str,
-) -> None:
-    rule = ProjectAutomationRule(
-        cloud_project_id=delivery_project.id,
-        title="Develop automatically",
-        description="Start from the Issue workflow",
-        status="enabled",
-        created_by_user_id=delivery_project.created_by_user_id,
-        metadata_json={
-            "trigger_type": "workflow",
-            "assignment_mode": "manual",
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.flush()
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "execution_config": {
-                "agent_id": "agent-1",
-                "runtime_profile_id": "runtime-1",
-                "model": "model-1",
-                "workspace_binding": {
-                    "type": "backend_project",
-                    "projectId": delivery_project.id,
-                },
-            },
-            "nodes": [
-                {
-                    "id": "develop",
-                    "name": "Develop",
-                    "kind": "automation",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "none",
-                    "automation_rule_id": str(rule.id),
-                }
-            ],
-        },
-    }
-    test_db.commit()
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Start workflow from board", "status": "inbox"},
-    ).json()
-    dispatch = AsyncMock()
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
-
-    response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={"version": created["version"], "status": target_status},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == target_status
-    assert response.json()["workflow"]["nodes"][0]["status"] == "queued"
-    run = test_db.query(ProjectAutomationRun).one()
-    assert run.task_id == created["id"]
-    dispatch.assert_awaited_once()
-
-
-def test_ai_issue_creation_rejects_missing_configuration_before_persisting(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    rule = ProjectAutomationRule(
-        cloud_project_id=delivery_project.id,
-        title="AI manager",
-        description="Plan and assign the Issue.",
-        status="enabled",
-        created_by_user_id=delivery_project.created_by_user_id,
-        metadata_json={
-            "trigger_type": "event",
-            "event_type": "task.created",
-            "event_config": {},
-            "action": "ai_assign",
-            "manager": {"type": "custom"},
-            "runtime": {
-                "source": "fixed_profile",
-                "runtime_profile_id": None,
-            },
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.flush()
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "none",
-            "advancement_policy": "ai",
-            "ai_automation_rule_id": str(rule.id),
-            "nodes": [],
-        },
-    }
-    test_db.commit()
-    dispatch = AsyncMock()
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
-
-    created_response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Configure before AI planning", "status": "pending"},
-    )
-
-    assert created_response.status_code == 422
-    detail = created_response.json()["detail"]
-    assert detail["error_code"] == "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE"
-    assert detail["missing_fields"] == ["device", "model"]
-    assert test_db.query(LoopItem).count() == 0
-    assert test_db.query(ProjectAutomationRun).count() == 0
-    dispatch.assert_not_awaited()
-
-    workflow = {
-        **delivery_project.metadata_json["workflow_definition"],
-        "execution_config": {
-            "agent_id": None,
-            "runtime_profile_id": None,
-            "execution_device_id": "local-device",
-            "model": "gpt-5-codex",
-            "model_type": "runtime",
-            "model_options": {},
-            "workspace_binding": {"type": "standalone"},
-        },
-    }
-    started_response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Configured AI planning",
-            "status": "pending",
-            "workflow": workflow,
-        },
-    )
-
-    assert started_response.status_code == 201, started_response.text
-    created = started_response.json()
-    run = test_db.query(ProjectAutomationRun).one()
-    assert run.task_id == created["id"]
-    assert (run.metadata_json or {})["workflow_execution_config"]["model"] == (
-        "gpt-5-codex"
-    )
-    dispatch.assert_awaited_once()
-
-
 def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_client: TestClient,
     test_db: Session,
@@ -1148,16 +1206,11 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_db.refresh(item)
 
     refresh = MagicMock(side_effect=lambda _db, *, item, user_id: item)
-    dispatch = AsyncMock()
     wake = AsyncMock()
     monkeypatch.setattr(
         deliveries_endpoint.loop_item_service,
         "refresh_agent_execution_configuration",
         refresh,
-    )
-    monkeypatch.setattr(
-        "app.services.board_team_execution.dispatch_board_team_assignment",
-        dispatch,
     )
     monkeypatch.setattr(
         "app.tasks.robot_queue_tasks.consume_queues_background",
@@ -1183,7 +1236,6 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
 
     assert response.status_code == 200
     refresh.assert_called_once()
-    dispatch.assert_awaited_once()
     wake.assert_awaited_once_with()
 
 
@@ -1232,226 +1284,6 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     status_event = ingest.await_args_list[1].args[1]
     assert status_event.event_type == "task.status_changed"
     assert status_event.subject_id == created["id"]
-
-
-def test_human_assigned_issue_does_not_start_creation_automation(
-    test_client: TestClient,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    matching_rules = MagicMock(return_value=[SimpleNamespace(id="rule-1")])
-    ingest = AsyncMock(return_value=1)
-    should_start_workflow = MagicMock(return_value=True)
-    start_workflow = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.matching_rules",
-        matching_rules,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.project_incoming_hook_service,
-        "ingest_internal",
-        ingest,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "should_start_after_creation",
-        should_start_workflow,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "start",
-        start_workflow,
-    )
-
-    response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Human-owned Issue",
-            "assignee_user_id": delivery_project.created_by_user_id,
-        },
-    )
-
-    assert response.status_code == 201
-    assert response.json()["human_work"] is not None
-    matching_rules.assert_not_called()
-    ingest.assert_not_awaited()
-    should_start_workflow.assert_not_called()
-    start_workflow.assert_not_awaited()
-
-
-def test_status_automation_workflow_is_returned_by_status_update(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-) -> None:
-    rule = ProjectAutomationRule(
-        cloud_project_id=delivery_project.id,
-        title="Bind workflow on processing",
-        description="Attach the canonical workflow before the board decides execution mode.",
-        status="enabled",
-        created_by_user_id=delivery_project.created_by_user_id,
-        metadata_json={
-            "trigger_type": "event",
-            "event_type": "task.status_changed",
-            "event_config": {
-                "transition": "entered_processing",
-                "runtime_workflow_definition": {
-                    "version": 1,
-                    "stage_mode": "dag",
-                    "advancement_policy": "manual",
-                    "nodes": [
-                        {
-                            "id": "implement",
-                            "name": "Implement",
-                            "execution_mode": "robot",
-                            "execution_config": {
-                                "execution_device_id": "local-device",
-                                "model": "runtime-model",
-                                "workspace_binding": None,
-                            },
-                        }
-                    ],
-                },
-            },
-            "action": "execute",
-            "role": {"source": "generic", "agent_id": None},
-            "runtime": {
-                "source": "runtime_user",
-                "user_id": delivery_project.created_by_user_id,
-            },
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.commit()
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Bind workflow before execution", "status": "inbox"},
-    ).json()
-
-    response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={"version": created["version"], "status": "in_progress"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "in_progress"
-    assert payload["workflow"]["nodes"][0]["id"] == "implement"
-    assert payload["workflow"]["nodes"][0]["status"] == "ready"
-    assert (
-        payload["workflow"]["nodes"][0]["execution_config"]["workspace_binding"] is None
-    )
-
-
-def test_status_update_requires_one_automation_before_entering_processing(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Choose workflow on processing", "status": "inbox"},
-    ).json()
-    item = test_db.get(LoopItem, created["id"])
-    assert item is not None
-    item.metadata_json = {
-        **(item.metadata_json or {}),
-        "workflow": {
-            "version": 1,
-            "definition_version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "approval_policy": "required",
-            "orchestration_status": "idle",
-            "nodes": [
-                {
-                    "id": "legacy-step",
-                    "name": "Legacy step",
-                    "prompt": "Do not start after selecting a canonical automation",
-                    "execution_mode": "human",
-                    "status": "ready",
-                }
-            ],
-        },
-    }
-    test_db.commit()
-    matching_rules = [
-        SimpleNamespace(id="rule-1", title="Implement", description="Build the change"),
-        SimpleNamespace(id="rule-2", title="Review", description="Review the request"),
-    ]
-    matching = MagicMock(return_value=matching_rules)
-    ingest = AsyncMock(return_value=1)
-    start = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.matching_rules",
-        matching,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.project_incoming_hook_service,
-        "ingest_internal",
-        ingest,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "start",
-        start,
-    )
-
-    selection_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={"version": created["version"], "status": "pending"},
-    )
-
-    assert selection_response.status_code == 409
-    assert selection_response.json()["detail"] == {
-        "code": "automation_selection_required",
-        "message": "Multiple automations match this Issue",
-        "candidates": [
-            {
-                "id": "rule-1",
-                "name": "Implement",
-                "description": "Build the change",
-            },
-            {
-                "id": "rule-2",
-                "name": "Review",
-                "description": "Review the request",
-            },
-        ],
-    }
-    unchanged = test_client.get(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-    ).json()
-    assert unchanged["status"] == "inbox"
-    assert unchanged["version"] == created["version"]
-    ingest.assert_not_awaited()
-
-    selected_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={
-            "version": created["version"],
-            "status": "pending",
-            "automation_rule_id": "rule-2",
-        },
-    )
-
-    assert selected_response.status_code == 200
-    assert selected_response.json()["status"] == "pending"
-    start.assert_not_awaited()
-    ingest.assert_awaited_once()
-    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1595,532 +1427,6 @@ def test_tag_update_requires_and_dispatches_one_matching_automation(
     assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
-def test_issue_created_in_inbox_starts_its_existing_workflow(
-    test_client: TestClient,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "start",
-        start,
-    )
-
-    response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Start inbox workflow",
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "coordinator_prompt": "",
-                "approval_policy": "automatic",
-                "ai_automation_rule_id": "rule-1",
-                "execution_config": None,
-                "orchestration_status": "idle",
-                "active_run_id": None,
-                "active_plan_version": None,
-                "current_stage_id": None,
-                "nodes": [],
-            },
-        },
-    )
-
-    assert response.status_code == 201
-    assert response.json()["status"] == "inbox"
-    start.assert_awaited_once()
-    assert start.await_args.kwargs["item"].id == response.json()["id"]
-
-
-def test_pausing_planning_cancels_active_ai_manager(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    issue = LoopItem(
-        id=f"I{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        title="Pause planning",
-        status="pending",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "approval_policy": "required",
-                "ai_automation_rule_id": "rule-1",
-                "orchestration_status": "idle",
-                "nodes": [],
-            }
-        },
-    )
-    test_db.add(issue)
-    test_db.flush()
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=issue,
-        user_id=test_user.id,
-    )
-    manager_run = ProjectAutomationRun(
-        id=f"A{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        parent_id="rule-1",
-        task_id=issue.id,
-        title="AI manager",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
-    )
-    test_db.add(manager_run)
-    test_db.commit()
-    cancel_run = AsyncMock(return_value={"id": manager_run.id, "status": "cancelled"})
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_service,
-        "cancel_run",
-        cancel_run,
-    )
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
-        headers=_auth(test_token),
-        json={},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "paused"
-    cancel_run.assert_awaited_once_with(
-        test_db,
-        str(delivery_project.id),
-        manager_run.id,
-        test_user.id,
-    )
-    resume_response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan/resume",
-        headers=_auth(test_token),
-        json={},
-    )
-    assert resume_response.status_code == 409
-    assert resume_response.json()["detail"] == "The AI manager is still stopping"
-
-
-def test_pausing_planning_does_not_claim_success_without_runtime_confirmation(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    issue = LoopItem(
-        id=f"I{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        title="Pause planning without Runtime confirmation",
-        status="pending",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "approval_policy": "required",
-                "ai_automation_rule_id": "rule-1",
-                "orchestration_status": "idle",
-                "nodes": [],
-            }
-        },
-    )
-    test_db.add(issue)
-    test_db.flush()
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=issue,
-        user_id=test_user.id,
-    )
-    manager_run = ProjectAutomationRun(
-        id=f"A{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        parent_id="rule-1",
-        task_id=issue.id,
-        title="AI manager",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
-    )
-    test_db.add(manager_run)
-    test_db.commit()
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_service,
-        "cancel_run",
-        AsyncMock(
-            side_effect=HTTPException(
-                status_code=502,
-                detail="Runtime did not confirm cancellation",
-            )
-        ),
-    )
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
-        headers=_auth(test_token),
-        json={},
-    )
-
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Runtime did not confirm cancellation"
-    plan = issue_workflow_planning_service.get(
-        test_db,
-        issue_id=issue.id,
-        user_id=test_user.id,
-    )
-    assert plan is not None
-    assert plan.status == "planning"
-
-
-def test_executor_workflow_plan_submission_binds_current_manager_run(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    issue = LoopItem(
-        id=f"I{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        title="Submit manager plan",
-        status="pending",
-        created_by_user_id=test_user.id,
-    )
-    test_db.add(issue)
-    test_db.commit()
-    plan = WorkflowPlanView(
-        run_id="workflow-run-1",
-        issue_id=issue.id,
-        stage_id="__issue__",
-        plan_version=1,
-        approval_policy="required",
-        status="awaiting_approval",
-        summary="Implement the task.",
-        items=[],
-        manager_run=None,
-    )
-    submit = MagicMock(return_value=plan)
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_execution,
-        "submit_manager_workflow_plan",
-        submit,
-    )
-    published_events: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        deliveries_endpoint,
-        "publish_loop_item_changed",
-        lambda db, *, item, reason, actor_user_id: published_events.append(
-            (item.id, reason)
-        ),
-    )
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan",
-        headers={
-            **_auth(test_token),
-            "X-Wegent-Automation-Run-ID": "automation-run-1",
-        },
-        json={
-            "summary": "Implement the task.",
-            "items": [
-                {
-                    "client_key": "implementation",
-                    "title": "Implement",
-                    "description": "Implement the requested behavior.",
-                    "assignee_type": "agent",
-                    "assignee_id": "agent-1",
-                }
-            ],
-        },
-    )
-
-    assert response.status_code == 200
-    submit.assert_called_once()
-    assert submit.call_args.kwargs["run_id"] == "automation-run-1"
-    assert submit.call_args.kwargs["issue_id"] == issue.id
-    assert published_events == [(issue.id, "workflow_plan_submitted")]
-
-
-def test_workflow_task_binding_requires_a_ready_non_automated_stage(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-) -> None:
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "nodes": [
-                {
-                    "id": "develop",
-                    "name": "Develop",
-                    "kind": "my_task",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "composer",
-                },
-                {
-                    "id": "test",
-                    "name": "Test",
-                    "kind": "my_task",
-                    "depends_on": ["develop"],
-                    "required": True,
-                    "workspace_policy": "inherit",
-                },
-                {
-                    "id": "deploy",
-                    "name": "Deploy",
-                    "kind": "automation",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "none",
-                    "automation_rule_id": "rule-1",
-                },
-            ],
-        },
-    }
-    test_db.commit()
-    item = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Workflow binding"},
-    ).json()
-
-    blocked = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "test-task",
-            "workflowNodeId": "test",
-        },
-    )
-    assert blocked.status_code == 409
-
-    automatic = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "deploy-task",
-            "workflowNodeId": "deploy",
-        },
-    )
-    assert automatic.status_code == 422
-
-    first = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "develop-task",
-            "workflowNodeId": "develop",
-        },
-    )
-    assert first.status_code == 201
-    assert first.json()["workflow_node_id"] == "develop"
-    context = test_client.get(
-        "/api/v1/runtime-tasks/cloud-context",
-        headers=_auth(test_token),
-        params={"device_id": "local-device", "task_id": "develop-task"},
-    )
-    assert context.status_code == 200
-    assert context.json()["workflow_node_id"] == "develop"
-
-    duplicate = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "other-develop-task",
-            "workflowNodeId": "develop",
-        },
-    )
-    assert duplicate.status_code == 201
-    assert duplicate.json()["workflow_node_id"] == "develop"
-
-    stored_item = test_db.get(LoopItem, item["id"])
-    assert stored_item is not None
-    metadata = dict(stored_item.metadata_json or {})
-    workflow = dict(metadata["workflow"])
-    nodes = [dict(node) for node in workflow["nodes"]]
-    nodes[0]["status"] = "awaiting_approval"
-    workflow["nodes"] = nodes
-    metadata["workflow"] = workflow
-    stored_item.metadata_json = metadata
-    test_db.commit()
-
-    correction = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "correction-task",
-            "workflowNodeId": "develop",
-        },
-    )
-    assert correction.status_code == 201
-    assert correction.json()["workflow_node_id"] == "develop"
-
-    stored_item = test_db.get(LoopItem, item["id"])
-    assert stored_item is not None
-    metadata = dict(stored_item.metadata_json or {})
-    workflow = dict(metadata["workflow"])
-    nodes = [dict(node) for node in workflow["nodes"]]
-    nodes[0]["decision_history"] = [
-        {
-            "action": "reject",
-            "actor_user_id": 1,
-            "reason": "Needs correction",
-            "decided_at": "2026-08-19T02:47:28+00:00",
-        }
-    ]
-    workflow["nodes"] = nodes
-    metadata["workflow"] = workflow
-    stored_item.metadata_json = metadata
-    test_db.commit()
-    current = test_client.get(
-        f"/api/v1/loop-items/{item['id']}",
-        headers=_auth(test_token),
-    ).json()
-
-    serialized = test_client.patch(
-        f"/api/v1/loop-items/{item['id']}",
-        headers=_auth(test_token),
-        json={
-            "version": current["version"],
-            "status": current["status"],
-            "workflow": current["workflow"],
-        },
-    )
-    assert serialized.status_code == 200
-
-
-def test_workflow_task_binding_survives_missing_dependency_delivery_content(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "nodes": [
-                {
-                    "id": "develop",
-                    "name": "Develop",
-                    "kind": "my_task",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "composer",
-                },
-                {
-                    "id": "deploy",
-                    "name": "Deploy",
-                    "kind": "my_task",
-                    "depends_on": ["develop"],
-                    "dependency_context": {"develop": ["deliveries"]},
-                    "required": True,
-                    "workspace_policy": "inherit",
-                },
-            ],
-        },
-    }
-    test_db.commit()
-    item = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Missing dependency delivery"},
-    ).json()
-    source_task = {
-        "deviceId": "local-device",
-        "taskId": "develop-task",
-        "taskTitle": "Develop",
-        "workflowNodeId": "develop",
-    }
-    source_binding = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json=source_task,
-    )
-    assert source_binding.status_code == 201
-    draft = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/deliveries",
-        headers=_auth(test_token),
-        json={"markdown": "# Develop", "source_task": source_task},
-    ).json()
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{draft['id']}/finalize",
-        headers=_auth(test_token),
-    )
-    assert finalized.status_code == 200
-
-    delivery = test_db.get(Delivery, draft["id"])
-    assert delivery is not None
-    delivery_storage.objects.pop(delivery.markdown_object_key)
-    stored_item = test_db.get(LoopItem, item["id"])
-    assert stored_item is not None
-    metadata = dict(stored_item.metadata_json or {})
-    workflow = dict(metadata["workflow"])
-    nodes = [dict(node) for node in workflow["nodes"]]
-    nodes[0]["status"] = "completed"
-    nodes[1]["status"] = "ready"
-    workflow["nodes"] = nodes
-    metadata["workflow"] = workflow
-    stored_item.metadata_json = metadata
-    test_db.commit()
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "deploy-task",
-            "workflowNodeId": "deploy",
-        },
-    )
-
-    assert response.status_code == 201
-    assert response.json()["workflow_node_id"] == "deploy"
-    binding = test_db.get(LoopItemTaskBinding, response.json()["id"])
-    assert binding is not None
-    stage_input = binding.metadata_json["workflow_stage_input"]
-    dependency_delivery = stage_input["dependencies"][0]["deliveries"][0]
-    assert dependency_delivery["id"] == draft["id"]
-    assert dependency_delivery["markdown"] == ""
-    assert dependency_delivery["content_available"] is False
-    context_response = test_client.get(
-        f"/api/v1/loop-items/{item['id']}/workflow-nodes/deploy/input-context",
-        headers=_auth(test_token),
-    )
-    assert context_response.status_code == 200
-    compiled_instruction = context_response.json()["compiled_task_instruction"]
-    assert "## 任务定位" in compiled_instruction
-    assert "## 上游已交付内容" in compiled_instruction
-    assert f'"id": "{draft["id"]}"' in compiled_instruction
-
-
 def test_binding_subscription_backend_task_uses_task_store(
     test_client: TestClient,
     test_db: Session,
@@ -2189,6 +1495,8 @@ def test_binding_task_preserves_started_or_finished_todo_status(
 def test_runtime_task_can_narrow_project_context_to_todo(
     test_client: TestClient,
     test_token: str,
+    test_db: Session,
+    test_user: User,
     delivery_project: CloudProject,
 ) -> None:
     task = {"deviceId": "local-device", "taskId": "project-context-task"}
@@ -2201,14 +1509,11 @@ def test_runtime_task_can_narrow_project_context_to_todo(
     assert str(project_binding.json()["cloud_project_id"]) == str(delivery_project.id)
     assert project_binding.json()["loop_item_id"] is None
 
-    context = test_client.get(
-        "/api/v1/runtime-tasks/cloud-context",
-        headers=_auth(test_token),
-        params={"device_id": task["deviceId"], "task_id": task["taskId"]},
+    binding, project, loop_item = loop_item_service.find_cloud_context(
+        test_db, test_user.id, task["deviceId"], task["taskId"]
     )
-    assert context.status_code == 200
-    assert context.json()["project"]["name"] == delivery_project.name
-    assert context.json()["loop_item"] is None
+    assert project.name == delivery_project.name
+    assert loop_item is None
 
     item = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
@@ -2222,13 +1527,11 @@ def test_runtime_task_can_narrow_project_context_to_todo(
     )
     assert todo_binding.status_code == 201
 
-    narrowed = test_client.get(
-        "/api/v1/runtime-tasks/cloud-context",
-        headers=_auth(test_token),
-        params={"device_id": task["deviceId"], "task_id": task["taskId"]},
-    ).json()
-    assert str(narrowed["cloud_project_id"]) == str(delivery_project.id)
-    assert narrowed["loop_item"]["id"] == item["id"]
+    narrowed, _, loop_item = loop_item_service.find_cloud_context(
+        test_db, test_user.id, task["deviceId"], task["taskId"]
+    )
+    assert str(narrowed.cloud_project_id) == str(delivery_project.id)
+    assert loop_item.id == item["id"]
 
 
 def test_delivery_submitter_becomes_collaborator_without_runtime_task(
@@ -2324,69 +1627,6 @@ def test_delivery_rejects_oversized_asset_and_discards_draft(
     assert not delivery_storage.objects
 
 
-def test_project_member_can_discover_shared_todo_and_delivery(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    item_id = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Continue shared work"},
-    ).json()["id"]
-    member = User(
-        user_name="delivery-member",
-        password_hash=get_password_hash("member-password"),
-        email="delivery-member@example.com",
-        is_active=True,
-    )
-    test_db.add(member)
-    test_db.flush()
-    test_db.add(
-        ResourceMember.create(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=delivery_project.id,
-            entity_id=str(member.id),
-            status=MemberStatus.APPROVED.value,
-        )
-    )
-    test_db.commit()
-    member_token = create_access_token(data={"sub": member.user_name})
-
-    projects_response = test_client.get(
-        "/api/v1/cloud-projects", headers=_auth(member_token)
-    )
-    items_response = test_client.get(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(member_token),
-    )
-
-    assert projects_response.status_code == 200
-    assert any(
-        str(item["id"]) == str(delivery_project.id)
-        for item in projects_response.json()["items"]
-    )
-    assert items_response.status_code == 200
-    assert items_response.json()["items"][0]["id"] == item_id
-
-    collaborator_response = test_client.post(
-        f"/api/v1/loop-items/{item_id}/collaborators",
-        headers=_auth(test_token),
-        json={"user_id": member.id},
-    )
-    assert collaborator_response.status_code == 201
-    assert collaborator_response.json()["user_name"] == member.user_name
-
-    member_collaborators = test_client.get(
-        f"/api/v1/loop-items/{item_id}/collaborators",
-        headers=_auth(member_token),
-    )
-    assert member_collaborators.status_code == 200
-    assert [row["user_id"] for row in member_collaborators.json()] == [member.id]
-
-
 def test_loop_item_unread_follows_content_revision_and_read_cursor(
     test_client: TestClient,
     test_db: Session,
@@ -2416,6 +1656,7 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
             resource_type=ResourceType.CLOUD_PROJECT.value,
             resource_id=delivery_project.id,
             entity_id=str(member.id),
+            role="Viewer",
             status=MemberStatus.APPROVED.value,
         )
     )
@@ -2481,6 +1722,35 @@ def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
     test_db.refresh(item)
     assert item.metadata_json["legacy"] is True
     assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3
+
+
+def test_mark_loop_item_read_persists_activity_sequence(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Activity cursor"},
+    )
+    assert created.status_code == 201
+
+    marked = test_client.post(
+        f"/api/v1/loop-items/{created.json()['id']}/read",
+        headers=_auth(test_token),
+        json={"activity_sequence": 17},
+    )
+
+    assert marked.status_code == 200
+    assert marked.json()["activity_read_sequence"] == 17
+    item = test_db.get(LoopItem, created.json()["id"])
+    assert item is not None
+    assert (
+        item.metadata_json["activity_read_sequences"][str(item.created_by_user_id)]
+        == 17
+    )
 
 
 def _github_webhook_headers(
@@ -2590,10 +1860,8 @@ def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
                 "execution_target": "continue_binding",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text
@@ -2696,3 +1964,50 @@ def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
     assert run.task_id == str(item["id"])
     assert event.status == "processed"
     send_runtime_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize("status_scope", [None, "inbox"])
+def test_loop_item_reorder_respects_sibling_scope_across_statuses(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    status_scope: str | None,
+) -> None:
+    headers = _auth(test_token)
+    path = f"/api/v1/cloud-projects/{delivery_project.id}/loop-items"
+
+    def create(title: str, **values: Any) -> dict[str, Any]:
+        response = test_client.post(
+            path, headers=headers, json={"title": title, **values}
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    first = create("First", status="inbox")
+    second = create("Second", status="completed")
+    child = create("Child", parent_id=first["id"], status="completed")
+    requested = [second["id"], first["id"], child["id"]]
+    response = test_client.post(
+        f"{path}/reorder",
+        headers=headers,
+        json={"parent_id": None, "status": status_scope, "item_ids": requested},
+    )
+    assert response.status_code == 200
+    expected = requested[:2] if status_scope is None else [first["id"]]
+    assert [item["id"] for item in response.json()["items"]] == expected
+    listed = test_client.get(path, headers=headers).json()["items"]
+    siblings = sorted(
+        [item for item in listed if item["id"] in expected],
+        key=lambda item: item["sort_order"],
+    )
+    assert [item["id"] for item in siblings] == expected
+    assert sorted(item["sort_order"] for item in listed if not item["parent_id"]) == [
+        0,
+        1,
+    ]
+    assert next(item for item in listed if item["id"] == child["id"]) == child
+    assert {item["id"]: item["status"] for item in listed} == {
+        first["id"]: "inbox",
+        second["id"]: "completed",
+        child["id"]: "completed",
+    }

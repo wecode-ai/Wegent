@@ -30,7 +30,7 @@ export function ProjectChatComposerSurface({
   canCollapseInShortPane?: boolean
   collapseWhenIdle?: boolean
   isDraggingFiles?: boolean
-  presentation?: 'chat' | 'document'
+  presentation?: 'chat' | 'document' | 'configuration'
   embeddedInForm?: boolean
 }) {
   const formRef = useRef<HTMLElement>(null)
@@ -45,9 +45,11 @@ export function ProjectChatComposerSurface({
   }, [shortComposerExpanded])
   const surfaceClassName = cn(
     'relative z-10 flex w-full flex-col bg-background transition-colors',
-    presentation === 'document'
-      ? 'rounded-2xl px-5 pb-3 pt-1'
-      : 'min-h-[76px] rounded-[26px] border px-4 pb-1.5 pt-2',
+    presentation === 'configuration'
+      ? 'rounded-b-xl px-3 pb-2 pt-1'
+      : presentation === 'document'
+        ? 'rounded-2xl px-5 pb-3 pt-1'
+        : 'min-h-[76px] rounded-[26px] border px-4 pb-1.5 pt-2',
     presentation === 'chat' && styles.form,
     presentation === 'chat' && collapseWhenIdle && styles.collapseWhenIdle,
     isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
@@ -78,9 +80,11 @@ export function ProjectChatComposerSurface({
       data-testid="project-chat-composer"
       data-presentation={presentation}
       className={
-        presentation === 'document'
-          ? 'relative w-full rounded-2xl border border-border/60 bg-background shadow-sm focus-within:border-focus/70 transition-colors'
-          : 'relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
+        presentation === 'configuration'
+          ? 'relative w-full rounded-xl border border-border/70 bg-background'
+          : presentation === 'document'
+            ? 'relative w-full rounded-2xl border border-border/60 bg-background shadow-sm focus-within:border-focus/70 transition-colors'
+            : 'relative w-full rounded-[26px] bg-background shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
       }
     >
       {workBar}
@@ -92,7 +96,7 @@ export function ProjectChatComposerSurface({
           onDrop={formProps.onDrop as never}
           onClickCapture={expandOnClick}
           onFocusCapture={expandOnFocus}
-          ref={node => {
+          ref={(node) => {
             formRef.current = node
           }}
           {...commonDataProps}
@@ -105,7 +109,7 @@ export function ProjectChatComposerSurface({
           {...formProps}
           onClickCapture={expandOnClick}
           onFocusCapture={expandOnFocus}
-          ref={node => {
+          ref={(node) => {
             formRef.current = node
           }}
           {...commonDataProps}

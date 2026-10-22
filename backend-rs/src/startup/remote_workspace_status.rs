@@ -15,10 +15,11 @@ use std::{sync::Arc, time::Duration};
 
 pub async fn build<M: Mysql>(
     mysql: M,
-    task_policy: crate::task_routing::TaskPolicy,
+    task_store: Arc<dyn crate::task_store::TaskStore>,
     erp: std::sync::Arc<
         dyn crate::erp_provider::ErpProvider<brz_redis::RedisService> + Send + Sync,
     >,
+    entity_resolvers: crate::permissions::EntityResolvers<brz_redis::RedisService>,
     video_refresh: VideoRefresh,
 ) -> Result<Arc<AppState<M, brz_redis::RedisService>>> {
     let config = AppConfig::from_env().context("failed to load application configuration")?;
@@ -35,8 +36,16 @@ pub async fn build<M: Mysql>(
         .build()
         .context("failed to build the executor-manager HTTP client")?;
     let http = HttpDependencies::new(http, &config.executor_manager_url);
-    let mut state = AppState::new(config, mysql, http, cache, erp, video_refresh);
-    state.task_policy = task_policy;
+    let state = AppState::new(
+        config,
+        mysql,
+        task_store,
+        http,
+        cache,
+        erp,
+        entity_resolvers,
+        video_refresh,
+    );
     Ok(Arc::new(state))
 }
 
@@ -46,6 +55,7 @@ async fn build_cache(config: &AppConfig) -> Result<CacheClients<brz_redis::Redis
         config.redis_slave_url.as_deref(),
     )?;
     let options = RedisServiceOptions::default()
+        .with_resource_name(super::redis::resource_name())
         .with_password(redis_config.password.clone())
         .with_timeout(Duration::from_secs(5));
     let master = redis_config.endpoint();

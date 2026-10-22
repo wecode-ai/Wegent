@@ -8,10 +8,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  CollaborationParticipantsTabs,
-  ProjectCollaborationParticipants,
-} from "./ProjectCollaborationParticipants";
+import { CollaborationParticipantsTabs } from "./ProjectCollaborationParticipants";
+import { createProjectAiTeamSections } from "./projectAiTeamSections";
+import { ProjectSettingsShell } from "./ProjectSettingsShell";
 
 describe("CollaborationParticipantsTabs", () => {
   let container: HTMLDivElement;
@@ -29,7 +28,7 @@ describe("CollaborationParticipantsTabs", () => {
     container.remove();
   });
 
-  async function renderTabs(requestedTab?: "agents" | "members" | "groups") {
+  async function renderTabs() {
     await act(async () => {
       root.render(
         <CollaborationParticipantsTabs
@@ -40,7 +39,6 @@ describe("CollaborationParticipantsTabs", () => {
           membersLabel="项目成员"
           groupsContent={<div>Groups content</div>}
           groupsLabel="协作小组"
-          requestedTab={requestedTab}
         />,
       );
     });
@@ -95,35 +93,57 @@ describe("CollaborationParticipantsTabs", () => {
     expect(tab("agents").getAttribute("aria-selected")).toBe("true");
   });
 
-  it("selects a tab requested by the settings host", async () => {
-    await renderTabs();
-    expect(tab("agents").getAttribute("aria-selected")).toBe("true");
-
-    await renderTabs("members");
-
-    expect(tab("members").getAttribute("aria-selected")).toBe("true");
-    expect(container.textContent).toContain("Members content");
-    expect(container.textContent).not.toContain("Agents content");
-  });
-
-  it("uses the wide settings layout for collaboration resources", async () => {
+  it("opens AI team pages directly from a separate sidebar group without tabs", async () => {
+    const sections = createProjectAiTeamSections({
+      agentsContent: <div>Agents content</div>,
+      groupsContent: <div>Groups content</div>,
+      membersContent: <div>Members content</div>,
+      testIdPrefix: "project-ai-team",
+      translate: (_key, fallback) => fallback ?? "",
+    });
     await act(async () => {
       root.render(
-        <ProjectCollaborationParticipants
-          agentsContent={<div>Agents content</div>}
-          groupsContent={<div>Groups content</div>}
-          membersContent={<div>Members content</div>}
-          translate={(_key, fallback) => fallback ?? ""}
+        <ProjectSettingsShell
+          ariaLabel="项目设置"
+          sections={[
+            {
+              id: "project",
+              label: "基本信息",
+              testId: "project-overview",
+              content: <div>Overview content</div>,
+            },
+            ...sections,
+          ]}
         />,
       );
     });
-
     expect(
-      container
-        .querySelector(
-          '[data-testid="collaboration-project-participants-page"]',
-        )
-        ?.firstElementChild?.classList.contains("max-w-5xl"),
-    ).toBe(true);
+      Array.from(container.querySelectorAll("aside h2")).map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["项目设置", "AI 团队"]);
+    expect(
+      Array.from(
+        container.querySelectorAll('nav[aria-label="AI 团队"] button'),
+      ).map((node) => node.textContent),
+    ).toEqual(["智能体", "成员", "协作团队"]);
+    for (const [id, text] of [
+      ["agents", "Agents content"],
+      ["members", "Members content"],
+      ["groups", "Groups content"],
+    ]) {
+      const button = container.querySelector<HTMLButtonElement>(
+        `[data-testid="project-ai-team-${id}"]`,
+      )!;
+      await act(async () => button.click());
+      expect(button.getAttribute("aria-current")).toBe("page");
+      expect(container.querySelector("main")?.textContent).toContain(text);
+      expect(container.querySelector('[role="tablist"]')).toBeNull();
+      expect(
+        container
+          .querySelector(`[data-testid="collaboration-project-${id}-page"]`)
+          ?.firstElementChild?.classList.contains("max-w-5xl"),
+      ).toBe(true);
+    }
   });
 });

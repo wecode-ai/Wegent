@@ -1,0 +1,630 @@
+import assert from 'node:assert/strict'
+
+import {
+  assistantMessage,
+  codexRequestKind,
+  createSse,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { verifyLocalIssueAssigneeRecovery } from '../modules/local-issue-assignee-recovery.mjs'
+import {
+  createLocalCollaborationProject,
+  configureFirstProjectExecutionEnvironment,
+  selectProjectRunnerModel,
+  waitForTestIdByText,
+  inCollaborationSidebar,
+} from '../modules/workspace-flows.mjs'
+import {
+  openWorkspaceAgentConfiguration,
+  selectWorkspaceIssueAgent,
+  waitForValue,
+} from '../modules/workspace-agent-setup.mjs'
+
+const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const PROJECT = `本地单智能体调度-${process.pid}`
+const AGENT = `本地执行智能体-${process.pid}`
+const ASSIGNED_TASK = `采集本地执行证据-${process.pid}`
+const RENAMED_ISSUE = `已重命名的验证事项-${process.pid}`
+const RESULT = `LOCAL_AGENT_RESULT_${process.pid}`
+const MARKER = `LOCAL_AGENT_DISPATCH_${process.pid}`
+const RECOVERY_MARKER = `LOCAL_ASSIGNEE_RECOVERY_${process.pid}`
+const RECOVERY_RESULT = `${RECOVERY_MARKER}_COMPLETED`
+const FOLLOW_UP_ONE = `继续核对执行环境-${process.pid}`
+const FOLLOW_UP_TWO = `再补充一项验证-${process.pid}`
+const FOLLOW_UP_ONE_RESULT = `LOCAL_AGENT_FOLLOW_UP_ONE_${process.pid}`
+const FOLLOW_UP_TWO_RESULT = `LOCAL_AGENT_FOLLOW_UP_TWO_${process.pid}`
+const ACTIVE_WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const MANAGEMENT_TOOLS = [
+  'get_assignment_candidates',
+  'submit_workflow_plan',
+  'update_issue_status',
+  'report_workflow_outcome',
+]
+
+function scoped(selector) {
+  return `${CONTENT} ${selector}`
+}
+
+function writeEvents(response, responseId, events) {
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+  response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
+}
+
+function advertisedToolNames(body) {
+  if (!Array.isArray(body.tools)) return []
+  return body.tools
+    .map(tool => tool?.name ?? tool?.function?.name ?? '')
+    .filter(name => typeof name === 'string' && name)
+}
+
+async function addLocalAgent(control, timeoutMs) {
+  const projectNavId = await waitForTestIdByText(
+    control,
+    inCollaborationSidebar(
+      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]',
+      CONTENT
+    ),
+    'collaboration-workspace-project-',
+    PROJECT,
+    timeoutMs
+  )
+  await openWorkspaceAgentConfiguration(control, CONTENT, 'wework-local-workspace')
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]', { timeoutMs })
+  const existingAgents = await control.command(
+    'getText',
+    '[data-testid="project-agent-wegent-team"]'
+  )
+  assert.ok(
+    existingAgents.includes('当前设备智能体'),
+    'The current-device Agent must remain selectable'
+  )
+  await control.command('fill', '[data-testid="project-agent-search"]', {
+    value: 'no-such-agent-e2e',
+  })
+  await control.command('waitFor', '[data-testid="project-agent-search-clear"]')
+  await control.command('click', '[data-testid="project-agent-search-clear"]')
+  await control.command('waitFor', '[data-testid="project-agent-wegent-team"]')
+  await control.command('click', '[data-testid="project-agent-mode-create"]')
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', { timeoutMs })
+  await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
+    value: AGENT,
+  })
+  await selectProjectRunnerModel(control, timeoutMs)
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]')
+  await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
+    value: `${MARKER}。你是直接执行成员，只完成用户分配的任务，不规划协作小组，不修改 Issue 状态。`,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+    visible: false,
+    timeoutMs,
+  })
+  const sourceRow = await waitForTestIdByText(
+    control,
+    scoped('[data-testid="project-agent-list"]'),
+    'project-agent-row-',
+    AGENT,
+    timeoutMs
+  )
+  await control.command(
+    'clickWhenEnabled',
+    inCollaborationSidebar(`[data-testid="${projectNavId}"]`, CONTENT)
+  )
+  return sourceRow.slice('project-agent-row-'.length)
+}
+
+async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
+    timeoutMs,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
+    value: ASSIGNED_TASK,
+  })
+  await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
+    value: `${MARKER}。只读取本地环境并返回 ${RESULT}，不得调用管理类工具。`,
+  })
+  await selectWorkspaceIssueAgent(
+    control,
+    scoped('[data-testid="cloud-todo-create-assignee"]'),
+    agentId,
+    timeoutMs,
+    'create'
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
+    timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    text: ASSIGNED_TASK,
+    timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
+    visible: false,
+  })
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
+    text: AGENT,
+    timeoutMs,
+  })
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-detail-assignee"][data-value^="agent:"]'),
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
+  const target = await control.command(
+    'getAttribute',
+    scoped('[data-testid="cloud-todo-detail-assignee"]'),
+    { value: 'data-value' }
+  )
+  assert.notEqual(
+    target,
+    `agent:${agentId}`,
+    'Assignment must persist a project binding distinct from the workspace source'
+  )
+  const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
+  const project = (await rpc('projects.list', {})).find(candidate => candidate.name === PROJECT)
+  assert.ok(project, 'The local project fixture was not persisted')
+  const source = (await rpc('chat_agents.list', { project_id: 'default-work-items' })).find(
+    candidate => candidate.id === agentId
+  )
+  assert.ok(source, 'The workspace source fixture was not persisted')
+  const bindings = (await rpc('chat_agents.list', { project_id: project.id })).filter(
+    candidate => candidate.name === source.name && candidate.namespace === source.namespace
+  )
+  assert.equal(bindings.length, 1, 'Creating the assigned Issue must create exactly one binding')
+  assert.equal(target, `agent:${bindings[0].id}`)
+  const issues = await rpc('todos.list', { project_id: project.id })
+  assert.equal(issues.filter(candidate => candidate.title === ASSIGNED_TASK).length, 1)
+  const issue = issues.find(candidate => candidate.title === ASSIGNED_TASK)
+  assert.equal(issue.assignee_agent_id, bindings[0].id)
+  const runs = await waitForValue(
+    () => rpc('executions.list', { project_id: project.id, include_terminal: true }),
+    values => values.some(candidate => candidate.loop_item_id === issue.id),
+    'Creating the assigned local Issue did not persist an execution',
+    timeoutMs
+  )
+  assert.equal(runs.filter(candidate => candidate.loop_item_id === issue.id).length, 1)
+  assert.equal(runs.find(candidate => candidate.loop_item_id === issue.id).agent_id, bindings[0].id)
+  return { project, source }
+}
+
+async function waitForIssueStatus(control, expected, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let latest = null
+  while (Date.now() < deadline) {
+    latest = await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]'))
+    if (latest === expected) return
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  assert.fail(`Issue status did not become ${expected}. Last value: ${latest}`)
+}
+
+async function waitForModelRequest(started, timeoutMs) {
+  let timer
+  try {
+    await Promise.race([
+      started,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Direct local Agent did not start a model request')),
+          timeoutMs
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function waitForModelRequestCount(requests, expected, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (requests.length >= expected) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Direct local Agent did not start ${expected} model requests. Requests: ${JSON.stringify(
+      requests
+    )}`
+  )
+}
+
+async function renameIssueWhileRunning(control, timeoutMs) {
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await control.command('fill', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    value: RENAMED_ISSUE,
+  })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+    timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    text: RENAMED_ISSUE,
+    timeoutMs,
+  })
+}
+
+async function waitForTestIdPrefix(control, prefix, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const snapshot = JSON.parse(
+      await control.command('snapshot', scoped('[data-testid="cloud-task-activity-list"]'))
+    )
+    const testId = snapshot.testIds.find(candidate => candidate.startsWith(prefix))
+    if (testId) return testId
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  assert.fail(`Unable to find activity element with test id prefix ${prefix}`)
+}
+
+async function ensureReplyComposer(control, activityId, timeoutMs) {
+  const composer = scoped(
+    '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+  )
+  const replyToggle = scoped(`[data-testid="cloud-task-activity-reply-toggle-${activityId}"]`)
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (Number(await control.command('getElementCount', composer)) > 0) {
+      await control.command('waitFor', composer, { visible: true, timeoutMs })
+      return composer
+    }
+    if ((await control.command('clickIfPresent', replyToggle)) === 'clicked') {
+      await control.command('waitFor', composer, { visible: true, timeoutMs })
+      return composer
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`Unable to find the Issue reply composer or reply action for activity ${activityId}`)
+}
+
+async function sendIssueReply(control, activityId, content, timeoutMs) {
+  const composer = await ensureReplyComposer(control, activityId, timeoutMs)
+  await control.command('fill', composer, { value: content })
+  await control.command('press', composer, { key: 'Enter' })
+  await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+    text: content,
+    timeoutMs,
+  })
+}
+
+export async function createDesktopScenario({
+  captureScreenshot,
+  modelResponseTimeoutMs,
+  uiTimeoutMs,
+}) {
+  let active = false
+  const modelRequests = []
+  const recoveryModelRequests = { create: 0, edit: 0 }
+  const releaseRequests = new Map()
+  let resolveModelStarted
+  const modelStarted = new Promise(resolve => {
+    resolveModelStarted = resolve
+  })
+  const modelReleases = new Map(
+    ['initial', 'follow-up-one', 'follow-up-two'].map(kind => [
+      kind,
+      new Promise(resolve => {
+        releaseRequests.set(kind, resolve)
+      }),
+    ])
+  )
+
+  return {
+    requiresCloudEnvironment: true,
+
+    async prepareCloud(cloud) {
+      const response = await fetch(`${cloud.backendUrl}/api/admin/setup-complete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+      })
+      assert.equal(response.ok, true, 'The real test backend could not complete setup')
+    },
+
+    async handleHttp(request, response, url) {
+      if (
+        !active ||
+        request.method !== 'POST' ||
+        !['/responses', '/v1/responses'].includes(url.pathname)
+      ) {
+        return false
+      }
+      const body = await readRequestBody(request)
+      const responseId = `local-agent-dispatch-${Date.now()}-${modelRequests}`
+      const kind = codexRequestKind(body)
+      if (kind === 'prewarm' || kind === 'compaction') {
+        writeEvents(response, responseId, [assistantMessage('Ready')])
+        return true
+      }
+      const requestText = JSON.stringify(body)
+      if (requestText.includes(RECOVERY_MARKER)) {
+        const mode = requestText.includes(`${RECOVERY_MARKER}:create`) ? 'create' : 'edit'
+        recoveryModelRequests[mode] += 1
+        assert.equal(
+          recoveryModelRequests[mode],
+          1,
+          'Retrying assignment duplicated the recovery run'
+        )
+        writeEvents(response, responseId, [assistantMessage(RECOVERY_RESULT)])
+        return true
+      }
+      if (!requestText.includes(MARKER)) {
+        writeEvents(response, responseId, [])
+        return true
+      }
+
+      const requestKind = requestText.includes(FOLLOW_UP_TWO)
+        ? 'follow-up-two'
+        : requestText.includes(FOLLOW_UP_ONE)
+          ? 'follow-up-one'
+          : 'initial'
+      modelRequests.push(requestKind)
+      if (requestKind === 'initial') {
+        assert.equal(
+          modelRequests.length,
+          1,
+          'Direct Agent assignment started more than one initial execution'
+        )
+        assert.ok(
+          requestText.includes(ASSIGNED_TASK),
+          'Direct Agent request did not contain the title assigned through the Issue UI'
+        )
+        const toolNames = advertisedToolNames(body)
+        for (const toolName of MANAGEMENT_TOOLS) {
+          assert.equal(
+            toolNames.some(name => name.endsWith(toolName)),
+            false,
+            `Direct execution Agent was exposed management tool ${toolName}`
+          )
+        }
+        resolveModelStarted()
+      }
+      await modelReleases.get(requestKind)
+      const result =
+        requestKind === 'follow-up-one'
+          ? FOLLOW_UP_ONE_RESULT
+          : requestKind === 'follow-up-two'
+            ? FOLLOW_UP_TWO_RESULT
+            : `${ASSIGNED_TASK} 已完成。${RESULT}：本地执行证据完整。`
+      writeEvents(response, responseId, [assistantMessage(result)])
+      return true
+    },
+
+    async verify(control) {
+      active = true
+      await ensureExperimentalFeaturesEnabled(control)
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await createLocalCollaborationProject(control, CONTENT, PROJECT)
+      await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
+      const agentId = await addLocalAgent(control, uiTimeoutMs)
+      const fixture = await createIssueAndAssignAgent(control, agentId, uiTimeoutMs)
+
+      await waitForModelRequest(modelStarted, modelResponseTimeoutMs)
+      await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
+      await verifyExecutionActivityOrder(control, scoped, 'running', uiTimeoutMs)
+      await renameIssueWhileRunning(control, uiTimeoutMs)
+      await captureScreenshot(control, 'local-agent-dispatch-01-running.png', CONTENT)
+
+      releaseRequests.get('initial')?.()
+      await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: RESULT,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+
+      const taskSummaryTestId = await waitForTestIdPrefix(
+        control,
+        'cloud-task-activity-task-summary-',
+        modelResponseTimeoutMs
+      )
+      const taskSummary = await control.command('getText', `[data-testid="${taskSummaryTestId}"]`)
+      assert.ok(
+        taskSummary.includes(ASSIGNED_TASK),
+        'Execution activity did not retain the title assigned when the Agent run started'
+      )
+      assert.equal(
+        taskSummary.includes(RENAMED_ISSUE),
+        false,
+        'Execution activity incorrectly replaced the assigned task title with the current Issue title'
+      )
+      assert.equal(
+        taskSummary.includes(AGENT),
+        false,
+        'Execution activity incorrectly used the Agent name as the task title'
+      )
+      const activityId = taskSummaryTestId.slice('cloud-task-activity-task-summary-'.length)
+      const activityMessage = `[data-testid="cloud-task-activity-message-${activityId}"]`
+      const activityHeader = `${activityMessage} header`
+      const activityBody = `${activityMessage} .task-detail-thread-message-body`
+      const openTask = `[data-testid="cloud-task-activity-open-task-${activityId}"]`
+      await control.command('scrollIntoView', openTask)
+      await control.command('waitFor', openTask, {
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal(
+        (await control.command('getText', activityHeader)).includes(ASSIGNED_TASK),
+        false,
+        'Execution activity mixed the assigned task title into the Agent author row'
+      )
+      assert.ok(
+        (await control.command('getText', activityBody)).includes(RESULT),
+        'Execution activity did not render the Agent reply in its own body row'
+      )
+      assert.ok(
+        (await control.command('getText', openTask)).includes(ASSIGNED_TASK),
+        'Execution activity did not expose the assigned task as an inline task entry'
+      )
+
+      const executionBadgeTestId = await waitForTestIdPrefix(
+        control,
+        'cloud-task-activity-execution-badge-',
+        modelResponseTimeoutMs
+      )
+      // Wait for both the execution state and hydrated completion label.
+      await control.command(
+        'waitFor',
+        scoped(`[data-testid="${executionBadgeTestId}"][data-status="succeeded"]`),
+        { text: '已完成', timeoutMs: modelResponseTimeoutMs }
+      )
+      const executionBadge = await control.command(
+        'getText',
+        `[data-testid="${executionBadgeTestId}"]`
+      )
+      assert.ok(
+        executionBadge.includes('已完成'),
+        `Direct Agent activity did not expose its completed execution status: ${executionBadge}`
+      )
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
+        'in_review',
+        'Direct Agent completion did not move the Issue to review'
+      )
+      assert.deepEqual(
+        modelRequests,
+        ['initial'],
+        'Direct Agent assignment did not complete exactly one initial run'
+      )
+      await captureScreenshot(control, 'local-agent-dispatch-02-in-review.png', CONTENT)
+      await verifyExecutionActivityOrder(control, scoped, 'completed', uiTimeoutMs)
+      await control.command('click', openTask, { visible: true, timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="work-item-task-chat-panel"]', {
+        text: ASSIGNED_TASK,
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'local-agent-dispatch-03-inline-task-entry.png', CONTENT)
+      await control.command('click', '[data-testid="ai-chat-open-runtime-task"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH} [data-testid="project-execution-reply-in-issue"]`,
+        {
+          text: '此执行属于 Issue',
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')),
+        0,
+        'Opening the full Issue execution left the inline conversation mounted'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH} [data-testid="chat-message-input"]`
+          )
+        ),
+        0,
+        'Issue execution unexpectedly exposed a second reply composer in the task page'
+      )
+      await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH} [data-testid="embedded-local-terminal"]`,
+        {
+          visible: true,
+          timeoutMs: modelResponseTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'local-agent-dispatch-04-read-only-terminal.png', CONTENT)
+      await control.command('click', '[data-testid="project-execution-open-issue"]', {
+        visible: true,
+      })
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        RENAMED_ISSUE,
+        'Returning to the Issue did not retain its saved title'
+      )
+
+      await sendIssueReply(control, activityId, FOLLOW_UP_ONE, uiTimeoutMs)
+      await waitForModelRequestCount(modelRequests, 2, modelResponseTimeoutMs)
+      assert.deepEqual(
+        modelRequests,
+        ['initial', 'follow-up-one'],
+        'The first Issue follow-up did not reuse the existing execution'
+      )
+      await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
+
+      await sendIssueReply(control, activityId, FOLLOW_UP_TWO, uiTimeoutMs)
+      await new Promise(resolve => setTimeout(resolve, 500))
+      assert.deepEqual(
+        modelRequests,
+        ['initial', 'follow-up-one'],
+        'The second Issue follow-up started concurrently instead of waiting in the task queue'
+      )
+      assert.equal(
+        (
+          await control.command('getText', scoped('[data-testid="cloud-task-activity-list"]'))
+        ).includes('runtime task is already running'),
+        false,
+        'The queued Issue follow-up was exposed as a Runtime busy failure'
+      )
+      await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
+      await captureScreenshot(control, 'local-agent-dispatch-05-follow-up-queued.png', CONTENT)
+
+      releaseRequests.get('follow-up-one')?.()
+      await waitForModelRequestCount(modelRequests, 3, modelResponseTimeoutMs)
+      assert.deepEqual(
+        modelRequests,
+        ['initial', 'follow-up-one', 'follow-up-two'],
+        'Queued Issue follow-ups did not execute in submission order'
+      )
+      await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
+      releaseRequests.get('follow-up-two')?.()
+      await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: FOLLOW_UP_TWO_RESULT,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await captureScreenshot(control, 'local-agent-dispatch-06-follow-ups-completed.png', CONTENT)
+      for (const mode of ['create', 'edit']) {
+        await verifyLocalIssueAssigneeRecovery(control, {
+          contentSelector: CONTENT,
+          ...fixture,
+          mode,
+          marker: `${RECOVERY_MARKER}:${mode}`,
+          completion: RECOVERY_RESULT,
+          timeoutMs: uiTimeoutMs,
+          executionTimeoutMs: modelResponseTimeoutMs,
+        })
+      }
+      assert.deepEqual(recoveryModelRequests, { create: 1, edit: 1 })
+    },
+
+    diagnostics() {
+      return {
+        agent: AGENT,
+        assignedTask: ASSIGNED_TASK,
+        issue: RENAMED_ISSUE,
+        modelRequests,
+        recoveryModelRequests,
+        project: PROJECT,
+      }
+    },
+  }
+}

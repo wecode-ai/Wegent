@@ -1,5 +1,16 @@
 import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readlink,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -9,6 +20,7 @@ import {
   hashComponentPath,
   MANAGED_COMPONENT_IDS,
   type ManagedComponentId,
+  type ComponentUpdateManagerOptions,
 } from './component-update-manager.js'
 
 const temporaryDirectories: string[] = []
@@ -22,6 +34,170 @@ afterEach(async () => {
 })
 
 describe('ComponentUpdateManager', () => {
+  test('publishes complete plugin content and shares concurrent initialization', async () => {
+    const fixture = await createFixture()
+    const manager = createManager(fixture, async () => new Response(null, { status: 404 }))
+    const [first, concurrent] = await Promise.all([
+      createManager(fixture, async () => new Response(null, { status: 404 })).prepareStartup(),
+      manager.prepareStartup(),
+    ])
+    expect(concurrent.weworkCorePlugins).toBe(first.weworkCorePlugins)
+    expect((await lstat(first.weworkCorePlugins)).isSymbolicLink()).toBe(true)
+    const content = await readlink(first.weworkCorePlugins)
+    expect(await readFile(join(content, 'wework-app', 'web', 'code.js'), 'utf8')).toBe(
+      'plugin code'
+    )
+    expect(await readFile(join(content, 'wework-app', 'web', 'vendor', 'static.js'), 'utf8')).toBe(
+      'stable static'
+    )
+    const cache = dirname(first.weworkCorePlugins)
+    const before = await readdir(cache)
+    const restarted = createManager(fixture, async () => new Response(null, { status: 404 }))
+    expect((await restarted.prepareStartup()).weworkCorePlugins).toBe(first.weworkCorePlugins)
+    expect(await readdir(cache)).toEqual(before)
+  })
+
+  test('removes incomplete composition without publishing a cache entry', async () => {
+    const fixture = await createFixture()
+    await rm(join(fixture.resources, 'wework-app-static', 'wasm'), { recursive: true })
+    const manager = createManager(fixture, async () => new Response(null, { status: 404 }))
+    await expect(manager.prepareStartup()).rejects.toThrow()
+    expect(
+      await readdir(join(fixture.data, 'managed-components', 'composed', 'wework-core-plugins'))
+    ).toEqual([])
+    await mkdir(join(fixture.resources, 'wework-app-static', 'wasm'))
+    expect((await stat((await manager.prepareStartup()).weworkCorePlugins)).isDirectory()).toBe(
+      true
+    )
+  })
+
+  test('rejects an incompatible packaged executor instead of returning startup paths', async () => {
+    const fixture = await createFixture()
+    const manager = createManager(
+      fixture,
+      async () => new Response(null, { status: 404 }),
+      appVersion,
+      async () => {
+        throw new Error('incompatible Workbench schema')
+      }
+    )
+    await expect(manager.prepareStartup()).rejects.toThrow('incompatible Workbench schema')
+  })
+
+  test.each(['explicit', 'interrupted-startup'])(
+    'refuses %s component rollback before changing the selected set',
+    async mode => {
+      const fixture = await createFixture()
+      const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+      const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+      const initial = createManager(fixture, fetch)
+      await initial.stageAvailableUpdate()
+      await initial.prepareStartup()
+      const statePath = join(fixture.data, 'managed-components', 'state.json')
+      const before = await readFile(statePath, 'utf8')
+      const selected: string[] = []
+      const manager = createManager(fixture, fetch, appVersion, async path => {
+        selected.push(path)
+        throw new Error('incompatible Workbench schema')
+      })
+      await expect(
+        mode === 'explicit' ? manager.rollbackStartup() : manager.prepareStartup()
+      ).rejects.toThrow('incompatible Workbench schema')
+      expect(selected).toEqual([join(fixture.resources, 'bin', 'wegent-executor')])
+      expect(await readFile(statePath, 'utf8')).toBe(before)
+    }
+  )
+
+  test('checks the packaged fallback when the newly selected executor is incompatible', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-incompatible')
+    const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+    const checked: string[] = []
+    const manager = createManager(fixture, fetch, appVersion, async path => {
+      const content = await readFile(path, 'utf8')
+      checked.push(content)
+      if (content === 'executor-incompatible') throw new Error('incompatible Workbench schema')
+    })
+    await manager.stageAvailableUpdate()
+    const statePath = join(fixture.data, 'managed-components', 'state.json')
+    const before = await readFile(statePath, 'utf8')
+    const paths = await manager.prepareStartup()
+    expect(paths.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
+    expect(checked).toEqual(['executor-incompatible', 'executor-v1'])
+    await manager.confirmStartup()
+    expect(await manager.rollbackStartup()).toBe(false)
+    expect(await readFile(statePath, 'utf8')).toBe(before)
+  })
+
+  test.each([true, false])(
+    'preserves a thin release index when packaged fallback succeeds: %s',
+    async fallbackSucceeds => {
+      const release = await createFixture()
+      const targetVersion = '1.2.3-beta.5'
+      const update = await createExecutorUpdate(release.root, 'release-executor', targetVersion)
+      const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+      await createManager(release, fetch).stageUpdateForApp(targetVersion, 'beta')
+      await writePackagedManifest(release, targetVersion)
+      const installed = createManager(release, fetch, targetVersion)
+      await installed.prepareStartup()
+      await installed.confirmStartup()
+      for (const component of Object.values(release.components)) {
+        await rm(join(release.resources, component.path), { recursive: true, force: true })
+      }
+      const statePath = join(release.data, 'managed-components', 'state.json')
+      const before = await readFile(statePath, 'utf8')
+      const local = { ...(await createFixture()), data: release.data }
+      await writePackagedManifest(local, targetVersion)
+      const manager = createManager(local, fetch, targetVersion, async path => {
+        if (!fallbackSucceeds || (await readFile(path, 'utf8')) === 'release-executor') {
+          throw new Error('incompatible Workbench schema')
+        }
+      })
+
+      if (fallbackSucceeds) {
+        expect((await manager.prepareStartup()).executor).toBe(
+          join(local.resources, 'bin', 'wegent-executor')
+        )
+      } else {
+        await expect(manager.prepareStartup()).rejects.toThrow('incompatible Workbench schema')
+      }
+      await manager.confirmStartup()
+      expect(await manager.rollbackStartup()).toBe(false)
+      expect(await readFile(statePath, 'utf8')).toBe(before)
+      const restarted = createManager(release, fetch, targetVersion)
+      const paths = await restarted.prepareStartup()
+      expect(await readFile(paths.executor, 'utf8')).toBe('release-executor')
+      expect(await readFile(paths.codex, 'utf8')).toBe('codex')
+    }
+  )
+
+  test('stages updates from the running packaged components after a managed fallback', async () => {
+    const fixture = await createFixture()
+    let update = await createExecutorUpdate(fixture.root, 'executor-v2')
+    const fetch: typeof globalThis.fetch = async input =>
+      componentFetch(update.manifest, update.assetName, update.archive)(input)
+    const installed = createManager(fixture, fetch)
+    await installed.stageAvailableUpdate()
+    const active = await installed.prepareStartup()
+    await installed.confirmStartup()
+    await writeFile(active.executor, 'corrupt executor')
+    const statePath = join(fixture.data, 'managed-components', 'state.json')
+    const before = JSON.parse(await readFile(statePath, 'utf8'))
+    const manager = createManager(fixture, fetch)
+    expect((await manager.prepareStartup()).executor).toBe(
+      join(fixture.resources, 'bin', 'wegent-executor')
+    )
+
+    update = await createExecutorUpdate(fixture.root, 'executor-v3')
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    const staged = JSON.parse(await readFile(statePath, 'utf8'))
+    expect(staged.current).toEqual(before.current)
+    expect(staged.pending.components.executor.contentSha256).toBe(
+      update.manifest.components.executor.contentSha256
+    )
+    expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v3')
+  })
+
   test('uses packaged components when no update has been staged', async () => {
     const fixture = await createFixture()
     const manager = createManager(fixture, async () => new Response(null, { status: 404 }))
@@ -56,7 +232,9 @@ describe('ComponentUpdateManager', () => {
     const activated = await manager.prepareStartup()
     expect(await readFile(activated.executor, 'utf8')).toBe('executor-v2')
     expect(activated.contentSha256.executor).toBe(update.manifest.components.executor.contentSha256)
-    expect((await stat(activated.executor)).mode & 0o111).not.toBe(0)
+    if (process.platform !== 'win32') {
+      expect((await stat(activated.executor)).mode & 0o111).not.toBe(0)
+    }
     await manager.confirmStartup()
 
     const restarted = createManager(fixture, fetch)
@@ -88,23 +266,72 @@ describe('ComponentUpdateManager', () => {
     ).resolves.toBe('stable static')
   })
 
-  test('does not redownload unchanged packaged components after post-package processing', async () => {
-    const fixture = await createFixture()
-    const update = await createCorePluginUpdate(fixture.root, 'updated plugin code')
-    await writeFile(join(fixture.resources, 'bin', 'wegent-executor'), 'stripped executor')
-    const requests: string[] = []
-    const manager = createManager(
-      fixture,
-      componentFetch(update.manifest, update.assetName, update.archive, requests)
-    )
+  test.each(['pending', 'confirmed'])(
+    'starts a same-version thin app from a full app %s update',
+    async phase => {
+      const fixture = await createFixture()
+      const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+      const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+      const manager = createManager(fixture, fetch)
+      await manager.stageAvailableUpdate()
+      if (phase === 'confirmed') {
+        await manager.prepareStartup()
+        await manager.confirmStartup()
+      }
+      for (const component of Object.values(fixture.components)) {
+        await rm(join(fixture.resources, component.path), { recursive: true, force: true })
+      }
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+      const thin = createManager(fixture, fetch)
+      const paths = await thin.prepareStartup()
+      expect(await readFile(paths.executor, 'utf8')).toBe('executor-v2')
+      expect(await readFile(join(paths.bundledPlugins, 'marketplace.json'), 'utf8')).toBe(
+        'bundled plugins'
+      )
+      expect(await readFile(join(dirname(paths.codex), 'codex-code-mode-host'), 'utf8')).toBe(
+        'code-mode-host'
+      )
+      await thin.confirmStartup()
+      expect((await createManager(fixture, fetch).prepareStartup()).contentSha256).toEqual(
+        paths.contentSha256
+      )
+    }
+  )
 
-    expect(requests).toEqual([
-      `${updateBaseUrl}/components-beta-macos-arm64.json`,
-      `${updateBaseUrl}/${update.assetName}`,
-    ])
-  })
+  test.each(['packaged', 'installed'])(
+    'caches post-processed binaries for a thin app when remote hashes match %s content',
+    async hashSource => {
+      const fixture = await createFixture()
+      const update = await createCorePluginUpdate(fixture.root, 'updated plugin code')
+      await writeFile(join(fixture.resources, 'bin', 'wegent-executor'), 'stripped executor')
+      if (hashSource === 'installed') {
+        update.manifest.components.executor.contentSha256 = await hashComponentPath(
+          join(fixture.resources, 'bin', 'wegent-executor')
+        )
+      }
+      const requests: string[] = []
+      const manager = createManager(
+        fixture,
+        componentFetch(update.manifest, update.assetName, update.archive, requests)
+      )
+
+      expect(await manager.stageAvailableUpdate()).toBe(true)
+
+      expect(requests).toEqual([
+        `${updateBaseUrl}/components-beta-macos-arm64.json`,
+        `${updateBaseUrl}/${update.assetName}`,
+      ])
+      for (const component of Object.values(fixture.components)) {
+        await rm(join(fixture.resources, component.path), { recursive: true, force: true })
+      }
+      const thin = createManager(fixture, async () => {
+        throw new Error('Startup must not need the update server')
+      })
+      expect(await readFile((await thin.prepareStartup()).executor, 'utf8')).toBe(
+        'stripped executor'
+      )
+    }
+  )
 
   test('stages a future app component set and reuses unchanged local components', async () => {
     const fixture = await createFixture()
@@ -248,6 +475,63 @@ describe('ComponentUpdateManager', () => {
 
     const restarted = createManager(fixture, fetch)
     expect(await readFile((await restarted.prepareStartup()).executor, 'utf8')).toBe('executor-v1')
+  })
+
+  test('stages and activates a nested directory using the installed updater digest', async () => {
+    const fixture = await createFixture()
+    const content = 'updated plugin code'
+    const update = await createCorePluginUpdate(fixture.root, content)
+    // Freeze the original updater's serialized paths independently of the release hasher.
+    const separator = process.platform === 'win32' ? '\\' : '/'
+    const codePath = ['wework-app', 'web', 'code.js'].join(separator)
+    const webPath = ['wework-app', 'web'].join(separator)
+    const webHash = sha256(Buffer.from(`file:${codePath}\0${sha256(Buffer.from(content))}\0`))
+    const appHash = sha256(Buffer.from(`directory:${webPath}\0${webHash}\0`))
+    const expected = sha256(Buffer.from(`directory:wework-app\0${appHash}\0`))
+    update.manifest.components.weworkCorePlugins.contentSha256 = expected
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    const paths = await manager.prepareStartup()
+    await expect(
+      readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'code.js'), 'utf8')
+    ).resolves.toBe(content)
+    await manager.confirmStartup()
+    const state = JSON.parse(
+      await readFile(join(fixture.data, 'managed-components', 'state.json'), 'utf8')
+    )
+    expect(state.current.components.weworkCorePlugins.contentSha256).toBe(expected)
+    expect(state.pending).toBeUndefined()
+    expect(state.activationInProgress).toBeUndefined()
+  })
+
+  test('rejects incorrect extracted content and recovers after the manifest is corrected', async () => {
+    const fixture = await createFixture()
+    const update = await createCorePluginUpdate(fixture.root, 'updated plugin code')
+    const correct = update.manifest.components.weworkCorePlugins.contentSha256
+    update.manifest.components.weworkCorePlugins.contentSha256 = 'f'.repeat(64)
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    await expect(manager.stageAvailableUpdate()).rejects.toThrow(
+      'Extracted component checksum mismatch: weworkCorePlugins'
+    )
+    await expect(
+      stat(join(fixture.data, 'managed-components', 'state.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(
+      await readdir(join(fixture.data, 'managed-components', 'blobs', 'weworkCorePlugins'))
+    ).toEqual([])
+
+    update.manifest.components.weworkCorePlugins.contentSha256 = correct
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    await manager.prepareStartup()
+    await manager.confirmStartup()
   })
 
   test('rejects a corrupt archive without staging it', async () => {
@@ -430,7 +714,8 @@ async function createFixture(): Promise<Fixture> {
 function createManager(
   fixture: Fixture,
   fetch: typeof globalThis.fetch,
-  currentAppVersion = appVersion
+  currentAppVersion = appVersion,
+  validateExecutor?: ComponentUpdateManagerOptions['validateExecutor']
 ): ComponentUpdateManager {
   return new ComponentUpdateManager({
     resourcesRoot: fixture.resources,
@@ -440,6 +725,7 @@ function createManager(
     platform: 'darwin',
     arch: 'arm64',
     fetch,
+    validateExecutor,
   })
 }
 

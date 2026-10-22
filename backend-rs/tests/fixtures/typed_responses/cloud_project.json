@@ -1,9 +1,11 @@
 [
   {
-    "id": "1712605396200092385",
-    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
-    "project_key": "WEWORKBU0CEBB1",
-    "name": "WeWork Bug Feedback",
+    "id": "1000000000000000001",
+    "workspace_id": null,
+    "workspace_context": null,
+    "public_id": "00000000-0000-4000-8000-000000000003",
+    "project_key": "EXAMPLEPROJECT1",
+    "name": "Example Project",
     "description": "Description",
     "project_store": "backend",
     "task_provider": "local",
@@ -45,7 +47,14 @@
           "color": "green"
         }
       ],
-      "processing_start_status_id": "pending"
+      "processing_start_status_id": "pending",
+      "schedule_view": {
+        "status_filter": null,
+        "assignee_filter": null,
+        "tag_filter": null,
+        "group_by": "none",
+        "sort_by": "start_asc"
+      }
     },
     "ai_automation": {
       "auto_retry_on_failure": false,
@@ -73,8 +82,17 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "workspace_policy": "git_worktree",
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
-    "created_by_user_id": 86,
+    "public_access": null,
+    "default_issue_security": "open",
+    "created_by_user_id": 101,
     "current_user_id": 1,
     "current_user_name": "user",
     "access_role": "Owner",
@@ -85,10 +103,12 @@
     "updated_at": "2026-07-28T17:30:01"
   },
   {
-    "id": "1712605396200092385",
-    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
-    "project_key": "WEWORKBU0CEBB1",
-    "name": "WeWork Bug Feedback",
+    "id": "1000000000000000001",
+    "workspace_id": null,
+    "workspace_context": null,
+    "public_id": "00000000-0000-4000-8000-000000000003",
+    "project_key": "EXAMPLEPROJECT1",
+    "name": "Example Project",
     "description": "Description",
     "project_store": "backend",
     "task_provider": "local",
@@ -130,7 +150,14 @@
           "color": "green"
         }
       ],
-      "processing_start_status_id": "pending"
+      "processing_start_status_id": "pending",
+      "schedule_view": {
+        "status_filter": null,
+        "assignee_filter": null,
+        "tag_filter": null,
+        "group_by": "none",
+        "sort_by": "start_asc"
+      }
     },
     "ai_automation": {
       "auto_retry_on_failure": false,
@@ -158,8 +185,17 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "workspace_policy": "git_worktree",
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
-    "created_by_user_id": 86,
+    "public_access": null,
+    "default_issue_security": "open",
+    "created_by_user_id": 101,
     "current_user_id": 1,
     "current_user_name": "user",
     "access_role": "Owner",
@@ -170,10 +206,12 @@
     "updated_at": "2026-07-28T17:30:01"
   },
   {
-    "id": "1712605396200092385",
-    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
-    "project_key": "WEWORKBU0CEBB1",
-    "name": "WeWork Bug Feedback",
+    "id": "1000000000000000001",
+    "workspace_id": null,
+    "workspace_context": null,
+    "public_id": "00000000-0000-4000-8000-000000000003",
+    "project_key": "EXAMPLEPROJECT1",
+    "name": "Example Project",
     "description": "Description",
     "project_store": "backend",
     "task_provider": "local",
@@ -215,7 +253,14 @@
           "color": "green"
         }
       ],
-      "processing_start_status_id": "pending"
+      "processing_start_status_id": "pending",
+      "schedule_view": {
+        "status_filter": null,
+        "assignee_filter": null,
+        "tag_filter": null,
+        "group_by": "none",
+        "sort_by": "start_asc"
+      }
     },
     "ai_automation": {
       "auto_retry_on_failure": false,
@@ -243,8 +288,17 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "workspace_policy": "git_worktree",
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
-    "created_by_user_id": 86,
+    "public_access": null,
+    "default_issue_security": "open",
+    "created_by_user_id": 101,
     "current_user_id": 1,
     "current_user_name": "user",
     "access_role": "Owner",
@@ -255,10 +309,12 @@
     "updated_at": "2026-07-28T17:30:01"
   },
   {
-    "id": "1712605396200092385",
-    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
-    "project_key": "WEWORKBU0CEBB1",
-    "name": "WeWork Bug Feedback",
+    "id": "1000000000000000001",
+    "workspace_id": null,
+    "workspace_context": null,
+    "public_id": "00000000-0000-4000-8000-000000000003",
+    "project_key": "EXAMPLEPROJECT1",
+    "name": "Example Project",
     "description": "Description",
     "project_store": "backend",
     "task_provider": "local",
@@ -301,7 +357,14 @@
           "color": "green"
         }
       ],
-      "processing_start_status_id": "pending"
+      "processing_start_status_id": "pending",
+      "schedule_view": {
+        "status_filter": null,
+        "assignee_filter": null,
+        "tag_filter": null,
+        "group_by": "none",
+        "sort_by": "start_asc"
+      }
     },
     "ai_automation": {
       "auto_retry_on_failure": false,
@@ -329,8 +392,17 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "workspace_policy": "git_worktree",
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
-    "created_by_user_id": 86,
+    "public_access": null,
+    "default_issue_security": "open",
+    "created_by_user_id": 101,
     "current_user_id": 1,
     "current_user_name": "user",
     "access_role": "Owner",
@@ -343,10 +415,12 @@
     "updated_at": "2026-07-28T17:30:01"
   },
   {
-    "id": "1712605396200092385",
-    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
-    "project_key": "WEWORKBU0CEBB1",
-    "name": "WeWork Bug Feedback",
+    "id": "1000000000000000001",
+    "workspace_id": null,
+    "workspace_context": null,
+    "public_id": "00000000-0000-4000-8000-000000000003",
+    "project_key": "EXAMPLEPROJECT1",
+    "name": "Example Project",
     "description": "Description",
     "project_store": "backend",
     "task_provider": "local",
@@ -367,7 +441,14 @@
           "extra": null
         }
       ],
-      "processing_start_status_id": "custom"
+      "processing_start_status_id": "custom",
+      "schedule_view": {
+        "status_filter": null,
+        "assignee_filter": null,
+        "tag_filter": null,
+        "group_by": "none",
+        "sort_by": "start_asc"
+      }
     },
     "ai_automation": {
       "auto_retry_on_failure": false,
@@ -395,8 +476,17 @@
       "nodes": []
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "workspace_policy": "git_worktree",
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
-    "created_by_user_id": 86,
+    "public_access": null,
+    "default_issue_security": "open",
+    "created_by_user_id": 101,
     "current_user_id": 1,
     "current_user_name": "user",
     "access_role": "Owner",
@@ -407,10 +497,12 @@
     "updated_at": "2026-07-28T17:30:01"
   },
   {
-    "id": "1712605396200092385",
-    "public_id": "99f780dd-f8c3-4df9-99d8-2c5dfa9c3336",
-    "project_key": "WEWORKBU0CEBB1",
-    "name": "WeWork Bug Feedback",
+    "id": "1000000000000000001",
+    "workspace_id": null,
+    "workspace_context": null,
+    "public_id": "00000000-0000-4000-8000-000000000003",
+    "project_key": "EXAMPLEPROJECT1",
+    "name": "Example Project",
     "description": "Description",
     "project_store": "backend",
     "task_provider": "local",
@@ -452,7 +544,14 @@
           "color": "green"
         }
       ],
-      "processing_start_status_id": "pending"
+      "processing_start_status_id": "pending",
+      "schedule_view": {
+        "status_filter": null,
+        "assignee_filter": null,
+        "tag_filter": null,
+        "group_by": "none",
+        "sort_by": "start_asc"
+      }
     },
     "ai_automation": {
       "auto_retry_on_failure": false,
@@ -484,8 +583,17 @@
       ]
     },
     "workflow_automation_id": null,
+    "execution_environment": {
+      "workspace_policy": "git_worktree",
+      "repositories": [],
+      "setup_steps": [],
+      "fingerprint": "",
+      "devices": {}
+    },
     "visibility": "private",
-    "created_by_user_id": 86,
+    "public_access": null,
+    "default_issue_security": "open",
+    "created_by_user_id": 101,
     "current_user_id": 1,
     "current_user_name": "user",
     "access_role": "Owner",

@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from 'vitest'
-import { createCollaborationIssueCardModel, resolveIssueCardAssignee } from './model'
+import {
+  createCollaborationIssueCardModel,
+  issueNeedsExecutionConfiguration,
+  resolveIssueCardAssignee,
+} from './model'
 
 const labels = {
   assignee: 'Assignee',
@@ -129,5 +133,20 @@ describe('collaboration issue card model', () => {
     })
     expect(build('2026-09-23').date?.label).toBe('09-23')
     expect(build('2027-09-23').date?.label).toBe('2027-09-23')
+  })
+
+  it('flags a robot-owned card whose latest run is waiting for runtime configuration', () => {
+    const build = (execution_state?: string | null) =>
+      issueNeedsExecutionConfiguration({
+        id: 'ISSUE-1',
+        title: 'Issue',
+        priority: 'none',
+        execution_state,
+      })
+    expect(build('waiting_runtime')).toBe(true)
+    expect(build('running')).toBe(false)
+    expect(build('queued')).toBe(false)
+    expect(build(null)).toBe(false)
+    expect(build(undefined)).toBe(false)
   })
 })

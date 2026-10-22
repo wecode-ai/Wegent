@@ -24,7 +24,22 @@ runs:
       with:
         node-version: "24"
 
+    - name: Resolve Windows pnpm store
+      if: runner.os == 'Windows'
+      id: windows-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Windows pnpm store
+      if: runner.os == 'Windows'
+      id: windows-store-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ steps.windows-store.outputs.path }}
+        key: ${{ runner.os }}-node-24-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
+
     - name: Restore shared workspace dependencies
+      if: runner.os != 'Windows'
       id: workspace-cache
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
@@ -37,12 +52,19 @@ runs:
         key: ${{ runner.os }}-node-24-workspace-v2-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json') }}
 
     - name: Install workspace dependencies
-      if: steps.workspace-cache.outputs.cache-hit != 'true'
+      if: runner.os == 'Windows' || steps.workspace-cache.outputs.cache-hit != 'true'
       shell: bash
       run: pnpm install --frozen-lockfile
 
+    - name: Save Windows pnpm store
+      if: runner.os == 'Windows' && inputs.save-cache == 'true' && steps.windows-store-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ steps.windows-store.outputs.path }}
+        key: ${{ steps.windows-store-cache.outputs.cache-primary-key }}
+
     - name: Save shared workspace dependencies
-      if: inputs.save-cache == 'true' && steps.workspace-cache.outputs.cache-hit != 'true'
+      if: runner.os != 'Windows' && inputs.save-cache == 'true' && steps.workspace-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: |

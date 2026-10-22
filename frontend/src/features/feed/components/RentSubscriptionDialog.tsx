@@ -48,6 +48,14 @@ interface RentSubscriptionDialogProps {
   onSuccess: () => void
 }
 
+const getUserTimezone = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    return 'UTC'
+  }
+}
+
 export function RentSubscriptionDialog({
   open,
   onOpenChange,
@@ -64,6 +72,7 @@ export function RentSubscriptionDialog({
   const [displayName, setDisplayName] = useState('')
   const [triggerType, setTriggerType] = useState<SubscriptionTriggerType>('interval')
   const [cronExpression, setCronExpression] = useState('0 9 * * *')
+  const cronTimezone = getUserTimezone()
   const [intervalValue, setIntervalValue] = useState(1)
   const [intervalUnit, setIntervalUnit] = useState('hours')
   const [executeAt, setExecuteAt] = useState<Date | undefined>()
@@ -123,7 +132,7 @@ export function RentSubscriptionDialog({
     // Build trigger config
     let triggerConfig: Record<string, unknown> = {}
     if (triggerType === 'cron') {
-      triggerConfig = { expression: cronExpression, timezone: 'UTC' }
+      triggerConfig = { expression: cronExpression, timezone: cronTimezone }
     } else if (triggerType === 'interval') {
       triggerConfig = { value: intervalValue, unit: intervalUnit }
     } else if (triggerType === 'one_time') {
@@ -152,6 +161,7 @@ export function RentSubscriptionDialog({
     displayName,
     triggerType,
     cronExpression,
+    cronTimezone,
     intervalValue,
     intervalUnit,
     executeAt,
@@ -265,7 +275,16 @@ export function RentSubscriptionDialog({
               {t('trigger_config')}
             </Label>
             {triggerType === 'cron' && (
-              <CronSchedulePicker value={cronExpression} onChange={setCronExpression} />
+              <div className="space-y-2">
+                <CronSchedulePicker
+                  value={cronExpression}
+                  onChange={setCronExpression}
+                  timezone={cronTimezone}
+                />
+                <p className="text-xs text-text-muted">
+                  {t('timezone_hint')}: {cronTimezone}
+                </p>
+              </div>
             )}
             {triggerType === 'interval' && (
               <div className="flex items-center gap-2">
@@ -308,11 +327,6 @@ export function RentSubscriptionDialog({
               disabled={modelsLoading}
               dataTestId="rent-subscription-model-select"
               getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
-              renderModelMeta={model =>
-                model.provider ? (
-                  <span className="block truncate text-xs text-text-muted">{model.provider}</span>
-                ) : null
-              }
             />
           </div>
 
@@ -331,7 +345,7 @@ export function RentSubscriptionDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             {t('common:actions.cancel')}
           </Button>
-          <Button onClick={handleSubmit} disabled={loading}>
+          <Button onClick={handleSubmit} disabled={loading} data-testid="rent-subscription-submit">
             {loading ? t('common:loading') : t('market.rent')}
           </Button>
         </DialogFooter>

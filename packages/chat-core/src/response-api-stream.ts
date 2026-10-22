@@ -85,12 +85,14 @@ export function emitResponseApiEvent(
       warnDroppedResponseDelta(eventName, "empty_text_delta", base, data);
       return;
     }
+    // Native rendering addresses individual items, unlike whole-response HTTP callbacks.
+    const offset = optionalNumberField(data, "block_offset") ?? eventOffset(payload);
     handlers.onChatChunk?.({
       ...base,
       itemId: idField(data, "itemId") ?? idField(data, "item_id"),
       content,
-      ...(eventOffset(payload) !== undefined && {
-        offset: eventOffset(payload),
+      ...(offset !== undefined && {
+        offset,
       }),
       result: eventResult(payload),
     });

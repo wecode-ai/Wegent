@@ -279,7 +279,7 @@ class RuntimeProfileService:
         db.commit()
 
     def get_project_default(self, db: Session, project_id: str, user_id: int) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.RestrictedAnalyst)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         binding = self._default_binding(db, project_id, user_id)
         return {
             "project_id": str(project_id),
@@ -290,7 +290,7 @@ class RuntimeProfileService:
     def set_project_default(
         self, db: Session, project_id: str, user_id: int, profile_id: str
     ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.RestrictedAnalyst)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         self.require_runnable(db, profile_id, user_id)
         binding = self._default_binding(db, project_id, user_id, for_update=True)
         if binding is None:
@@ -362,6 +362,11 @@ class RuntimeProfileService:
         )
         if execution is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+        if execution.uses_runner_routing:
+            raise HTTPException(
+                422,
+                "This execution uses agent runner policies; update the execution selection instead of a legacy Runtime profile",
+            )
         if execution.executor_owner_user_id != user_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,

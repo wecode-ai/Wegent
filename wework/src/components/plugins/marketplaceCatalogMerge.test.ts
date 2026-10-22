@@ -376,6 +376,57 @@ describe('mergeMarketplaceCatalog', () => {
     expect(shouldShowInstalledMarketplaceActions(merged[0], true)).toBe(true)
   })
 
+  test('preserves the cloud install id when native materialization has another id', () => {
+    const installed: InstalledPlugin = {
+      ...localInstalledPlugin(),
+      metadata: { name: 'dev-tools', namespace: 'default', labels: { id: '66' } },
+      spec: {
+        ...localInstalledPlugin().spec,
+        pluginId: 4,
+        sourcePayload: {
+          localId: 'dev-tools@wegent',
+          localPresent: true,
+          cloudInstalledPluginId: '66',
+        },
+      },
+    }
+    const merged = mergeMarketplaceCatalog(
+      [{ ...cloudPlugin(), installed: true, installedPluginId: 66 }],
+      [],
+      [installed]
+    )
+    expect(merged[0].installedPluginId).toBe(66)
+    const lagging = mergeMarketplaceCatalog([cloudPlugin()], [], [installed])
+    expect(lagging[0].installedPluginId).toBe('66')
+  })
+
+  test('preserves account routing when only the managed native inventory refreshes', () => {
+    const installed: InstalledPlugin = {
+      ...localInstalledPlugin(),
+      metadata: { name: 'dev-tools', namespace: 'wegent', labels: { id: 'dev-tools@wegent' } },
+      spec: {
+        ...localInstalledPlugin().spec,
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent',
+          pluginKey: 'dev-tools',
+          marketplace: 'wegent',
+        },
+        origin: 'market',
+        sourcePayload: {
+          managedByWegent: true,
+          cloudPluginId: 4,
+          cloudInstalledPluginId: '66',
+        },
+      },
+    }
+    const catalog = { ...cloudPlugin(), installed: true, installedPluginId: 66 }
+    expect(mergeMarketplaceCatalog([catalog], [], [installed])[0].installedPluginId).toBe(66)
+    expect(mergeMarketplaceCatalog([cloudPlugin()], [], [installed])[0].installedPluginId).toBe(
+      '66'
+    )
+  })
+
   test('marks a pending cloud row installed locally when Codex already has the package', () => {
     const cloudPending: PluginMarketplaceItem = {
       ...cloudPlugin(),

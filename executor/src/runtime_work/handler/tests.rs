@@ -7,6 +7,9 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
+#[path = "runtime_rpc_tests.rs"]
+mod runtime_rpc_tests;
+
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 
@@ -50,6 +53,9 @@ mod task_project_move_tests;
 #[path = "message_presentation_tests.rs"]
 mod message_presentation_tests;
 
+#[path = "project_preparation_tests.rs"]
+mod project_preparation_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
@@ -71,33 +77,42 @@ fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
     ));
 }
 
-#[tokio::test]
-async fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
-    let (event_tx, _) = broadcast::channel(1);
-    let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
-        "device-1",
-        "/bin/false",
-        event_tx,
-    );
-    assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
+#[test]
+fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (event_tx, _) = broadcast::channel(1);
+            let handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                "device-1",
+                "/bin/false",
+                event_tx,
+            );
+            assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
 
-    handler
-        .dispatch(
-            "runtime.codex.runtime_config.update",
-            json!({"proxyUrl": "http://127.0.0.1:7890"}),
-        )
-        .await
-        .expect("runtime proxy configuration should succeed before recovery");
+            handler
+                .dispatch(
+                    "runtime.codex.runtime_config.update",
+                    json!({"proxyUrl": "http://127.0.0.1:7890"}),
+                )
+                .await
+                .expect("runtime proxy configuration should succeed before recovery");
 
-    let config = handler.codex_runtime_proxy_config.lock().await;
-    assert!(config.initialized);
-    assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    drop(config);
-    assert!(
-        handler.worktree_reconciliation_state.lock().await.completed,
-        "successful runtime proxy configuration should release deferred recovery"
-    );
-    assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
+            let config = handler.codex_runtime_proxy_config.lock().await;
+            assert!(config.initialized);
+            assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+            drop(config);
+            assert!(
+                handler.worktree_reconciliation_state.lock().await.completed,
+                "successful runtime proxy configuration should release deferred recovery"
+            );
+            assert!(!handler.startup_recovery_deferred.load(Ordering::Acquire));
+        });
 }
 
 #[test]
@@ -148,6 +163,7 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             local_task_id: "queued-1".to_owned(),
             runtime: "codex".to_owned(),
             request: ExecutionRequest::default(),
+            send_payload: None,
             direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
@@ -171,6 +187,60 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
         .filter_map(Value::as_str)
         .collect::<HashSet<_>>();
     assert_eq!(active_task_ids, HashSet::from(["active-1", "active-2"]));
+}
+
+#[tokio::test]
+async fn create_task_persists_collaboration_member_runtime_profiles() {
+    let (handler, root) = isolated_runtime_work_handler("collaboration-member-profiles");
+    {
+        let mut scheduler = handler
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned");
+        scheduler.max_concurrent_tasks = 1;
+        scheduler.active_tasks = 1;
+    }
+    let profiles = json!([{
+        "memberIds": ["agent-2"],
+        "runtimePayload": {
+            "taskId": "member-template",
+            "runtime": "codex"
+        }
+    }]);
+    let request = ExecutionRequest {
+        task_id: "manager-task-1".to_owned(),
+        subtask_id: "manager-task-1-initial".to_owned(),
+        prompt: Value::String("Manage the Issue".to_owned()),
+        project_workspace_path: Some("/tmp/project".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let response = handler
+        .create_task(json!({
+            "schemaVersion": 1,
+            "taskId": "manager-task-1",
+            "runtime": "codex",
+            "title": "Issue manager",
+            "workspacePath": "/tmp/project",
+            "executionRequest": request,
+            "runtimeHandle": {
+                "collaborationManagerContext": "Issue context",
+                "collaborationDispatchTaskId": "dispatch-task-1",
+                "collaborationMemberRuntimeProfiles": profiles,
+            }
+        }))
+        .await
+        .expect("manager task should be accepted");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(
+        handler
+            .local_task_link("manager-task-1")
+            .expect("manager task should be persisted")
+            .runtime_handle["collaborationMemberRuntimeProfiles"],
+        profiles
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -214,6 +284,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -247,6 +318,7 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request: ExecutionRequest::default(),
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -284,11 +356,11 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
     let root =
         temp_runtime_work_index_path("cancelled-worktree-cleanup").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -313,6 +385,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         local_task_id: "task-1".to_owned(),
         runtime: "codex".to_owned(),
         request,
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -358,7 +431,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
 async fn archive_waits_for_runtime_stopped_ack_before_marking_task_archived() {
     let root = temp_runtime_work_index_path("archive-stopped-ack").with_extension("directory");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -406,11 +479,11 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
     let root =
         temp_runtime_work_index_path("archive-stop-timeout-retry").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -560,11 +633,11 @@ async fn runtime_terminal_cancellation_settles_execution_after_stop_request_time
     let root =
         temp_runtime_work_index_path("stopped-turn-final-consistency").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -620,11 +693,11 @@ async fn unarchive_restores_managed_worktree_before_reactivating_task() {
     let root =
         temp_runtime_work_index_path("unarchive-worktree-restore").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -673,11 +746,11 @@ async fn unarchive_restore_failure_is_an_action_failure_and_keeps_task_archived(
     let root =
         temp_runtime_work_index_path("unarchive-worktree-failure").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let worktree_state_path = root.join("runtime-work/worktrees.json");
+    let managed_root = root.join("workspace").join("worktrees");
+    let worktree_state_path = root.join("runtime-work").join("worktrees.json");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
     handler.worktrees = WorktreeManager::new(worktree_state_path.clone());
     handler
         .worktrees
@@ -793,11 +866,11 @@ fn worktree_restore_helper_keeps_the_async_runtime_responsive() {
 async fn automatic_prune_removes_old_archived_worktree_and_preserves_snapshot() {
     let root = temp_runtime_work_index_path("automatic-worktree-prune").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -845,11 +918,11 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
     let root =
         temp_runtime_work_index_path("restart-worktree-reconciliation").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let state_path = root.join("runtime-work/worktrees.json");
+    let managed_root = root.join("workspace").join("worktrees");
+    let state_path = root.join("runtime-work").join("worktrees.json");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
     handler.worktrees = WorktreeManager::new(state_path.clone());
     handler
         .worktrees
@@ -866,7 +939,7 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
     state["records"]
         .as_object_mut()
         .unwrap()
-        .get_mut(&record.path)
+        .get_mut(&record.path.replace('\\', "/"))
         .expect("prepared record should be persisted")["state"] = json!("preparing");
     fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
     let mut link =
@@ -908,12 +981,12 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 async fn restart_reconciliation_leaves_active_history_unchanged() {
     let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
+    let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
-    let index_path = root.join("runtime-work/index.json");
+    let index_path = root.join("runtime-work").join("index.json");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -956,13 +1029,13 @@ async fn restart_reconciliation_leaves_active_history_unchanged() {
 async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
     let root = temp_runtime_work_index_path("restart-queued-worktree").with_extension("directory");
     let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let index_path = root.join("runtime-work/index.json");
-    let queue_path = root.join("runtime-work/turn-queue.json");
+    let managed_root = root.join("workspace").join("worktrees");
+    let index_path = root.join("runtime-work").join("index.json");
+    let queue_path = root.join("runtime-work").join("turn-queue.json");
     initialize_test_repository(&source);
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler.turn_queue_path = Arc::new(queue_path.clone());
     handler
         .worktrees
@@ -1000,6 +1073,7 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         local_task_id: "task-queued".to_owned(),
         runtime: "codex".to_owned(),
         request,
+        send_payload: None,
         direct_thread_id: None,
         fork_thread_id: None,
         fork_thread_path: None,
@@ -1082,6 +1156,12 @@ fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf
         .clear();
     (handler, root)
 }
+
+#[path = "background_terminal_tests.rs"]
+mod background_terminal_tests;
+
+#[path = "streaming_transcript_tests.rs"]
+mod streaming_transcript_tests;
 
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
@@ -1181,13 +1261,15 @@ fn rewrites_loopback_gateway_when_no_connection_snapshot_exists() {
         backend_url: Some("http://backend.example.com:8000".to_owned()),
         ..ExecutionRequest::default()
     };
-    request.model_config = json!({"baseUrl": "http://127.0.0.1:8000/api/work"});
+    request.model_config = json!({
+        "baseUrl": "http://127.0.0.1:8000/api/runtime-work/llm-responses-proxy"
+    });
 
     handler.apply_backend_connection(&mut request);
 
     assert_eq!(
         request.model_config["baseUrl"],
-        json!("http://backend.example.com:8000/api/work")
+        json!("http://backend.example.com:8000/api/runtime-work/llm-responses-proxy")
     );
 }
 
@@ -1207,6 +1289,39 @@ fn codex_cached_transcripts_never_expose_offset_pagination() {
             after_cursor: None
         }
     ));
+}
+
+#[tokio::test]
+async fn running_codex_older_page_bypasses_live_cache() {
+    let (handler, root) = isolated_runtime_work_handler("running-older-page");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_transcript_snapshot_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "latest", "role": "assistant", "content": "Cached output"
+        })],
+        Some("native-before".to_owned()),
+        None,
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    let result = handler.handle_runtime_rpc(json!({
+        "method": "runtime.tasks.transcript",
+        "payload": {"taskId": "task-1", "workspacePath": "/tmp/project", "beforeCursor": "native-before"}
+    })).await;
+    // /bin/false cannot provide older records: returning cached latest records
+    // would incorrectly hide this provider read failure.
+    assert!(
+        result.is_err(),
+        "older pages must be read from native history"
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1425,6 +1540,30 @@ fn active_codex_items_replace_stale_paginated_items() {
 }
 
 #[test]
+fn live_codex_items_do_not_mark_partial_history_complete() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed",
+            "params": {"turnId": "turn-1", "item": {
+                "id": "latest", "type": "agentMessage", "text": "Latest output"
+            }}
+        }),
+    );
+    for view in ["summary", "notLoaded", "full"] {
+        let mut thread = json!({"turns": [{
+            "id": "turn-1", "itemsView": view, "items": []
+        }]});
+        handler.merge_active_codex_transcript("task-1", &mut thread);
+        assert_eq!(thread["turns"][0]["itemsView"], view);
+        assert_eq!(thread["turns"][0]["items"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
 fn active_codex_plan_deltas_restore_complete_streaming_content() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
@@ -1594,6 +1733,8 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
                 "createdAt": 1_779_999_999_500_i64,
             }),
         ],
+        Some("native-before".to_owned()),
+        None,
     );
     set_runtime_handle_messages(
         &mut link.runtime_handle,
@@ -1680,6 +1821,8 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         .expect("running transcript should use the live cache");
 
     assert_eq!(transcript["running"], true);
+    assert_eq!(transcript["hasMoreBefore"], true);
+    assert_eq!(transcript["beforeCursor"], "native-before");
     assert_eq!(transcript["messages"].as_array().unwrap().len(), 5);
     assert_eq!(transcript["messages"][0]["content"], "Explain the approach");
     assert_eq!(
@@ -1720,6 +1863,8 @@ async fn running_codex_transcript_deduplicates_cached_and_live_user_aliases() {
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    // Native history was loaded before the subsequent notification-only updates.
+    set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", Vec::new(), None, None);
     set_runtime_handle_messages(
         &mut link.runtime_handle,
         vec![json!({
@@ -1800,6 +1945,8 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    // Native history was loaded before the subsequent notification-only updates.
+    set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", Vec::new(), None, None);
     for (index, content) in [
         "First instruction",
         "Second instruction",
@@ -1921,6 +2068,8 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    // Native history was loaded before the subsequent notification-only updates.
+    set_transcript_snapshot_messages(&mut link.runtime_handle, "thread-1", Vec::new(), None, None);
     set_runtime_handle_messages(
         &mut link.runtime_handle,
         vec![json!({
@@ -2015,6 +2164,8 @@ fn recording_a_new_provider_thread_clears_completed_transcript_cache() {
         &mut link.runtime_handle,
         "thread-1",
         vec![json!({"id": "snapshot-message-1", "role": "assistant"})],
+        Some("native-before".to_owned()),
+        None,
     );
     handler.upsert_local_task(link);
 
@@ -2431,37 +2582,44 @@ fn finishing_execution_removes_its_codex_turn_context() {
     assert!(handler.active_codex_turn("task-1").is_none());
 }
 
-#[tokio::test]
-async fn side_source_waits_for_the_running_source_turn_before_forking() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut source = RuntimeTaskLink::new_pending(
-        "source-task".to_owned(),
-        "/tmp/project".to_owned(),
-        "Source task".to_owned(),
-    );
-    source.thread_id = Some("source-thread".to_owned());
-    handler.upsert_local_task(source);
-    let execution_id = start_test_execution(&handler, "source-task");
-    let waiting_handler = handler.clone();
-    let wait = tokio::spawn(async move {
-        waiting_handler
-            .wait_for_running_side_source_turn("source-thread")
-            .await;
-    });
+#[test]
+fn side_source_waits_for_the_running_source_turn_before_forking() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _executor_home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workbench_home = ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+            // Keep the source index private even when other handlers use default storage.
+            handler.store = RuntimeWorkStore::new(root.path().join("source").join("index.json"));
+            let mut source = RuntimeTaskLink::new_pending(
+                "source-task".to_owned(),
+                root.path().join("project").to_string_lossy().into_owned(),
+                "Source task".to_owned(),
+            );
+            source.thread_id = Some("source-thread".to_owned());
+            handler.upsert_local_task(source);
+            let execution_id = start_test_execution(&handler, "source-task");
+            let wait = handler.wait_for_running_side_source_turn("source-thread");
+            tokio::pin!(wait);
 
-    tokio::task::yield_now().await;
-    assert!(!wait.is_finished());
-    handler.record_active_codex_turn(
-        "source-task",
-        execution_id,
-        "source-thread".to_owned(),
-        "source-turn".to_owned(),
-    );
+            // Poll the wait itself so the assertion cannot pass before it starts.
+            assert!(futures_util::poll!(wait.as_mut()).is_pending());
+            handler.record_active_codex_turn(
+                "source-task",
+                execution_id,
+                "source-thread".to_owned(),
+                "source-turn".to_owned(),
+            );
 
-    tokio::time::timeout(Duration::from_secs(1), wait)
-        .await
-        .expect("side source readiness should unblock after turn/start")
-        .expect("side source readiness task should not panic");
+            tokio::time::timeout(Duration::from_secs(1), wait)
+                .await
+                .expect("side source readiness should unblock after turn/start");
+        });
 }
 
 #[test]
@@ -3248,7 +3406,7 @@ fn user_message_presentation_matches_shared_reference_fixtures() {
         }))
         .unwrap();
         let expected = match fixture["kind"].as_str() {
-            Some("skill") => json!([{
+            Some("skill" | "app") => json!([{
                 "token": format!("${}", fixture["name"].as_str().unwrap()),
                 "href": fixture["href"],
             }]),
@@ -3631,6 +3789,39 @@ fn transcript_restores_a_missing_supervisor_generated_user_message() {
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0]["items"][0]["type"], "user_message");
     assert_eq!(turns[0]["items"][0]["message"]["content"], "Use Japanese");
+}
+
+#[test]
+fn transcript_restores_missing_historical_turns_in_chronological_order() {
+    let mut messages = vec![json!({
+        "id": "latest-answer", "turnId": "latest-turn", "role": "assistant",
+        "content": "Latest response", "createdAt": 300
+    })];
+    let presentations = vec![
+        json!({
+            "clientUserMessageId": "old-user-2", "turnId": "old-turn-2",
+            "content": "Second historical instruction", "createdAt": 200,
+            "ensureVisible": true
+        }),
+        json!({
+            "clientUserMessageId": "old-user-1", "turnId": "old-turn-1",
+            "content": "First historical instruction", "createdAt": 100,
+            "ensureVisible": true
+        }),
+    ];
+    attach_user_message_presentations(&mut messages, presentations.clone());
+    assert_eq!(
+        messages
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["old-user-1", "old-user-2", "latest-answer"]
+    );
+    assert_eq!(messages[0]["turnId"], "old-turn-1");
+    assert_eq!(messages[1]["turnId"], "old-turn-2");
+    let before = messages.clone();
+    attach_user_message_presentations(&mut messages, presentations);
+    assert_eq!(messages, before);
 }
 
 #[test]
@@ -4322,6 +4513,198 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["taskId"], "optimistic-local-task");
     assert_eq!(result["workspacePath"], "/tmp/project");
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    assert!(
+        result.get("running").is_none(),
+        "An unknown task must not report an authoritative idle execution"
+    );
+}
+
+#[tokio::test]
+async fn transcript_without_session_preserves_known_terminal_state() {
+    let index_path = temp_runtime_work_index_path("transcript-terminal-without-session");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "failed-before-session".to_owned(),
+        "/tmp/project".to_owned(),
+        "Failed task".to_owned(),
+    );
+    link.status = "failed".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": { "taskId": "failed-before-session", "workspacePath": "/tmp/project" }
+        }))
+        .await
+        .expect("terminal task without a session should return its known state");
+
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"], json!([]));
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn completed_transcript_uses_persisted_snapshot_when_provider_session_is_not_ready() {
+    let index_path = temp_runtime_work_index_path("completed-transcript-provider-not-ready");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "completed-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Completed task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    link.status = "done".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Persisted final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        })],
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "completed-task",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("completed transcript should remain readable before the provider session is ready");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"][0]["content"], "Persisted final answer");
+    assert_eq!(
+        result["turns"][0]["items"][0]["content"],
+        "Persisted final answer"
+    );
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn unmaterialized_provider_transcript_returns_local_presentation() {
+    let index_path = temp_runtime_work_index_path("unmaterialized-provider-transcript");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "local-task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Pending task".to_owned(),
+    );
+    link.thread_id = Some("01a0d200-cdaa-75b1-a55c-090a89171c79".to_owned());
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "content": "nihao",
+            "createdAt": 1790229662977_i64,
+            "ensureVisible": true,
+            "attachments": [],
+            "references": [],
+        }),
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                }
+            }
+        }))
+        .await
+        .expect("unmaterialized provider thread should use the local presentation");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(result["messages"][0]["role"], "user");
+    assert_eq!(result["messages"][0]["content"], "nihao");
+
+    let navigation = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                },
+                "navigationOnly": true
+            }
+        }))
+        .await
+        .expect("unmaterialized provider navigation should be empty");
+
+    assert_eq!(navigation["success"], true);
+    assert_eq!(navigation["turnNavigation"], json!([]));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn direct_thread_override_bypasses_unmaterialized_local_transcript() {
+    for navigation_only in [false, true] {
+        let index_path = temp_runtime_work_index_path(if navigation_only {
+            "direct-thread-override-navigation"
+        } else {
+            "direct-thread-override-transcript"
+        });
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Pending task".to_owned(),
+        );
+        link.thread_id = Some("linked-thread".to_owned());
+        append_runtime_handle_user_message_presentation(
+            &mut link.runtime_handle,
+            json!({
+                "clientUserMessageId": "runtime-local-pane-1",
+                "content": "local presentation",
+                "createdAt": 1790229662977_i64,
+                "ensureVisible": true,
+                "attachments": [],
+                "references": [],
+            }),
+        );
+        handler.upsert_local_task(link);
+
+        let error = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "runtimeHandle": {
+                        "threadId": "requested-thread"
+                    },
+                    "navigationOnly": navigation_only
+                }
+            }))
+            .await
+            .expect_err("an explicit thread override should read the requested provider thread");
+
+        assert_eq!(error.code, "codex_error");
+        let _ = fs::remove_file(index_path);
+    }
 }
 
 #[test]
@@ -4679,6 +5062,94 @@ fn spawned_child_notifications_wait_for_parent_route_registration() {
     assert_eq!(
         child_event["payload"]["data"]["block"]["content"],
         "child output before parent spawn completion"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn subagent_activity_routes_pending_native_child_notifications() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("pending-native-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "native child output"
+        }
+    }));
+
+    assert!(!handler.thread_event_route_exists("thread-child"));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "type": "subAgentActivity",
+                "agentPath": "/root/native-child",
+                "agentThreadId": "thread-child",
+                "kind": "started"
+            }
+        }
+    }));
+
+    assert!(handler.thread_event_route_exists("thread-child"));
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.subagent.activity"
+    );
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.block.created"
+    );
+    let child_event = event_rx
+        .try_recv()
+        .expect("pending native child output should replay through the inherited route");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(child_event["payload"]["taskId"], local_task_id);
+    assert_eq!(child_event["payload"]["subtaskId"], "turn-root");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "native child output"
     );
 
     let _ = fs::remove_file(index_path);
@@ -5763,6 +6234,99 @@ async fn execution_mapper_drops_notifications_after_stop_is_requested() {
 }
 
 #[tokio::test]
+async fn async_question_state_survives_completion_and_clears_on_next_send() {
+    let index_path = temp_runtime_work_index_path("async-question-interaction");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "async-question-task";
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Async question".to_owned(),
+    );
+    link.thread_id = Some("thread-async".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-async".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            None,
+            &mut CodexNotificationEventMapper::default(),
+            json!({
+                "method": "item/completed",
+                "params": {"item": {
+                    "id": "question-async", "type": "agentMessage",
+                    "questions": [{"title": "Continue?", "options": ["Yes", "No"]}]
+                }}
+            }),
+        )
+        .await;
+    assert_eq!(
+        handler
+            .local_task_link(local_task_id)
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
+    assert!(handler.finish_local_task(local_task_id, execution_id, None, "done"));
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    assert_eq!(
+        handler
+            .local_task_link(local_task_id)
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
+    assert!(!handler.is_active_local_task(local_task_id));
+    handler.mark_task_running_for_send(
+        local_task_id,
+        "thread-async",
+        "/tmp/project",
+        &request,
+        &json!({"message": "Yes"}),
+    );
+    assert!(handler
+        .local_task_link(local_task_id)
+        .unwrap()
+        .interaction_status
+        .is_none());
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn unsuccessful_execution_clears_pending_async_question() {
+    for status in ["failed", "cancelled"] {
+        let index_path = temp_runtime_work_index_path(status);
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "async-failed-task".to_owned(),
+            "/tmp/project".to_owned(),
+            "Async question".to_owned(),
+        );
+        link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.to_owned());
+        handler.upsert_local_task(link);
+        let execution_id = start_test_execution(&handler, "async-failed-task");
+        assert!(handler.finish_local_task("async-failed-task", execution_id, None, status));
+        assert!(handler
+            .local_task_link("async-failed-task")
+            .unwrap()
+            .interaction_status
+            .is_none());
+        let _ = fs::remove_file(index_path);
+    }
+}
+
+#[tokio::test]
 async fn execution_mapper_keeps_same_turn_subagent_text_out_of_root_conversation() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-subagent-text");
@@ -5997,15 +6561,15 @@ fn thread_read_repairs_legacy_activity_time_pollution() {
 fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
     let root =
         temp_runtime_work_index_path("archived-cleanup-managed-root").with_extension("directory");
-    let managed_root = root.join("workspace/worktrees");
-    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    let managed_root = root.join("workspace").join("worktrees");
+    let manager = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     manager
         .update_settings(WorktreeSettingsPatch {
             worktree_root: Some(managed_root.display().to_string()),
             ..WorktreeSettingsPatch::default()
         })
         .unwrap();
-    let worktree_path = managed_root.join("task-1/Wegent");
+    let worktree_path = managed_root.join("task-1").join("Wegent");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         worktree_path.display().to_string(),
@@ -6030,9 +6594,9 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         .collect::<Vec<_>>();
 
     assert!(target_paths.contains(&worktree_path.display().to_string()));
-    assert!(target_paths.contains(
-        &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
-    ));
+    assert!(target_paths.contains(&normalize_workspace_path(
+        "/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png"
+    )));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -6101,9 +6665,19 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        temp.path().join("workspace").to_str().unwrap(),
+    );
+    let _home = ScalarEnv::set(
+        "WEGENT_EXECUTOR_HOME",
+        temp.path().join("executor").to_str().unwrap(),
+    );
     let root =
         temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
-    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    let manager = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/Users/me/project".to_owned(),
@@ -6117,12 +6691,36 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         .collect::<Vec<_>>();
 
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+    assert!(target_paths.contains(
+        &temp
+            .path()
+            .join("workspace")
+            .join("task-1")
+            .join("attachments")
+            .to_string_lossy()
+            .to_string()
+    ));
     assert!(target_paths.iter().any(|path| {
         path.ends_with("/workspace/attachments/runtime/task-1")
             || path.ends_with("\\workspace\\attachments\\runtime\\task-1")
     }));
-    assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
-    assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
+    let project = PathBuf::from(normalize_workspace_path("/Users/me/project"));
+    assert!(target_paths
+        .iter()
+        .any(|path| normalize_workspace_path(path)
+            == normalize_workspace_path(
+                &project
+                    .join(".wegent")
+                    .join("attachments")
+                    .join("task-1")
+                    .to_string_lossy()
+            )));
+    assert!(target_paths.contains(
+        &project
+            .join("task-1:executor:attachments")
+            .to_string_lossy()
+            .to_string()
+    ));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -6191,4 +6789,194 @@ fn local_project_execution_never_inherits_backend_credentials() {
     assert!(request.auth_token.is_none());
     assert!(request.runtime_auth_token.is_none());
     assert!(request.skill_identity_token.is_none());
+}
+
+#[test]
+fn context_compaction_cache_preserves_started_and_completed_outcomes() {
+    for completed in [false, true] {
+        let (handler, root) = isolated_runtime_work_handler("context-compaction-cache");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        handler.upsert_local_task(link);
+        handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+        for method in if completed {
+            vec!["item/started", "item/completed"]
+        } else {
+            vec!["item/started"]
+        } {
+            handler.record_active_codex_transcript_item(
+                "task-1",
+                "turn-1",
+                &json!({
+                    "method": method,
+                    "params": {"item": {"id": "compact-1", "type": "contextCompaction"}}
+                }),
+            );
+        }
+        let active = handler.active_codex_transcript_messages("task-1");
+        assert_eq!(
+            active[0]["blocks"][0]["status"],
+            if completed { "done" } else { "pending" }
+        );
+
+        handler.persist_and_clear_active_codex_transcript("task-1", "interrupted");
+        let link = handler.local_task_link("task-1").unwrap();
+        let persisted = completed_transcript_messages(&link);
+        assert_eq!(persisted[0]["status"], "cancelled");
+        assert_eq!(
+            persisted[0]["blocks"][0]["status"],
+            if completed { "done" } else { "error" }
+        );
+        assert!(handler
+            .active_codex_transcript_messages("task-1")
+            .is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+fn decision_proxy_handler() -> RuntimeWorkRpcHandler {
+    let (event_tx, _) = broadcast::channel(1);
+    RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "device-1",
+        "/bin/false",
+        event_tx,
+    )
+}
+
+#[tokio::test]
+async fn decision_proxy_register_requires_a_scope() {
+    let handler = decision_proxy_handler();
+    for payload in [json!({}), json!({"scope": "   "}), json!({"scope": 7})] {
+        let error = handler
+            .dispatch("runtime.decision_proxy.register", payload.clone())
+            .await
+            .expect_err("scope must be required");
+        assert_eq!(error.code, "invalid_request", "payload={payload}");
+    }
+}
+
+#[tokio::test]
+async fn decision_proxy_register_needs_no_environment_model_configuration() {
+    let handler = decision_proxy_handler();
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-1:abc"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("catalog configuration is resolved at request time");
+    let token = launch["token"].as_str().expect("token");
+    crate::server::local_decision_proxy::unregister(token);
+}
+
+#[tokio::test]
+async fn decision_proxy_register_rejects_client_supplied_configuration() {
+    let handler = decision_proxy_handler();
+    for field in [
+        "upstream",
+        "upstreamUrl",
+        "apiKey",
+        "models",
+        "allowedModels",
+        "defaultModel",
+        "credential",
+    ] {
+        let mut payload = serde_json::Map::new();
+        payload.insert("scope".to_owned(), json!("smart-app:install-1:abc"));
+        payload.insert(field.to_owned(), json!("attacker value"));
+        let error = handler
+            .register_decision_proxy_at(Value::Object(payload), "http://127.0.0.1:4567")
+            .expect_err("client supplied configuration must be rejected");
+        assert_eq!(error.code, "invalid_request", "field={field}");
+    }
+}
+
+#[tokio::test]
+async fn decision_proxy_register_returns_a_loopback_launch() {
+    let handler = decision_proxy_handler();
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-2:launch"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    assert!(token.starts_with("decision-"));
+    assert_eq!(
+        launch["baseUrl"].as_str(),
+        Some(format!("http://127.0.0.1:4567/v1/decision-router/{token}").as_str())
+    );
+    assert_eq!(launch["protocolVersion"], 1);
+
+    let serialized = launch.to_string();
+    for leaked in [
+        "decision-upstream.example.com",
+        "model-a",
+        "apiKey",
+        "upstream",
+    ] {
+        assert!(!serialized.contains(leaked), "launch leaked {leaked}");
+    }
+}
+
+#[tokio::test]
+async fn decision_proxy_register_needs_a_running_http_server() {
+    let handler = decision_proxy_handler();
+    let error = handler
+        .dispatch(
+            "runtime.decision_proxy.register",
+            json!({"scope": "smart-app:install-3:no-server"}),
+        )
+        .await
+        .expect_err("registration needs a bound loopback address");
+    assert_eq!(error.code, "runtime_unavailable");
+}
+
+#[tokio::test]
+async fn registration_binds_the_shared_connection_snapshot() {
+    let handler = decision_proxy_handler();
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-4:login"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    let route =
+        crate::server::local_decision_proxy::lookup_route(&token).expect("registered route");
+    let snapshot = route.snapshot();
+    assert!(
+        Arc::ptr_eq(&snapshot, &handler.backend_connection),
+        "routes must share the handler connection snapshot"
+    );
+    crate::server::local_decision_proxy::unregister(&token);
+}
+
+#[tokio::test]
+async fn decision_proxy_unregister_is_idempotent() {
+    let handler = decision_proxy_handler();
+    let error = handler
+        .dispatch("runtime.decision_proxy.unregister", json!({}))
+        .await
+        .expect_err("token must be required");
+    assert_eq!(error.code, "invalid_request");
+
+    let launch = handler
+        .register_decision_proxy_at(
+            json!({"scope": "smart-app:install-6:stop"}),
+            "http://127.0.0.1:4567",
+        )
+        .expect("registration should succeed");
+    let token = launch["token"].as_str().expect("token").to_owned();
+    for _ in 0..2 {
+        let result = handler
+            .dispatch("runtime.decision_proxy.unregister", json!({"token": token}))
+            .await
+            .expect("unregister should be idempotent");
+        assert_eq!(result["unregistered"], true);
+    }
+    assert!(crate::server::local_decision_proxy::lookup_route(&token).is_none());
 }

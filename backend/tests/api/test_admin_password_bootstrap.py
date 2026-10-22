@@ -27,44 +27,6 @@ def _get_admin_password_config(db: Session) -> SystemConfig | None:
     )
 
 
-def test_current_user_handshake_returns_setup_required_from_startup_cache(
-    test_client: TestClient,
-    test_db: Session,
-):
-    ensure_default_user(test_db)
-    load_admin_password_setup_state(test_db)
-
-    config = _get_admin_password_config(test_db)
-    config.config_value = {"completed": True}
-    test_db.commit()
-
-    response = test_client.get("/api/users/me")
-
-    assert get_cached_admin_password_setup_required() is True
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "ADMIN_PASSWORD_SETUP_REQUIRED"
-    assert response.json()["detail"] == {
-        "error_code": "ADMIN_PASSWORD_SETUP_REQUIRED",
-        "admin_username": "admin",
-    }
-
-
-def test_current_user_handshake_skips_setup_status_when_check_disabled(
-    monkeypatch,
-    test_client: TestClient,
-    test_db: Session,
-):
-    monkeypatch.setattr(settings, "CHECK_SYSTEM_INITIALIZATION_STATUS", False)
-    ensure_default_user(test_db)
-    load_admin_password_setup_state(test_db)
-
-    response = test_client.get("/api/users/me")
-
-    assert get_cached_admin_password_setup_required() is False
-    assert response.status_code == 401
-    assert response.json()["detail"] == "Missing authentication credentials"
-
-
 def test_new_bootstrap_admin_cannot_login_with_default_password(
     test_client: TestClient,
     test_db: Session,

@@ -60,7 +60,10 @@ const config: Config = {
   ],
   // Coverage thresholds are enforced incrementally via CI tools (e.g., Codecov)
   // rather than globally to support gradual improvement of legacy code
-  testMatch: ['<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}'],
+  testMatch: [
+    '<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}',
+    '<rootDir>/src/features/collaboration/shared-api/**/*.test.{ts,tsx}',
+  ],
   modulePathIgnorePatterns: ['<rootDir>/.next/'],
 }
 

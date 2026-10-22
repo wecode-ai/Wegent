@@ -33,14 +33,46 @@ export class PreferencesStore {
   }
 
   private async readFile(): Promise<Record<string, unknown>> {
+    let content: string
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
+      content = await readFile(this.path(), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+      // A permission, sharing, or I/O error says nothing about the contents:
+      // keep the file where it is instead of moving valid settings aside.
+      throw error
+    }
+    try {
+      const value = JSON.parse(content) as unknown
       return value && typeof value === 'object' && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : {}
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      throw error
+      await this.quarantineDamagedFile(error)
+      return {}
+    }
+  }
+
+  /**
+   * Content that cannot be parsed must not break every consumer: keep the
+   * original bytes for diagnosis, then continue with defaults so the store
+   * heals itself on the next write instead of failing permanently.
+   */
+  private async quarantineDamagedFile(reason: unknown): Promise<void> {
+    const path = this.path()
+    const quarantined = `${path}.corrupt-${Date.now()}`
+    try {
+      await rename(path, quarantined)
+      console.warn('[Preferences] Moved an unreadable preferences file aside', {
+        path,
+        quarantined,
+        reason: describeError(reason),
+      })
+    } catch (error) {
+      console.warn('[Preferences] Could not move an unreadable preferences file aside', {
+        path,
+        reason: describeError(error),
+      })
     }
   }
 
@@ -52,4 +84,8 @@ export class PreferencesStore {
     )
     return result
   }
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

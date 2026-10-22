@@ -185,21 +185,31 @@ def test_search_rejects_invalid_input(test_db, test_user, options):
     assert error.value.status_code in (400, 422)
 
 
-@pytest.fixture
-def teams_client(test_db, test_user):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+def team_page(db: Session, user_id: int, **options: Any) -> dict[str, Any]:
+    """Exercise the shared list service independently of the retired HTTP handler."""
+    from app.services.team_list_filters import (
+        build_team_list_filters,
+        validate_team_list_groups,
+    )
 
-    from app.api.dependencies import get_db
-    from app.api.endpoints.adapter.teams import router
-    from app.core.security import get_current_user
-
-    app = FastAPI()
-    app.include_router(router, prefix="/teams")
-    app.dependency_overrides[get_db] = lambda: test_db
-    app.dependency_overrides[get_current_user] = lambda: test_user
-    with TestClient(app) as client:
-        yield client
+    source_filter = options.pop("source_filter", None)
+    mode = options.pop("mode", None)
+    page = options.pop("page", 1)
+    limit = options.pop("limit", 100)
+    validate_team_list_groups(
+        db, user_id, options.get("group_name"), options.get("group_names")
+    )
+    filters = build_team_list_filters(db, user_id, source_filter, mode)
+    items, total = team_kinds_service.get_user_teams_page(
+        db=db,
+        user_id=user_id,
+        skip=(page - 1) * limit,
+        limit=limit,
+        shared_only=source_filter == "group",
+        filters=filters,
+        **options,
+    )
+    return {"items": items, "total": total}
 
 
 @pytest.mark.parametrize(
@@ -216,7 +226,6 @@ def teams_client(test_db, test_user):
 def test_team_page_resolves_permissions_once_and_counts_only_when_needed(
     test_db,
     test_user,
-    teams_client,
     mocker,
     size,
     page,
@@ -238,22 +247,19 @@ def test_team_page_resolves_permissions_once_and_counts_only_when_needed(
 
     event.listen(test_db.bind, "before_cursor_execute", capture)
     try:
-        response = teams_client.get(
-            "/teams", params={"page": page, "limit": 100, "scope": "all"}
-        )
+        response = team_page(test_db, test_user.id, page=page, limit=100, scope="all")
     finally:
         event.remove(test_db.bind, "before_cursor_execute", capture)
 
-    assert response.status_code == 200
-    assert response.json()["total"] == size
-    assert len(response.json()["items"]) == returned
+    assert response["total"] == size
+    assert len(response["items"]) == returned
     assert roles.call_count == 1
     assert authorization.call_count == 1
     assert sum("count(" in statement for statement in statements) == count_queries
 
 
 def test_team_page_refreshes_group_permissions_on_each_request(
-    test_db, test_user, teams_client, mocker
+    test_db, test_user, mocker
 ):
     from app.services import group_permission
 
@@ -280,22 +286,18 @@ def test_team_page_refreshes_group_permissions_on_each_request(
         make_team(test_db, 999, f"group-agent-{index}", namespace=group.name)
     roles = mocker.spy(group_permission, "get_user_group_roles")
     params = {"limit": 1, "scope": "all", "source_filter": "group"}
-    before = teams_client.get("/teams", params=params)
-    assert before.status_code == 200
-    assert before.json()["total"] == 2
-    assert len(before.json()["items"]) == 1
+    before = team_page(test_db, test_user.id, **params)
+    assert before["total"] == 2
+    assert len(before["items"]) == 1
 
     test_db.delete(membership)
     test_db.flush()
-    after = teams_client.get("/teams", params=params)
-    assert after.status_code == 200
-    assert after.json() == {"total": 0, "items": []}
+    after = team_page(test_db, test_user.id, **params)
+    assert after == {"total": 0, "items": []}
     assert roles.call_count == 2
 
 
-def test_team_list_pages_all_205_agents_with_filtered_totals(
-    test_db, test_user, teams_client
-):
+def test_team_list_pages_all_205_agents_with_filtered_totals(test_db, test_user):
     expected = [
         make_team(test_db, test_user.id, f"agent-{index}", bind_mode=["task"]).id
         for index in range(205)
@@ -306,9 +308,10 @@ def test_team_list_pages_all_205_agents_with_filtered_totals(
     make_team(test_db, test_user.id, "hidden", bind_mode=[])
     pages = []
     for page in [1, 2, 3, 4]:
-        response = teams_client.get(
-            "/teams",
-            params={
+        response = team_page(
+            test_db,
+            test_user.id,
+            **{
                 "page": page,
                 "limit": 100,
                 "scope": "all",
@@ -316,8 +319,7 @@ def test_team_list_pages_all_205_agents_with_filtered_totals(
                 "mode": "task",
             },
         )
-        assert response.status_code == 200
-        result = response.json()
+        result = response
         assert result["total"] == 205
         pages.append(result["items"])
     assert [len(items) for items in pages] == [100, 100, 5, 0]
@@ -337,9 +339,7 @@ def test_source_and_mode_filter_before_pagination(test_db, test_user):
     assert not result.has_more
 
 
-def test_multiple_groups_share_one_page_and_require_access(
-    test_db, test_user, teams_client
-):
+def test_multiple_groups_share_one_page_and_require_access(test_db, test_user):
     for name in ["group-a", "group-b"]:
         group = Namespace(
             name=name,
@@ -392,9 +392,10 @@ def test_multiple_groups_share_one_page_and_require_access(
     assert error.value.status_code == 403
     ids = []
     for page, size in [(1, 100), (2, 20)]:
-        response = teams_client.get(
-            "/teams",
-            params={
+        response = team_page(
+            test_db,
+            test_user.id,
+            **{
                 "page": page,
                 "limit": 100,
                 "scope": "group",
@@ -403,20 +404,22 @@ def test_multiple_groups_share_one_page_and_require_access(
                 "mode": "all",
             },
         )
-        assert response.status_code == 200
-        result = response.json()
+        result = response
         assert result["total"] == 120
         assert len(result["items"]) == size
         ids.extend(item["id"] for item in result["items"])
     assert len(set(ids)) == 120
-    denied = teams_client.get(
-        "/teams",
-        params={"scope": "group", "group_names": ["group-a", "unauthorized"]},
-    )
-    assert denied.status_code == 403
+    with pytest.raises(HTTPException) as denied:
+        team_page(
+            test_db,
+            test_user.id,
+            scope="group",
+            group_names=["group-a", "unauthorized"],
+        )
+    assert denied.value.status_code == 403
 
 
-def test_team_list_total_matches_shared_agents(test_db, test_user, teams_client):
+def test_team_list_total_matches_shared_agents(test_db, test_user):
     own = make_team(test_db, test_user.id, "own-agent")
     make_team(test_db, 0, "public-agent")
     shared = make_team(test_db, 999, "shared-agent")
@@ -432,12 +435,11 @@ def test_team_list_total_matches_shared_agents(test_db, test_user, teams_client)
         )
     )
     test_db.flush()
-    response = teams_client.get(
-        "/teams", params={"limit": 1, "source_filter": "group", "mode": "all"}
+    response = team_page(
+        test_db, test_user.id, **{"limit": 1, "source_filter": "group", "mode": "all"}
     )
-    assert response.status_code == 200
-    assert response.json()["total"] == 1
-    assert [item["id"] for item in response.json()["items"]] == [shared.id]
+    assert response["total"] == 1
+    assert [item["id"] for item in response["items"]] == [shared.id]
     assert own.id != shared.id
 
 

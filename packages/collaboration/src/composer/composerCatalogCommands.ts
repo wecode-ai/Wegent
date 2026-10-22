@@ -17,6 +17,7 @@ interface CatalogCandidate {
   title: string
   description?: string
   metaLabel: string
+  statusLabel?: string
   searchAliases: string[]
   enabled: boolean
 }
@@ -103,6 +104,7 @@ export function createPluginSlashCommands<App extends { id: string }>(
       id: candidate.key,
       title: candidate.title,
       description: candidate.description,
+      metaLabel: candidate.statusLabel,
       group,
       searchAliases: candidate.searchAliases,
       Icon: Plug,

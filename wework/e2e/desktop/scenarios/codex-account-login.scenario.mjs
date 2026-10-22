@@ -19,6 +19,8 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       }
 
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
+      await control.command('waitFor', '[data-testid="codex-account-details-toggle"]')
+      await control.command('click', '[data-testid="codex-account-details-toggle"]')
       await control.command('waitFor', '[data-testid="local-codex-login-button"]', {
         text: '登录',
         timeoutMs: uiTimeoutMs,

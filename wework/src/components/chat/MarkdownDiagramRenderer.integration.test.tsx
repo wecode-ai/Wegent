@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react'
 import { afterAll, beforeAll, expect, test, vi } from 'vitest'
-import 'mermaid'
+import mermaid from 'mermaid'
 import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
 import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 
@@ -31,7 +31,8 @@ const MULTILINE_MERMAID = `flowchart TD
     CALL["callFunction<br/>校验入参 / 解析 env / 序列化 data"]
     APP -->|init| INIT
     APP -->|callFunction| CALL
-    INIT --> SDK`
+    INIT --> SDK
+    linkStyle default stroke:#2166cc`
 
 test('renders Mermaid HTML labels containing line breaks', async () => {
   const { container } = render(
@@ -44,10 +45,92 @@ test('renders Mermaid HTML labels containing line breaks', async () => {
       expect(svg).toBeInTheDocument()
       expect(svg).toHaveTextContent('开发者代码')
       expect(svg).toHaveTextContent('app.js / pages')
+      expect(svg).toHaveAttribute('data-mermaid-layout-isolated', 'true')
+      const arrows = Array.from(svg!.querySelectorAll('[marker-end]'))
+      expect(arrows.length).toBeGreaterThan(0)
+      for (const arrow of arrows) {
+        const markerId = arrow.getAttribute('marker-end')?.match(/#([^)'"\s]+)/)?.[1]
+        const marker = Array.from(svg!.querySelectorAll('marker')).find(
+          node => node.id === markerId
+        )
+        expect(marker).toBeDefined()
+        expect(marker?.querySelector('path')?.getAttribute('stroke')).toBe('#2166cc')
+      }
+      expect(document.querySelector('[data-file-viewer-mermaid-isolate]')).toBeNull()
       expect(container.querySelector('.drawing-state.error')).not.toBeInTheDocument()
     },
     { timeout: 10_000 }
   )
+}, 15_000)
+
+test('reuses sanitized Mermaid results with independent SVG references and theme keys', async () => {
+  const renderMermaid = vi.spyOn(mermaid, 'render').mockImplementation(async id => ({
+    diagramType: 'flowchart',
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}" viewBox="0 0 100 100" aria-labelledby="label">
+      <style>#${id} #fff {fill:#fff;marker-end:url(#arrow)} #${id} #node\\:one {opacity:1}</style>
+      <title id="label">Cached diagram</title>
+      <defs><marker id="arrow"><path d="M0 0L10 5" /></marker></defs>
+      <g id="node:one"><text>Cache label</text></g>
+      <path id="fff" marker-end="url(#arrow)" d="M0 0L20 20" />
+      <use href="#node:one" />
+      <script>window.unsafeDiagram = true</script>
+    </svg>`,
+  }))
+  const source = 'graph LR\nCACHE_RESULT --> CACHE_TARGET'
+  const preview = (theme: 'light' | 'dark', copies: number) => (
+    <MarkdownServicesProvider value={{ ...browserMarkdownServices, theme }}>
+      {Array.from({ length: copies }, (_, index) => (
+        <MarkdownDiagramPreview key={index} code={source} language="mermaid" />
+      ))}
+    </MarkdownServicesProvider>
+  )
+  const waitUntilReady = async (container: HTMLElement, count: number) => {
+    await waitFor(() => {
+      expect(container.querySelectorAll('.drawing-diagram-svg')).toHaveLength(count)
+      expect(container.querySelector('.drawing-state:not([hidden])')).not.toBeInTheDocument()
+    })
+    return Array.from(container.querySelectorAll<SVGSVGElement>('.drawing-diagram-svg'))
+  }
+
+  try {
+    const first = render(preview('light', 2))
+    const firstSvgs = await waitUntilReady(first.container, 2)
+    expect(renderMermaid).toHaveBeenCalledTimes(1)
+    const firstIds = firstSvgs.flatMap(svg => [
+      svg.id,
+      ...Array.from(svg.querySelectorAll('[id]'), node => node.id),
+    ])
+    expect(new Set(firstIds).size).toBe(firstIds.length)
+    for (const svg of firstSvgs) {
+      expect(svg.querySelector('script')).not.toBeInTheDocument()
+      expect(svg.getAttribute('aria-labelledby')).toBe(svg.querySelector('title')?.id)
+      expect(svg.querySelector('use')?.getAttribute('href')).toBe(`#${svg.querySelector('g')?.id}`)
+      expect(svg.querySelector('[marker-end]')?.getAttribute('marker-end')).toBe(
+        `url(#${svg.querySelector('marker')?.id})`
+      )
+      expect(svg.querySelector('style')?.textContent).toContain(`#${svg.id}`)
+      expect(svg.querySelector('style')?.textContent).toContain('fill:#fff')
+      expect(svg.querySelector('style')?.textContent).toContain(`#${svg.querySelector('g')?.id}`)
+    }
+    first.unmount()
+
+    const second = render(preview('light', 1))
+    const [cached] = await waitUntilReady(second.container, 1)
+    expect(renderMermaid).toHaveBeenCalledTimes(1)
+    expect(cached).toHaveAttribute('data-diagram-cache-hit', 'true')
+    expect(firstIds).not.toContain(cached.id)
+    second.rerender(preview('dark', 1))
+    await waitFor(() => {
+      expect(renderMermaid).toHaveBeenCalledTimes(2)
+      expect(second.container.querySelector('.drawing-diagram-svg')).toHaveAttribute(
+        'data-diagram-cache-hit',
+        'false'
+      )
+    })
+    second.unmount()
+  } finally {
+    renderMermaid.mockRestore()
+  }
 }, 15_000)
 
 test('sanitizes unsafe SVG returned by the PlantUML server', async () => {

@@ -471,7 +471,7 @@ class ArtifactService:
         return (now - activity_at).total_seconds() >= stall_seconds
 
     def _subtask_datetime_as_utc(self, value: datetime) -> datetime:
-        return self._as_utc_naive(value, database_datetime_timezone(self.db))
+        return self._as_utc_naive(value, database_datetime_timezone())
 
     @staticmethod
     def _as_utc_naive(value: datetime, naive_timezone: timezone) -> datetime:

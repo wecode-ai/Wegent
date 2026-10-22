@@ -12,8 +12,7 @@
 //! `SERVICE_EXTENSION`) registers its implementation through
 //! `AppState::user_reader` before route construction. The lite task
 //! projection does not consume the returned row, so only the call topology
-//! and side effects are observable through that endpoint; the runtime-check
-//! task assembly consumes the returned record; the responses API
+//! and side effects are observable through that endpoint; the responses API
 //! authentication consumes the auth fields of both lookups.
 use async_trait::async_trait;
 
@@ -76,6 +75,23 @@ pub trait UserByIdReader: Send + Sync {
     /// `userReader.get_by_name` (`db.query(User).filter(User.user_name ==
     /// user_name).first()`).
     async fn get_by_name(&self, user_name: &str) -> anyhow::Result<Option<UserRecord>>;
+
+    /// `db.get(User, user_id)`: the `Session.get` entity lookup with the
+    /// unlabeled column projection and no `LIMIT`. Unlike
+    /// [`Self::get_by_id`], this is the ORM identity-map read the item and
+    /// agent projections use, and its statement shape must match the
+    /// recorded exchange for replay.
+    async fn get_entity_by_id(&self, user_id: i64) -> anyhow::Result<Option<UserRecord>>;
+
+    /// Drop any cached copy of the committed `users` row
+    /// (`CachedUserReader.on_change`, driven by the source's SQLAlchemy
+    /// `after_update` event on the `User` model). The public SQL reader keeps
+    /// no cache, so the default is a no-op; a deployment whose reader is a
+    /// read-through cache deletes `user:v2:data:{user_id}` and
+    /// `user:v2:idx:name:{user_name}` here.
+    async fn invalidate_user_cache(&self, _user_id: i64, _user_name: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// The public direct-SQL reader (`UserReader.get_by_id` / `get_by_name`).
@@ -106,6 +122,14 @@ impl UserByIdReader for PublicUserReader {
             .await?;
         Ok(row.map(UserRecord::from))
     }
+
+    async fn get_entity_by_id(&self, user_id: i64) -> anyhow::Result<Option<UserRecord>> {
+        let row: Option<UserEntityRow> = self
+            .mysql
+            .fetch_optional(USER_ENTITY_BY_ID_QUERY, (user_id,))
+            .await?;
+        Ok(row.map(UserRecord::from))
+    }
 }
 
 impl From<UserRow> for UserRecord {
@@ -114,6 +138,48 @@ impl From<UserRow> for UserRecord {
             id: i64::from(row.id),
             user_name: row.user_name,
             password_hash: row.users_password_hash,
+            email: row.email,
+            git_info: row.git_info.0.to_value(),
+            is_active: row.is_active != 0,
+            role: row.role,
+            auth_source: row.auth_source,
+            preferences: row.preferences,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+/// One `db.get(User, id)` row: the unlabeled entity projection SQLAlchemy
+/// renders for a `Session.get` lookup.
+#[derive(Debug, brz_mysql::FromMysqlRow)]
+struct UserEntityRow {
+    id: i64,
+    user_name: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    password_hash: String,
+    email: Option<String>,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
+    is_active: i8,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    role: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    auth_source: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    preferences: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    created_at: chrono::NaiveDateTime,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    updated_at: chrono::NaiveDateTime,
+}
+
+impl From<UserEntityRow> for UserRecord {
+    fn from(row: UserEntityRow) -> Self {
+        Self {
+            id: row.id,
+            user_name: row.user_name,
+            password_hash: row.password_hash,
             email: row.email,
             git_info: row.git_info.0.to_value(),
             is_active: row.is_active != 0,
@@ -138,6 +204,26 @@ pub const USER_BY_ID_QUERY: &str = "SELECT users.id AS users_id, users.user_name
      FROM users \
      WHERE users.id = ? \
      LIMIT 1";
+
+/// The labeled `users_<column>` projection shared verbatim by every
+/// `db.query(User)` rendering. Derived from [`USER_BY_ID_QUERY`] so the full
+/// mapped column list stays defined once for joins that embed the `users`
+/// projection (for example the cloud-project member read).
+pub(crate) fn users_projection() -> &'static str {
+    USER_BY_ID_QUERY
+        .strip_prefix("SELECT ")
+        .and_then(|rest| rest.split(" FROM users").next())
+        .expect("the by-id statement carries the users projection")
+}
+
+/// The `Session.get(User, id)` statement SQLAlchemy renders for the ORM
+/// identity-map lookup: the bare entity columns with no labels and no
+/// `LIMIT`, with the id bound as one parameter.
+pub const USER_ENTITY_BY_ID_QUERY: &str = "SELECT users.id, users.user_name, users.password_hash, \
+     users.email, users.git_info, users.is_active, users.`role`, users.auth_source, \
+     users.preferences, users.created_at, users.updated_at \
+     FROM users \
+     WHERE users.id = ?";
 
 /// The by-name ORM statement SQLAlchemy renders for `UserReader.get_by_name`'s
 /// `db.query(User).filter(User.user_name == user_name).first()`: every mapped
@@ -177,6 +263,23 @@ mod tests {
         }
         assert_eq!(USER_BY_ID_QUERY.matches('?').count(), 1);
         assert!(USER_BY_ID_QUERY.contains("WHERE users.id = ? LIMIT 1"));
+    }
+
+    #[test]
+    fn entity_by_id_query_matches_the_session_get_projection() {
+        // `Session.get(User, id)` renders the bare entity columns with no
+        // labels and no LIMIT, binding exactly one parameter.
+        assert!(!USER_ENTITY_BY_ID_QUERY.contains(" AS users_"));
+        assert_eq!(USER_ENTITY_BY_ID_QUERY.matches('?').count(), 1);
+        assert!(USER_ENTITY_BY_ID_QUERY.contains("WHERE users.id = ?"));
+        assert!(!USER_ENTITY_BY_ID_QUERY.to_uppercase().contains("LIMIT"));
+        for column in [
+            "users.id, users.user_name, users.password_hash, users.email,",
+            "users.git_info, users.is_active, users.`role`, users.auth_source,",
+            "users.preferences, users.created_at, users.updated_at",
+        ] {
+            assert!(USER_ENTITY_BY_ID_QUERY.contains(column), "missing {column}");
+        }
     }
 
     #[test]

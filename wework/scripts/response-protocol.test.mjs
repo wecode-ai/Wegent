@@ -1,13 +1,22 @@
 import { describe, expect, test } from 'vitest'
 import {
+  createSse,
   cors,
+  customToolCall,
+  functionCall,
   mcpToolRequestEvents,
   requestAdvertisesProgrammaticExec,
+  responseCompleted,
+  responseCreated,
   serializedOutputReportsSuccess,
   selectMcpTool,
   selectMcpToolRequest,
   selectProgrammaticExec,
 } from '../e2e/desktop/modules/response-protocol.mjs'
+import {
+  longCodeStreamingEvents,
+  textDeltaEvents,
+} from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 function searchResult(...tools) {
   return {
@@ -27,6 +36,66 @@ function namespace(name, ...toolNames) {
 function functionTool(name) {
   return { type: 'function', name }
 }
+
+describe('responses stream fixtures', () => {
+  test('keeps long-code reasoning and final text in the same order through completion', () => {
+    const stream = longCodeStreamingEvents('long-code')
+    const started = stream.start.filter(event => event.type === 'response.output_item.added')
+    expect(started.map(event => event.output_index)).toEqual([0, 1])
+    expect(started.map(event => event.item.type)).toEqual(['reasoning', 'message'])
+    expect(textDeltaEvents(stream.itemId, 'code', 0, stream.outputIndex)[0]).toMatchObject({
+      item_id: started[1].item.id,
+      output_index: 1,
+    })
+    const completed = stream.finish.at(-1).response.output
+    expect(completed.map(item => item.id)).toEqual(started.map(event => event.item.id))
+    expect(completed.map(item => item.status)).toEqual(['completed', 'completed'])
+    expect(completed[1].phase).toBe('final_answer')
+    expect(
+      stream.finish.filter(event => 'output_index' in event).map(event => event.output_index)
+    ).toEqual([1, 1])
+  })
+
+  test('completes tool items in the final response for Codex turn history', () => {
+    const events = [
+      responseCreated('response-1'),
+      ...functionCall('call-1', 'view_image', { path: '/tmp/image.png' }),
+      customToolCall('call-2', 'apply_patch', '*** Begin Patch\n*** End Patch'),
+      responseCompleted('response-1'),
+    ]
+    const completedEvent = createSse(events)
+      .split('\n\n')
+      .map(chunk => chunk.split('\n').find(line => line.startsWith('data: ')))
+      .filter(Boolean)
+      .map(line => JSON.parse(line.slice('data: '.length)))
+      .find(event => event.type === 'response.completed')
+
+    expect(completedEvent.response.output).toEqual([
+      expect.objectContaining({
+        id: 'fc_call-1',
+        type: 'function_call',
+        status: 'completed',
+        call_id: 'call-1',
+      }),
+      expect.objectContaining({
+        id: 'fc_call-2',
+        type: 'custom_tool_call',
+        status: 'completed',
+        call_id: 'call-2',
+      }),
+    ])
+    expect(completedEvent.response).toEqual(
+      expect.objectContaining({
+        object: 'response',
+        status: 'completed',
+        model: 'wework-desktop-e2e',
+        error: null,
+        incomplete_details: null,
+      })
+    )
+    expect(completedEvent.response.created_at).toEqual(expect.any(Number))
+  })
+})
 
 describe('cors', () => {
   test('allows every HTTP method used by desktop application APIs', () => {

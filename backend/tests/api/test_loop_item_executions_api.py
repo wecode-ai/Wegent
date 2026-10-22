@@ -4,19 +4,35 @@
 
 """Focused API tests for LoopItem execution ownership."""
 
-from contextlib import contextmanager
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import loop_item_executions
-from app.models.delivery import CloudProject, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    Delivery,
+    LoopItem,
+    LoopItemTaskBinding,
+    ProjectChatAgent,
+)
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
-from app.schemas.project_chat import LoopItemExecutionClaim
+from app.models.wework_notification import WeworkNotification
+from app.schemas.project_chat import (
+    LoopItemExecutionAssignmentStatus,
+    LoopItemExecutionBatchCreate,
+    LoopItemExecutionBatchItem,
+    LoopItemExecutionStatusQuery,
+)
+from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 
 def test_runtime_write_back_authorizes_execution_owner(
@@ -61,107 +77,566 @@ def test_runtime_write_back_authorizes_execution_owner(
     assert error.value.status_code == 403
 
 
-def test_agent_claim_uses_run_owner_not_agent_creator(
-    monkeypatch,
+@pytest.fixture
+def collaboration_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
-) -> None:
-    run_owner = User(
-        user_name="execution-owner",
-        password_hash="unused",
-        email="execution-owner@example.com",
-        is_active=True,
-        git_info=None,
-    )
+) -> SimpleNamespace:
+    push = Mock()
+    monkeypatch.setattr(loop_item_executions, "push_project_chat_message", push)
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", Mock())
+    public_id = str(uuid4())
     project = CloudProject(
-        public_id="execution-owner-project",
-        project_key="RUNOWNER",
-        name="Run owner project",
+        public_id=public_id,
+        project_key=f"MIXED{uuid4().hex[:4].upper()}",
+        name="Mixed collaboration batch",
         description="",
         created_by_user_id=test_user.id,
-        storage_prefix="projects/execution-owner-project",
+        storage_prefix=f"projects/{public_id}",
         metadata_json={},
+        next_item_number=2,
     )
-    test_db.add_all([run_owner, project])
+    authorize_project(test_db, project)
+    test_db.add(project)
     test_db.flush()
-    agent = ProjectChatAgent(
-        id="agent-created-by-project-owner",
+    manager = ProjectChatAgent(
+        id=f"manager-{uuid4().hex}",
         cloud_project_id=project.id,
-        title="Shared agent",
-        name="Shared agent",
+        title="Manager",
+        name="Manager",
         status="active",
         created_by_user_id=test_user.id,
+        metadata_json={"wegent_team_id": 1001},
+    )
+    authorize_project_agent(test_db, manager)
+    worker = ProjectChatAgent(
+        id=f"worker-{uuid4().hex}",
+        cloud_project_id=project.id,
+        title="Worker",
+        name="Worker",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={"wegent_team_id": 1002},
+    )
+    authorize_project_agent(test_db, worker)
+    reviewer = ProjectChatAgent(
+        id=f"reviewer-{uuid4().hex}",
+        cloud_project_id=project.id,
+        title="Reviewer",
+        name="Reviewer",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={"wegent_team_id": 1003},
+    )
+    authorize_project_agent(test_db, reviewer)
+    group = {
+        "id": "group-1",
+        "leader": {"kind": "agent", "id": "1001"},
+        "members": [
+            {"kind": "agent", "id": "1001"},
+            {"kind": "agent", "id": "1002"},
+            {"kind": "agent", "id": "1003"},
+            {"kind": "human", "id": str(test_user.id)},
+        ],
+    }
+    parent = LoopItem(
+        id=f"{project.project_key}-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Parent Issue",
+        description="",
+        status="in_progress",
+        priority="none",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "collaboration_group": {"id": "group-1", "name": "Mixed team"},
+            "collaboration_group_assignment_key": "assignment-1",
+        },
+    )
+    manager_execution = LoopItemExecution(
+        loop_item_id=parent.id,
+        cloud_project_id=str(project.id),
+        agent_id="",
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        runtime_device_id="manager-device",
+        runtime_instance_id="manager-instance",
+        runtime_task_id="manager-runtime-1",
+        execution_environment="cloud",
+        execution_payload=json.dumps(
+            {
+                "runtime_selection": {
+                    "executor_kind": "collaboration_group_dispatch",
+                },
+                "origin_context": {
+                    "dispatch_kind": "collaboration_group",
+                    "dispatch_role": "manager",
+                    "manager_agent_id": manager.id,
+                    "dispatch_id": "dispatch-1",
+                    "run_id": "collaboration-group:assignment-1",
+                    "collaboration_group_id": "group-1",
+                    "collaboration_group": group,
+                },
+            }
+        ),
+        status="running",
+    )
+    device = Kind(
+        kind="Device",
+        namespace="default",
+        name="manager-device",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"deviceType": "cloud"}},
+    )
+    test_db.add_all([manager, worker, reviewer, parent, manager_execution, device])
+    test_db.commit()
+    runtime_activity = ProjectChatMessage(
+        message_id=str(uuid4()),
+        client_message_id=str(uuid4()),
+        project_id=str(project.id),
+        task_id=parent.id,
+        sender_type="agent",
+        sender_id=manager.id,
+        sender_name=manager.name,
+        message_type="agent_chunk",
+        content="",
+        metadata_json={"execution_id": manager_execution.id, "run_status": "running"},
+        agent_id=manager.id,
+        runtime_device_id=manager_execution.runtime_device_id,
+        runtime_task_id=f"{manager_execution.runtime_task_id}-manager-initial",
+        status="streaming",
+    )
+    test_db.add(runtime_activity)
+    test_db.commit()
+    return SimpleNamespace(
+        project=project,
+        parent=parent,
+        manager=manager,
+        worker=worker,
+        reviewer=reviewer,
+        execution=manager_execution,
+        runtime_activity=runtime_activity,
+        push=push,
+    )
+
+
+def test_collaboration_batch_records_activity_and_persists_human_fact(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    collaboration_dispatch: SimpleNamespace,
+) -> None:
+    project = collaboration_dispatch.project
+    parent = collaboration_dispatch.parent
+    manager = collaboration_dispatch.manager
+    worker = collaboration_dispatch.worker
+    manager_execution = collaboration_dispatch.execution
+    runtime_activity = collaboration_dispatch.runtime_activity
+    push = collaboration_dispatch.push
+
+    values = LoopItemExecutionBatchCreate(
+        loop_item_id=parent.id,
+        dispatch_id="dispatch-1",
+        round_id="round-1",
+        manager_runtime_task_id="manager-runtime-1-manager-initial",
+        manager_agent_id=manager.id,
+        items=[
+            LoopItemExecutionBatchItem(
+                assignment_id="agent-assignment",
+                title="Agent task",
+                instructions="Collect evidence.",
+                assignee_type="agent",
+                assignee_id=worker.id,
+            ),
+            LoopItemExecutionBatchItem(
+                assignment_id="human-assignment",
+                title="Human task",
+                instructions="Provide business approval.",
+                assignee_type="human",
+                assignee_id=str(test_user.id),
+                workflow_stage_id="approval",
+            ),
+        ],
+    )
+
+    leader_assignment = LoopItemExecutionBatchCreate(
+        loop_item_id=parent.id,
+        dispatch_id="dispatch-1",
+        round_id="leader-round",
+        manager_runtime_task_id="manager-runtime-1-manager-initial",
+        manager_agent_id=manager.id,
+        items=[
+            LoopItemExecutionBatchItem(
+                assignment_id="manager-cannot-execute",
+                title="Manager task",
+                instructions="This must be rejected.",
+                assignee_type="agent",
+                assignee_id=manager.id,
+            )
+        ],
+    )
+    with pytest.raises(HTTPException) as error:
+        loop_item_executions.enqueue_execution_batch(
+            project.id, leader_assignment, test_db, test_user
+        )
+    assert error.value.status_code == 422
+    assert error.value.detail == (
+        "Collaboration group leader cannot execute an assignment"
+    )
+
+    first = loop_item_executions.enqueue_execution_batch(
+        project.id, values, test_db, test_user
+    )
+    test_db.refresh(parent)
+    first_version = parent.version
+    assert parent.assignee_user_id == test_user.id
+    assert not parent.assignee_agent_id
+    assert parent.assignee_team_id is None
+    projected = loop_item_executions.loop_item_service.response_values(
+        test_db, parent, test_user.id
+    )
+    assert projected["assignee_group_id"] is None
+    assert parent.metadata_json["collaboration_group"]["id"] == "group-1"
+    assert parent.metadata_json["assignment_history"][-1]["to_type"] == "user"
+    second = loop_item_executions.enqueue_execution_batch(
+        project.id, values, test_db, test_user
+    )
+
+    test_db.refresh(parent)
+    assert parent.version == first_version
+    assert "assignments" not in first
+    assert len(first["human_assignments"]) == 1
+    assert first["human_assignments"][0]["assignee_type"] == "human"
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.agent_id == worker.id)
+        .count()
+        == 0
+    )
+    human_assignment_id = first["human_assignments"][0]["human_assignment_id"]
+    assert second["human_assignments"][0]["human_assignment_id"] == human_assignment_id
+    assert test_db.query(LoopItem).filter(LoopItem.parent_id == parent.id).count() == 0
+    notifications = (
+        test_db.query(WeworkNotification)
+        .filter(
+            WeworkNotification.user_id == test_user.id,
+            WeworkNotification.kind == "issue_dispatch_assignment",
+        )
+        .all()
+    )
+    assert len(notifications) == 1
+    assert notifications[0].payload["humanAssignmentId"] == human_assignment_id
+    assert notifications[0].payload["itemId"] == parent.id
+    activities = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.task_id == parent.id,
+            ProjectChatMessage.sender_id == manager.id,
+        )
+        .all()
+    )
+    assert len(activities) == 2
+    assignment_activity = next(
+        activity
+        for activity in activities
+        if activity.metadata_json.get("activity_type") == "manager_assignment"
+    )
+    assert assignment_activity.id != runtime_activity.id
+    assignments = assignment_activity.metadata_json["dispatch_assignments"]
+    assert assignments[0]["agent_name"] == "Worker"
+    assert assignments[1]["human_user_name"] == test_user.user_name
+    from app.services.collaboration_human_assignments import _round_human_task_binding
+
+    round_binding = _round_human_task_binding(test_db, parent)
+    assert round_binding == {
+        "humanAssignmentId": human_assignment_id,
+        "dispatchId": "dispatch-1",
+        "dispatchRoundId": "round-1",
+        "assignmentId": "human-assignment",
+    }
+    push.assert_called_once()
+    assert push.call_args.args[0]["metadata"]["dispatch_assignments"] == assignments
+    test_db.refresh(manager_execution)
+    assert manager_execution.status == "running"
+
+    runtime_activity.metadata_json = {"run_status": "completed"}
+    test_db.commit()
+
+    push.reset_mock()
+    running = loop_item_executions.report_collaboration_assignment_status(
+        project.id,
+        LoopItemExecutionAssignmentStatus(
+            loop_item_id=parent.id,
+            dispatch_id="dispatch-1",
+            round_id="round-1",
+            assignment_id="agent-assignment",
+            runtime_device_id="manager-device",
+            runtime_task_id="manager-runtime-1-member-round-1-agent-assignment",
+            status="running",
+        ),
+        test_db,
+        test_user,
+    )
+    assert running["changed"] is True
+    assert running["message"]["sender"]["name"] == "Worker"
+    assert running["message"]["metadata"]["workflow_task_title"] == "Agent task"
+    assert running["message"]["metadata"]["dispatch_role"] == "member"
+    assert running["message"]["runtimeAddress"] == {
+        "deviceId": "manager-device",
+        "taskId": "manager-runtime-1-member-round-1-agent-assignment",
+    }
+    push.assert_called_once()
+
+    push.reset_mock()
+    completed = loop_item_executions.report_collaboration_assignment_status(
+        project.id,
+        LoopItemExecutionAssignmentStatus(
+            loop_item_id=parent.id,
+            dispatch_id="dispatch-1",
+            round_id="round-1",
+            assignment_id="agent-assignment",
+            runtime_device_id="manager-device",
+            runtime_task_id="manager-runtime-1-member-round-1-agent-assignment",
+            status="completed",
+            result="Agent evidence delivered.",
+        ),
+        test_db,
+        test_user,
+    )
+    assert completed["changed"] is True
+    assert completed["message"]["content"] == "Agent evidence delivered."
+    assert completed["message"]["metadata"]["run_status"] == "completed"
+    push.assert_called_once()
+    test_db.refresh(parent)
+    assert parent.status == "in_progress"
+    test_db.refresh(manager_execution)
+    assert manager_execution.status == "running"
+
+    push.reset_mock()
+    duplicate = loop_item_executions.report_collaboration_assignment_status(
+        project.id,
+        LoopItemExecutionAssignmentStatus(
+            loop_item_id=parent.id,
+            dispatch_id="dispatch-1",
+            round_id="round-1",
+            assignment_id="agent-assignment",
+            runtime_device_id="manager-device",
+            runtime_task_id="manager-runtime-1-member-round-1-agent-assignment",
+            status="completed",
+            result="Agent evidence delivered.",
+        ),
+        test_db,
+        test_user,
+    )
+    assert duplicate["changed"] is False
+    push.assert_not_called()
+
+    from app.schemas.delivery import LoopItemTaskBind
+
+    binding = loop_item_executions.loop_item_service.bind_task(
+        test_db,
+        parent.id,
+        LoopItemTaskBind(
+            deviceId="human-device",
+            taskId="human-runtime-task",
+            taskTitle="Human task",
+            **round_binding,
+        ),
+        test_user.id,
+    )
+    assert binding.human_assignment_id == human_assignment_id
+    assert binding.dispatch_round_id == "round-1"
+    delivery = Delivery(
+        id=str(uuid4()),
+        loop_item_id=parent.id,
+        created_by_user_id=test_user.id,
+        source_task_binding_id=str(binding.id),
+        source_task_snapshot={},
+        status="delivered",
+        markdown_object_key="human-delivery.md",
+    )
+    test_db.add(delivery)
+    test_db.commit()
+    monkeypatch.setattr(
+        loop_item_executions.collaboration_human_assignment_status.__globals__[
+            "delivery_service"
+        ],
+        "read_markdown",
+        lambda _delivery: "Business evidence delivered.",
+    )
+    status_result = loop_item_executions.execution_statuses(
+        project.id,
+        LoopItemExecutionStatusQuery(
+            loop_item_id=parent.id,
+            human_assignment_ids=[human_assignment_id],
+        ),
+        test_db,
+        test_user,
+    )
+
+    assert status_result["items"][0]["assignee_type"] == "human"
+    assert status_result["items"][0]["work_id"] == (
+        f"human_assignment:{human_assignment_id}"
+    )
+    assert status_result["items"][0]["status"] == "completed"
+    assert status_result["items"][0]["human_user_id"] == test_user.id
+    assert status_result["items"][0]["delivery_id"] == delivery.id
+    assert status_result["items"][0]["result"] == "Business evidence delivered."
+
+
+@pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
+def test_agent_only_batch_waits_for_explicit_manager_decision(
+    test_db: Session,
+    test_user: User,
+    collaboration_dispatch: SimpleNamespace,
+    outcome: str,
+) -> None:
+    fixture = collaboration_dispatch
+    execution = fixture.execution
+    execution.status = "claimed"
+    execution.observed_state = "accepted"
+    execution.sync_state = "diverged"
+    execution.error_message = "Runtime returned unrecognized status 'missing'"
+    test_db.commit()
+    loop_item_executions.enqueue_execution_batch(
+        fixture.project.id,
+        LoopItemExecutionBatchCreate(
+            loop_item_id=fixture.parent.id,
+            dispatch_id="dispatch-1",
+            round_id="round-1",
+            manager_runtime_task_id="manager-runtime-1-manager-initial",
+            manager_agent_id=fixture.manager.id,
+            items=[
+                LoopItemExecutionBatchItem(
+                    assignment_id="agent-assignment",
+                    title="Agent work",
+                    instructions="Collect evidence.",
+                    assignee_type="agent",
+                    assignee_id=fixture.worker.id,
+                ),
+                LoopItemExecutionBatchItem(
+                    assignment_id="reviewer-assignment",
+                    title="Review evidence",
+                    instructions="Check the collected evidence.",
+                    assignee_type="agent",
+                    assignee_id=fixture.reviewer.id,
+                ),
+            ],
+        ),
+        test_db,
+        test_user,
+    )
+    values = LoopItemExecutionAssignmentStatus(
+        loop_item_id=fixture.parent.id,
+        dispatch_id="dispatch-1",
+        round_id="round-1",
+        assignment_id="agent-assignment",
+        runtime_device_id="manager-device",
+        runtime_task_id="manager-runtime-1-member-round-1-agent-assignment",
+        status=outcome,
+        result="Member evidence" if outcome == "completed" else "",
+        error="Member failed" if outcome == "failed" else "",
+    )
+    loop_item_executions.report_collaboration_assignment_status(
+        fixture.project.id, values, test_db, test_user
+    )
+    test_db.refresh(execution)
+    test_db.refresh(fixture.parent)
+    assert execution.status == "claimed"
+    assert fixture.parent.status == "in_progress"
+    values = values.model_copy(
+        update={
+            "assignment_id": "reviewer-assignment",
+            "runtime_task_id": "manager-runtime-1-member-round-1-reviewer-assignment",
+            "status": "completed",
+            "result": "Review evidence",
+            "error": "",
+        }
+    )
+    loop_item_executions.report_collaboration_assignment_status(
+        fixture.project.id, values, test_db, test_user
+    )
+    test_db.refresh(execution)
+    test_db.refresh(fixture.parent)
+    assert execution.status == "claimed"
+    assert fixture.parent.status == "in_progress"
+    assert fixture.parent.assignee_agent_id == fixture.worker.id
+    assert test_db.query(LoopItemExecution).count() == 1
+    version = execution.version
+    duplicate = loop_item_executions.report_collaboration_assignment_status(
+        fixture.project.id, values, test_db, test_user
+    )
+    test_db.refresh(execution)
+    assert duplicate["changed"] is False
+    assert execution.version == version
+
+
+@pytest.mark.parametrize("human", [False, True])
+def test_collaboration_round_owner_records_assignment_without_new_execution(
+    test_db: Session, test_user: User, human: bool
+) -> None:
+    from app.services.collaboration_round_assignment import assign_round_owner
+    from app.services.issue_assignments import issue_assignment_service
+
+    public_id = str(uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key=f"OWNER{uuid4().hex[:4].upper()}",
+        name="Owner round",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
-    test_db.add(agent)
-    test_db.commit()
-    test_db.refresh(run_owner)
-    test_db.refresh(project)
-
-    claimed = LoopItemExecution(
-        id=41,
-        loop_item_id="issue-1",
-        cloud_project_id=str(project.id),
-        executor_owner_user_id=run_owner.id,
-        agent_id=agent.id,
-        execution_environment="local",
-        execution_device_id="owner-device",
-        status="claimed",
+    authorize_project(test_db, project)
+    test_db.add(project)
+    test_db.flush()
+    agent = ProjectChatAgent(
+        id=f"agent-{uuid4().hex}",
+        cloud_project_id=project.id,
+        name="Worker",
+        title="Worker",
+        status="active",
+        created_by_user_id=test_user.id,
     )
-    claim = Mock(return_value=claimed)
-    monkeypatch.setattr(
-        loop_item_executions.loop_item_execution_service,
-        "claim",
-        claim,
+    authorize_project_agent(test_db, agent)
+    item = LoopItem(
+        id=f"{project.project_key}-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Issue",
+        status="in_progress",
+        priority="none",
+        created_by_user_id=test_user.id,
+        metadata_json={"collaboration_group": {"id": "g"}},
     )
-    monkeypatch.setattr(
-        loop_item_executions,
-        "get_runtime_capacity_sync",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            runtime_instance_id="runtime-owner",
-            limit=1,
-            active=0,
-            active_task_ids=set(),
-        ),
+    test_db.add_all([agent, item])
+    test_db.flush()
+    assignments = [
+        {"assignee_type": "agent", "agent_id": agent.id, "agent_name": "Worker"}
+    ]
+    if human:
+        assignments.append(
+            {
+                "assignee_type": "human",
+                "human_user_id": test_user.id,
+                "human_user_name": test_user.user_name,
+            }
+        )
+    assign_round_owner(
+        test_db, item=item, assignments=assignments, user_id=test_user.id
     )
-
-    @contextmanager
-    def acquired(*_args, **_kwargs):
-        yield True
-
-    monkeypatch.setattr(
-        loop_item_executions.distributed_lock,
-        "acquire_context",
-        acquired,
+    test_db.flush()
+    assert item.assignee_user_id == (test_user.id if human else None)
+    assert item.assignee_agent_id == ("" if human else agent.id)
+    active = issue_assignment_service.active_for_issue(test_db, item.id)
+    assert len(active) == 1
+    assert active[0].member_type == ("human" if human else "agent")
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .count()
+        == 0
     )
-    monkeypatch.setattr(
-        loop_item_executions,
-        "_claimed_execution_view",
-        lambda _db, row: row,
-    )
-
-    result = loop_item_executions.claim_execution(
-        project_id=project.id,
-        values=LoopItemExecutionClaim(
-            agent_id=agent.id,
-            execution_device_id="owner-device",
-            execution_environment="local",
-        ),
-        db=test_db,
-        current_user=run_owner,
-    )
-
-    assert result is claimed
-    claim.assert_called_once_with(
-        test_db,
-        agent_id=agent.id,
-        execution_device_id="owner-device",
-        environment="local",
-        owner_user_id=run_owner.id,
-        runtime_instance_id="runtime-owner",
-        device_capacity=1,
-        runtime_active=0,
-        runtime_active_task_ids=set(),
-        lease_seconds=300,
-        assigner_filter=None,
-    )
+    assert test_db.query(LoopItem).filter(LoopItem.parent_id == item.id).count() == 0

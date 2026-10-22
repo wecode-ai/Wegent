@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
+      backend_rs: ${{ steps.classify.outputs.backend_rs }}
       executor: ${{ steps.classify.outputs.executor }}
       executor_manager: ${{ steps.classify.outputs.executor_manager }}
       shared: ${{ steps.classify.outputs.shared }}
@@ -77,6 +78,15 @@ jobs:
         working-directory: ./backend
         run: uv sync --dev
 
+      - name: Install runtime dependencies for index-to-query contract tests
+        run: uv sync --project knowledge_runtime --frozen
+
+      - name: Guard approved collaboration permission invariants
+        working-directory: ./backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/test_collaboration_permission_guard.py tests/api/test_collaboration_permission_contract.py tests/api/test_collaboration_permission_resources.py tests/api/test_loop_item_reorder_permissions.py tests/api/test_workspace_shared_agents.py tests/models/test_collaboration_permission_compatibility.py tests/test_startup_migration_failure.py tests/services/test_runner_routing.py -n 0
+
       - name: Run backend tests
         working-directory: ./backend
         env:
@@ -90,6 +100,42 @@ jobs:
           flags: backend
           name: backend-coverage
 
+  test-backend-rs:
+    name: Test Backend Rust
+    needs: changes
+    if: needs.changes.outputs.backend_rs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure backend Rust target directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Check Rust backend formatting
+        working-directory: backend-rs
+        run: cargo fmt --check
+
+      - name: Run Rust backend tests
+        working-directory: backend-rs
+        run: cargo test --locked
+
+      - name: Check Rust backend lints
+        working-directory: backend-rs
+        run: cargo clippy --locked --all-targets -- -D warnings
+
   test-plugin-auth-mysql:
     name: Test Backend MySQL Regressions
     needs: changes
@@ -97,6 +143,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
       mysql:
         image: mysql:8.0
         env:
@@ -117,17 +172,24 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: uv sync --dev
-      - name: Verify real InnoDB enrollment and transfer races
+      - name: Verify real Redis and InnoDB plugin write races
         working-directory: backend
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
-        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py -n 0
+          PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
 
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend
         env:
           TEAM_NAMESPACE_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
         run: uv run pytest integration_checks/test_team_namespace_collation_mysql.py -n 0
+
+      - name: Verify populated legacy MySQL collaboration permission compatibility
+        working-directory: backend
+        env:
+          COLLABORATION_PERMISSION_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+        run: uv run pytest integration_checks/test_collaboration_permission_mysql.py integration_checks/test_rust_collaboration_permissions_mysql.py integration_checks/test_rust_runtime_binding_identity_mysql.py -n 0
 
   test-executor:
     name: Test Executor
@@ -217,7 +279,7 @@ jobs:
           name: executor-manager-coverage
 
   test-executor-local-auth-platforms:
-    name: Test Executor Local Auth (${{ matrix.os }})
+    name: Test Executor Platform Regressions (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.executor == 'true'
     runs-on: ${{ matrix.os }}
@@ -256,6 +318,40 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
+
+      - name: Run native index platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib runtime_work::store::tests::atomic_write
+
+      - name: Run native worktree platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+
+      - name: Run native clone platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
+
+      - name: Set up Node for native package filesystem regressions
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run native managed package filesystem regressions
+        if: ${{ !cancelled() }}
+        run: node --experimental-strip-types --test wework/electron/src/runtime/managed-plugin-files.test.mjs
 
   test-shared:
     name: Test Shared
@@ -306,7 +402,7 @@ jobs:
           name: shared-coverage
 
   test-knowledge-engine:
-    name: Test Knowledge Engine
+    name: Test Knowledge Engine and Runtime
     needs: changes
     if: needs.changes.outputs.knowledge_engine == 'true'
     runs-on: ubuntu-latest
@@ -339,6 +435,14 @@ jobs:
           flags: knowledge-engine
           name: knowledge-engine-coverage
 
+      - name: Install knowledge runtime test dependencies
+        working-directory: ./knowledge_runtime
+        run: uv sync --dev --frozen
+
+      - name: Run knowledge runtime tests
+        working-directory: ./knowledge_runtime
+        run: uv run --no-sync pytest tests/ -v
+
   test-frontend:
     name: Test Frontend
     needs: changes
@@ -354,6 +458,11 @@ jobs:
 
       - name: Run chat core tests
         run: pnpm --filter @wegent/chat-core test
+
+      - name: Verify shared collaboration types and permission UI regressions
+        run: |
+          pnpm --filter @wegent/collaboration build
+          pnpm --filter @wegent/collaboration test
 
       - name: Run frontend tests
         env:
@@ -387,14 +496,34 @@ jobs:
       - name: Prepare Wework Electron dependencies
         run: pnpm --filter wework prepare:electron
 
-      - name: Run wework tests
+      - name: Run process explorer package tests
+        if: matrix.shard == 1
+        run: |
+          pnpm --filter @wegent/process-explorer typecheck
+          pnpm --filter @wegent/process-explorer test
+
+      - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
-        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests --shard=${{ matrix.shard }}/2
+        run: |
+          pnpm --filter wework exec vitest run \
+            --coverage \
+            --passWithNoTests \
+            --shard=${{ matrix.shard }}/2 &
+          vitest_pid=$!
 
-      - name: Run Wework Electron tests
-        if: matrix.shard == 1
-        run: pnpm --dir wework/electron test
+          electron_pid=
+          if [[ "${{ matrix.shard }}" == "1" ]]; then
+            pnpm --dir wework/electron test &
+            electron_pid=$!
+          fi
+
+          status=0
+          wait "$vitest_pid" || status=$?
+          if [[ -n "$electron_pid" ]]; then
+            wait "$electron_pid" || status=$?
+          fi
+          exit "$status"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -546,6 +675,7 @@ jobs:
       [
         changes,
         test-backend,
+        test-backend-rs,
         test-plugin-auth-mysql,
         test-executor,
         test-executor-local-auth-platforms,
@@ -575,6 +705,7 @@ jobs:
 
           [[ "${{ needs.changes.result }}" == "success" ]]
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
+          assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor.result }}" "Executor tests"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor-local-auth-platforms.result }}" "Executor local auth platform tests"

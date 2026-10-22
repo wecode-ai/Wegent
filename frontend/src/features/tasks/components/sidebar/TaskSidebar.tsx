@@ -5,7 +5,7 @@
 'use client'
 
 import './task-list-scrollbar.css'
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -25,6 +25,7 @@ import {
   Library,
   LayoutGrid,
   Zap,
+  Search,
 } from 'lucide-react'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import TaskListSection from './TaskListSection'
@@ -35,6 +36,8 @@ import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 import HistoryManageDialog from './HistoryManageDialog'
+import SearchDialog from './SearchDialog'
+import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { TaskDndProvider } from '@/features/projects'
 import {
   DropdownMenu,
@@ -69,10 +72,6 @@ interface TaskSidebarProps {
     | 'resource-library'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
-  // Search dialog control from parent (for global shortcut support)
-  isSearchDialogOpen?: boolean
-  onSearchDialogOpenChange?: (open: boolean) => void
-  shortcutDisplayText?: string
   contextSection?: React.ReactNode
 }
 
@@ -82,9 +81,6 @@ export default function TaskSidebar({
   pageType = 'chat',
   isCollapsed = false,
   onToggleCollapsed,
-  isSearchDialogOpen: _externalIsSearchDialogOpen,
-  onSearchDialogOpenChange,
-  shortcutDisplayText: externalShortcutDisplayText,
   contextSection,
 }: TaskSidebarProps) {
   const { t } = useTranslation()
@@ -118,8 +114,12 @@ export default function TaskSidebar({
   const mobileScrollRef = useRef<HTMLDivElement>(null)
   const moreNavCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Use external state for search dialog (controlled by parent page)
-  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
+  const toggleSearchDialog = useCallback(() => {
+    setIsMobileSidebarOpen(false)
+    setIsSearchDialogOpen(previous => !previous)
+  }, [setIsMobileSidebarOpen])
+  const { shortcutDisplayText } = useSearchShortcut({ onToggle: toggleSearchDialog })
 
   // Group chats collapse/expand state
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
@@ -135,9 +135,6 @@ export default function TaskSidebar({
     setInitialHistoryTaskId(taskId)
     setIsHistoryManageDialogOpen(true)
   }
-
-  // Use external shortcut display text from parent
-  const shortcutDisplayText = externalShortcutDisplayText ?? ''
 
   // Clear search for sidebar (used when clearing search results)
   const handleClearSearch = () => {
@@ -165,10 +162,38 @@ export default function TaskSidebar({
     }, 160)
   }
 
-  // Open search dialog (controlled by parent)
   const handleOpenSearchDialog = () => {
+    setIsMobileSidebarOpen(false)
     setIsSearchDialogOpen(true)
   }
+
+  const renderSearchButton = (testId: string) => (
+    <TooltipProvider>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={handleOpenSearchDialog}
+            data-testid={testId}
+            aria-label={t('common:tasks.search_placeholder_chat')}
+            className="h-11 w-11 min-w-[44px] shrink-0 text-text-muted hover:text-text-primary lg:h-8 lg:w-8 lg:min-w-8"
+          >
+            <Search className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          <p>
+            {shortcutDisplayText
+              ? t('common:tasks.search_hint_with_shortcut', { shortcut: shortcutDisplayText })
+              : t('common:tasks.search_placeholder_chat')}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+
   // Navigation buttons - always show all buttons
   // Define type explicitly to include all possible buttonPageType values
   type ButtonPageType =
@@ -640,12 +665,12 @@ export default function TaskSidebar({
               {/* New Conversation Button and Fixed Navigation Buttons */}
               <div data-tour="mode-toggle" className="px-2.5">
                 {!isCollapsed && (
-                  <div className="mb-0.5">
+                  <div className="mb-0.5 flex items-center gap-1">
                     <Button
                       variant="ghost"
                       onClick={handleNewAgentClick}
                       data-testid="new-agent-button"
-                      className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 lg:h-8"
+                      className="min-w-[44px] flex-1 justify-start px-3 h-11 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 lg:h-8"
                       size="sm"
                     >
                       <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
@@ -726,7 +751,6 @@ export default function TaskSidebar({
                         </button>
                       </div>
                     )}
-                    {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
                     {isSearching ? (
                       <div className="text-center py-8 text-xs text-text-muted">
                         {t('common:tasks.searching')}
@@ -816,8 +840,7 @@ export default function TaskSidebar({
                         getUnreadCount={getUnreadCount}
                         totalUnreadCount={totalUnreadCount}
                         handleMarkAllAsViewed={handleMarkAllAsViewed}
-                        handleOpenSearchDialog={handleOpenSearchDialog}
-                        shortcutDisplayText={shortcutDisplayText}
+                        searchAction={renderSearchButton('task-history-search-button')}
                         setIsMobileSidebarOpen={setIsMobileSidebarOpen}
                         isSearchResult={isSearchResult}
                         onTaskSelect={() => setIsMobileSidebarOpen(false)}
@@ -885,6 +908,14 @@ export default function TaskSidebar({
           {renderSidebarContent(mobileScrollRef, 'mobile')}
         </div>
       </MobileSidebar>
+
+      {isSearchDialogOpen && (
+        <SearchDialog
+          open={isSearchDialogOpen}
+          onOpenChange={setIsSearchDialogOpen}
+          shortcutDisplayText={shortcutDisplayText}
+        />
+      )}
 
       {/* History Manage Dialog */}
       <HistoryManageDialog

@@ -3,15 +3,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { projectApis } from '@/apis/projects'
+import { taskApis } from '@/apis/tasks'
 import { ProjectProvider, useProjectContext } from '@/features/projects/contexts/projectContext'
 import { PROJECT_DELETED_EVENT, ProjectDeletedEventDetail } from '@/features/projects/events'
 import type { ProjectWithTasks } from '@/types/api'
+import type { TaskEventHandlers } from '@/contexts/SocketContext'
 
 const toastMock = jest.fn()
 let mockSearchParams = new URLSearchParams()
+let mockTaskHandlers: TaskEventHandlers = {}
+const mockSocketContext = {
+  isConnected: true,
+  registerTaskHandlers: jest.fn((handlers: TaskEventHandlers) => {
+    mockTaskHandlers = handlers
+    return jest.fn()
+  }),
+}
+
+jest.mock('@/contexts/SocketContext', () => ({ useSocket: () => mockSocketContext }))
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => mockSearchParams,
@@ -20,12 +32,17 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/apis/projects', () => ({
   projectApis: {
     getProjects: jest.fn(),
+    getProjectTasks: jest.fn(),
     createProject: jest.fn(),
     updateProject: jest.fn(),
     deleteProject: jest.fn(),
     addTaskToProject: jest.fn(),
     removeTaskFromProject: jest.fn(),
   },
+}))
+
+jest.mock('@/apis/tasks', () => ({
+  taskApis: { getTaskDetail: jest.fn() },
 }))
 
 jest.mock('@/hooks/use-toast', () => ({
@@ -54,6 +71,7 @@ jest.mock('@/features/common/UserContext', () => ({
 }))
 
 const mockedProjectApis = projectApis as jest.Mocked<typeof projectApis>
+const mockedTaskApis = taskApis as jest.Mocked<typeof taskApis>
 
 function DeleteProjectProbe() {
   const { deleteProject } = useProjectContext()
@@ -111,9 +129,35 @@ const projectFixture: ProjectWithTasks = {
 describe('ProjectContext delete project behavior', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockTaskHandlers = {}
     mockSearchParams = new URLSearchParams()
     mockedProjectApis.getProjects.mockResolvedValue({ total: 0, items: [] })
     mockedProjectApis.deleteProject.mockResolvedValue({ message: 'ok' })
+  })
+
+  test('refreshes grouped task metadata once on task creation without fetching group pages', async () => {
+    render(
+      <ProjectProvider>
+        <DeleteProjectProbe />
+      </ProjectProvider>
+    )
+    await waitFor(() => expect(mockedProjectApis.getProjects).toHaveBeenCalledTimes(1))
+    const createdTask = {
+      task_id: 99,
+      title: 'API task',
+      team_id: 3,
+      team_name: 'Test agent',
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    act(() => mockTaskHandlers.onTaskCreated?.(createdTask))
+    expect(mockedProjectApis.getProjects).toHaveBeenCalledTimes(1)
+
+    act(() => mockTaskHandlers.onTaskCreated?.({ ...createdTask, project_id: 42 }))
+
+    await waitFor(() => expect(mockedProjectApis.getProjects).toHaveBeenCalledTimes(2))
+    expect(mockedProjectApis.getProjects).toHaveBeenLastCalledWith(false)
+    expect(mockedProjectApis.getProjectTasks).not.toHaveBeenCalled()
+    expect(mockedTaskApis.getTaskDetail).not.toHaveBeenCalled()
   })
 
   test('emits a project deleted event after deletion succeeds', async () => {
@@ -189,6 +233,9 @@ describe('ProjectContext delete project behavior', () => {
 
   test('expands the group containing the task selected by the current route', async () => {
     mockSearchParams = new URLSearchParams({ taskId: '101' })
+    mockedTaskApis.getTaskDetail.mockResolvedValue({ project_id: 42 } as Awaited<
+      ReturnType<typeof taskApis.getTaskDetail>
+    >)
     mockedProjectApis.getProjects.mockResolvedValue({
       total: 1,
       items: [
@@ -196,15 +243,7 @@ describe('ProjectContext delete project behavior', () => {
           ...projectFixture,
           is_expanded: false,
           task_count: 1,
-          tasks: [
-            {
-              task_id: 101,
-              task_title: 'selected conversation',
-              task_status: 'COMPLETED',
-              is_group_chat: false,
-              project_id: 42,
-            },
-          ],
+          tasks: [],
         },
       ],
     })
@@ -219,6 +258,7 @@ describe('ProjectContext delete project behavior', () => {
       expect(screen.getByTestId('selected-project-task')).toHaveTextContent('101')
       expect(screen.getByTestId('project-expansion-state')).toHaveTextContent('expanded')
       expect(screen.getByTestId('project-section-state')).toHaveTextContent('expanded')
+      expect(taskApis.getTaskDetail).toHaveBeenCalledWith(101)
     })
   })
 })

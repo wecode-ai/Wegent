@@ -26,7 +26,6 @@ import { useDevices } from '@/contexts/DeviceContext'
 import { paths } from '@/config/paths'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamEditExtension } from '@/features/tasks/hooks/useTeamEditExtension'
 import { useToast } from '@/hooks/use-toast'
@@ -43,10 +42,6 @@ import { calculateOpenLinks } from '@/utils/openLinks'
 import { resolveChatPageTaskType } from '@/utils/taskRouting'
 import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
 import type { UnifiedMessage } from '@wegent/chat-core'
-
-const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
-  ssr: false,
-})
 
 const Workbench = dynamic(() => import('@/features/tasks/components/workbench/Workbench'), {
   ssr: false,
@@ -200,9 +195,6 @@ export function ChatPageDesktop() {
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(false)
   const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
 
-  // Search dialog state (controlled from page level for global shortcut support)
-  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
-
   // Toast for notifications
   const { toast } = useToast()
 
@@ -279,16 +271,6 @@ export function ChatPageDesktop() {
       refreshTeams()
       void refreshSelectedTaskDetail()
     }, [refreshTeams, refreshSelectedTaskDetail]),
-  })
-
-  // Toggle search dialog callback
-  const toggleSearchDialog = useCallback(() => {
-    setIsSearchDialogOpen(prev => !prev)
-  }, [])
-
-  // Global search shortcut hook
-  const { shortcutDisplayText } = useSearchShortcut({
-    onToggle: toggleSearchDialog,
   })
 
   const handleShareButtonRender = (button: React.ReactNode) => {
@@ -429,9 +411,6 @@ export function ChatPageDesktop() {
           pageType="chat"
           isCollapsed={isCollapsed}
           onToggleCollapsed={handleToggleCollapsed}
-          isSearchDialogOpen={isSearchDialogOpen}
-          onSearchDialogOpenChange={setIsSearchDialogOpen}
-          shortcutDisplayText={shortcutDisplayText}
         />
       </ResizableSidebar>
       {/* Main content area */}
@@ -555,15 +534,6 @@ export function ChatPageDesktop() {
         <CreateGroupChatDialog
           open={isCreateGroupChatOpen}
           onOpenChange={setIsCreateGroupChatOpen}
-        />
-      )}
-      {/* Search Dialog - rendered at page level for global shortcut support */}
-      {isSearchDialogOpen && (
-        <SearchDialog
-          open={isSearchDialogOpen}
-          onOpenChange={setIsSearchDialogOpen}
-          shortcutDisplayText={shortcutDisplayText}
-          pageType="chat"
         />
       )}
     </div>

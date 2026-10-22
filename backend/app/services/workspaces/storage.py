@@ -30,6 +30,7 @@ class CollaborationWorkspace:
     description: str
     namespace: str
     created_by_user_id: int
+    owner_user_id: int
     is_default: bool
     execution_environment: dict[str, Any]
     status: str
@@ -52,7 +53,8 @@ def workspace_from_kind(kind: Kind) -> CollaborationWorkspace:
         name=kind.name,
         description=str(spec.get("description") or ""),
         namespace=kind.namespace,
-        created_by_user_id=int(kind.user_id),
+        created_by_user_id=int(metadata.get("createdByUserId") or kind.user_id),
+        owner_user_id=int(kind.user_id),
         is_default=bool(spec.get("isDefault")),
         execution_environment=ExecutionEnvironmentConfig.model_validate(
             spec.get("executionEnvironment") or {}
@@ -73,6 +75,7 @@ def workspace_kind_payload(
     is_default: bool,
     execution_environment: dict[str, Any] | None = None,
     version: int = 1,
+    created_by_user_id: int | None = None,
 ) -> dict[str, Any]:
     return {
         "apiVersion": "agent.wecode.io/v1",
@@ -81,6 +84,7 @@ def workspace_kind_payload(
             "name": name,
             "namespace": namespace,
             "publicId": public_id,
+            **({"createdByUserId": created_by_user_id} if created_by_user_id else {}),
         },
         "spec": {
             "description": description,
@@ -135,14 +139,24 @@ def ensure_resource_grant(
     added_by_user_id: int,
     role: BaseRole,
 ) -> ResourceMember:
-    existing = resource_grant(
-        db,
-        workspace_id=workspace_id,
-        resource_type=resource_type,
-        resource_id=resource_id,
+    # Authorization writes must find inactive grants too: the resource/entity
+    # identity is unique independently of its current approval status.
+    existing = (
+        db.query(ResourceMember)
+        .filter_by(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            entity_type=WORKSPACE_ENTITY_TYPE,
+            entity_id=str(workspace_id),
+        )
+        .with_for_update()
+        .first()
     )
     if existing is not None:
         existing.role = role.value
+        existing.status = MemberStatus.APPROVED.value
+        existing.invited_by_user_id = added_by_user_id
+        db.flush()
         return existing
     grant = ResourceMember.create(
         resource_type=resource_type,
@@ -159,36 +173,13 @@ def ensure_resource_grant(
 
 
 def workspace_id_for_project(db: Session, project_id: int | str) -> int | None:
-    row = (
-        db.query(ResourceMember.entity_id)
-        .filter(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.resource_id == int(project_id),
-            ResourceMember.entity_type == WORKSPACE_ENTITY_TYPE,
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        .first()
-    )
-    if row is None:
-        return None
-    try:
-        return int(row[0])
-    except (TypeError, ValueError):
-        return None
+    project = db.get(CloudProject, str(project_id))
+    return int(project.workspace_id) if project and project.workspace_id else None
 
 
 def project_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:
-    rows = (
-        db.query(ResourceMember.resource_id)
-        .filter(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.entity_type == WORKSPACE_ENTITY_TYPE,
-            ResourceMember.entity_id == str(workspace_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        .all()
-    )
-    return [int(resource_id) for (resource_id,) in rows]
+    rows = db.query(CloudProject.id).filter(CloudProject.workspace_id == workspace_id)
+    return [int(project_id) for (project_id,) in rows]
 
 
 def active_project_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:

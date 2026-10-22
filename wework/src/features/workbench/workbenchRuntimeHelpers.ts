@@ -1,3 +1,4 @@
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { normalizeProjectPluginNames } from '@wegent/chat-core/composer-plugin-scope'
 import { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 export { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
@@ -91,12 +92,29 @@ export function isSameRuntimeTaskAddress(
   left: RuntimeTaskAddress | null | undefined,
   right: RuntimeTaskAddress
 ): boolean {
-  return Boolean(
-    left &&
-    left.deviceId === right.deviceId &&
-    left.taskId === right.taskId &&
-    matchesRequestedWorkspacePath(left.workspacePath, right.workspacePath)
-  )
+  if (
+    !left ||
+    left.deviceId !== right.deviceId ||
+    left.taskId !== right.taskId ||
+    !matchesRequestedWorkspacePath(left.workspacePath, right.workspacePath)
+  ) {
+    return false
+  }
+  if (
+    right.issueExecution &&
+    (left.issueExecution?.projectId !== right.issueExecution.projectId ||
+      left.issueExecution?.issueId !== right.issueExecution.issueId)
+  ) {
+    return false
+  }
+  if (
+    right.projectSession &&
+    (left.projectSession?.projectId !== right.projectSession.projectId ||
+      left.projectSession?.issueId !== right.projectSession.issueId)
+  ) {
+    return false
+  }
+  return true
 }
 
 export function mergeRuntimeTaskHandles(
@@ -107,6 +125,26 @@ export function mergeRuntimeTaskHandles(
   return {
     ...(base ?? {}),
     ...(override ?? {}),
+  }
+}
+
+export function mergeRuntimeTaskAddresses(
+  base: RuntimeTaskAddress | null | undefined,
+  override: RuntimeTaskAddress
+): RuntimeTaskAddress {
+  if (
+    !base ||
+    (!base.issueExecution && !base.projectSession) ||
+    base.deviceId !== override.deviceId ||
+    base.taskId !== override.taskId
+  ) {
+    return override
+  }
+  const runtimeHandle = mergeRuntimeTaskHandles(base.runtimeHandle, override.runtimeHandle)
+  return {
+    ...base,
+    ...override,
+    ...(runtimeHandle ? { runtimeHandle } : {}),
   }
 }
 
@@ -412,7 +450,7 @@ export function resolveComposerProjectPluginNames(
     (currentProjectId == null
       ? null
       : runtimeWork.projects.find(item => runtimeProjectUiId(item.project) === currentProjectId))
-  if (project?.project.source !== 'local_project') return null
+  if (!project || !isDeviceRuntimeProject(project.project)) return null
   return normalizeProjectPluginNames(
     (project.project.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
   )
@@ -473,7 +511,7 @@ export function getDefaultProjectDeviceWorkspace(
   const projectWork = runtimeWork?.projects.find(
     item => runtimeProjectUiId(item.project) === projectId
   )
-  if (projectWork?.project.source !== 'local_project') return null
+  if (!projectWork || !isDeviceRuntimeProject(projectWork.project)) return null
 
   const primaryRoot = projectWork.project.roots?.[0]?.path
   if (primaryRoot) {
@@ -483,7 +521,10 @@ export function getDefaultProjectDeviceWorkspace(
     )
     if (primaryWorkspace) return primaryWorkspace
   }
-  return workspaces[0] ?? null
+  return new Set(workspaces.map(workspace => workspace.remoteHostId || workspace.deviceId)).size <=
+    1
+    ? (workspaces[0] ?? null)
+    : null
 }
 
 export function getDefaultProjectDeviceWorkspaceId(
@@ -532,7 +573,7 @@ export function findProjectMetadataDeviceWorkspace(
   const projectWork = runtimeWork?.projects.find(
     item => runtimeProjectUiId(item.project) === projectId
   )
-  if (projectWork?.project.source !== 'local_project') return null
+  if (!projectWork || !isDeviceRuntimeProject(projectWork.project)) return null
 
   const primaryRoot = projectWork.project.roots?.[0]?.path
   if (primaryRoot) {
@@ -542,7 +583,10 @@ export function findProjectMetadataDeviceWorkspace(
     )
     if (primaryWorkspace) return primaryWorkspace
   }
-  return workspaces[0] ?? null
+  return new Set(workspaces.map(workspace => workspace.remoteHostId || workspace.deviceId)).size <=
+    1
+    ? (workspaces[0] ?? null)
+    : null
 }
 
 const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g

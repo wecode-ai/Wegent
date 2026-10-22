@@ -16,22 +16,28 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
+from app.schemas.cloud_project import SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.loop_item_position import LoopItemPosition
+from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
+from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
+    start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
@@ -47,18 +53,29 @@ class LoopItemCreate(BaseModel):
             value is not None
             for value in (
                 self.assignee_user_id,
+                self.assignee_group_id,
                 self.assignee_agent_id,
                 self.assignee_team_id,
             )
         )
         if selected > 1:
             raise ValueError("Only one assignee may be selected")
+        if (
+            self.start_at
+            and self.due_at
+            and normalize_schedule_datetime(self.start_at)
+            > normalize_schedule_datetime(self.due_at)
+        ):
+            raise ValueError("start_at cannot be after due_at")
         return self
 
 
 class LoopItemUpdate(BaseModel):
+    position: LoopItemPosition | None = None
+    runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     version: int = Field(ge=1)
+    security_level: Literal["open", "related"] | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
@@ -67,6 +84,7 @@ class LoopItemUpdate(BaseModel):
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
+    start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
@@ -80,6 +98,8 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if "security_level" in self.model_fields_set and self.security_level is None:
+            raise ValueError("security_level cannot be null")
         values = [
             value
             for field, value in (
@@ -96,10 +116,10 @@ class LoopItemUpdate(BaseModel):
 
 
 class LoopItemReorder(BaseModel):
-    """Manual order of the TODOs inside one board lane (parent + status)."""
+    """Manual sibling order, optionally restricted to a status lane."""
 
     parent_id: str | None = Field(default=None, max_length=64)
-    status: str = Field(max_length=32)
+    status: str | None = Field(default=None, max_length=32)
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
@@ -108,6 +128,10 @@ class LoopItemPermissions(BaseModel):
     comment: bool = False
     assign: bool = False
     execute: bool = False
+
+
+class LoopItemRead(BaseModel):
+    activity_sequence: int | None = Field(default=None, ge=0)
 
 
 class LoopItemResponse(BaseModel):
@@ -140,7 +164,7 @@ class LoopItemResponse(BaseModel):
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
-    human_work: dict[str, Any] | None = None
+    human_task_binding: dict[str, str] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
@@ -148,16 +172,19 @@ class LoopItemResponse(BaseModel):
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     priority: str
+    start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
     tags: list[str] = []
     created_by_user_id: int
     created_by_user_name: str | None = None
     can_view_detail: bool = True
+    security_level: Literal["open", "related"] = "open"
     can_edit: bool = True
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
     content_revision: int = 1
+    activity_read_sequence: int = 0
     is_unread: bool = False
     current_delivery_id: str | None
     version: int
@@ -278,7 +305,7 @@ class LoopItemResponse(BaseModel):
     def normalize_empty_numeric_assignee_id(cls, value: object) -> object:
         return None if value == 0 else value
 
-    @field_validator("due_at", "completed_at", mode="before")
+    @field_validator("start_at", "due_at", "completed_at", mode="before")
     @classmethod
     def normalize_unset_datetime(cls, value: object) -> object:
         if isinstance(value, datetime) and value == datetime(1970, 1, 1, 0, 0, 1):
@@ -289,6 +316,19 @@ class LoopItemResponse(BaseModel):
 
 
 class LoopItemListResponse(BaseModel):
+    items: list[LoopItemResponse]
+
+
+class ArchivedLoopItemResponse(LoopItemResponse):
+    archived_at: datetime
+
+
+class ArchivedLoopItemPageResponse(BaseModel):
+    items: list[ArchivedLoopItemResponse]
+    next_cursor: str | None = None
+
+
+class LoopItemRestoreResponse(BaseModel):
     items: list[LoopItemResponse]
 
 
@@ -392,9 +432,14 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    wegent_team_id: int | None = Field(default=None, alias="wegentTeamId", gt=0)
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",
+    )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
     )
     workflow_node_id: str | None = Field(
         default=None,
@@ -402,6 +447,30 @@ class LoopItemTaskBind(BaseModel):
         min_length=1,
         max_length=64,
         pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    human_assignment_id: str | None = Field(
+        default=None,
+        alias="humanAssignmentId",
+        min_length=1,
+        max_length=64,
+    )
+    dispatch_id: str | None = Field(
+        default=None,
+        alias="dispatchId",
+        min_length=1,
+        max_length=255,
+    )
+    dispatch_round_id: str | None = Field(
+        default=None,
+        alias="dispatchRoundId",
+        min_length=1,
+        max_length=128,
+    )
+    assignment_id: str | None = Field(
+        default=None,
+        alias="assignmentId",
+        min_length=1,
+        max_length=128,
     )
 
 
@@ -420,7 +489,15 @@ class LoopItemTaskBindingResponse(BaseModel):
         default=None,
         alias="modelSelection",
     )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
+    )
     workflow_node_id: str | None = None
+    human_assignment_id: str | None = None
+    dispatch_id: str | None = None
+    dispatch_round_id: str | None = None
+    assignment_id: str | None = None
     change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime
@@ -446,11 +523,6 @@ class LoopItemPageResponse(BaseModel):
     items: list[LoopItemResponse]
     task_bindings: list[LoopItemTaskBindingResponse]
     next_cursor: str | None = None
-
-
-class CloudTaskContextResponse(LoopItemTaskBindingResponse):
-    project: CloudProjectResponse
-    loop_item: LoopItemResponse | None = None
 
 
 class DeliveryChatSelection(BaseModel):

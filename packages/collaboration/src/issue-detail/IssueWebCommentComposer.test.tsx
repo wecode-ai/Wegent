@@ -12,6 +12,24 @@ describe("Web adapter for the desktop main composer", () => {
   let container: HTMLDivElement;
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(),
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -25,17 +43,23 @@ describe("Web adapter for the desktop main composer", () => {
     vi.unstubAllGlobals();
   });
 
-  function render(
+  const editor = () =>
+    container.querySelector<HTMLElement & { value: string }>(
+      '[data-testid="collaboration-issue-comment"]',
+    )!;
+  async function render(
     upload: SharedWorkspaceAttachmentsApi["upload"],
     send = vi.fn().mockResolvedValue(undefined),
+    assignment?: Parameters<typeof IssueWebCommentComposer>[0]["assignment"],
   ) {
     const api = {
       upload,
       remove: vi.fn().mockResolvedValue(undefined),
     } as unknown as SharedWorkspaceAttachmentsApi;
-    act(() =>
+    await act(async () =>
       root.render(
         <IssueWebCommentComposer
+          assignment={assignment}
           issueId="issue"
           canComment
           canAttach
@@ -58,13 +82,12 @@ describe("Web adapter for the desktop main composer", () => {
     return { send };
   }
   function write(text: string) {
-    const input = container.querySelector("textarea")!;
+    const input = editor();
     act(() => {
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )!.set!.call(input, text);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.value = text;
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { key: text.at(-1) ?? "", bubbles: true }),
+      );
     });
     return input;
   }
@@ -80,6 +103,37 @@ describe("Web adapter for the desktop main composer", () => {
     });
   }
 
+  it("does not assign when a pending comment fails after leaving the Issue", async () => {
+    let rejectSend!: (error: Error) => void;
+    const send = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+    const assign = vi.fn().mockResolvedValue(undefined);
+    await render(vi.fn(), send, {
+      members: [
+        { user_id: 8, user_name: "bob", role: "Developer" },
+      ] as import("../types").CollaborationMember[],
+      assign,
+    });
+    write("[$@bob](wework-member://8) Please review");
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-issue-comment-submit"]',
+        )!
+        .click(),
+    );
+    expect(send).toHaveBeenCalledOnce();
+    act(() => root.unmount());
+    await act(async () => {
+      rejectSend(new Error("offline"));
+    });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
   it("uses the desktop controls and keeps a selected document and draft on send failure", async () => {
     const attachment = {
       id: "a1",
@@ -91,8 +145,10 @@ describe("Web adapter for the desktop main composer", () => {
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(undefined);
-    render(vi.fn().mockResolvedValue(attachment), send);
-    expect(container.querySelector("textarea")?.placeholder).toBe("留下评论…");
+    await render(vi.fn().mockResolvedValue(attachment), send);
+    expect(
+      container.querySelector(".composer-prosemirror-placeholder")?.textContent,
+    ).toBe("发起新讨论…");
     expect(
       container.querySelectorAll(".task-detail-new-comment-actions button"),
     ).toHaveLength(3);
@@ -113,7 +169,8 @@ describe("Web adapter for the desktop main composer", () => {
     expect(
       container.querySelector("[data-testid=attachment-document-icon] svg"),
     ).not.toBeNull();
-    const input = write("Review this");
+    await write("Review this");
+    const input = editor();
     const submit = container.querySelector<HTMLButtonElement>(
       '[data-testid="collaboration-issue-comment-submit"]',
     )!;
@@ -141,7 +198,7 @@ describe("Web adapter for the desktop main composer", () => {
       display_name: "screen.png",
       content_type: "image/png",
     } as CollaborationAttachment;
-    render(vi.fn().mockResolvedValue(attachment));
+    await render(vi.fn().mockResolvedValue(attachment));
     await select(new File(["image"], "screen.png", { type: "image/png" }));
     await act(async () =>
       container

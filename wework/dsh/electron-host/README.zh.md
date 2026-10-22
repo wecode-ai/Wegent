@@ -4,7 +4,7 @@
 Electron 主进程，并向第一方 Wework DSH 应用提供带版本的、仅限回环地址的
 HTTP 载体。
 
-该插件只属于内置 Core Runtime `0.1.1-rc.2`。Workbench Runtime
+该插件只属于内置 Core Runtime `0.2.0-rc.2`。Workbench Runtime
 `0.1.0-rc.8` 不携带它，也不会获得 Electron Host pipe。Electron 新架构不再
 支持 `0.1.0-rc.7`。
 

@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { harnessAppsApi, type HarnessAppExport } from './harnessApps'
 
 const mocks = vi.hoisted(() => ({
+  businessTrack: vi.fn(),
   desktopInvoke: vi.fn(),
 }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: (...args: unknown[]) => mocks.desktopInvoke(...args),
+}))
+
+vi.mock('@/telemetry/businessEvents', () => ({
+  trackBusinessEvent: (...args: unknown[]) => mocks.businessTrack(...args),
 }))
 
 const exported: HarnessAppExport = {
@@ -30,6 +35,7 @@ const exported: HarnessAppExport = {
 
 describe('harnessAppsApi', () => {
   beforeEach(() => {
+    mocks.businessTrack.mockReset()
     mocks.desktopInvoke.mockReset()
   })
 
@@ -39,15 +45,66 @@ describe('harnessAppsApi', () => {
     try {
       const failed = { state: 'failed', error: 'private runtime error' }
       mocks.desktopInvoke.mockResolvedValueOnce(failed).mockResolvedValueOnce({ state: 'running' })
-      await expect(harnessAppsApi.start('private-app', null)).resolves.toBe(failed)
-      await harnessAppsApi.start('private-app', null)
+      await expect(
+        harnessAppsApi.start({ installationId: 'private-app', modelBaseUrl: null })
+      ).resolves.toBe(failed)
+      await harnessAppsApi.start({ installationId: 'private-app', modelBaseUrl: null })
+      const firstStartupId = mocks.businessTrack.mock.calls[0]?.[1]?.startup_id
+      const secondStartupId = mocks.businessTrack.mock.calls[1]?.[1]?.startup_id
+      expect(firstStartupId).toMatch(/^[0-9a-f-]{36}$/)
+      expect(secondStartupId).toMatch(/^[0-9a-f-]{36}$/)
+      expect(firstStartupId).not.toBe(secondStartupId)
+      expect(mocks.businessTrack.mock.calls).toEqual([
+        ['smart_app_start_attempted', { startup_id: firstStartupId }],
+        ['smart_app_start_attempted', { startup_id: secondStartupId }],
+      ])
       expect(results).toEqual([
-        { key: 'smart_app.start', outcome: 'failed', failureStage: 'confirm' },
-        { key: 'smart_app.start', outcome: 'succeeded' },
+        {
+          key: 'smart_app.start',
+          outcome: 'failed',
+          failureStage: 'confirm',
+          properties: { startup_id: firstStartupId },
+        },
+        {
+          key: 'smart_app.start',
+          outcome: 'succeeded',
+          properties: { startup_id: secondStartupId },
+        },
       ])
     } finally {
       stop()
     }
+  })
+
+  test('forwards the decision route fields and defaults them to null', async () => {
+    mocks.desktopInvoke.mockResolvedValue({ state: 'running' })
+
+    await harnessAppsApi.start({
+      installationId: 'decision-app',
+      modelBaseUrl: 'http://127.0.0.1:9000',
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
+      decisionProtocolVersion: 1,
+    })
+    await harnessAppsApi.start({ installationId: 'plain-app', modelBaseUrl: null })
+
+    expect(mocks.desktopInvoke).toHaveBeenNthCalledWith(1, 'smartApps.start', {
+      installationId: 'decision-app',
+      modelBaseUrl: 'http://127.0.0.1:9000',
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: 'http://127.0.0.1:9500/v1/decision-router/decision-token',
+      decisionProtocolVersion: 1,
+    })
+    expect(mocks.desktopInvoke).toHaveBeenNthCalledWith(2, 'smartApps.start', {
+      installationId: 'plain-app',
+      modelBaseUrl: null,
+      contextBaseUrl: null,
+      contextToken: null,
+      decisionBaseUrl: null,
+      decisionProtocolVersion: null,
+    })
   })
 
   test('exports an installation and copies the archive to Downloads', async () => {

@@ -5,7 +5,7 @@
 //! MySQL data access for `GET /api/users/quick-access`, mirroring the source
 //! SQLAlchemy renderings token for token: full labeled projections with
 //! `{table}_{column}` aliases and literal-inlined scalar filters.
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 

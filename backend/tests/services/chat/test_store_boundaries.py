@@ -120,12 +120,10 @@ def test_active_streaming_db_fallback_uses_subtask_store(monkeypatch):
     )
 
 
-def test_database_datetime_serialization_treats_sqlite_values_as_utc():
-    db = _NoModelCrudDb()
-    db.get_bind = lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+def test_database_datetime_serialization_treats_sqlite_values_as_utc(monkeypatch):
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
 
     result = permissions._serialize_database_datetime(
-        db,
         datetime(2026, 7, 29, 2, 30),  # noqa: DTZ001
     )
 

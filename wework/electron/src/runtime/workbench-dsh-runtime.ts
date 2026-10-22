@@ -4,13 +4,20 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'no
 import semver from 'semver'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
+import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import {
   selectBundledDshRuntimeMatching,
   type BundledDshRuntime,
   type CommandRunner,
 } from './core-dsh-runtime.js'
 
-export const WORKBENCH_DSH_VERSION = '0.1.0-rc.8'
+export const WORKBENCH_DSH_VERSION = '0.2.0-rc.2'
+
+export function workbenchClientRendererPackage(versionRequirement: string): string {
+  return semver.satisfies(WORKBENCH_DSH_VERSION, versionRequirement, { includePrerelease: true })
+    ? '@deepseek-ai/dsh-client-ui-renderer'
+    : '@deepseek-ai/dsh-client-runtime'
+}
 
 export interface WorkbenchAppManifest {
   name: string
@@ -31,6 +38,13 @@ export interface WorkbenchAppManifest {
     spec: string
     path?: string
   }>
+  /**
+   * Capability requests. Declaring one here grants it: Wework does not gate
+   * these on install provenance, and the Smart App decides when to use them.
+   */
+  capabilities?: {
+    decisionModel?: boolean
+  }
 }
 
 export interface PrepareWorkbenchDshOptions {
@@ -44,6 +58,8 @@ export interface PrepareWorkbenchDshOptions {
   modelBaseUrl?: string | null
   contextBaseUrl?: string | null
   contextToken?: string | null
+  decisionBaseUrl?: string | null
+  decisionProtocolVersion?: 1 | null
   includeElectronHostBridge?: boolean
   run?: CommandRunner
 }
@@ -76,9 +92,8 @@ export interface ResolveWorkbenchProjectPnpmOptions {
 export async function resolveWorkbenchProjectPnpmCommand(
   options: ResolveWorkbenchProjectPnpmOptions
 ): Promise<WorkbenchProjectPnpmCommand> {
-  const runtime = await selectBundledDshRuntimeMatching(
-    options.runtimeRoot,
-    'workbench',
+  const runtime = await resolveWorkbenchRuntime(
+    options,
     options.versionRequirement ?? WORKBENCH_DSH_VERSION
   )
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
@@ -95,11 +110,7 @@ export async function resolveWorkbenchProjectPnpmCommand(
 export async function prepareWorkbenchDshLaunch(
   options: PrepareWorkbenchDshOptions
 ): Promise<WorkbenchDshLaunch> {
-  const runtime = await selectBundledDshRuntimeMatching(
-    options.runtimeRoot,
-    'workbench',
-    options.manifest.requirements.dsh
-  )
+  const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(
@@ -127,6 +138,18 @@ export async function prepareWorkbenchDshLaunch(
     environment,
     run
   )
+  if (runtime.version === WORKBENCH_DSH_VERSION) {
+    environment.WEWORK_DSH_BROWSER_AUTH = '1'
+    await installPlugins(
+      runtime,
+      dshHome,
+      options.manifest.entry.profile,
+      [join(runtime.pluginsRoot, 'wework-browser-auth')],
+      nodeCommand,
+      environment,
+      run
+    )
+  }
   if (options.includeElectronHostBridge !== false) {
     // The workbench is an isolated harness profile. Without the electron-host
     // plugin its DSH client has no route to the scoped host pipe, so calling
@@ -197,6 +220,19 @@ export async function prepareWorkbenchDshLaunch(
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
   }
+}
+
+async function resolveWorkbenchRuntime(
+  options: ResolveWorkbenchProjectPnpmOptions,
+  versionRequirement: string
+): Promise<BundledDshRuntime> {
+  const resources = options.environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
+  if (resources) {
+    await materializeBundledRuntimes(resources, options.runtimeRoot, ['workbench'], {
+      versionRequirement,
+    })
+  }
+  return selectBundledDshRuntimeMatching(options.runtimeRoot, 'workbench', versionRequirement)
 }
 
 function validateRequirements(manifest: WorkbenchAppManifest, runtime: BundledDshRuntime): void {
@@ -422,7 +458,14 @@ async function addProfilePackages(
   const before = await readWorkbenchProfileManifest(profileDir)
   await run(
     nodeCommand,
-    runtimeNodeArgs(environment, [pnpmEntry, 'add', '--ignore-scripts', ...specs]),
+    runtimeNodeArgs(environment, [
+      pnpmEntry,
+      '--store-dir',
+      join(dshHome, 'pnpm-store'),
+      'add',
+      '--ignore-scripts',
+      ...specs,
+    ]),
     { cwd: profileDir, env: environment }
   )
   await reconcileProfileBundles(profileDir, before)
@@ -556,6 +599,16 @@ function runtimeEnvironment(
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),
     ...(options.contextToken ? { WEWORK_HARNESS_CONTEXT_TOKEN: options.contextToken } : {}),
+    // The decision route is injected as its own capability. Host-controlled
+    // values win over anything already present in the inherited environment,
+    // so a Smart app package cannot pre-seed a hostile router address.
+    ...(options.decisionBaseUrl
+      ? {
+          WEWORK_DECISION_ROUTER_BASE_URL: options.decisionBaseUrl,
+          WEWORK_DECISION_ROUTER_KEY: 'wework-local-router',
+          WEWORK_DECISION_ROUTER_PROTOCOL_VERSION: String(options.decisionProtocolVersion ?? 1),
+        }
+      : {}),
   }
 }
 

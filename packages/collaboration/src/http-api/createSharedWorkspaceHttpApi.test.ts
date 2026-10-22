@@ -31,6 +31,41 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("loads devices without fetching the agent resource catalog", async () => {
+    const { transport, get } = createTransport();
+    get.mockResolvedValue({
+      items: [
+        {
+          id: 42,
+          device_id: "runner-42",
+          app_device_id: "desktop-installation-42",
+          name: "Runner",
+          device_type: "remote",
+          status: "busy",
+          bind_shell: "claudecode",
+        },
+        {
+          id: 43,
+          device_id: "other-shell",
+          bind_shell: "openclaw",
+          status: "online",
+        },
+      ],
+    });
+    const api = createSharedWorkspaceHttpApi(transport);
+    await expect(api.resources.devices.cloud!()).resolves.toMatchObject([
+      {
+        id: "42",
+        device_id: 42,
+        device_key: "runner-42",
+        app_device_id: "desktop-installation-42",
+        kind: "cloud_host",
+        status: "online",
+      },
+    ]);
+    expect(get).toHaveBeenCalledExactlyOnceWith("/devices");
+  });
+
   it("deletes a cloud Agent through its Team resource", async () => {
     const { transport, remove } = createTransport();
     const api = createSharedWorkspaceHttpApi(transport);
@@ -323,12 +358,108 @@ describe("createSharedWorkspaceHttpApi", () => {
       workspaceHttpRequestBody({
         executionDeviceId: "device-1",
         plugins: [{ marketplaceId: "official", enabled: true }],
-        modelOptions: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+        modelOptions: {
+          weworkCloudModelNamespace: "default",
+          weworkCloudModelResourceUserId: "0",
+        },
       }),
     ).toEqual({
       execution_device_id: "device-1",
       plugins: [{ marketplace_id: "official", enabled: true }],
-      model_options: { weworkCloudModelNamespace: 'default', weworkCloudModelResourceUserId: '0' },
+      model_options: {
+        weworkCloudModelNamespace: "default",
+        weworkCloudModelResourceUserId: "0",
+      },
     });
   });
+
+  it("preserves the runner policy wire keys when reading a project Agent", async () => {
+    const { transport, get } = createTransport();
+    const model = {
+      runtime: "codex",
+      provider: "native",
+      model_id: "default-model",
+      source: "cloud",
+      cloud_model: {
+        name: "shared",
+        type: "public",
+        namespace: "default",
+        resource_user_id: 0,
+      },
+    };
+    get.mockResolvedValue([
+      {
+        id: "agent",
+        name: "Agent",
+        execution_policy: { mode: "fixed", environment_id: "device" },
+        model_policy: { mode: "fixed", model },
+      },
+    ]);
+    const [agent] =
+      await createSharedWorkspaceHttpApi(transport).agents.list("project");
+    expect(agent.executionPolicy).toEqual({
+      mode: "fixed",
+      environment_id: "device",
+    });
+    expect(agent.modelPolicy).toEqual({ mode: "fixed", model });
+  });
+});
+
+it("deduplicates reads across adapters and invalidates the project list after a mutation", async () => {
+  const { transport, get, post } = createTransport();
+  get.mockResolvedValue([]);
+  post.mockResolvedValue({ id: "created", name: "Created", runtime: "codex" });
+  const first = createSharedWorkspaceHttpApi(transport);
+  const second = createSharedWorkspaceHttpApi(transport);
+  await Promise.all([first.agents.list("1"), second.agents.list("1")]);
+  expect(get).toHaveBeenCalledOnce();
+  await first.agents.create("1", {
+    name: "Created",
+    runtime: "codex",
+  } as never);
+  await second.agents.list("1");
+  expect(get).toHaveBeenCalledTimes(2);
+});
+
+it("refreshes an externally changed Agent directory without disabling ordinary caching", async () => {
+  const { transport, get } = createTransport();
+  get
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      { id: "external", name: "External Agent", runtime: "codex" },
+    ]);
+  const api = createSharedWorkspaceHttpApi(transport);
+  await expect(api.agents.list("1")).resolves.toEqual([]);
+  await expect(api.agents.list("1")).resolves.toEqual([]);
+  expect(get).toHaveBeenCalledOnce();
+  await expect(
+    api.agents.list("1", { forceRefresh: true }),
+  ).resolves.toMatchObject([{ id: "external", name: "External Agent" }]);
+  await expect(api.agents.list("1")).resolves.toMatchObject([
+    { id: "external" },
+  ]);
+  expect(get).toHaveBeenCalledTimes(2);
+});
+
+it("revalidates workspace grants without reusing an older in-flight catalog", async () => {
+  const { transport, get } = createTransport();
+  let resolveOld!: (value: unknown) => void;
+  get
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+    )
+    .mockResolvedValueOnce({ items: [] });
+  const api = createSharedWorkspaceHttpApi(transport);
+  const oldRead = api.workspaces.listAgents("space");
+  await Promise.resolve();
+
+  await expect(
+    api.workspaces.listAgents("space", { forceRefresh: true }),
+  ).resolves.toEqual([]);
+  resolveOld({ items: [{ id: 42, team_id: 42, name: "Revoked" }] });
+  await oldRead;
+  await expect(api.workspaces.listAgents("space")).resolves.toEqual([]);
+  expect(get).toHaveBeenCalledTimes(2);
 });

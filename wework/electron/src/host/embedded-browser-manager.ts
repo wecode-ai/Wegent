@@ -1,3 +1,4 @@
+import { copyDshBrowserAuthentication } from '../runtime/dsh-browser-auth.js'
 import {
   app,
   BrowserWindow,
@@ -460,7 +461,13 @@ export class EmbeddedBrowserManager {
     contents.on('page-title-updated', (_event, title) => {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
-    contents.on('did-navigate', (_event, url) => {
+    const commitNavigation = (url: string) => {
+      // The host's bootstrap commit can arrive after the requested navigation
+      // starts. It must not replace that destination while it is still loading.
+      if (entry.initialNavigation && url === 'about:blank' && entry.requestedUrl !== url) {
+        emitPageState()
+        return
+      }
       if (entry.initialNavigation && url !== 'about:blank') {
         entry.initialNavigation = false
         const history = contents.navigationHistory
@@ -478,14 +485,10 @@ export class EmbeddedBrowserManager {
         entry.previewSourceUrl = null
       }
       emitPageState()
-    })
-    contents.on('did-navigate-in-page', (_event, url) => {
-      if (url !== entry.previewDisplayUrl) {
-        entry.requestedUrl = url
-        entry.previewDisplayUrl = null
-        entry.previewSourceUrl = null
-      }
-      emitPageState()
+    }
+    contents.on('did-navigate', (_event, url) => commitNavigation(url))
+    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) commitNavigation(url)
     })
     contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
       if (!isMainFrame || code === NAVIGATION_ABORTED_ERROR_CODE) return
@@ -598,6 +601,36 @@ export class EmbeddedBrowserManager {
 
   async evaluate(label: string, expression: string): Promise<unknown> {
     return this.required(label).contents.executeJavaScript(expression, true)
+  }
+
+  async uploadFiles(
+    label: string,
+    selector: string | null,
+    files: string[]
+  ): Promise<{ selector: string }> {
+    const contents = this.required(label).contents
+    const target = contents.debugger
+    const ownsAttach = !target.isAttached()
+    if (ownsAttach) target.attach('1.3')
+    try {
+      const effectiveSelector = selector?.trim() || 'input[type="file"]'
+      const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
+        root: { nodeId: number }
+      }
+      const { nodeId } = (await target.sendCommand('DOM.querySelector', {
+        nodeId: root.nodeId,
+        selector: effectiveSelector,
+      })) as { nodeId: number }
+      if (!nodeId) {
+        throw new Error(
+          `No file input element matches selector "${effectiveSelector}" in the embedded browser.`
+        )
+      }
+      await target.sendCommand('DOM.setFileInputFiles', { files, nodeId })
+      return { selector: effectiveSelector }
+    } finally {
+      if (ownsAttach && target.isAttached()) target.detach()
+    }
   }
 
   clickAt(label: string, x: number, y: number): void {
@@ -925,7 +958,6 @@ export class EmbeddedBrowserManager {
       label: normalizedLabel,
       nativeLabel: entry.nativeLabel,
     })
-    await this.waitForAttachedContents(normalizedLabel)
   }
 
   close(label: string, expectedNativeLabel?: string | null): void {
@@ -1219,6 +1251,13 @@ export class EmbeddedBrowserManager {
       }
       entry.previewDisplayUrl = navigation.kind === 'preview' ? navigation.displayUrl : null
       entry.previewSourceUrl = navigation.kind === 'preview' ? navigation.sourceUrl : null
+      if (entry.contents.session === session.fromPartition(EMBEDDED_BROWSER_PARTITION)) {
+        await copyDshBrowserAuthentication(
+          session.defaultSession,
+          entry.contents.session,
+          navigation.displayUrl
+        )
+      }
       await entry.contents.loadURL(navigation.displayUrl)
     } catch (error) {
       if (!entry.navigationError) {

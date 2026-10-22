@@ -100,6 +100,38 @@ pub struct DiscoveryList {
     pub limit: i64,
 }
 
+/// Raw query parameters for `GET /api/resource-library/users/me/published`.
+/// Values stay strings so the handler can reproduce FastAPI's decoding and
+/// validation before the service runs.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PublishedQuery {
+    pub resource_type: Option<String>,
+    pub page: Option<String>,
+    pub limit: Option<String>,
+}
+
+/// Validated `list_published` arguments.
+///
+/// `resource_type` keeps the endpoint's own value (`agent`, `skill`, ...)
+/// because the service compares it against
+/// `marketplace_resources.resource_type` directly.
+#[derive(Debug, Clone)]
+pub struct PublishedParams {
+    pub resource_type: Option<&'static str>,
+    pub page: i64,
+    pub limit: i64,
+}
+
+/// `ResourceLibraryListingList`: the offset-paginated listing body.
+#[derive(Debug, Serialize)]
+pub struct ListingList {
+    pub items: Vec<Listing>,
+    pub total: i64,
+    pub page: i64,
+    pub limit: i64,
+}
+
 /// `ResourceLibraryListing`.
 #[derive(Debug, Serialize)]
 pub struct Listing {
@@ -242,14 +274,33 @@ pub struct KindSpec {
     pub visible: Option<JsonScalar>,
     #[serde(rename = "bind_mode")]
     pub bind_mode: Option<Vec<JsonScalar>>,
-    /// SkillBinding members (`_is_user_default_binding`).
+    /// SkillBinding members (`_is_user_default_binding`, `to_response`).
     #[serde(rename = "targetType")]
     pub target_type: Option<JsonScalar>,
     #[serde(rename = "targetId")]
     pub target_id: Option<JsonScalar>,
     #[serde(rename = "skillRef")]
     pub skill_ref: Option<SkillRef>,
+    /// `_extract_force_preload`: `forcePreload or force_preload or False`.
+    #[serde(rename = "forcePreload")]
+    pub force_preload: Option<JsonScalar>,
+    #[serde(rename = "force_preload")]
+    pub legacy_force_preload: Option<JsonScalar>,
+    /// `_extract_exceptions`: the stored exception rules.
+    pub exceptions: Option<Vec<Option<ExceptionEntry>>>,
     pub capability: Option<Capability>,
+    /// `_delete_legacy_agent_installations`' `spec.sourceRef`.
+    #[serde(rename = "sourceRef")]
+    pub source_ref: Option<SourceRef>,
+}
+
+/// One stored `spec.exceptions` entry (`SkillBindingException`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ExceptionEntry {
+    #[serde(rename = "type")]
+    pub kind: Option<JsonScalar>,
+    pub value: Option<JsonScalar>,
 }
 
 /// `kinds.json.spec.skillRef`.
@@ -260,6 +311,20 @@ pub struct SkillRef {
     pub skill_id: Option<JsonScalar>,
     #[serde(rename = "skill_id")]
     pub skill_id_snake: Option<JsonScalar>,
+    pub name: Option<JsonScalar>,
+    pub namespace: Option<JsonScalar>,
+    #[serde(rename = "isPublic")]
+    pub is_public: Option<JsonScalar>,
+    #[serde(rename = "is_public")]
+    pub is_public_snake: Option<JsonScalar>,
+}
+
+/// `kinds.json.spec.sourceRef` (legacy `CapabilityInstallation` rows).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SourceRef {
+    #[serde(rename = "kindId")]
+    pub kind_id: Option<JsonScalar>,
 }
 
 /// `kinds.json.spec.capability`.
@@ -351,5 +416,15 @@ impl CursorInt {
             Self::Float(value) => Some(*value as i64),
             Self::Text(value) => value.trim().parse().ok(),
         }
+    }
+}
+
+/// `int(value)` for a JSON scalar, `None` when the text does not parse.
+pub(super) fn scalar_to_int(value: &JsonScalar) -> Option<i64> {
+    match value {
+        JsonScalar::Bool(value) => Some(i64::from(*value)),
+        JsonScalar::Int(value) => Some(*value),
+        JsonScalar::Float(value) => Some(*value as i64),
+        JsonScalar::Text(value) => value.trim().parse().ok(),
     }
 }

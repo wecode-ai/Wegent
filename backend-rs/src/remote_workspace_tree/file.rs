@@ -133,9 +133,11 @@ async fn stream_file(
     let _task = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
-        deps.task_policy,
+        deps.task_store.as_ref(),
         &erp,
         &kinds,
+        Some(&deps.entity_resolvers),
+        &deps.video_refresh,
         task_id,
         user_id,
     )
@@ -155,9 +157,11 @@ async fn stream_file(
         let detail = task_detail::load_task_detail(
             &deps.mysql,
             deps.redis.as_ref(),
-            deps.task_policy,
+            deps.task_store.as_ref(),
             &erp,
             &kinds,
+            Some(&deps.entity_resolvers),
+            &deps.video_refresh,
             task_id,
             user_id,
         )

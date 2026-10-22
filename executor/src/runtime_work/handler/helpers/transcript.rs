@@ -7,13 +7,17 @@ fn cached_transcript_response(
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
+    normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let turn_navigation = transcript_turn_navigation(&messages);
     let history_unavailable = !running
         && link.runtime == "claude_code"
         && messages.is_empty()
-        && link.runtime_handle.get("userMessagePresentations")
-            .and_then(Value::as_array).is_some_and(|items| !items.is_empty());
+        && link
+            .runtime_handle
+            .get("userMessagePresentations")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty());
     let mut response = transcript_response(TranscriptResponseInput {
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
@@ -21,12 +25,18 @@ fn cached_transcript_response(
         messages,
         context_usage,
         running,
-        pagination: transcript_pagination(
-            &link.runtime,
-            limit,
-            before_cursor.map(ToOwned::to_owned),
-            after_cursor.map(ToOwned::to_owned),
-        ),
+        pagination: if runtime_has_provider_transcript_reader(&link.runtime) {
+            let (before_cursor, after_cursor) = transcript_snapshot_pagination(link)
+                .unwrap_or((None, None));
+            TranscriptPagination::Opaque { before_cursor, after_cursor }
+        } else {
+            transcript_pagination(
+                &link.runtime,
+                limit,
+                before_cursor.map(ToOwned::to_owned),
+                after_cursor.map(ToOwned::to_owned),
+            )
+        },
         full_content: false,
         conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
@@ -34,14 +44,64 @@ fn cached_transcript_response(
     });
     response["historyUnavailable"] = Value::Bool(history_unavailable);
     if link.runtime == "claude_code" && link.status == "interrupted" && !running {
-        if let Some(turn) = response.get_mut("turns").and_then(Value::as_array_mut)
-            .and_then(|turns| turns.last_mut()) {
+        if let Some(turn) = response
+            .get_mut("turns")
+            .and_then(Value::as_array_mut)
+            .and_then(|turns| turns.last_mut())
+        {
             turn["status"] = json!("failed");
             turn["runtimeStatus"] = json!("failed");
             turn["error"] = json!("Execution was interrupted before its outcome was recorded");
         }
     }
     response
+}
+
+fn overload_recovery_turn_ids(runtime_handle: &Value) -> std::collections::HashSet<&str> {
+    runtime_handle
+        .get("overloadRecoveryTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+fn normalize_overload_recovery_thread(thread: &mut Value, runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
+        for turn in turns {
+            if turn
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| ids.contains(id))
+            {
+                turn["status"] = json!("completed");
+                turn.as_object_mut()
+                    .expect("turn is an object")
+                    .remove("error");
+            }
+        }
+    }
+}
+
+fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: &Value) {
+    let ids = overload_recovery_turn_ids(runtime_handle);
+    for message in messages {
+        if message
+            .get("turnId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| ids.contains(id))
+        {
+            let object = message
+                .as_object_mut()
+                .expect("transcript message is an object");
+            object.insert("status".to_owned(), json!("done"));
+            object.insert("runtimeStatus".to_owned(), json!("completed"));
+            object.remove("error");
+            object.remove("errorType");
+        }
+    }
 }
 
 pub(super) fn remove_superseded_transcript_turns(
@@ -81,47 +141,36 @@ fn merge_latest_completed_transcript_messages(
     if before_cursor.is_some() || after_cursor.is_some() {
         return;
     }
-    for completed in completed_transcript_messages(link) {
+    for mut completed in completed_transcript_messages(link) {
         let message_id = string_field(&completed, "id");
-        if let Some(existing) = messages.iter_mut().find(|message| {
-            message_id.is_some() && string_field(message, "id") == message_id
-        }) {
-            *existing = merge_completed_transcript_message(existing, completed);
+        if let Some(existing) = messages
+            .iter_mut()
+            .find(|message| message_id.is_some() && string_field(message, "id") == message_id)
+        {
+            // Exit snapshots are authoritative; running commands use their live event buffer.
+            visit_transcript_blocks_mut(&mut completed, |block| {
+                if block.pointer("/render_payload/kind").and_then(Value::as_str)
+                    != Some("command_execution")
+                {
+                    return;
+                }
+                if let Some(native) = existing.get("blocks").and_then(Value::as_array)
+                    .into_iter().flatten().find(|native| {
+                        native.get("id") == block.get("id")
+                            && native.pointer("/render_payload/kind").and_then(Value::as_str) == Some("command_execution")
+                            && matches!(native.get("status").and_then(Value::as_str), Some("done" | "error"))
+                    })
+                {
+                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object()) {
+                        block.extend(native.clone());
+                    }
+                }
+            });
+            *existing = merge_assistant_transcript_message(existing, completed);
         } else {
             messages.push(completed);
         }
     }
-}
-
-fn merge_completed_transcript_message(existing: &Value, mut completed: Value) -> Value {
-    let (Some(existing), Some(completed_object)) =
-        (existing.as_object(), completed.as_object_mut())
-    else {
-        return completed;
-    };
-    for (key, value) in existing {
-        completed_object.entry(key.clone()).or_insert_with(|| value.clone());
-    }
-    let completed_has_blocks = completed_object
-        .get("blocks")
-        .and_then(Value::as_array)
-        .is_some_and(|blocks| !blocks.is_empty());
-    let existing_blocks = existing
-        .get("blocks")
-        .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()));
-    if !completed_has_blocks {
-        if let Some(existing_blocks) = existing_blocks {
-            completed_object.insert("blocks".to_owned(), existing_blocks.clone());
-            if let Some(existing_runtime_items) = existing.get("runtimeItems").filter(|value| {
-                value
-                    .as_array()
-                    .is_some_and(|items| !items.is_empty())
-            }) {
-                completed_object.insert("runtimeItems".to_owned(), existing_runtime_items.clone());
-            }
-        }
-    }
-    completed
 }
 
 #[derive(Clone, Copy)]
@@ -356,19 +405,12 @@ fn transcript_canonical_turns(
             continue;
         }
 
-        match item_source {
-            TranscriptTurnItemSource::CodexItems => {
-                if let Some(runtime_items) =
-                    message.get("runtimeItems").and_then(Value::as_array)
-                {
-                    items.extend(runtime_items.iter().cloned());
-                }
-            }
-            TranscriptTurnItemSource::CachedMessages => {
-                append_runtime_message_items(items, message);
-            }
+        // Cached provider messages retain the same item identities and order as live events.
+        if let Some(runtime_items) = message.get("runtimeItems").and_then(Value::as_array) {
+            items.extend(runtime_items.iter().cloned());
+        } else if matches!(item_source, TranscriptTurnItemSource::CachedMessages) {
+            append_runtime_message_items(items, message);
         }
-
     }
 
     turns
@@ -384,7 +426,10 @@ fn append_runtime_message_items(items: &mut Vec<Value>, message: &Value) {
             "type": "assistant_text",
             "content": content,
         });
-        if let Some(created_at) = message.get("createdAt").or_else(|| message.get("created_at")) {
+        if let Some(created_at) = message
+            .get("createdAt")
+            .or_else(|| message.get("created_at"))
+        {
             item["createdAt"] = created_at.clone();
         }
         items.push(item);
@@ -451,9 +496,7 @@ fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
     turns
 }
 
-fn transcript_navigation_from_codex_turns(
-    navigation: CodexTranscriptNavigation,
-) -> Vec<Value> {
+fn transcript_navigation_from_codex_turns(navigation: CodexTranscriptNavigation) -> Vec<Value> {
     if !navigation.complete {
         return Vec::new();
     }
@@ -598,7 +641,10 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         return None;
     }
     let references = local_presentation_reference_descriptors(content);
-    let source = payload.get("source").filter(|value| value.is_object()).cloned();
+    let source = payload
+        .get("source")
+        .filter(|value| value.is_object())
+        .cloned();
     let presentation = json!({
         "clientUserMessageId": client_user_message_id,
         "content": content,
@@ -611,14 +657,8 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
     Some(presentation)
 }
 
-fn attach_legacy_thread_preview(
-    messages: &mut Vec<Value>,
-    thread: &Value,
-    has_older_page: bool,
-) {
-    if has_older_page
-        || string_field(thread, "historyMode").as_deref() != Some("legacy")
-    {
+fn attach_legacy_thread_preview(messages: &mut Vec<Value>, thread: &Value, has_older_page: bool) {
+    if has_older_page || string_field(thread, "historyMode").as_deref() != Some("legacy") {
         return;
     }
     let Some(preview) = string_field(thread, "preview")
@@ -637,12 +677,14 @@ fn attach_legacy_thread_preview(
             return false;
         }
         match turn_id.as_deref() {
-            Some(turn_id) => string_field(message, "turnId")
-                .or_else(|| string_field(message, "turn_id"))
-                .or_else(|| string_field(message, "subtaskId"))
-                .or_else(|| string_field(message, "subtask_id"))
-                .as_deref()
-                == Some(turn_id),
+            Some(turn_id) => {
+                string_field(message, "turnId")
+                    .or_else(|| string_field(message, "turn_id"))
+                    .or_else(|| string_field(message, "subtaskId"))
+                    .or_else(|| string_field(message, "subtask_id"))
+                    .as_deref()
+                    == Some(turn_id)
+            }
             None => true,
         }
     });
@@ -677,10 +719,7 @@ fn attach_legacy_thread_preview(
 }
 
 #[cfg(test)]
-fn attach_user_message_presentations(
-    messages: &mut Vec<Value>,
-    presentations: Vec<Value>,
-) {
+fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: Vec<Value>) {
     let page_messages = messages.clone();
     attach_user_message_presentations_for_page(
         messages,
@@ -714,15 +753,14 @@ fn attach_user_message_presentations_for_page(
         });
         let message_index = match message_index {
             Some(index) => index,
-            None
-                if bool_field(&presentation, "ensureVisible") == Some(true)
-                    && presentation_belongs_to_transcript_page(
-                        &presentation,
-                        page_messages,
-                        page_turn_ids,
-                        has_more_before,
-                        has_more_after,
-                    ) =>
+            None if bool_field(&presentation, "ensureVisible") == Some(true)
+                && presentation_belongs_to_transcript_page(
+                    &presentation,
+                    page_messages,
+                    page_turn_ids,
+                    has_more_before,
+                    has_more_after,
+                ) =>
             {
                 let content = string_field(&presentation, "content").unwrap_or_default();
                 let attachments = normalized_attachments(presentation.get("attachments"));
@@ -733,10 +771,10 @@ fn attach_user_message_presentations_for_page(
                     timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
                 let turn_id = string_field(&presentation, "turnId")
                     .or_else(|| string_field(&presentation, "turn_id"));
-                let index = match turn_id.as_deref() {
-                    Some(turn_id) => messages
-                        .iter()
-                        .position(|message| {
+                let index = turn_id
+                    .as_deref()
+                    .and_then(|turn_id| {
+                        messages.iter().position(|message| {
                             string_field(message, "turnId")
                                 .or_else(|| string_field(message, "turn_id"))
                                 .or_else(|| string_field(message, "subtaskId"))
@@ -744,18 +782,17 @@ fn attach_user_message_presentations_for_page(
                                 .as_deref()
                                 == Some(turn_id)
                         })
-                        .unwrap_or(messages.len()),
-                    None => messages
-                        .iter()
-                        .position(|message| {
+                    })
+                    .or_else(|| {
+                        messages.iter().position(|message| {
                             timestamp_ms_field(message, "createdAt").is_some_and(|message_at| {
                                 message_at > created_at
                                     || (message_at == created_at
                                         && string_field(message, "role").as_deref() != Some("user"))
                             })
                         })
-                        .unwrap_or(messages.len()),
-                };
+                    })
+                    .unwrap_or(messages.len());
                 let turn_id = turn_id.or_else(|| {
                     messages[index..].iter().find_map(|message| {
                         string_field(message, "turnId")
@@ -789,14 +826,17 @@ fn attach_user_message_presentations_for_page(
         let content = string_field(message, "content").unwrap_or_default();
         let presentation_content = string_field(&presentation, "content").unwrap_or_default();
         let attachments = normalized_attachments(presentation.get("attachments"));
-        // Codex replaces file/folder mentions with paths, losing their display labels.
+        // Provider input is an execution projection, not the user's presentation.
+        // Restore native references even when the host routes a plugin to CLI text.
         let restore_content = !attachments.is_empty()
             || local_presentation_reference_descriptors(&presentation_content)
                 .iter()
                 .any(|reference| {
-                    reference["href"]
-                        .as_str()
-                        .is_some_and(is_local_path_reference)
+                    reference["href"].as_str().is_some_and(|href| {
+                        is_local_path_reference(href)
+                            || href.starts_with("app://")
+                            || href.starts_with("plugin://")
+                    })
                 });
         let references = presentation
             .get("references")
@@ -806,10 +846,7 @@ fn attach_user_message_presentations_for_page(
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
             if restore_content {
-                message.insert(
-                    "content".to_owned(),
-                    Value::String(presentation_content),
-                );
+                message.insert("content".to_owned(), Value::String(presentation_content));
                 message.remove("presentationReferences");
             }
             if !attachments.is_empty() {
@@ -839,8 +876,8 @@ fn presentation_belongs_to_transcript_page(
         return true;
     }
 
-    let presentation_turn_id = string_field(presentation, "turnId")
-        .or_else(|| string_field(presentation, "turn_id"));
+    let presentation_turn_id =
+        string_field(presentation, "turnId").or_else(|| string_field(presentation, "turn_id"));
     if let Some(presentation_turn_id) = presentation_turn_id {
         return page_turn_ids.contains(&presentation_turn_id)
             || page_messages.iter().any(|message| {
@@ -920,12 +957,9 @@ fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Val
 fn find_complete_presentation_token(content: &str, token: &str) -> Option<usize> {
     content.match_indices(token).find_map(|(start, _)| {
         let end = start + token.len();
-        content[end..]
-            .chars()
-            .next()
-            .map_or(Some(start), |next| {
-                (!is_presentation_token_continuation(next)).then_some(start)
-            })
+        content[end..].chars().next().map_or(Some(start), |next| {
+            (!is_presentation_token_continuation(next)).then_some(start)
+        })
     })
 }
 
@@ -945,6 +979,9 @@ fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> 
         return Some(format!("${}", crate::prompt_mentions::skill_name(name)));
     }
     if is_local_path_reference(href) {
+        return Some(format!("${name}"));
+    }
+    if href.starts_with("app://") {
         return Some(format!("${name}"));
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))
@@ -1137,6 +1174,7 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
         .as_object()
         .cloned()
         .unwrap_or_else(Map::new);
+    object.remove("collaborationMemberRuntimeProfiles");
     object.insert(
         "threadId".to_owned(),
         link.thread_id

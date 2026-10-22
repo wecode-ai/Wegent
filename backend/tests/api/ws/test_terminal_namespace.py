@@ -4,6 +4,7 @@
 
 """Tests for the browser terminal Socket.IO namespace."""
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -764,39 +765,110 @@ async def test_terminal_input_requires_reattach_when_resynced_routing_changes(
 
 
 @pytest.mark.asyncio
-async def test_terminal_resize_uses_bound_authorization_without_redis(monkeypatch):
+@pytest.mark.parametrize("protocol_version", [1, 2])
+async def test_terminal_resize_waits_for_executor_without_redis(
+    monkeypatch, protocol_version
+):
     namespace = TerminalNamespace()
     service = _service(
         authorize=AsyncMock(),
         is_revoked=Mock(return_value=False),
     )
-    sio = SimpleNamespace(emit=AsyncMock())
+    resize_started = asyncio.Event()
+    resize_applied = asyncio.Event()
+
+    async def resize_executor(*args, **kwargs):
+        resize_started.set()
+        await resize_applied.wait()
+        return {"success": True}
+
+    sio = SimpleNamespace(call=AsyncMock(side_effect=resize_executor))
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+    session = _attached_session()
+    session["terminal_protocol_version"] = protocol_version
+    session["terminal_consumer_id"] = "consumer-1" if protocol_version == 2 else None
     monkeypatch.setattr(
         namespace,
         "get_session",
-        AsyncMock(return_value=_attached_session()),
+        AsyncMock(return_value=session),
     )
 
-    result = await namespace.on_terminal_resize(
-        "browser-sid",
-        {"session_id": "terminal-1", "rows": 40, "cols": 120},
+    resizing = asyncio.create_task(
+        namespace.on_terminal_resize(
+            "browser-sid",
+            {"session_id": "terminal-1", "rows": 40, "cols": 120},
+        )
     )
+    try:
+        await asyncio.wait_for(resize_started.wait(), timeout=1)
+        assert not resizing.done(), "Success must wait until the PTY is resized"
+        resize_applied.set()
+        result = await asyncio.wait_for(resizing, timeout=1)
+    finally:
+        resizing.cancel()
+        await asyncio.gather(resizing, return_exceptions=True)
 
     assert result == {"success": True}
-    sio.emit.assert_awaited_once_with(
+    sio.call.assert_awaited_once_with(
         "terminal:resize",
         {
             "session_id": "terminal-1",
-            "consumer_id": "consumer-1",
+            **({"consumer_id": "consumer-1"} if protocol_version == 2 else {}),
             "rows": 40,
             "cols": 120,
         },
         to="device-sid",
         namespace="/local-executor",
+        timeout=terminal_namespace.TERMINAL_ATTACH_TIMEOUT_SECONDS,
     )
     service.authorize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "expected_error"),
+    [
+        ({"success": False, "error": "Not resizable"}, "Not resizable"),
+        ({"success": False}, "Failed to resize terminal executor"),
+        (None, "Invalid executor response"),
+    ],
+)
+async def test_terminal_resize_does_not_report_executor_failure_as_success(
+    monkeypatch, reply, expected_error
+):
+    namespace = TerminalNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "_authorize_attached_session",
+        AsyncMock(return_value=(_record(), "consumer-1", None)),
+    )
+    sio = SimpleNamespace(call=AsyncMock(return_value=reply))
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+
+    result = await namespace.on_terminal_resize(
+        "browser-sid", {"session_id": "terminal-1", "rows": 40, "cols": 120}
+    )
+
+    assert result == {"error": expected_error}
+
+
+@pytest.mark.asyncio
+async def test_terminal_resize_reports_executor_timeout(monkeypatch):
+    namespace = TerminalNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "_authorize_attached_session",
+        AsyncMock(return_value=(_record(), "consumer-1", None)),
+    )
+    sio = SimpleNamespace(call=AsyncMock(side_effect=TimeoutError))
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+
+    result = await namespace.on_terminal_resize(
+        "browser-sid", {"session_id": "terminal-1", "rows": 40, "cols": 120}
+    )
+
+    assert result == {"error": "Failed to resize terminal executor"}
 
 
 @pytest.mark.asyncio

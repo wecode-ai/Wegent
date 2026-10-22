@@ -150,6 +150,11 @@ class ConnectorValidationTests(unittest.TestCase):
         )
         self.assertEqual(path.read_text(), content)
 
+    def test_bundled_codex_validator_loads_without_a_codex_home(self) -> None:
+        upstream = validator.load_codex_validator(ROOT / "scripts/codex-plugin-creator")
+
+        self.assertTrue(callable(upstream.validate_manifest_shape))
+
 
 if __name__ == "__main__":
     unittest.main()

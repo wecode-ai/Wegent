@@ -764,13 +764,13 @@ def test_transfer_to_notebook_default_view_kb_allows_more_than_50_documents(
 
 
 @pytest.mark.unit
-@patch("app.services.knowledge.knowledge_transfer._get_delete_gateway")
+@patch("app.services.knowledge.knowledge_transfer._get_rag_gateway")
 @patch(
     "app.services.knowledge.orchestrator.KnowledgeOrchestrator._schedule_indexing_celery"
 )
 def test_transfer_triggers_indexing_in_target_kb(
     mock_schedule_indexing: MagicMock,
-    mock_get_delete_gateway: MagicMock,
+    mock_get_rag_gateway: MagicMock,
     test_db: Session,
 ) -> None:
     """Test that transfer triggers indexing in target KB when retrieval config exists."""
@@ -787,7 +787,7 @@ def test_transfer_triggers_indexing_in_target_kb(
     flag_modified(target_kb, "json")
     test_db.commit()
     doc = _create_document(test_db, source_kb_id, owner.id, "index-doc.md")
-    mock_get_delete_gateway.return_value = MagicMock()
+    mock_get_rag_gateway.return_value = MagicMock()
 
     result = KnowledgeService.transfer_documents_to_kb(
         db=test_db,

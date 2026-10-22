@@ -11,7 +11,7 @@
 //! download endpoint then applies its share-token/browser fallbacks.
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json};
 use chrono::NaiveDateTime;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -115,7 +115,10 @@ fn extract_authorization_token(authorization: Option<&str>) -> String {
     header.to_string()
 }
 
-fn algorithm(config: &AuthConfig) -> Algorithm {
+/// Algorithm from settings (`HS256`); shared with the download-token
+/// credential, which `_resolve_user_from_download_token` decodes with the
+/// same `settings.ALGORITHM`.
+pub(super) fn algorithm(config: &AuthConfig) -> Algorithm {
     match config.algorithm.as_str() {
         "HS384" => Algorithm::HS384,
         "HS512" => Algorithm::HS512,

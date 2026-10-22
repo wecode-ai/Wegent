@@ -1,3 +1,4 @@
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { isUsableDevice } from '@/lib/device-capabilities'
 import type {
   DeviceInfo,
@@ -5,11 +6,13 @@ import type {
   RuntimeProjectRef,
   RuntimeProjectRoot,
   RuntimeProjectSpaceRef,
+  RuntimeProjectAiSettings,
   RuntimeProjectWork,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/api'
-import { EMPTY_RUNTIME_WORK, mergeRuntimeWorkLists } from './workbenchCloudStatus'
+import { EMPTY_RUNTIME_WORK } from './workbenchCloudStatus'
+import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 
 const REMOTE_RUNTIME_WORK_CACHE_VERSION = 3
 const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v3'
@@ -130,6 +133,14 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
       ? { projectStore: defaultProjectStore, projectId: defaultProjectId }
       : undefined
 
+  const rawAppearance = recordValue(project.appearance)
+  const rawMarker = recordValue(rawAppearance.marker)
+  const marker =
+    rawMarker.kind === 'emoji' && stringValue(rawMarker.emoji)
+      ? { kind: 'emoji' as const, emoji: stringValue(rawMarker.emoji)! }
+      : rawMarker.kind === 'icon' && stringValue(rawMarker.icon)
+        ? { kind: 'icon' as const, icon: stringValue(rawMarker.icon)! }
+        : undefined
   return {
     key,
     name,
@@ -148,6 +159,23 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
     ...(nullableStringValue(project.stateDeviceId) !== undefined
       ? { stateDeviceId: nullableStringValue(project.stateDeviceId) }
       : {}),
+    ...(stringValue(project.ownerDeviceId)
+      ? { ownerDeviceId: stringValue(project.ownerDeviceId) }
+      : {}),
+    ...(stringValue(project.ownerProjectKey)
+      ? { ownerProjectKey: stringValue(project.ownerProjectKey) }
+      : {}),
+    ...(project.aiSettings ? { aiSettings: sanitizeProjectAiSettings(project.aiSettings) } : {}),
+    ...(project.appearance
+      ? {
+          appearance: {
+            ...(stringValue(rawAppearance.color)
+              ? { color: stringValue(rawAppearance.color) }
+              : {}),
+            ...(marker ? { marker } : {}),
+          },
+        }
+      : {}),
     ...(roots ? { roots } : {}),
     ...(nullableNumberValue(project.sidebarOrder) !== undefined
       ? { sidebarOrder: nullableNumberValue(project.sidebarOrder) }
@@ -158,6 +186,66 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
       : {}),
     ...(booleanValue(project.active) !== undefined ? { active: booleanValue(project.active) } : {}),
     ...(defaultProjectSpace ? { defaultProjectSpace } : {}),
+  }
+}
+
+function sanitizeProjectAiSettings(value: unknown): RuntimeProjectAiSettings {
+  const settings = recordValue(value)
+  const selection = recordValue(settings.modelSelection)
+  const modelType = selection.modelType
+  const plugins = Array.isArray(settings.plugins)
+    ? settings.plugins.flatMap(raw => {
+        const plugin = recordValue(raw)
+        const id = stringValue(plugin.id),
+          pluginName = stringValue(plugin.pluginName),
+          marketplaceId = stringValue(plugin.marketplaceId)
+        return id && pluginName && marketplaceId
+          ? [
+              {
+                id,
+                pluginName,
+                marketplaceId,
+                displayName: stringValue(plugin.displayName) || pluginName,
+              },
+            ]
+          : []
+      })
+    : []
+  const quickPhrases = Array.isArray(settings.quickPhrases)
+    ? settings.quickPhrases.flatMap(raw => {
+        const phrase = recordValue(raw)
+        const id = stringValue(phrase.id),
+          title = stringValue(phrase.title),
+          content = stringValue(phrase.content)
+        const mode = phrase.mode
+        return id && title && content && (mode === 'normal' || mode === 'plan' || mode === 'goal')
+          ? [{ id, title, content, mode }]
+          : []
+      })
+    : []
+  return {
+    ...(typeof settings.instructions === 'string' ? { instructions: settings.instructions } : {}),
+    modelSelection: stringValue(selection.modelName)
+      ? {
+          modelName: stringValue(selection.modelName)!,
+          modelType:
+            modelType === 'runtime' ||
+            modelType === 'public' ||
+            modelType === 'user' ||
+            modelType === 'group'
+              ? modelType
+              : null,
+          options: Object.fromEntries(
+            Object.entries(recordValue(selection.options)).filter(
+              (entry): entry is [string, string] => typeof entry[1] === 'string'
+            )
+          ),
+        }
+      : null,
+    ...(plugins.length ? { plugins } : {}),
+    ...(quickPhrases.length
+      ? { quickPhrases: quickPhrases as NonNullable<RuntimeProjectAiSettings['quickPhrases']> }
+      : {}),
   }
 }
 
@@ -389,20 +477,6 @@ function runtimeWorkspaces(runtimeWork: RuntimeWorkListResponse): RuntimeDeviceW
   ]
 }
 
-function deviceAliases(device: DeviceInfo): Set<string> {
-  return new Set(
-    [
-      device.device_id,
-      device.app_device_id,
-      device.socket_device_id,
-      device.runtime_instance_id,
-      ...(device.runtime_routes ?? []).flatMap(route => [route.device_id, route.runtime_device_id]),
-    ]
-      .map(value => value?.trim())
-      .filter((value): value is string => Boolean(value))
-  )
-}
-
 function workspaceAliases(workspace: RuntimeDeviceWorkspace): Set<string> {
   return new Set(
     [workspace.deviceId, workspace.remoteHostId]
@@ -437,7 +511,7 @@ function withCachedDeviceLabels(
   if (!devices) return runtimeWork
   const deviceRecords = devices.map(device => ({
     device,
-    aliases: deviceAliases(device),
+    aliases: new Set(getWorkbenchDeviceIds(device)),
   }))
   const annotateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
     const aliases = workspaceAliases(workspace)
@@ -493,7 +567,7 @@ export function reconcileCachedRemoteRuntimeWork(
   const cachedSnapshot = createRemoteRuntimeWorkCacheSnapshot(cachedRuntimeWork)
   const liveWorkspaceAliases = runtimeWorkspaces(liveRuntimeWork).map(workspaceAliases)
   const deviceRecords = devices?.map(device => ({
-    aliases: deviceAliases(device),
+    aliases: new Set(getWorkbenchDeviceIds(device)),
     available: isUsableDevice(device),
   }))
 

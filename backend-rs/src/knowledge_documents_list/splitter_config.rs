@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The stored `splitter_config` payload and its response normalization
-//! (`shared.models.splitter_config`).
+//! (`shared.knowledge_contracts.splitter_config`).
 use serde_json::json;
 
 /// The stored `splitter_config` payload: either the normalized shape
 /// (`chunk_strategy` + strategy-specific config) or one of the legacy
-/// `type`-tagged shapes (`shared.models.splitter_config`).
+/// `type`-tagged shapes (`shared.knowledge_contracts.splitter_config`).
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
 pub enum StoredSplitterConfig {
@@ -40,6 +40,13 @@ pub enum StoredSplitterConfig {
         buffer_size: Option<i64>,
         #[serde(default)]
         breakpoint_percentile_threshold: Option<i64>,
+    },
+    /// An empty stored payload: `normalize_splitter_config`'s `raw == {}`
+    /// branch renders the flat default. A unit variant alone would only
+    /// match JSON `null`, so the empty map is captured explicitly.
+    Empty {
+        #[serde(default)]
+        _empty: std::marker::PhantomData<()>,
     },
 }
 
@@ -74,7 +81,8 @@ pub(super) struct MarkdownEnhancementConfig {
     enabled: bool,
 }
 
-/// `normalize_splitter_config` (`shared.models.splitter_config`): convert
+/// `normalize_splitter_config` (`shared.knowledge_contracts.splitter_config`):
+/// convert
 /// legacy and normalized payloads to the one stable response shape. The
 /// result is built with `json!` so the field order matches the pydantic
 /// model's serialization order.
@@ -152,6 +160,21 @@ pub fn normalize_splitter_config(raw: &StoredSplitterConfig) -> impl serde::Seri
             })
         }
         StoredSplitterConfig::Legacy { .. } => json!({
+            "chunk_strategy": "flat",
+            "format_enhancement": "none",
+            "flat_config": {
+                "chunk_size": 1024,
+                "chunk_overlap": 200,
+                "separator": "\n\n",
+            },
+            "hierarchical_config": null,
+            "semantic_config": null,
+            "markdown_enhancement": {"enabled": false},
+            "legacy_type": null,
+        }),
+        // `normalize_splitter_config`'s `raw is None or raw == {}` branch:
+        // the flat default with the `FlatChunkConfig` field defaults.
+        StoredSplitterConfig::Empty { .. } => json!({
             "chunk_strategy": "flat",
             "format_enhancement": "none",
             "flat_config": {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
-import { mergeRuntimeWorkLists } from './workbenchCloudStatus'
+import { mergeRuntimeWorkLists } from './runtimeWorkMerge'
 import {
   createRemoteRuntimeWorkCacheSnapshot,
   readCachedRemoteRuntimeWork,
@@ -73,6 +73,47 @@ function device(
 describe('remote runtime work cache', () => {
   beforeEach(() => {
     localStorage.clear()
+  })
+
+  test('retains full project settings and owner identity across offline reload', () => {
+    const input = runtimeWork(workspace('remote-a', 'task'))
+    Object.assign(input.projects[0].project, {
+      appearance: { color: 'blue', marker: { kind: 'emoji', emoji: '⭐' } },
+      ownerDeviceId: 'remote-a',
+      ownerProjectKey: 'stable',
+      roots: [
+        { kind: 'local', path: '/new' },
+        { kind: 'local', path: '/extra' },
+      ],
+      aiSettings: {
+        instructions: 'Instructions',
+        modelSelection: {
+          modelName: 'model',
+          modelType: 'runtime',
+          options: { reasoning: 'high' },
+        },
+        plugins: [
+          {
+            id: 'quality@team',
+            pluginName: 'quality',
+            marketplaceId: 'team',
+            displayName: 'Quality',
+          },
+        ],
+        quickPhrases: [
+          { id: 'review', title: 'Review', content: 'Review changes', mode: 'normal' },
+        ],
+      },
+    })
+    writeCachedRemoteRuntimeWork(7, input, [device('remote-a', 'online')])
+    const restored = readCachedRemoteRuntimeWork(7)
+    expect(restored.projects[0].project).toMatchObject({
+      appearance: input.projects[0].project.appearance,
+      ownerDeviceId: 'remote-a',
+      ownerProjectKey: 'stable',
+      roots: input.projects[0].project.roots,
+      aiSettings: input.projects[0].project.aiSettings,
+    })
   })
 
   test('persists only sidebar summary fields and restores them as unavailable', () => {

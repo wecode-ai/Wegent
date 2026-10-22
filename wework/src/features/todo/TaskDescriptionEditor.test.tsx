@@ -120,7 +120,7 @@ describe('TaskDescriptionEditor', () => {
   })
 
   it('routes pasted files to the shared attachment flow', async () => {
-    const onPasteFiles = vi.fn()
+    const onPasteFiles = vi.fn(async () => null)
     render(<TaskDescriptionEditor value="" onChange={vi.fn()} onPasteFiles={onPasteFiles} />)
     const editor = await screen.findByTestId('cloud-todo-detail-description')
     const file = new File(['image'], 'capture.png', { type: 'image/png' })
@@ -134,6 +134,39 @@ describe('TaskDescriptionEditor', () => {
     expect(onPasteFiles).toHaveBeenCalledWith([file])
   })
 
+  it('inserts uploaded attachment Markdown next to the paste position', async () => {
+    const onChange = vi.fn()
+    const onPasteFiles = vi.fn(
+      async () =>
+        '[capture.png](wegent://attachments/attachment-pasted)\n<!-- wegent-attachment:attachment-pasted -->'
+    )
+    render(
+      <TaskDescriptionEditor
+        value="前文"
+        onChange={onChange}
+        onPasteFiles={onPasteFiles}
+        readAttachment={vi.fn(async () => new Blob(['image'], { type: 'image/png' }))}
+      />
+    )
+    const editor = await screen.findByTestId('cloud-todo-detail-description')
+    const file = new File(['image'], 'capture.png', { type: 'image/png' })
+    const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { files: [file], types: ['Files'] },
+    })
+
+    editor.dispatchEvent(paste)
+
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.stringContaining('wegent://attachments/attachment-pasted')
+      )
+    )
+    expect(
+      await screen.findByTestId('task-description-attachment-image-attachment-pasted')
+    ).toBeInTheDocument()
+  })
+
   it('applies external Markdown updates in place', async () => {
     const view = render(<TaskDescriptionEditor value={'旧内容'} onChange={vi.fn()} />)
     const editor = await screen.findByTestId('cloud-todo-detail-description')
@@ -141,6 +174,35 @@ describe('TaskDescriptionEditor', () => {
     view.rerender(<TaskDescriptionEditor value={'新内容'} onChange={vi.fn()} />)
 
     expect(editor.textContent).toContain('新内容')
+  })
+
+  it('renders attachment image blocks after an external Markdown update', async () => {
+    const readAttachment = vi.fn(async () => new Blob(['image'], { type: 'image/png' }))
+    const onInlineAttachmentIdsChange = vi.fn()
+    const view = render(
+      <TaskDescriptionEditor
+        value=""
+        onChange={vi.fn()}
+        readAttachment={readAttachment}
+        onInlineAttachmentIdsChange={onInlineAttachmentIdsChange}
+      />
+    )
+    await screen.findByTestId('cloud-todo-detail-description')
+
+    view.rerender(
+      <TaskDescriptionEditor
+        value="[late.png](wegent://attachments/late-image)"
+        onChange={vi.fn()}
+        readAttachment={readAttachment}
+        onInlineAttachmentIdsChange={onInlineAttachmentIdsChange}
+      />
+    )
+
+    expect(
+      await screen.findByTestId('task-description-attachment-image-late-image')
+    ).toBeInTheDocument()
+    expect((await screen.findByAltText('late.png')).getAttribute('src')).toMatch(/^blob:/)
+    expect(onInlineAttachmentIdsChange).toHaveBeenCalledWith(['late-image'])
   })
 
   it('does not publish intermediate pinyin while an IME composition is active', async () => {
@@ -187,25 +249,27 @@ describe('TaskDescriptionEditor', () => {
       URL.revokeObjectURL = vi.fn()
     })
 
-    it('fetches attachment images only when hovered', async () => {
+    it('renders attachment images inline without waiting for hover', async () => {
       const readAttachment = vi.fn(async () => new Blob(['fake-image'], { type: 'image/png' }))
+      const onInlineAttachmentIdsChange = vi.fn()
       render(
         <TaskDescriptionEditor
           value={'[image.png](wegent://attachments/att-1)'}
           onChange={vi.fn()}
           readAttachment={readAttachment}
+          onInlineAttachmentIdsChange={onInlineAttachmentIdsChange}
         />
       )
-      const editor = await screen.findByTestId('cloud-todo-detail-description')
-      expect(readAttachment).not.toHaveBeenCalled()
-
-      const link = editor.querySelector('a[href="wegent://attachments/att-1"]') as HTMLAnchorElement
-      expect(link).toBeTruthy()
-      fireEvent.mouseOver(link)
-
+      await screen.findByTestId('cloud-todo-detail-description')
       await waitFor(() => expect(readAttachment).toHaveBeenCalledWith('att-1'))
-      const preview = await screen.findByAltText('image.png')
-      expect(preview.getAttribute('src')).toMatch(/^blob:/)
+      const image = await screen.findByAltText('image.png')
+      expect(image.getAttribute('src')).toMatch(/^blob:/)
+      expect(onInlineAttachmentIdsChange).toHaveBeenCalledWith(['att-1'])
+
+      fireEvent.click(screen.getByRole('button', { name: '预览 image.png' }))
+      expect(screen.getByRole('dialog', { name: '预览 image.png' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '关闭预览' }))
+      expect(screen.queryByRole('dialog', { name: '预览 image.png' })).toBeNull()
     })
 
     it('does not fetch non-image attachments', async () => {
@@ -222,76 +286,6 @@ describe('TaskDescriptionEditor', () => {
       fireEvent.mouseOver(link)
       await new Promise(resolve => setTimeout(resolve, 50))
       expect(readAttachment).not.toHaveBeenCalled()
-    })
-
-    it('opens a zoomable lightbox from the hover preview', async () => {
-      const readAttachment = vi.fn(async () => new Blob(['fake-image'], { type: 'image/png' }))
-      render(
-        <TaskDescriptionEditor
-          value={'[image.png](wegent://attachments/att-1)'}
-          onChange={vi.fn()}
-          readAttachment={readAttachment}
-        />
-      )
-      const editor = await screen.findByTestId('cloud-todo-detail-description')
-      const link = editor.querySelector('a[href="wegent://attachments/att-1"]') as HTMLAnchorElement
-      fireEvent.mouseOver(link)
-      const preview = await screen.findByAltText('image.png')
-      const viewButton = screen.getByTestId('cloud-todo-preview-view')
-      expect(viewButton).toHaveTextContent('查看大图')
-      fireEvent.click(viewButton)
-
-      const lightbox = await screen.findByTestId('cloud-todo-preview-lightbox')
-      expect(lightbox.querySelector('img')).toHaveAttribute('src', preview.getAttribute('src'))
-      expect(screen.getByText('100%')).toBeTruthy()
-
-      fireEvent.click(screen.getByTestId('cloud-todo-preview-zoom-in'))
-      expect(screen.getByText('125%')).toBeTruthy()
-      fireEvent.click(screen.getByTestId('cloud-todo-preview-zoom-out'))
-      expect(screen.getByText('100%')).toBeTruthy()
-
-      fireEvent.keyDown(window, { key: 'Escape' })
-      await waitFor(() => expect(screen.queryByTestId('cloud-todo-preview-lightbox')).toBeNull())
-    })
-
-    it('keeps the preview open when the mouse moves onto it', async () => {
-      const readAttachment = vi.fn(async () => new Blob(['fake-image'], { type: 'image/png' }))
-      render(
-        <TaskDescriptionEditor
-          value={'[image.png](wegent://attachments/att-1)'}
-          onChange={vi.fn()}
-          readAttachment={readAttachment}
-        />
-      )
-      const editor = await screen.findByTestId('cloud-todo-detail-description')
-      const link = editor.querySelector('a[href="wegent://attachments/att-1"]') as HTMLAnchorElement
-      fireEvent.mouseOver(link)
-      const preview = await screen.findByTestId('cloud-todo-preview')
-
-      // Crossing the gap starts the hide timer; entering the preview must
-      // cancel it so the image does not vanish under the cursor.
-      fireEvent.mouseOut(link, { relatedTarget: editor })
-      fireEvent.mouseOver(preview)
-      await new Promise(resolve => setTimeout(resolve, 450))
-      expect(screen.getByTestId('cloud-todo-preview')).toBeInTheDocument()
-    })
-
-    it('hides the preview immediately when leaving the editor', async () => {
-      const readAttachment = vi.fn(async () => new Blob(['fake-image'], { type: 'image/png' }))
-      render(
-        <TaskDescriptionEditor
-          value={'[image.png](wegent://attachments/att-1)'}
-          onChange={vi.fn()}
-          readAttachment={readAttachment}
-        />
-      )
-      const editor = await screen.findByTestId('cloud-todo-detail-description')
-      const link = editor.querySelector('a[href="wegent://attachments/att-1"]') as HTMLAnchorElement
-      fireEvent.mouseOver(link)
-      await screen.findByTestId('cloud-todo-preview')
-
-      fireEvent.mouseOut(link, { relatedTarget: document.body })
-      await waitFor(() => expect(screen.queryByTestId('cloud-todo-preview')).toBeNull())
     })
   })
 })

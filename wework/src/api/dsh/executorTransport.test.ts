@@ -5,6 +5,9 @@ import {
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from './executorTransport'
+import { logModelLoading } from '@/lib/model-loading-diagnostics'
+
+vi.mock('@/lib/model-loading-diagnostics', () => ({ logModelLoading: vi.fn() }))
 
 describe('DSH executor transport', () => {
   afterEach(() => {
@@ -23,6 +26,7 @@ describe('DSH executor transport', () => {
               executor: {
                 protocol_version: 1,
                 device_id: 'device-1',
+                runtime_instance_id: 'runtime-1',
                 capabilities: ['runtime.tasks'],
                 renderer_methods: ['runtime.*'],
                 transports: ['local-endpoint-ndjson'],
@@ -35,9 +39,36 @@ describe('DSH executor transport', () => {
 
     await expect(describeDshExecutor()).resolves.toMatchObject({
       device_id: 'device-1',
+      runtime_instance_id: 'runtime-1',
       capabilities: ['runtime.tasks'],
     })
   })
+
+  test.each([undefined, null, '', '  ', 1])(
+    'rejects a managed executor with invalid Runtime identity %s',
+    async runtimeInstanceId => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                protocolVersion: 1,
+                executor: {
+                  protocol_version: 1,
+                  device_id: 'device-1',
+                  runtime_instance_id: runtimeInstanceId,
+                },
+              })
+            )
+        )
+      )
+      await expect(describeDshExecutor()).rejects.toMatchObject({
+        code: 'protocol_mismatch',
+        message: 'DSH executor returned a missing or invalid Runtime identity',
+      })
+    }
+  )
 
   test('sends RPC through the same-origin runtime route', async () => {
     const fetchMock = vi.fn(
@@ -70,6 +101,16 @@ describe('DSH executor transport', () => {
     })
     expect(request.id).toBe(
       (fetchMock.mock.calls[0][1]?.headers as Record<string, string>)['x-request-id']
+    )
+    expect(logModelLoading).toHaveBeenCalledWith(
+      request.id,
+      'rpc.runtime.tasks.list.fetch_started',
+      expect.objectContaining({ elapsedMs: expect.any(Number) })
+    )
+    expect(logModelLoading).toHaveBeenCalledWith(
+      request.id,
+      'rpc.runtime.tasks.list.body_parsed',
+      expect.objectContaining({ ok: true })
     )
   })
 
@@ -177,6 +218,80 @@ describe('DSH executor transport', () => {
     expect(requestAnimationFrame).not.toHaveBeenCalled()
 
     unsubscribe()
+  })
+
+  test('shares one stream across subscribers and closes it after the last unsubscribe', () => {
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failingListener = vi.fn(() => {
+      throw new Error('reducer failed')
+    })
+    const listener = vi.fn()
+    const unsubscribeFailing = subscribeDshExecutorEvents(failingListener)
+    const unsubscribeFirst = subscribeDshExecutorEvents(listener)
+    const unsubscribeSecond = subscribeDshExecutorEvents(listener)
+    const otherListeners = Array.from({ length: 5 }, () => vi.fn())
+    const unsubscribeOthers = otherListeners.map(subscribeDshExecutorEvents)
+
+    expect(sources).toHaveLength(1)
+    sources[0].onopen?.()
+    emitExecutorEvent(sources[0].onmessage, eventEnvelope(1, 'response.created'))
+    expect(failingListener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(2)
+    otherListeners.forEach(other => expect(other).toHaveBeenCalledTimes(1))
+
+    unsubscribeFailing()
+    unsubscribeFirst()
+    unsubscribeOthers.forEach(unsubscribe => unsubscribe())
+    expect(sources[0].closed).toBe(false)
+    reconnectDshExecutorEvents()
+    expect(sources).toHaveLength(2)
+    expect(sources[0].closed).toBe(true)
+    expect(sources[1].url).toBe('/wework/executor/v1/events?after=1&replay=1')
+    emitExecutorEvent(sources[1].onmessage, eventEnvelope(1, 'response.created'))
+    expect(listener).toHaveBeenCalledTimes(2)
+    emitExecutorEvent(sources[1].onmessage, eventEnvelope(2, 'response.completed'))
+    expect(listener).toHaveBeenCalledTimes(3)
+
+    unsubscribeSecond()
+    expect(sources[1].closed).toBe(true)
+    const unsubscribeFresh = subscribeDshExecutorEvents(listener)
+    expect(sources[2].url).toBe('/wework/executor/v1/events?after=0&replay=0')
+    unsubscribeSecond()
+    expect(sources[2].closed).toBe(false)
+    unsubscribeFresh()
+    expect(sources[2].closed).toBe(true)
+    consoleError.mockRestore()
+  })
+
+  test('cancels a shared reconnect when all subscribers unsubscribe', () => {
+    vi.useFakeTimers()
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const unsubscribe = subscribeDshExecutorEvents(vi.fn())
+    sources[0].onerror?.()
+    unsubscribe()
+    vi.runAllTimers()
+    expect(sources).toHaveLength(1)
+    expect(sources[0].closed).toBe(true)
+    vi.useRealTimers()
   })
 
   test('replaces a stale executor event stream after system resume', () => {

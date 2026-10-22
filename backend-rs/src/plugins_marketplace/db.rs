@@ -14,7 +14,7 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 pub use brz_mysql::Mysql as MysqlCapability;
 use chrono::NaiveDateTime;
 
-use crate::json_compat::OpaqueJson;
+use brz_json::OpaqueJson;
 
 /// One `users` row, as used by marketplace listing and authentication.
 ///
@@ -57,7 +57,7 @@ pub struct UserRow {
 }
 
 /// One `plugins` row.
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct PluginRow {
     #[mysql(rename = "plugins_id")]
     pub id: i64,
@@ -114,7 +114,7 @@ pub struct PluginRow {
 }
 
 /// One `plugin_releases` row.
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct PluginReleaseRow {
     #[mysql(rename = "plugin_releases_id")]
     pub id: i64,
@@ -260,13 +260,15 @@ pub struct NamespaceRow {
 }
 
 /// One `plugin_device_installations` row.
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub struct DeviceInstallationRow {
     #[mysql(rename = "plugin_device_installations_id")]
     #[allow(dead_code)]
     pub id: i64,
     #[mysql(rename = "plugin_device_installations_installed_kind_id")]
     pub installed_kind_id: i64,
+    #[mysql(rename = "plugin_device_installations_user_id")]
+    pub user_id: i64,
     #[mysql(rename = "plugin_device_installations_device_id")]
     pub device_id: String,
     #[mysql(rename = "plugin_device_installations_desired_release_id")]
@@ -287,13 +289,35 @@ pub struct DeviceInstallationRow {
     pub updated_at: NaiveDateTime,
 }
 
+impl crate::device_identity::DeviceRow for DeviceInstallationRow {
+    fn user_id(&self) -> i64 {
+        self.user_id
+    }
+
+    fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    fn installed_kind_id(&self) -> i64 {
+        self.installed_kind_id
+    }
+
+    fn last_sync_at(&self) -> NaiveDateTime {
+        self.last_sync_at
+    }
+
+    fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+}
+
 const USER_COLUMNS: &str = "users.id AS users_id, users.user_name AS users_user_name, \
      users.password_hash AS users_password_hash, users.email AS users_email, \
      users.git_info AS users_git_info, users.is_active AS users_is_active, users.`role` AS \
      users_role, users.auth_source AS users_auth_source, users.preferences AS \
      users_preferences, users.created_at AS users_created_at, users.updated_at AS \
      users_updated_at";
-const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, plugins.catalog_namespace AS \
+pub(crate) const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, plugins.catalog_namespace AS \
      plugins_catalog_namespace, plugins.slug AS plugins_slug, plugins.name AS plugins_name, \
      plugins.display_name AS plugins_display_name, plugins.summary AS plugins_summary, \
      plugins.description_md AS plugins_description_md, plugins.listing_type AS \
@@ -307,7 +331,7 @@ const PLUGIN_COLUMNS: &str = "plugins.id AS plugins_id, plugins.catalog_namespac
      plugins.featured_rank AS plugins_featured_rank, plugins.created_at AS \
      plugins_created_at, plugins.updated_at AS plugins_updated_at, plugins.published_at AS \
      plugins_published_at";
-const RELEASE_COLUMNS: &str = "plugin_releases.id AS plugin_releases_id, \
+pub(crate) const RELEASE_COLUMNS: &str = "plugin_releases.id AS plugin_releases_id, \
      plugin_releases.plugin_id AS plugin_releases_plugin_id, plugin_releases.version AS \
      plugin_releases_version, plugin_releases.manifest_json AS plugin_releases_manifest_json, \
      plugin_releases.interface_json AS plugin_releases_interface_json, \
@@ -321,11 +345,11 @@ const RELEASE_COLUMNS: &str = "plugin_releases.id AS plugin_releases_id, \
      plugin_releases_publication_revision_id, plugin_releases.source_commit_sha AS \
      plugin_releases_source_commit_sha, plugin_releases.created_at AS \
      plugin_releases_created_at, plugin_releases.published_at AS plugin_releases_published_at";
-const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+pub(crate) const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, kinds.namespace AS kinds_namespace, \
      kinds.json AS kinds_json, kinds.is_active AS kinds_is_active, kinds.created_at AS \
      kinds_created_at, kinds.updated_at AS kinds_updated_at";
-const GRANT_COLUMNS: &str = "resource_members.id AS resource_members_id, \
+pub(crate) const GRANT_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members.resource_type AS resource_members_resource_type, \
      resource_members.resource_id AS resource_members_resource_id, \
      resource_members.entity_type AS resource_members_entity_type, resource_members.entity_id \
@@ -341,9 +365,10 @@ const GRANT_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members_requested_at, resource_members.created_at AS \
      resource_members_created_at, resource_members.updated_at AS resource_members_updated_at";
 const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, namespace.name AS namespace_name";
-const DEVICE_COLUMNS: &str = "plugin_device_installations.id AS \
+pub(crate) const DEVICE_COLUMNS: &str = "plugin_device_installations.id AS \
      plugin_device_installations_id, plugin_device_installations.installed_kind_id AS \
-     plugin_device_installations_installed_kind_id, plugin_device_installations.device_id AS \
+     plugin_device_installations_installed_kind_id, plugin_device_installations.user_id AS \
+     plugin_device_installations_user_id, plugin_device_installations.device_id AS \
      plugin_device_installations_device_id, plugin_device_installations.desired_release_id AS \
      plugin_device_installations_desired_release_id, plugin_device_installations.actual_release_id \
      AS plugin_device_installations_actual_release_id, plugin_device_installations.state AS \
@@ -353,32 +378,6 @@ const DEVICE_COLUMNS: &str = "plugin_device_installations.id AS \
      plugin_device_installations_attempt_count, plugin_device_installations.last_sync_at AS \
      plugin_device_installations_last_sync_at, plugin_device_installations.updated_at AS \
      plugin_device_installations_updated_at";
-
-/// One bound argument of the device-installation query, preserving the
-/// recorded literal's token kind: the source's SQLAlchemy `in_` renders the
-/// installed kind ids as integer literals while `device_id ==` renders the
-/// device id as a quoted string.
-#[derive(Debug, Clone)]
-enum DeviceArg {
-    Int(i64),
-    Str(String),
-}
-
-impl brz_mysql::MysqlValue for DeviceArg {
-    fn write(self, writer: &mut brz_mysql::MysqlValueWriter) -> brz_mysql::MysqlResult<()> {
-        match self {
-            Self::Int(value) => value.write(writer),
-            Self::Str(value) => value.write(writer),
-        }
-    }
-
-    fn encoded_size_hint(&self) -> usize {
-        match self {
-            Self::Int(value) => value.encoded_size_hint(),
-            Self::Str(value) => value.encoded_size_hint(),
-        }
-    }
-}
 
 /// Query helpers for the marketplace listing.
 pub struct UserRepository;
@@ -622,37 +621,26 @@ impl UserRepository {
             .await
     }
 
-    /// Load device installations for the given installed kind IDs on one
-    /// device.
-    pub async fn list_device_installations<M>(
+    /// Load all device installations owned by one user.
+    ///
+    /// Source `plugin_device_rows`: `WHERE user_id = ?`, then the caller
+    /// coalesces rows and filters by the canonical device id resolved from the
+    /// requested device. The full labeled column list matches the recorded
+    /// SQLAlchemy exchange.
+    pub async fn list_device_installations_by_user<M>(
         mysql: &M,
-        installed_kind_ids: &[i64],
-        device_id: &str,
+        user_id: i64,
     ) -> MysqlResult<Vec<DeviceInstallationRow>>
     where
         M: Mysql,
     {
-        if installed_kind_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        // Source filters `installed_kind_id IN (...) AND device_id = ?` for
-        // the user's selected installed kinds only; the kind ids bind as
-        // integers and the device id as a string, like the recorded
-        // SQLAlchemy rendering.
-        let placeholders = vec!["?"; installed_kind_ids.len()].join(", ");
-        let mut arguments: Vec<DeviceArg> = installed_kind_ids
-            .iter()
-            .map(|kind_id| DeviceArg::Int(*kind_id))
-            .collect();
-        arguments.push(DeviceArg::Str(device_id.to_owned()));
         mysql
             .fetch_all(
                 format!(
                     "SELECT {DEVICE_COLUMNS} FROM plugin_device_installations WHERE \
-                     plugin_device_installations.installed_kind_id IN ({placeholders}) AND \
-                     plugin_device_installations.device_id = ?"
+                     plugin_device_installations.user_id = ?"
                 ),
-                arguments,
+                (user_id,),
             )
             .await
     }

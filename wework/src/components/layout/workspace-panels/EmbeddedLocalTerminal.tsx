@@ -68,6 +68,8 @@ export function EmbeddedLocalTerminal({
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+  const exitedRef = useRef(false)
+  const terminalInputReadyRef = useRef(false)
   const appearanceRef = useRef(appearance)
   const resourceRef = useRef<LocalTerminalResource | null>(null)
   const cleanupTimerRef = useRef<number | null>(null)
@@ -135,6 +137,8 @@ export function EmbeddedLocalTerminal({
     }
     currentResource?.dispose()
     lastSizeRef.current = null
+    exitedRef.current = false
+    terminalInputReadyRef.current = false
 
     const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
@@ -150,14 +154,14 @@ export function EmbeddedLocalTerminal({
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
-    let terminalInputReady = false
     let pendingTerminalInput = ''
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
     }
     const writeTerminalInput = (data: string) => {
-      if (!terminalInputReady) {
+      if (exitedRef.current) return
+      if (!terminalInputReadyRef.current) {
         pendingTerminalInput += data
         return
       }
@@ -200,7 +204,14 @@ export function EmbeddedLocalTerminal({
     }
 
     const syncTerminalSize = () => {
-      if (!activeRef.current || terminal.rows <= 0 || terminal.cols <= 0) return
+      if (
+        !terminalInputReadyRef.current ||
+        exitedRef.current ||
+        !activeRef.current ||
+        terminal.rows <= 0 ||
+        terminal.cols <= 0
+      )
+        return
 
       const lastSize = lastSizeRef.current
       if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
@@ -233,7 +244,8 @@ export function EmbeddedLocalTerminal({
           terminal.write(payload.data, () => {
             if (disposed) return
             if (source === 'snapshot') {
-              terminalInputReady = true
+              terminalInputReadyRef.current = true
+              syncTerminalSize()
               if (pendingTerminalInput) {
                 writeTerminalInput(pendingTerminalInput)
                 pendingTerminalInput = ''
@@ -245,6 +257,9 @@ export function EmbeddedLocalTerminal({
       },
       payload => {
         if (!disposed && payload.session_id === sessionId) {
+          exitedRef.current = true
+          terminal.options.disableStdin = true
+          pendingTerminalInput = ''
           onExitRef.current?.()
         }
       },
@@ -320,7 +335,12 @@ export function EmbeddedLocalTerminal({
           terminalKind: 'local',
         })
         focusTerminalUnlessComposerFocusRequested(terminal.textarea)
-        if (terminal.rows > 0 && terminal.cols > 0) {
+        if (
+          terminalInputReadyRef.current &&
+          !exitedRef.current &&
+          terminal.rows > 0 &&
+          terminal.cols > 0
+        ) {
           const lastSize = lastSizeRef.current
           if (lastSize?.rows !== terminal.rows || lastSize.cols !== terminal.cols) {
             lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }

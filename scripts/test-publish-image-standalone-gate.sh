@@ -49,6 +49,7 @@ verify_arch_gate() {
 
     require_line "$block" "Build standalone image for verification (${arch})" "${arch} verification build step"
     require_line "$block" "load: true" "${arch} local Docker load"
+    require_line "$block" 'WEWORK_SOURCE_SHA=${{ github.sha }}' "${arch} Wework source SHA"
     require_line "$block" "Verify standalone image startup (${arch})" "${arch} startup verification step"
     require_line "$block" 'run: bash scripts/verify-standalone-image.sh "$IMAGE"' "${arch} verification script call"
     require_line "$block" "Push verified standalone image (${arch})" "${arch} verified push step"

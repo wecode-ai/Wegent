@@ -30,8 +30,44 @@ Before changing a Wework flow, identify the affected product area and trace its 
 - Custom Markdown renderers must preserve semantic attributes supplied by the parser, such as an ordered list's `start` value.
 - Preserve platform text-navigation semantics in the ProseMirror chat composer. Register only composer-specific key bindings instead of the document-level `baseKeymap`, and scope mention caret workarounds to unmodified arrow keys.
 - Focus popup composers through their exact editor target; a mixed `querySelector` returns the first matching element in DOM order, not the first selector in the list. In WKWebView, keep a completely empty contenteditable position native instead of replacing it with a decoration widget so programmatic focus can start the platform text input session.
-- Keep model selector controls mounted while refreshing an already-loaded model catalog. Reserve loading placeholders for the initial catalog load so background refreshes do not create blank composer actions.
+- Always keep task model selector controls mounted, including initial catalog loading, refresh failures, empty catalogs, and deleted task models. Model readiness may block sending but must never hide the recovery entry.
 - In project-board hover conversations, handle self-contained actions such as sending, retrying, answering runtime input, and loading or reverting diffs inside the popup. Actions that require workbench UI, including opening files, skills, reviews, plans, or switching the retry model, must navigate to the bound Runtime task. Never render an enabled conversation action without a real handler.
+
+## Native application menu
+
+The Electron host declares the native application menu
+(`electron/src/host/application-menu.ts`) and the renderer executes the actions
+it dispatches (`src/desktop/applicationMenu.ts` and
+`src/desktop/ApplicationMenuWorkspaceBridge.tsx`). When adding menu items:
+
+- Prefer attaching a new product action to an existing top-level menu
+  (`application`, `file`, `work`, `edit`, `view`, `window`, `help`); do not add a
+  new top-level menu without discussing it first.
+- Reuse an action the UI already has. Menu items must call the same handler or
+  command as the existing control, never a second navigation or state path.
+- Only add menu items that are unambiguous and useful in every state, or that
+  declare a capability so they hide when unavailable. A menu item that looks
+  enabled but does nothing is a defect, not a fallback.
+- The host owns item ids, labels, and menu structure. Actions and capabilities
+  are declared in both `src/desktop/applicationMenuModel.ts` (renderer) and
+  `electron/src/host/application-menu.ts` (host); a contract test fails when
+  those two declarations drift, and the `application-menu` E2E checkpoint fails
+  when an item id disappears.
+- Declaring a capability is a promise that some code reports it. Only declare a
+  capability when the renderer actually reports it for the focused window, and
+  cover the item becoming _visible_ in the E2E checkpoint. An item whose
+  capability is never reported is a permanently hidden dead entry, which the
+  contract test cannot detect.
+- Hiding an item does not disable its accelerator: Electron still fires a
+  `visible: false` item whose accelerator is pressed. Never rely on the hidden
+  state to block an action — the renderer handler must guard itself against the
+  state where the action is not available.
+- Cover a new item in the `application-menu` desktop E2E checkpoint: assert it
+  exists, that its visibility matches the capability matrix, and that activating
+  it performs its action.
+
+This is a recommendation, not a requirement: a feature that only makes sense
+inside its own surface can stay without a menu entry.
 
 ## i18n
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, SquarePen, X } from 'lucide-react'
 import { DesktopWorkbenchMain } from '@/components/layout/DesktopWorkbenchMain'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -9,24 +9,14 @@ import {
 import {
   dismissPopoutWindow,
   openPopoutTaskInMain,
-  setPopoutWindowExpanded,
-  setPopoutWindowOverlayActive,
+  setPopoutWindowMode,
 } from '@/desktop/popoutWindow'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { isLocalStandaloneDevice } from '@/components/chat/composer/project-work-bar-utils'
 import { isOnlineDevice } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
-import {
-  getRuntimeWorkbenchPaneKeys,
-  getWorkbenchPaneKey,
-  type WorkbenchPaneIdentity,
-} from '@/components/layout/workbenchPaneIdentity'
-import {
-  useWorkbenchSplitGroups,
-  workbenchSplitStorageKeys,
-} from '@/components/layout/useWorkbenchSplitGroups'
+import type { WorkbenchPaneIdentity } from '@/components/layout/workbenchPaneIdentity'
 import './PopoutWorkbenchPage.css'
 
 const POPOUT_LAST_PROJECT_STORAGE_KEY = 'wework.popout.lastProjectId.v1'
@@ -65,14 +55,8 @@ function writeRememberedProjectId(projectId: number | null) {
 
 export function PopoutWorkbenchPage() {
   const { t } = useTranslation('common')
-  const {
-    state,
-    selectProject,
-    selectStandaloneDevice,
-    setWorkbenchError,
-    startNewChat,
-    workspaceTabId,
-  } = useWorkbench()
+  const { state, selectProject, selectStandaloneDevice, setWorkbenchError, startNewChat } =
+    useWorkbench()
   const activePane = useMemo<WorkbenchPaneIdentity>(
     () => ({
       currentRuntimeTask: state.currentRuntimeTask,
@@ -81,19 +65,11 @@ export function PopoutWorkbenchPage() {
     }),
     [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
   )
-  const runtimePaneKeys = useMemo(
-    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
-    [state.runtimeWork]
-  )
-  const splitGroups = useWorkbenchSplitGroups({
-    ...workbenchSplitStorageKeys(`popout:${workspaceTabId ?? 'default'}`),
-    activePaneKey: getWorkbenchPaneKey(activePane),
-    validRuntimeKeys: runtimePaneKeys,
-    runtimeKeysReady: state.runtimeWork !== null,
-  })
   const selectionInitializedRef = useRef(false)
   const restoringProjectIdRef = useRef<number | null | undefined>(undefined)
+  const [overlayOpen, setOverlayOpen] = useState(false)
   const expanded = Boolean(state.currentRuntimeTask)
+  const mode = expanded ? 'conversation' : overlayOpen ? 'menu' : 'composer'
   const title = useMemo(
     () =>
       truncateRuntimeTaskTitle(
@@ -104,7 +80,6 @@ export function PopoutWorkbenchPage() {
   const closeWindow = useCallback(() => {
     void dismissPopoutWindow()
   }, [])
-  useEscapeKey(closeWindow)
 
   useEffect(() => {
     document.documentElement.classList.add('popout-document')
@@ -159,62 +134,54 @@ export function PopoutWorkbenchPage() {
   }, [state.currentProject, state.isBootstrapping])
 
   useEffect(() => {
-    void setPopoutWindowExpanded(expanded)
-  }, [expanded])
+    void setPopoutWindowMode(mode)
+  }, [mode])
 
   useEffect(() => {
-    let overlayActive = false
     const syncOverlayState = () => {
-      const nextOverlayActive = document.querySelector(POPOUT_OVERLAY_SELECTOR) !== null
-      if (nextOverlayActive === overlayActive) return
-      overlayActive = nextOverlayActive
-      void setPopoutWindowOverlayActive(nextOverlayActive)
+      setOverlayOpen(document.querySelector(POPOUT_OVERLAY_SELECTOR) !== null)
     }
     const observer = new MutationObserver(syncOverlayState)
     observer.observe(document.body, { childList: true, subtree: true })
     syncOverlayState()
 
-    return () => {
-      observer.disconnect()
-      if (overlayActive) {
-        void setPopoutWindowOverlayActive(false)
-      }
-    }
+    return () => observer.disconnect()
   }, [])
 
   return (
     <main
       data-testid="popout-workbench-page"
+      data-popout-mode={mode}
       className={cn(
         'popout-window relative flex h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-border/70 bg-background text-text-primary shadow-xl',
-        !expanded && 'popout-window-collapsed',
-        !expanded && 'popout-window-compact-context'
+        !expanded && 'popout-window-compact'
       )}
     >
       {expanded ? (
         <header
           data-testid="popout-window-header"
-          className="electron-titlebar-drag-region relative flex h-11 shrink-0 items-center border-b border-border/40 px-3"
+          className="relative flex h-11 shrink-0 items-center border-b border-border/40 px-3"
         >
           <button
             type="button"
             data-testid="popout-window-close-button"
             onClick={closeWindow}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+            className="electron-titlebar-interactive-region inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={t('workbench.popout_window_close')}
             title={t('workbench.popout_window_close')}
           >
             <X className="h-4 w-4" />
           </button>
+          <div className="electron-titlebar-drag-region h-full min-w-0 flex-1" />
           <div className="pointer-events-none absolute inset-x-14 truncate text-center text-base font-medium text-text-primary">
             {title}
           </div>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="electron-titlebar-interactive-region flex items-center gap-1">
             <button
               type="button"
               data-testid="popout-window-new-chat-button"
               onClick={startNewChat}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="electron-titlebar-interactive-region inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
               aria-label={t('workbench.popout_window_new_chat')}
               title={t('workbench.popout_window_new_chat')}
             >
@@ -228,7 +195,7 @@ export function PopoutWorkbenchPage() {
                   void openPopoutTaskInMain(state.currentRuntimeTask)
                 }
               }}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="electron-titlebar-interactive-region inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
               aria-label={t('workbench.popout_window_open_in_main')}
               title={t('workbench.popout_window_open_in_main')}
             >
@@ -241,10 +208,9 @@ export function PopoutWorkbenchPage() {
         <DesktopWorkbenchMain
           visible
           sidebarCollapsed
-          showComposerProjectMenuAction
+          presentation="popout"
           onSidebarCollapsedChange={() => undefined}
           activePane={activePane}
-          splitGroups={splitGroups}
         />
       </div>
     </main>

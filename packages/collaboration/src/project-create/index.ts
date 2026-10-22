@@ -1,4 +1,8 @@
 export { ProjectCreateDialog } from "./ProjectCreateDialog";
+export {
+  changeCollaborationGroupLeader,
+  normalizeCollaborationGroupDraftForPersistence,
+} from "./collaborationGroupDraft";
 export { projectCreateLabels } from "./labels";
 export { repositoryProviderConfig } from "./projectProviderConfig";
 export { useProjectCreateController } from "./useProjectCreateController";

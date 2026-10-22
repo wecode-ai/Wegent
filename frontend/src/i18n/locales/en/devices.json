@@ -161,6 +161,8 @@
     "unsupportedVersion": "Current version ({{current}}) does not support auto-upgrade, please delete and recreate the device"
   },
   "version": {
+    "upgradeInWework": "Open Wework to upgrade this device.",
+    "repullRemoteImage": "Pull the latest device image and recreate the container using the existing data volumes.",
     "current": "Current Version",
     "latest": "Latest Version",
     "updateAvailable": "Update Available",

@@ -13,10 +13,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
-from app.core.wework_transcript_encryption import (
-    KEY_ALGORITHM,
-    transcript_encryption_key,
-)
 from app.models.user import User
 from app.models.wework_transcript import (
     EPOCH_TIME,
@@ -28,11 +24,9 @@ from app.schemas.wework_transcript import (
     TranscriptAppendResponse,
     TranscriptArchiveRequest,
     TranscriptArchiveResponse,
-    TranscriptEncryptionKeyResponse,
     TranscriptLeaseReleaseRequest,
     TranscriptLeaseRequest,
     TranscriptLeaseResponse,
-    TranscriptListResponse,
     TranscriptResponse,
     TranscriptSegmentCommitRequest,
     TranscriptTurnResponse,
@@ -47,20 +41,6 @@ from app.services.wework_transcript_storage import (
 )
 
 router = APIRouter()
-
-
-@router.get("", response_model=TranscriptListResponse, response_model_by_alias=True)
-def list_transcripts_endpoint(
-    include_archived: bool = Query(default=True, alias="includeArchived"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    transcripts = wework_transcript_service.list_transcripts(
-        db,
-        user_id=current_user.id,
-        include_archived=include_archived,
-    )
-    return {"items": [_transcript_response(db, item) for item in transcripts]}
 
 
 @router.get(
@@ -83,50 +63,6 @@ def get_transcript_endpoint(
             ),
         )
     )
-
-
-@router.get(
-    "/{transcript_id}/encryption-key",
-    response_model=TranscriptEncryptionKeyResponse,
-)
-def get_transcript_encryption_key_endpoint(
-    transcript_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    _translate(
-        lambda: wework_transcript_service.get_transcript(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-        )
-    )
-    return {
-        "algorithm": KEY_ALGORITHM,
-        "key": transcript_encryption_key(current_user.id),
-    }
-
-
-@router.post(
-    "/{transcript_id}/lease",
-    response_model=TranscriptLeaseResponse,
-    response_model_by_alias=True,
-)
-def acquire_lease_endpoint(
-    transcript_id: str,
-    request: TranscriptLeaseRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    transcript = _translate(
-        lambda: wework_transcript_service.acquire_lease(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-            request=request,
-        )
-    )
-    return _lease_response(transcript)
 
 
 @router.put(

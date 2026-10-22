@@ -2,7 +2,8 @@ import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from 'react'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
-import { isElectronRuntime } from '@/lib/runtime-environment'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { navigateWorkspaceTab } from '@/features/workspace-tabs/workspaceNavigation'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { parseWeworkScheme, weworkDestinationRoute } from './scheme'
 
@@ -10,6 +11,7 @@ export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
   const connection = useContext(CloudConnectionContext)
   const connectionRef = useRef(connection)
+  const focusRequestRef = useRef(0)
   const pendingUrls = useRef(new Set<string>())
   const tabsRef = useRef(tabs)
   useLayoutEffect(() => {
@@ -20,16 +22,27 @@ export function WeworkSchemeBridge() {
     const destination = parseWeworkScheme(url)
     if (!destination) return true
     const cloud = connectionRef.current
-    if (destination.kind === 'board' && (!cloud?.isConnected || !cloud.token)) {
+    if (
+      destination.kind === 'board' &&
+      destination.projectStore !== 'local' &&
+      (!cloud?.isConnected || !cloud.token)
+    ) {
       if (deferInRenderer) pendingUrls.current.add(url)
       if (cloud?.status !== 'restoring' && cloud?.status !== 'connecting') {
-        tabsRef.current.openTab('task', { contentRoute: '/settings/connections' })
+        navigateWorkspaceTab(tabsRef.current, 'task', '/settings/connections')
       }
       return false
     }
-    tabsRef.current.openTab(destination.kind === 'task' ? 'task' : 'board', {
-      contentRoute: weworkDestinationRoute(destination),
-    })
+    navigateWorkspaceTab(
+      tabsRef.current,
+      destination.kind === 'task' ? 'task' : 'board',
+      weworkDestinationRoute(
+        destination,
+        destination.kind === 'board' && destination.commentId
+          ? `${Date.now()}-${++focusRequestRef.current}`
+          : undefined
+      )
+    )
     return true
   }, [])
 
@@ -59,7 +72,7 @@ export function WeworkSchemeBridge() {
   }, [open])
 
   useEffect(() => {
-    if (!isElectronRuntime()) return
+    if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
     let disposed = false
     let running = false
     let requested = false

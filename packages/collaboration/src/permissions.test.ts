@@ -9,6 +9,7 @@ import {
   canAssignCollaborationIssue,
   canCommentCollaborationIssue,
   canEditCollaborationIssue,
+  canManageCollaborationIssueSecurity,
   canStartWorkOnCollaborationIssue,
   getCollaborationIssueActionPermissions,
 } from "./permissions";
@@ -45,11 +46,16 @@ describe("collaboration permissions", () => {
     const readOnlyIssue = {
       can_edit: false,
       can_view_detail: true,
+      created_by_user_id: 99,
     };
 
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "Owner", project_store: "backend" },
+        {
+          access_role: "Owner",
+          project_store: "backend",
+          current_user_id: 7,
+        },
         readOnlyIssue,
       ),
     ).toEqual({
@@ -60,29 +66,37 @@ describe("collaboration permissions", () => {
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "Reporter", project_store: "backend" },
+        {
+          access_role: "Developer",
+          project_store: "backend",
+          current_user_id: 7,
+        },
         readOnlyIssue,
       ),
     ).toEqual({
       canEdit: false,
       canComment: true,
-      canAssign: false,
+      canAssign: true,
       canStartWork: true,
     });
     expect(
       getCollaborationIssueActionPermissions(
-        { access_role: "RestrictedAnalyst", project_store: "backend" },
+        {
+          access_role: "Viewer",
+          project_store: "backend",
+          current_user_id: 7,
+        },
         readOnlyIssue,
       ),
     ).toEqual({
       canEdit: false,
       canComment: false,
       canAssign: false,
-      canStartWork: true,
+      canStartWork: false,
     });
   });
 
-  it("requires project management permission for assignment", () => {
+  it("lets members assign and denies read-only creators", () => {
     expect(
       canAssignCollaborationIssue({
         access_role: "Maintainer",
@@ -94,20 +108,48 @@ describe("collaboration permissions", () => {
         access_role: "Developer",
         project_store: "backend",
       }),
+    ).toBe(true);
+    expect(
+      canAssignCollaborationIssue({
+        access_role: "Viewer",
+        project_store: "backend",
+      }),
     ).toBe(false);
   });
 
+  it("does not grant creators assignment control outside their role", () => {
+    expect(
+      getCollaborationIssueActionPermissions(
+        {
+          access_role: "Viewer",
+          project_store: "backend",
+          current_user_id: 7,
+        },
+        {
+          can_edit: false,
+          can_view_detail: true,
+          created_by_user_id: 7,
+        },
+      ),
+    ).toEqual({
+      canEdit: false,
+      canComment: false,
+      canAssign: false,
+      canStartWork: false,
+    });
+  });
+
   it("uses membership for comments and visibility for starting work", () => {
-    const reporter = {
-      access_role: "Reporter" as const,
+    const developer = {
+      access_role: "Developer" as const,
       project_store: "backend" as const,
     };
 
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: true }),
+      canCommentCollaborationIssue(developer, { can_view_detail: true }),
     ).toBe(true);
     expect(
-      canCommentCollaborationIssue(reporter, { can_view_detail: false }),
+      canCommentCollaborationIssue(developer, { can_view_detail: false }),
     ).toBe(false);
     expect(canStartWorkOnCollaborationIssue({ can_view_detail: true })).toBe(
       true,
@@ -115,5 +157,20 @@ describe("collaboration permissions", () => {
     expect(canStartWorkOnCollaborationIssue({ can_view_detail: false })).toBe(
       false,
     );
+  });
+
+  it("restricts issue security changes to maintainers and owners", () => {
+    const role = (
+      access_role: "Owner" | "Maintainer" | "Developer" | "Viewer",
+    ) =>
+      canManageCollaborationIssueSecurity({
+        access_role,
+        project_store: "backend",
+      });
+
+    expect(role("Owner")).toBe(true);
+    expect(role("Maintainer")).toBe(true);
+    expect(role("Developer")).toBe(false);
+    expect(role("Viewer")).toBe(false);
   });
 });

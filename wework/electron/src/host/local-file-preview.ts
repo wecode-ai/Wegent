@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { extname, join } from 'node:path'
+import { extname, join, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const DIRECTORY_ENTRY_LIMIT = 1_000
@@ -56,7 +56,7 @@ export async function prepareLocalFileNavigation(url: string): Promise<LocalFile
 
 export function isGeneratedLocalFilePreview(url: string): boolean {
   try {
-    return fileURLToPath(url).startsWith(`${PREVIEW_DIRECTORY}/`)
+    return fileURLToPath(url).startsWith(`${PREVIEW_DIRECTORY}${sep}`)
   } catch {
     return false
   }

@@ -12,7 +12,7 @@ from dingtalk_stream import AckMessage, ChatbotMessage
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.schemas.dingtalk_card import DingTalkChatCardConfig
+from app.schemas.dingtalk_card import AUTO_LAYOUT_PARAM, DingTalkChatCardConfig
 from app.schemas.im_channel import IMChannelCreate, IMChannelUpdate
 from app.services.channels.dingtalk import (
     card_binding,
@@ -87,6 +87,28 @@ def action(binding, **overrides):
         ),
     }
     return {**data, **overrides}
+
+
+def capture_card_requests(monkeypatch):
+    """Record the card HTTP calls an adapter makes, with a stubbed transport."""
+
+    requests = []
+
+    async def respond(request):
+        requests.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"success": True})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        card_transport.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs),
+    )
+    client = SimpleNamespace(
+        _access_token={"accessToken": "test-token", "expireTime": float("inf")},
+        credential=SimpleNamespace(client_id="robot-a"),
+    )
+    return requests, client
 
 
 class MemoryCache:
@@ -169,8 +191,10 @@ def test_optional_config_and_explicit_removal():
         {},
         {"template_id": " "},
         {"template_id": "a", "content_key": "flowStatus"},
+        {"template_id": "a", "content_key": AUTO_LAYOUT_PARAM},
         {"template_id": "a", "content_key": " "},
         {"template_id": "a", "follow_up_images_key": "followUpText"},
+        {"template_id": "a", "follow_up_status_key": AUTO_LAYOUT_PARAM},
     ],
 )
 def test_bad_config_rejected_before_saving(value):
@@ -237,6 +261,7 @@ async def test_http_stream_full_prefixes_same_card_and_binding_ready(
     assert (await card_binding.load_binding(77, adapter.card_instance_id)).ready
     assert requests[0][1]["cardTemplateId"] == "test.schema"
     assert requests[0][1]["cardData"]["cardParamMap"] == {
+        AUTO_LAYOUT_PARAM: '{"config":{"autoLayout":true}}',
         "answer": "",
         "flowStatus": "1",
     }
@@ -252,6 +277,41 @@ async def test_http_stream_full_prefixes_same_card_and_binding_ready(
     assert all(body["key"] == "answer" and body["isFull"] for body in writes)
     assert len({body["outTrackId"] for _, body in requests}) == 1
     assert len({body["guid"] for body in writes}) == 3
+
+
+@pytest.mark.asyncio
+async def test_reply_card_creation_carries_auto_layout(monkeypatch, config, binding):
+    """A reply card is drawn by the channel, so the wide layout rides on it."""
+
+    requests, client = capture_card_requests(monkeypatch)
+    message = ChatbotMessage.from_dict(binding.incoming_data)
+    adapter = TemplateChatCardAdapter(client, message, config, 77)
+
+    await adapter.start()
+
+    params = requests[0][1]["cardData"]["cardParamMap"]
+    assert params[AUTO_LAYOUT_PARAM] == '{"config":{"autoLayout":true}}'
+    assert params[config.content_key] == ""
+
+
+@pytest.mark.asyncio
+async def test_reply_card_initial_data_wins_over_auto_layout(monkeypatch, binding):
+    """A channel pinning the system variable keeps the value it configured."""
+
+    pinned = '{"config":{"autoLayout":false}}'
+    config = DingTalkChatCardConfig(
+        template_id="test.schema",
+        content_key="answer",
+        initial_data={AUTO_LAYOUT_PARAM: pinned},
+    )
+    requests, client = capture_card_requests(monkeypatch)
+    message = ChatbotMessage.from_dict(binding.incoming_data)
+    adapter = TemplateChatCardAdapter(client, message, config, 77)
+
+    await adapter.start()
+
+    params = requests[0][1]["cardData"]["cardParamMap"]
+    assert params[AUTO_LAYOUT_PARAM] == pinned
 
 
 @pytest.mark.asyncio

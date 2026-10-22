@@ -10,10 +10,10 @@ import pytest
 
 from app.models.subtask import SubtaskRole
 from app.services.chat.interactive_forms import validate_interactive_form_answer
-from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.interactive_form_render import (
     build_interactive_form_render_payload,
 )
+from app.services.execution.response_parser import ResponsesAPIEventParser
 from shared.models import EventType
 
 

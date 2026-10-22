@@ -35,6 +35,7 @@ async function loadTranslations() {
     'promptOptimization',
     'subscription',
     'resource-library',
+    'wework-open',
   ]
 
   for (const lng of supportedLanguages) {
@@ -105,6 +106,7 @@ export async function initI18n() {
       'promptOptimization',
       'subscription',
       'resource-library',
+      'wework-open',
     ],
   })
 

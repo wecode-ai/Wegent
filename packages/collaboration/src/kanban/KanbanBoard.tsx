@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Fragment, type ElementType, type ReactNode } from "react";
-import * as ScrollArea from "@radix-ui/react-scroll-area";
 
 export interface KanbanDroppableState {
   isOver: boolean;
@@ -80,23 +79,21 @@ export function KanbanColumnDropzone({
   const { isOver, setNodeRef } = dnd.useDroppable({ id: dropId });
 
   return (
-    <ScrollArea.Root
+    <div
       ref={setNodeRef}
       data-testid={testId}
-      type="always"
       className={classNames(
         "relative flex min-h-0 flex-1 flex-col transition-colors",
         isOver && "rounded-xl bg-muted ring-1 ring-inset ring-focus/50",
       )}
     >
-      {/* Keep cards column-sized and clear of the inset overlay scrollbar. */}
-      <ScrollArea.Viewport
+      <div
         data-testid={`${testId}-viewport`}
-        className="min-h-0 w-full flex-1 overscroll-y-contain pr-1.5 [&>div]:!block [&>div]:w-full"
+        className="min-h-0 w-full flex-1 overflow-y-auto overscroll-y-contain pr-1.5"
       >
         <div
           data-testid={`${testId}-content`}
-          className="space-y-2 px-2 pb-2 pt-2"
+          className="w-full space-y-2 px-2 pb-2 pt-2"
         >
           {isOver && dragHint ? (
             <div
@@ -108,19 +105,8 @@ export function KanbanColumnDropzone({
           ) : null}
           {children}
         </div>
-      </ScrollArea.Viewport>
-      <ScrollArea.Scrollbar
-        forceMount
-        orientation="vertical"
-        data-testid={`${testId}-scrollbar`}
-        className="project-board-scrollbar project-board-scrollbar-vertical"
-      >
-        <ScrollArea.Thumb
-          data-testid={`${testId}-scrollbar-thumb`}
-          className="project-board-scrollbar-thumb"
-        />
-      </ScrollArea.Scrollbar>
-    </ScrollArea.Root>
+      </div>
+    </div>
   );
 }
 

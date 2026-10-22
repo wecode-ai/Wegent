@@ -23,9 +23,16 @@ export const projectCreateLabels: Record<
     visibility: "项目可见性",
     privateVisibility: "私有",
     privateVisibilityDescription: "仅项目成员可访问",
-    restrictedVisibility: "仅看相关任务",
-    restrictedVisibilityDescription:
-      "所有人可进入；普通用户只能看到自己创建、负责、参与或关联的任务，以及自己创建机器人负责的任务",
+    publicAccessRole: "所有登录用户的角色",
+    viewerRole: "Viewer · 只读",
+    developerRole: "Developer · 可创建和编辑可见任务",
+    viewerRoleDescription: "只能查看有权访问的任务",
+    developerRoleDescription: "可以创建、编辑和执行有权访问的任务",
+    defaultIssueSecurity: "新任务默认可见范围",
+    openIssueSecurity: "项目可访问者可见",
+    relatedIssueSecurity: "仅相关人员可见",
+    openIssueSecurityDescription: "有项目访问权限的人都可以查看新任务",
+    relatedIssueSecurityDescription: "新任务仅对创建者、负责人和参与者可见",
     publicVisibility: "公开",
     publicVisibilityDescription: "所有登录用户可访问",
     publicVisibilityNotice:
@@ -65,7 +72,7 @@ export const projectCreateLabels: Record<
     noAvailableCollaborators: "暂无其他可添加项",
     groupRecommendationTitle: "建议组织成协作小组",
     groupRecommendationDescription:
-      "多个智能体独立协作时需要你逐个分配任务。转为协作小组后，由一个负责人拆解、分派并汇总，负责人也可以直接执行工作。",
+      "多个智能体独立协作时需要你逐个分配任务。转为协作小组后，由一个负责人拆解、分派、验收并汇总，执行工作由小组成员完成。",
     keepDirectCollaboration: "保持独立协作",
     organizeAsGroup: "组织成协作小组",
     createCollaborationGroup: "新建协作小组",
@@ -73,7 +80,7 @@ export const projectCreateLabels: Record<
     groupDraftTitle: "AI 分工建议",
     groupName: "小组名称",
     groupLeader: "负责人",
-    leaderWorks: "负责人 · 协调并执行",
+    leaderWorks: "负责人 · 仅协调",
     specialistWorks: "专项执行",
     setAsLeader: "设为负责人",
     generatedWorkflow: "建议流程",
@@ -91,7 +98,7 @@ export const projectCreateLabels: Record<
     generationRequestPlaceholder:
       "补充你希望的协作方式、重点职责或交付要求（可选）",
     generationRequestDefault:
-      "请结合项目目标和每个智能体的能力，生成清晰的职责分工、分配原则和执行流程。负责人需要参与实际工作。",
+      "请结合项目目标和每个智能体的能力，生成清晰的职责分工、分配原则和执行流程。负责人只负责拆解、分派、验收和状态决策，不执行成员任务。",
     selectedGenerationAgents: "参与分工的智能体",
     agentAttachment: "智能体",
     memberAttachment: "成员",
@@ -133,9 +140,18 @@ export const projectCreateLabels: Record<
     visibility: "Project visibility",
     privateVisibility: "Private",
     privateVisibilityDescription: "Project members only",
-    restrictedVisibility: "Related tasks only",
-    restrictedVisibilityDescription:
-      "Everyone can enter; regular users only see tasks they created, own, participate in, are linked to, or that are assigned to robots they created",
+    publicAccessRole: "Role for all signed-in users",
+    viewerRole: "Viewer · read only",
+    developerRole: "Developer · create and edit visible tasks",
+    viewerRoleDescription: "Can view accessible tasks",
+    developerRoleDescription: "Can create, edit, and run accessible tasks",
+    defaultIssueSecurity: "Default visibility for new issues",
+    openIssueSecurity: "Visible to project users",
+    relatedIssueSecurity: "Related people only",
+    openIssueSecurityDescription:
+      "Anyone with project access can see new issues",
+    relatedIssueSecurityDescription:
+      "Only creators, assignees, and participants see new issues",
     publicVisibility: "Public",
     publicVisibilityDescription: "All signed-in users",
     publicVisibilityNotice:
@@ -184,7 +200,7 @@ export const projectCreateLabels: Record<
     groupDraftTitle: "AI responsibility draft",
     groupName: "Group name",
     groupLeader: "Lead",
-    leaderWorks: "Lead · coordinates and executes",
+    leaderWorks: "Lead · coordinates only",
     specialistWorks: "Specialist execution",
     setAsLeader: "Set as lead",
     generatedWorkflow: "Suggested workflow",
@@ -203,7 +219,7 @@ export const projectCreateLabels: Record<
     generationRequestPlaceholder:
       "Add preferred collaboration, responsibility, or delivery requirements (optional)",
     generationRequestDefault:
-      "Use the project goal and each agent's capabilities to generate clear responsibilities, allocation principles, and an execution workflow. The lead must also perform hands-on work.",
+      "Use the project goal and each agent's capabilities to generate clear responsibilities, allocation principles, and an execution workflow. The lead only decomposes, delegates, reviews, and decides status; members execute the assigned work.",
     selectedGenerationAgents: "Agents included in this division",
     agentAttachment: "Agent",
     memberAttachment: "Member",

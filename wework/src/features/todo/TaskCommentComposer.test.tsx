@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import '@/i18n'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { TaskCommentComposer } from './TaskCommentComposer'
@@ -38,6 +39,7 @@ function setup(overrides: Partial<Parameters<typeof TaskCommentComposer>[0]> = {
     disabled: false,
     sending: false,
     error: null,
+    translate: createCollaborationTranslator('zh-CN'),
     controls,
     projectWork,
     ...overrides,
@@ -47,6 +49,41 @@ function setup(overrides: Partial<Parameters<typeof TaskCommentComposer>[0]> = {
 }
 
 describe('TaskCommentComposer', () => {
+  it('places the first mentioned assignee next to Send and allows assignment without text', async () => {
+    const user = userEvent.setup()
+    const assign = vi.fn().mockResolvedValue(undefined)
+    const assignment = {
+      members: [1, 2].map(user_id => ({
+        user_id,
+        user_name: `User ${user_id}`,
+        role: 'Developer',
+      })) as import('@wegent/collaboration').CollaborationMember[],
+      assign,
+    }
+    const { props, rerender } = setup({
+      assignment,
+      value: '[$@User 1](wework-member://1) [$@User 2](wework-member://2)',
+    })
+    const select = screen.getByTestId('task-comment-form-assignee')
+    const send = screen.getByTestId('send-message-button')
+    expect(select).toHaveAttribute('data-value', '1')
+    expect(select.nextElementSibling).toBe(send)
+    expect(send).toHaveTextContent('发送并转派')
+    await user.click(select)
+    await user.click(screen.getByTestId('task-comment-form-assignee-option-2'))
+    rerender(<TaskCommentComposer {...props} value="" />)
+    expect(send).toHaveTextContent('转派')
+    expect(send).toBeEnabled()
+    await user.click(send)
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(2))
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('hides assignment when the host does not grant permission', () => {
+    setup()
+    expect(screen.queryByTestId('task-comment-form-assignee')).not.toBeInTheDocument()
+  })
+
   it('keeps execution settings collapsed without replacing the draft when toggled', async () => {
     const user = userEvent.setup()
     const { input } = setup()
@@ -59,21 +96,11 @@ describe('TaskCommentComposer', () => {
     expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
   })
 
-  it('submits with Enter while preserving Shift+Enter and IME composition', () => {
-    const { props, input } = setup()
-    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
-    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
-    expect(props.onSubmit).not.toHaveBeenCalled()
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onSubmit).toHaveBeenCalledOnce()
-  })
-
-  it('disables submission for empty drafts, pending sends and uploads', () => {
-    const { props, input, rerender } = setup({ value: ' ' })
+  it('disables the send button for empty drafts, pending sends and uploads', () => {
+    const { props, rerender } = setup({ value: ' ' })
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
     rerender(<TaskCommentComposer {...props} value="Review this" sending />)
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
     props.controls.uploadingFiles.set('notes.txt', {
       file: new File(['notes'], 'notes.txt'),
       progress: 50,
@@ -82,13 +109,13 @@ describe('TaskCommentComposer', () => {
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
-  it('uploads selected and pasted files through the existing attachment controls', () => {
+  it('uploads selected and pasted files through the existing attachment controls', async () => {
     const { props, input } = setup()
     const file = new File(['notes'], 'notes.txt', { type: 'text/plain' })
     fireEvent.change(screen.getByTestId('task-comment-file-input'), { target: { files: [file] } })
     expect(props.controls.handleFileSelect).toHaveBeenCalledWith([file])
     fireEvent.paste(input, { clipboardData: { files: [file] } })
-    expect(props.controls.handleFileSelect).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(props.controls.handleFileSelect).toHaveBeenCalledTimes(2))
   })
 
   it('retains the draft and displays a send failure', () => {

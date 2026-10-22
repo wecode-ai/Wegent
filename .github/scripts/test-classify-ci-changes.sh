@@ -13,13 +13,14 @@ desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
 memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
 wework_app_workflow="$repo_root/.github/workflows/wework-app.yml"
+wework_core_build_action="$repo_root/.github/actions/build-wework-core-e2e/action.yml"
 
 assert_invalid_desktop_shards_rejected() {
   local temp_dir
   temp_dir="$(mktemp -d)"
   local broken_classifier="$temp_dir/classify-wework-desktop-e2e.sh"
   sed \
-    's/,local-file-preview$//' \
+    's/temporary-chat,local-file-preview,conversation-state/temporary-chat,conversation-state/' \
     "$desktop_classifier" > "$broken_classifier"
   chmod +x "$broken_classifier"
 
@@ -118,14 +119,9 @@ assert_checkpoint_runtime_failure_rejected() {
 
 assert_checkpoint_runtime_failure_rejected
 
-if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-differential' \
+if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-full' \
   "$wework_app_workflow"; then
-  printf 'The formal release workflow must invoke app-update-differential\n' >&2
-  exit 1
-fi
-if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-baseline' \
-  "$wework_app_workflow"; then
-  printf 'The formal release workflow must invoke app-update-baseline\n' >&2
+  printf 'The formal release workflow must invoke app-update-full\n' >&2
   exit 1
 fi
 
@@ -284,6 +280,7 @@ assert_case() {
 all_false=$(
   cat <<'EOF'
 backend=false
+backend_rs=false
 executor=false
 executor_manager=false
 shared=false
@@ -298,9 +295,27 @@ EOF
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+permission_contract_expected="${all_false/backend=false/backend=true}"
+assert_case "Chinese permission contract runs backend guards" "$permission_contract_expected" \
+  "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+assert_case "English permission contract runs backend guards" "$permission_contract_expected" \
+  "docs/en/wegent/developer-guide/collaboration-permissions.md"
+
+rust_permission_expected="${permission_contract_expected/platform_e2e=false/platform_e2e=true}"
+rust_permission_expected="${rust_permission_expected/wework_e2e=false/wework_e2e=true}"
+for path in backend-rs/src/cloud_projects.rs \
+  backend-rs/src/cloud_projects/collaboration_access.sql \
+  backend-rs/src/cloud_projects/environment_authorization.rs \
+  backend-rs/src/loop_item_executions/device.rs \
+  backend-rs/config/routes.toml; do
+  assert_case "Rust permission changes run backend and MySQL guards: $path" \
+    "$rust_permission_expected" "$path"
+done
+
 collaboration_package=$(
   cat <<'EOF'
 backend=false
+backend_rs=false
 executor=false
 executor_manager=false
 shared=false
@@ -318,6 +333,26 @@ assert_case \
   "$collaboration_package" \
   "packages/collaboration/src/CollaborationApp.tsx"
 
+process_explorer_package=$(
+  cat <<'EOF'
+backend=false
+backend_rs=false
+executor=false
+executor_manager=false
+shared=false
+knowledge_engine=false
+frontend=false
+wework=true
+wegent_cli=false
+platform_e2e=false
+wework_e2e=true
+EOF
+)
+assert_case \
+  "process explorer package" \
+  "$process_explorer_package" \
+  "packages/process-explorer/src/host/service.ts"
+
 wework_expected="${all_false/wework=false/wework=true}"
 wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
@@ -325,6 +360,7 @@ assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 shared_expected=$(
   cat <<'EOF'
 backend=true
+backend_rs=false
 executor=false
 executor_manager=true
 shared=true
@@ -338,6 +374,12 @@ EOF
 )
 assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"
 
+backend_rs_expected="${all_false/backend_rs=false/backend_rs=true}"
+backend_rs_expected="${backend_rs_expected/platform_e2e=false/platform_e2e=true}"
+backend_rs_expected="${backend_rs_expected/wework_e2e=false/wework_e2e=true}"
+assert_case "Rust backend changes run Rust contracts and both E2E suites" \
+  "$backend_rs_expected" "backend-rs/src/decisions/mod.rs"
+
 all_true="${all_false//false/true}"
 assert_case "explicit all modules" "$all_true" --all
 
@@ -346,6 +388,9 @@ assert_case "workflow changes validate all modules" "$all_true" \
 
 assert_case "shared CI actions validate all modules" "$all_true" \
   ".github/actions/setup-sccache/action.yml"
+
+assert_case "artifact downloader validates its runtime producers and consumers" "$all_true" \
+  ".github/scripts/download-actions-artifact.sh"
 
 assert_case "shared apt helper validates all modules" "$all_true" \
   ".github/scripts/lib/apt-packages.sh"
@@ -417,30 +462,336 @@ wework_desktop_other_e2e='
   fi
 }
 
-assert_desktop_case "official DWS source fixture selects account authentication" \
+for terminal_wiring_path in \
+  wework/src/components/layout/DesktopWorkbenchMain.tsx \
+  wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx \
+  wework/src/api/hybrid/hybridServices.ts \
+  wework/src/api/hybrid/hybridServices.test.ts \
+  wework/src/api/local/localServices.ts \
+  wework/src/api/local/localServices.test.ts; do
+  terminal_wiring_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$terminal_wiring_path")"
+  if [[ "$terminal_wiring_output" != *"background-terminals"* ]]; then
+    printf 'Terminal wiring changes must select background-terminal coverage: %s\n%s\n' \
+      "$terminal_wiring_path" "$terminal_wiring_output" >&2
+    exit 1
+  fi
+done
+
+assert_desktop_case "cloud catalog recovery changes select the real backend checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-12","name":"Cloud / shard 12","segments":"cloud-model-recovery"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/fixtures/dws-store/main.go"
+  "wework/src/api/hybrid/cloudModelCatalog.ts" \
+  "wework/e2e/desktop/modules/cloud-model-recovery.mjs" \
+  "wework/e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs"
+
+assert_desktop_case "deleted task model recovery runs in the cloud shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-12","name":"Cloud / shard 12","segments":"task-model-deletion"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs"
+
+assert_desktop_case "cloud model preset regression runs in the cloud shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-12","name":"Cloud / shard 12","segments":"cloud-model-presets"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs"
+
+assert_desktop_case "uninstall transport faults select real cloud recovery" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-move-recovery"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
+  "wework/e2e/desktop/modules/transport-fault-proxy.mjs" \
+  "wework/scripts/plugin-fault-proxy.test.mjs"
+
+for uninstall_path in \
+  "wework/e2e/desktop/modules/plugin-registration-coordination.mjs" \
+  "wework/e2e/desktop/support/registration-capabilities.py" \
+  "wework/e2e/desktop/modules/plugin-write-coordination.mjs" \
+  "wework/e2e/desktop/modules/plugin-write-lease.mjs" \
+  "wework/e2e/desktop/support/plugin-write-lease.py" \
+  "backend/app/services/device/plugin_reconciliation.py" \
+  "backend/app/services/device/plugin_removal_sync.py" \
+  "backend/app/services/plugin_device_installation_service.py" \
+  "backend/app/services/plugin_device_sync.py" \
+  "backend/app/services/plugin_installation_operations.py" \
+  "backend/app/services/plugin_marketplace_service.py" \
+  "backend/app/api/endpoints/installed_plugins.py"; do
+  assert_desktop_case "plugin write and uninstall changes select real cloud recovery: $uninstall_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$uninstall_path"
+done
+
+assert_desktop_case "long plugin list selects its independent cloud checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-toggle-persistence"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs" \
+  "wework/e2e/desktop/modules/plugin-inventory-state.mjs"
+
+assert_desktop_case "shared plugin regression fixture selects both checkpoints" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/plugin-regression-fixture.mjs"
+
+assert_desktop_case "conversation auth changes select managed login regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/features/plugins/localConnectorAuthGate.ts" \
+  "wework/src/features/plugins/useLocalConnectorAuthGate.ts" \
+  "wework/src/components/layout/DesktopEmptyTaskLauncher.tsx" \
+  "wework/src/components/chat/ConnectorAuthCard.tsx" \
+  "wework/src/api/local/githubCli.ts" \
+  "wework/src/features/plugins/githubCliAuthGate.test.tsx"
+
+# Check each path independently: a broad executor change must not hide missing
+# authorization routing for a later frontend-only pull request.
+for auth_path in \
+  "wework/src/features/plugins/codexConnectorAuthorization.ts" \
+  "wework/src/components/plugins/GithubCliAuthDialog.tsx" \
+  "wework/src/components/plugins/PluginConnectorSection.tsx" \
+  "wework/src/components/plugins/LocalConnectorAuthDialog.tsx"; do
+  assert_desktop_case "provider authorization selects account regression: $auth_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+    "$auth_path"
+done
+
+assert_desktop_case "remote catalog changes invoke the network isolation checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"},{"id":"plugins-plugin-composer-network-isolation","name":"Plugins / plugin-composer-network-isolation","command":"e2e:desktop:plugins","segment":"plugin-composer-network-isolation"}]}' \
+  "wework/src/features/plugins/useOpenAiPluginCatalog.ts"
+
+for account_fixture in \
+  "wework/e2e/desktop/modules/plugin-auth-coordination.mjs" \
+  "wework/e2e/desktop/fixtures/dws-store/main.go" \
+  "wework/e2e/desktop/modules/plugin-conversation-auth.mjs" \
+  "wework/e2e/desktop/modules/github-manage-connection.mjs"; do
+  assert_desktop_case "account authentication fixture selects its regression: $account_fixture" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$account_fixture"
+done
+
+for coordination_path in \
+  "backend/app/core/distributed_lock.py" \
+  "backend/app/services/plugin_write_coordination.py" \
+  "backend/app/services/plugin_write_operations.py" \
+  "backend/app/services/plugin_write_errors.py" \
+  "backend/app/services/plugin_write_resources.py" \
+  "backend/app/services/plugin_kind_revision.py" \
+  "backend/app/services/plugin_policy_revision.py"; do
+  assert_desktop_case "plugin write coordination selects its lifecycle regressions: $coordination_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$coordination_path"
+done
+
+for notification_path in \
+  "wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs" \
+  "wework/src/features/notifications/NotificationCenter.tsx" \
+  "wework/src/features/notifications/useUnlistedStandInTasks.ts"
+do
+  assert_desktop_case "stand-in notifications select local and cloud regressions: $notification_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,stand-in-notifications"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$notification_path"
+done
+
+assert_desktop_case "runtime reminder changes retain goal and stand-in notification coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle"},{"id":"core-12","name":"Core / shard 12","segments":"stand-in-notifications"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeTaskReminders.ts"
+
+assert_desktop_case "stand-in inherited permissions scenario is covered by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"stand-in-permissions"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs"
+
+for stand_in_path in \
+  "wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs" \
+  "wework/src/features/todo/StandInComposer.tsx" \
+  "wework/src/features/todo/StandInSettingsPage.tsx" \
+  "wework/src/features/todo/useStandInModels.ts" \
+  "wework/src/features/todo/IssueStandInControl.tsx"
+do
+  assert_desktop_case "stand-in workspace changes select all stand-in checkpoints: $stand_in_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"stand-in,stand-in-workspace,stand-in-controls"},{"id":"core-18","name":"Core / shard 18","segments":"stand-in-cloud,stand-in-permissions"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$stand_in_path"
+done
 
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,project-member-overrides,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments"},{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-comment-notification"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
 
+for consent_path in \
+  "packages/collaboration/src/conversation/McpUrlAuthorizationCard.tsx" \
+  "packages/collaboration/src/conversation/RequestUserInputCard.tsx" \
+  "wework/src/components/chat/RequestUserInputCard.tsx" \
+  "wework/scripts/mcp-elicitation-server.test.mjs"; do
+  consent_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$consent_path")"
+  if [[ "$consent_output" != *permission-modes* ]]; then
+    printf 'MCP consent path did not select permission-modes: %s\n' "$consent_path" >&2
+    exit 1
+  fi
+done
+
+assert_desktop_case "Lane sorting scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-sorting"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs"
+
+assert_desktop_case "Move recovery scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-move-recovery"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs"
+
+assert_desktop_case "Issue archive scenario selects its own checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-issue-archive"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs"
+
+assert_desktop_case "Issue task discovery scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-issue-task-discovery"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-task-discovery.scenario.mjs"
+
+assert_desktop_case "App queue identity regression is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-app-queue-identity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-app-queue-identity.scenario.mjs"
+
+assert_desktop_case "issue comment mention scenario selects its own checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-comment-mention"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs"
+
+for assignment_activity_path in \
+  "wework/e2e/desktop/scenarios/collaboration-issue-assignment-activity.scenario.mjs" \
+  "wework/src/features/todo/IssueAssignmentEvent.tsx" \
+  "wework/src/features/todo/assignmentHistoryLabels.ts" \
+  "wework/src/features/todo/issueActivityTimeline.ts" \
+  "wework/src/features/todo/useIssueActivityHistory.ts"; do
+  assert_desktop_case "assignment activity regression is invoked by core CI: $assignment_activity_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-assignment-activity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$assignment_activity_path"
+done
+
+assert_desktop_case "local assignment adapter changes include activity persistence coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,task-board-bulk-actions"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-assignment-activity"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/api/local/localDelivery.ts"
+assert_desktop_case "Issue comment image scenario is invoked by its core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-comment-attachments"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs"
+
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-issue-archive,collaboration-local-group-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,project-member-overrides"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"cloud-device-lifecycle"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/platform/WorkspaceResourceConfiguration.tsx" \
@@ -478,15 +829,23 @@ done
 assert_desktop_case "conversation cache selects guidance and conversation segments" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"conversation-state"},{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"},{"id":"core-4","name":"Core / shard 4","segments":"goal-state-sync"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/runtimeConversationCache.ts"
 
+assert_desktop_case "split interaction latency uses an independent runner" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-21","name":"Core / shard 21","segments":"split-workbench"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/split-workbench.scenario.mjs"
+
 assert_desktop_case "independent features select the union of minimum segments" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle"},{"id":"core-13","name":"Core / shard 13","segments":"rendering-extensions"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle"},{"id":"core-19","name":"Core / shard 19","segments":"rendering-extensions,streaming-content,streaming-tools,streaming-timers"},{"id":"core-20","name":"Core / shard 20","segments":"streaming-scroll,streaming-message-order,streaming-subagents"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/lib/runtime-goal.ts" \
@@ -495,16 +854,16 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "runner coverage does not broaden a classified feature" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"conversation-state"},{"id":"core-13","name":"Core / shard 13","segments":"rendering-extensions"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"},{"id":"core-19","name":"Core / shard 19","segments":"rendering-extensions,streaming-content,streaming-tools,streaming-timers"},{"id":"core-20","name":"Core / shard 20","segments":"streaming-scroll,streaming-message-order,streaming-subagents"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/task-flow.e2e.mjs" \
   "wework/src/components/chat/MessageList.tsx"
 
-assert_desktop_case "turn lifecycle changes select supervisor and resilience coverage" \
+assert_desktop_case "turn lifecycle changes select supervisor, resilience and sidebar coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-15","name":"Core / shard 15","segments":"running-sidebar-state"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/runtimeTaskLifecycle/reducer.ts"
@@ -512,7 +871,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "runtime pane events select supervisor and conversation coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/runtimePaneMessages.ts"
@@ -528,7 +887,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared right workspace panel selects plugin development and temporary chat" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-16","name":"Core / shard 16","segments":"plugin-development"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-13","name":"Core / shard 13","segments":"background-terminals"},{"id":"core-16","name":"Core / shard 16","segments":"plugin-development"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx"
@@ -536,7 +895,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "main workbench changes select fixed environment panel coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-5","name":"Core / shard 5","segments":"cloud-context-resilience"},{"id":"core-7","name":"Core / shard 7","segments":"task-board-association"},{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"},{"id":"core-5","name":"Core / shard 5","segments":"cloud-context-resilience"},{"id":"core-7","name":"Core / shard 7","segments":"task-board-association"},{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"},{"id":"core-13","name":"Core / shard 13","segments":"background-terminals"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopWorkbenchMain.tsx"
@@ -566,23 +925,63 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/README.md"
 
+assert_desktop_case "commit generation uses its real Git regression checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"git-commit-generation"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/api/commitMessage.ts"
+
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-apps,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,split-workbench,priority-filter,board-focus-view"},{"id":"core-13","name":"Core / shard 13","segments":"rendering-extensions"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,running-plan-history,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"harness-app-development,harness-app-lifecycle,browser-annotation-design"},{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle,remote-device-onboarding,core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat,local-file-preview,conversation-state,reply-predictions"},{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture"},{"id":"core-5","name":"Core / shard 5","segments":"send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime,workspace-tabs,task-attachments"},{"id":"core-7","name":"Core / shard 7","segments":"task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction"},{"id":"core-8","name":"Core / shard 8","segments":"window-lifecycle,browser-toolbar-actions,browser-annotation-anchors"},{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,automation-lifecycle,drawing-attachment"},{"id":"core-12","name":"Core / shard 12","segments":"project-assignment-notification,priority-filter"},{"id":"core-13","name":"Core / shard 13","segments":"transcript-sync,background-terminals"},{"id":"core-14","name":"Core / shard 14","segments":"runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import"},{"id":"core-15","name":"Core / shard 15","segments":"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome"},{"id":"core-16","name":"Core / shard 16","segments":"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions"},{"id":"core-19","name":"Core / shard 19","segments":"rendering-extensions,streaming-content,streaming-tools,streaming-timers"},{"id":"core-20","name":"Core / shard 20","segments":"streaming-scroll,streaming-message-order,streaming-subagents"},{"id":"core-21","name":"Core / shard 21","segments":"split-workbench"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
-full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,board-focus-view\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,priority-filter\"/\"segments\":\"project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome\"/\"segments\":\"local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history\"}"
+full_desktop_expected="${full_desktop_expected/temporary-chat,local-file-preview,conversation-state,reply-predictions/temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery\"/\"segments\":\"codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery\"}"
+
+assert_desktop_case "latest conversation history runs its desktop regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 15","segments":"latest-conversation-history"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs"
+
+assert_desktop_case "drawing implementation and scenario select their desktop regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-11","name":"Core / shard 11","segments":"drawing-attachment"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/chat/composer/DrawingCanvas.tsx" \
+  "wework/src/components/chat/composer/useComposerDrawing.tsx" \
+  "wework/vite/excalidrawAssets.ts" \
+  "wework/e2e/desktop/scenarios/drawing-attachment.scenario.mjs"
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
   "wework/e2e/desktop/task-flow.e2e.mjs"
 
-assert_desktop_case "collaboration executor runtime changes retain full coverage including the automation chain" \
+assert_desktop_case "native Codex catalog changes select their regression" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"codex-native-catalog"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "executor/src/server/codex_model_catalog.rs" \
+  "executor/src/server/codex_model_catalog_tests.rs" \
+  "wework/e2e/desktop/scenarios/codex-native-catalog.scenario.mjs"
+
+assert_desktop_case "collaboration executor runtime changes retain full coverage including Issue Dispatch" \
   "$full_desktop_expected" \
   "executor/src/runtime_work/handler/claude_turns.rs"
 
@@ -604,13 +1003,19 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs"
 
-assert_desktop_case "board focus view changes select their desktop regression" \
+assert_desktop_case "model settings changes select model management and account coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"board-focus-view"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"model-settings"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing,codex-account-login"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs"
+  "wework/e2e/desktop/scenarios/model-settings.scenario.mjs" \
+  "wework/src/components/settings/ProviderEditor.tsx" \
+  "wework/src/features/model-settings/providerModelConfiguration.ts"
+
+assert_desktop_case "workbench layout changes retain full desktop coverage" \
+  "$full_desktop_expected" \
+  "wework/src/components/layout/DesktopWorkbenchLayout.tsx"
 
 assert_desktop_case "external content import changes select its desktop regression" \
   'wework_desktop_e2e=true
@@ -620,6 +1025,18 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "executor/src/local/codex_home.rs" \
   "wework/e2e/desktop/scenarios/external-content-import.scenario.mjs"
+
+assert_desktop_case "native plugin installation selects lifecycle and project coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-14","name":"Core / shard 14","segments":"external-content-import"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"},{"id":"plugins-plugin-composer-network-isolation","name":"Plugins / plugin-composer-network-isolation","command":"e2e:desktop:plugins","segment":"plugin-composer-network-isolation"}]}' \
+  "wework/src/api/local/codexPlugins.ts" \
+  "wework/src/api/local/codexPlugins.install.test.ts" \
+  "wework/src/api/local/codexPluginInstallation.ts"
 
 assert_desktop_case "embedded browser files select browser coverage" \
   'wework_desktop_e2e=true
@@ -649,6 +1066,16 @@ wework_desktop_macos_inspector_e2e=true' \
   "wework/electron/src/host/tray-manager.ts" \
   "wework/e2e/desktop/scenarios/tray-position.mjs"
 
+assert_desktop_case "background terminal files select their registered Core checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-13","name":"Core / shard 13","segments":"background-terminals"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
+  "wework/e2e/desktop/scenarios/background-terminals.scenario.mjs" \
+  "wework/src/components/layout/BackgroundTerminalsSummary.tsx"
+
 assert_desktop_case "local harness files select local harness coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -660,7 +1087,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Claude runtime messaging selects task and Claude coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime"},{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-6","name":"Core / shard 6","segments":"claude-runtime"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"cloud-worktree-tools"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"cloud-worktree-capability"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false
@@ -679,10 +1106,18 @@ assert_desktop_case "Core artifact changes retain full coverage" \
   "$full_desktop_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
 
+assert_desktop_case "Core build action changes retain full coverage" \
+  "$full_desktop_expected" \
+  ".github/actions/build-wework-core-e2e/action.yml"
+
+assert_desktop_case "artifact downloader changes retain full desktop coverage" \
+  "$full_desktop_expected" \
+  ".github/scripts/download-actions-artifact.sh"
+
 assert_desktop_case "skill mention files select plugin and core coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-skill-mention-rendering","name":"Plugins / skill-mention-rendering","command":"e2e:desktop:plugins","segment":"skill-mention-rendering"}]}' \
   "wework/src/components/chat/composer/ComposerMentionMenu.tsx"
@@ -690,7 +1125,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-skill-mention-renderi
 assert_desktop_case "model settings select task launch and model routing coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/model-settings/localModelSettings.ts"
@@ -698,7 +1133,9 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "composer plugin files select project plugin coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-17","name":"Core / shard 17","segments":"model-routing"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/chat/composer/PluginPickerMenu.tsx"
@@ -724,18 +1161,18 @@ assert_desktop_case "project automation E2E changes select core and cloud covera
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"project-automation"},{"id":"core-11","name":"Core / shard 11","segments":"automation-lifecycle"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
 
-assert_desktop_case "collaboration automation chain scenario selects its core shard" \
+assert_desktop_case "collaboration coordinate scenario selects its core shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-group-coordinate"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs"
+  "wework/e2e/desktop/scenarios/collaboration-local-group-coordinate.scenario.mjs"
 
 assert_desktop_case "collaboration first-use scenario selects its core shard" \
   'wework_desktop_e2e=true
@@ -753,37 +1190,29 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
 
-assert_desktop_case "collaboration local agent capabilities scenario selects its core shard" \
+assert_desktop_case "collaboration human round scenario selects its core shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-agent-capabilities"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-human-round-resume"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-local-agent-capabilities.scenario.mjs"
+  "wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs"
 
-assert_desktop_case "collaboration local executor Issue tools scenario selects its core shard" \
+assert_desktop_case "collaboration cancellation scenario selects its core shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-executor-issue-tools"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-local-group-cancellation"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-local-executor-issue-tools.scenario.mjs"
+  "wework/e2e/desktop/scenarios/collaboration-local-group-cancellation.scenario.mjs"
 
-assert_desktop_case "collaboration settings matrix scenario selects its core shard" \
+assert_desktop_case "remote manager planning details E2E changes select regression coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-settings-matrix"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-group-planning-details"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-settings-matrix.scenario.mjs"
-
-assert_desktop_case "collaboration backend automation changes select the agent automation chain" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "backend/app/services/project_automation_execution.py"
+  "wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs"
 
 assert_desktop_case "project assignment notification E2E changes select assignment coverage" \
   'wework_desktop_e2e=true
@@ -792,6 +1221,33 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs"
+
+project_member_overrides_expected='wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"project-member-overrides"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}'
+
+for permission_path in \
+  wework/e2e/desktop/scenarios/project-member-overrides.scenario.mjs \
+  backend/app/services/cloud_projects/members.py \
+  backend/app/services/cloud_project_visibility.py \
+  backend/app/services/collaboration_permissions.py \
+  backend/app/services/issue_assignments.py \
+  backend/tests/services/test_loop_item_assignment.py \
+  backend/tests/api/test_collaboration_permission_contract.py; do
+  assert_desktop_case "project permission changes select the override checkpoint: $permission_path" \
+    "$project_member_overrides_expected" "$permission_path"
+done
+
+# Rust ownership already selects the full real desktop suite. Its shared matrix
+# must keep this checkpoint in both the Linux and Windows jobs.
+for permission_path in \
+  backend-rs/src/cloud_projects.rs \
+  backend-rs/src/cloud_projects/collaboration_access.sql; do
+  assert_desktop_case "Rust project authorization retains override coverage: $permission_path" \
+    "$full_desktop_expected" "$permission_path"
+done
 
 assert_desktop_case "browser E2E changes avoid desktop jobs" \
   'wework_desktop_e2e=false
@@ -806,7 +1262,7 @@ assert_desktop_case "cloud files select only the cloud suite" \
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth,cloud-device-lifecycle"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"embedded-browser,cloud-project-creation"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"goal-lifecycle,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"rendering-extensions"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,cloud-worktree-tools"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"resilience,telemetry-consent"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create,automation-lifecycle,browser-multi-tabs"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"workspace-tabs,cloud-worktree-capability"},{"id":"cloud-11","name":"Cloud / shard 11","segments":"supervisor-lifecycle,conversation-state"},{"id":"cloud-12","name":"Cloud / shard 12","segments":"model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion"},{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-auto-update,plugin-workspace-publication,workspace-attachments"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-17","name":"Cloud / shard 17","segments":"plugin-composer-long-list"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
@@ -816,7 +1272,7 @@ assert_desktop_case "cloud device lifecycle files select managed restart coverag
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"cloud-device-lifecycle"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/settings/ConnectionsSettingsPage.tsx" \
@@ -827,7 +1283,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "worktree UI changes select local launch and cloud lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"cloud-worktree-tools"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"cloud-worktree-capability"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false
@@ -857,7 +1313,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "workbench provider changes select send shortcut coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"send-key-preference,project-ai-settings"},{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-4","name":"Core / shard 4","segments":"goal-state-sync"},{"id":"core-5","name":"Core / shard 5","segments":"send-key-preference,project-ai-settings"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"cloud-worktree-tools"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"cloud-worktree-capability"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false
@@ -883,6 +1339,80 @@ wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/TaskBoardAssociationDialog.tsx"
+
+assert_desktop_case "draft first-message regression is invoked by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"task-board-association"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/new-task-board-association.mjs"
+
+assert_desktop_case "personal Issue permission regression is invoked by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-mcp-comments"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/personal-issue-access.mjs" \
+  "wework/e2e/desktop/modules/real-object-storage.mjs" \
+  "wework/e2e/desktop/scenarios/collaboration-issue-mcp-comments.scenario.mjs"
+
+assert_desktop_case "dispatch Issue boundary regression is invoked by CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/dispatch-issue-boundary.mjs"
+
+assert_desktop_case "workspace Agent setup selects local and cloud dispatch coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-agent-dispatch"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/workspace-agent-setup.mjs"
+
+assert_desktop_case "local assignee recovery stays in the dispatch CI checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs"
+
+assert_desktop_case "MCP result parsing selects both real permission scenarios" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 15","segments":"collaboration-issue-mcp-comments"},{"id":"core-18","name":"Core / shard 18","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/mcp-tool-results.mjs"
+
+assert_desktop_case "task board bulk action changes select dedicated coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-7","name":"Core / shard 7","segments":"task-board-bulk-actions"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/todo/TaskBoardView.tsx" \
+  "wework/src/features/workbench/runtimeTaskArchive.ts" \
+  "wework/e2e/desktop/scenarios/task-board-bulk-actions.scenario.mjs"
 
 assert_desktop_case "backend runtime Worktree changes select the cloud lifecycle checkpoint" \
   'wework_desktop_e2e=true
@@ -961,10 +1491,20 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs"
 
+assert_desktop_case "model overload recovery scenario is invoked by the core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-16","name":"Core / shard 16","segments":"model-overload-recovery"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/model-overload-recovery.scenario.mjs"
+
 assert_desktop_case "transcript sync files invoke the multi-device desktop regression" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-16","name":"Core / shard 16","segments":"transcript-sync"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-13","name":"Core / shard 13","segments":"transcript-sync"}]}
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
@@ -978,7 +1518,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Codex rollout paging invokes transcript and environment regressions" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"},{"id":"core-16","name":"Core / shard 16","segments":"transcript-sync"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"},{"id":"core-13","name":"Core / shard 13","segments":"transcript-sync"}]}
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
@@ -989,6 +1529,8 @@ assert_desktop_case "plugin files select plugin lifecycle and project plugin cov
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-18","name":"Cloud / shard 18","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
   "wework/src/components/plugins/PluginsWorkspace.tsx"
@@ -1028,7 +1570,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-co
 assert_desktop_case "desktop sidebar selects all owned checkpoints" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-7","name":"Core / shard 7","segments":"core-task-flow"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments"},{"id":"core-12","name":"Core / shard 12","segments":"priority-filter"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments"},{"id":"core-12","name":"Core / shard 12","segments":"priority-filter"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopSidebar.tsx"
@@ -1110,10 +1652,27 @@ platform_e2e_workflow="$script_dir/../workflows/e2e-tests.yml"
 provider_native_step="$(
   extract_named_workflow_step \
     "$platform_e2e_workflow" \
-    "Run Provider-native E2E tests serially"
+    "Run Provider-native E2E tests"
 )"
-if ! grep -Fq "if: matrix.shardIndex == 4" <<<"$provider_native_step"; then
-  printf 'Provider-native E2E must run on the historically fastest shard\n' >&2
+if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
+  <<<"$provider_native_step" ||
+  ! grep -Fq -- '--workers=1' <<<"$provider_native_step"; then
+  printf 'Provider-native E2E must preserve serial execution while sharing all platform shards\n' >&2
+  exit 1
+fi
+
+# Fork pull requests cannot pull the executor E2E image from GHCR: the Wework
+# desktop build downloads executor-e2e-binary from this job instead, so the
+# job must also run when a fork PR selects desktop E2E without platform_e2e.
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '.github/scripts/classify-wework-desktop-e2e.sh' \
+  "$platform_e2e_workflow" ||
+  ! grep -Fq 'wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}' \
+    "$platform_e2e_workflow" ||
+  ! grep -Fq "needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository" \
+  "$platform_e2e_workflow"; then
+  printf 'e2e-tests.yml must build the executor E2E runtime for fork desktop E2E PRs\n' >&2
   exit 1
 fi
 
@@ -1179,6 +1738,8 @@ for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
 done
 
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
+node "$script_dir/test-wework-windows-ci.mjs"
+node "$script_dir/test-wework-executor-debugger.mjs"
 if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
   printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2
   exit 1
@@ -1220,7 +1781,7 @@ collaboration_frontend_setup_step="$(
     "Set up Collaboration frontend"
 )"
 if ! grep -Fq \
-  "contains(matrix.segments, 'collaboration-settings-matrix')" \
+  "contains(matrix.segments, 'collaboration-shared-core')" \
   <<<"$collaboration_frontend_setup_step" ||
   ! grep -Fq 'uses: ./.github/actions/setup-node-workspace' \
     <<<"$collaboration_frontend_setup_step" ||
@@ -1238,55 +1799,25 @@ desktop_other_job="$(
   sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' \
     "$wework_workflow"
 )"
-if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
-  [[ "$core_build_job" != *"wework/electron/release/WeWork-linux-x64/WeWork"* ]] ||
-  [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]]; then
+if [[ "$core_build_job" != *"restore-wework-core-e2e-build-oci.sh"* ]] ||
+  [[ "$core_build_job" != *"uses: ./.github/actions/build-wework-core-e2e"* ]] ||
+  [[ "$core_build_job" != *"uses: actions/upload-artifact@v4"* ]] ||
+  ! grep -Fq "pnpm --filter wework ai:verify:electron:build" \
+    "$wework_core_build_action" ||
+  ! grep -Fq "wework/electron/release/WeWork-linux-x64/WeWork" \
+    "$wework_core_build_action" ||
+  ! grep -Fq "resources/bin/wegent-executor" "$wework_core_build_action" ||
+  ! grep -Fq "restore-oci-runtime-binary.sh" "$wework_core_build_action" ||
+  ! grep -Fq "BUILD_RUNTIMES_FROM_SOURCE:" "$wework_core_build_action"; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi
 
 if [[ "$desktop_other_job" != *"build-wework-desktop-core-e2e"* ]] ||
-  [[ "$desktop_other_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
+  [[ "$desktop_other_job" != *"uses: actions/download-artifact@v4"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/WeWork"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/resources/bin/wegent-executor"* ]]; then
   printf 'Non-Core desktop E2E must consume the shared Electron package\n' >&2
-  exit 1
-fi
-
-electron_cache_step="$(
-  extract_named_workflow_step_from_job \
-    "$wework_workflow" \
-    "  build-wework-desktop-core-e2e:" \
-    "  wework-desktop-core-e2e:" \
-    "Restore shared Wework Electron E2E build dependencies"
-)"
-electron_cache_key="$(
-  printf '%s\n' "$electron_cache_step" |
-    sed -n 's/^          key:[[:space:]]*//p'
-)"
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-electron-e2e-v1-' \
-  <<<"$electron_cache_key" ||
-  ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
-    <<<"$electron_cache_key"; then
-  printf 'Wework Electron E2E cache key must follow the desktop image\n' >&2
-  exit 1
-fi
-
-electron_cache_save_step="$(
-  extract_named_workflow_step \
-    "$wework_workflow" \
-    "Save shared Wework Electron E2E build dependencies"
-)"
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
-if ! grep -Fq "if: github.ref == 'refs/heads/main'" \
-  <<<"$electron_cache_save_step" ||
-  ! grep -Fq \
-    'key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}' \
-    <<<"$electron_cache_save_step"; then
-  printf 'Only main may save the shared Wework Electron E2E cache\n' >&2
   exit 1
 fi
 
@@ -1337,14 +1868,15 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *"fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"max-parallel: 15"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"node .github/scripts/run-with-resource-logging.mjs"* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"compression-level: 6"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"uses: actions/download-artifact@v4"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
-  printf 'Wework Cloud desktop E2E must use fifteen prebuilt serial shards\n' >&2
+  printf 'Wework Cloud desktop E2E must use fifteen prebuilt bounded-parallel shards\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
@@ -1358,11 +1890,12 @@ wework_desktop_core_job="$(
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_core_job" != *"max-parallel: 17"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"'* ]] ||
+  [[ "$wework_desktop_core_job" != *"node .github/scripts/run-with-resource-logging.mjs"* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
-  printf 'Wework Core desktop E2E must use seventeen prebuilt serial shards\n' >&2
+  printf 'Wework Core desktop E2E must use seventeen prebuilt bounded-parallel shards\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
@@ -1376,8 +1909,7 @@ wework_windows_desktop_core_build_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"github.event_name != 'merge_group'"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
@@ -1396,8 +1928,7 @@ wework_windows_desktop_core_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"github.event_name != 'merge_group'"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix)"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
@@ -1509,5 +2040,29 @@ if [[ "$wework_memory_job" != *"pnpm-store-v2-"* ]] ||
   printf 'Wework memory E2E must allow dependency downloads when the macOS pnpm cache is incomplete\n' >&2
   exit 1
 fi
+
+assert_desktop_case "goal synchronization regression has CI coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-state-sync"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs"
+
+assert_desktop_case "pane goal updates select conversation and goal synchronization coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"},{"id":"core-4","name":"Core / shard 4","segments":"goal-state-sync"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/layout/useWorkbenchPaneSession.ts"
+
+assert_desktop_case "goal reconciliation retains lifecycle coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"supervisor-lifecycle"},{"id":"core-4","name":"Core / shard 4","segments":"goal-state-sync"},{"id":"core-10","name":"Core / shard 10","segments":"resilience"},{"id":"core-15","name":"Core / shard 15","segments":"running-sidebar-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.tsx"
 
 printf 'CI change classifier tests passed\n'

@@ -33,6 +33,7 @@ export function parseDingTalkAITableLink(value: string): DingTalkAITableLink | n
 export {
   dingtalkAITableRuntimeContext,
   projectSpaceChatRuntimeContext,
+  projectSpaceIssueRuntimeContext,
 } from '@wegent/chat-core/project-space-context'
 
 export function repositoryAddress(project: CloudProject): string {

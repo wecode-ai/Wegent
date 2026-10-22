@@ -19,6 +19,23 @@ describe('DesktopHostEventBroker', () => {
     })
   })
 
+  test('resolves delivery waiters after a reader observes the published sequence', async () => {
+    const broker = new DesktopHostEventBroker()
+    const sequence = broker.publish('startup.failed', { startup_id: 'startup-1' })
+    let delivered = false
+    const delivery = broker.waitUntilRead(sequence).then(() => {
+      delivered = true
+    })
+
+    await Promise.resolve()
+    expect(delivered).toBe(false)
+
+    broker.read(0)
+    await delivery
+
+    expect(delivered).toBe(true)
+  })
+
   test('reports when the requested sequence fell out of retained history', () => {
     const broker = new DesktopHostEventBroker()
     for (let index = 0; index < 1026; index += 1) {

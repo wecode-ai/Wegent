@@ -1,6 +1,10 @@
+import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
+import { mergeDeviceLists } from '@/lib/workbench-device'
+import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -25,8 +29,6 @@ import {
   clearCloudRuntimeSync,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
-  mergeDeviceLists,
-  mergeRuntimeWorkLists,
   nowMs,
   readCachedDeviceList,
   resolveDeviceListWithCache,
@@ -591,6 +593,8 @@ export function useWorkbenchDataRefresh({
     }, 5000)
 
     async function bootstrap() {
+      const traceId = createModelLoadingTrace()
+      logModelLoading(traceId, 'bootstrap.devices_started')
       const bootstrapRevision = ++workListRefreshRevisionRef.current
       console.info('[startup][renderer]', {
         step: 'device-list-load',
@@ -600,6 +604,11 @@ export function useWorkbenchDataRefresh({
         'devices',
         executorClient.commands.listDevices()
       )
+      logModelLoading(traceId, 'bootstrap.devices_finished', {
+        elapsedMs: Math.round(nowMs() - startedAt),
+        ok: devicesResult.status === 'fulfilled',
+        cancelled,
+      })
       console.info('[startup][renderer]', {
         step: 'device-list-load',
         status: devicesResult.status === 'fulfilled' ? 'completed' : 'failed',
@@ -634,6 +643,7 @@ export function useWorkbenchDataRefresh({
       })
 
       const runtimeWorkStartedAt = nowMs()
+      logModelLoading(traceId, 'bootstrap.tasks_started')
       console.info('[startup][renderer]', {
         step: 'task-list-load',
         status: 'started',
@@ -642,7 +652,12 @@ export function useWorkbenchDataRefresh({
         'runtimeWork',
         executorClient.runtime.listRuntimeWork({ preferCached: true })
       ).then(runtimeWorkResult => {
-        if (cancelled) return
+        logModelLoading(traceId, 'bootstrap.tasks_received', {
+          elapsedMs: Math.round(nowMs() - runtimeWorkStartedAt),
+          ok: runtimeWorkResult.status === 'fulfilled',
+          cancelled,
+        })
+        if (cancelled || bootstrapRevision !== workListRefreshRevisionRef.current) return
         console.info('[startup][renderer]', {
           step: 'task-list-load',
           status: runtimeWorkResult.status === 'fulfilled' ? 'completed' : 'failed',
@@ -663,10 +678,7 @@ export function useWorkbenchDataRefresh({
           runtimeWorkResult.status === 'fulfilled'
             ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true)
             : EMPTY_RUNTIME_WORK
-        if (
-          runtimeWorkResult.status === 'fulfilled' &&
-          bootstrapRevision === workListRefreshRevisionRef.current
-        ) {
+        if (runtimeWorkResult.status === 'fulfilled') {
           localRuntimeWorkRef.current = runtimeWork
           dispatch({
             type: 'runtime_work_refreshed',
@@ -676,6 +688,7 @@ export function useWorkbenchDataRefresh({
               devices
             ),
           })
+          logModelLoading(traceId, 'bootstrap.tasks_dispatched')
         }
         void refreshCloudBackgroundData(devices, runtimeWork, {
           projects: [],
@@ -845,11 +858,15 @@ export function useWorkbenchDataRefresh({
   const refreshDevices = useCallback(
     async (options?: { useCacheFallback?: boolean }) => {
       const devices = await loadDevicesForRefresh(options)
+      const visibleDevices = resolveDeviceListWithCache(
+        selectVisibleDevices(devices, cloudRuntimeStateRef.current),
+        { useCacheFallback: false }
+      )
       dispatch({
         type: 'devices_refreshed',
-        devices,
+        devices: visibleDevices,
         standaloneDeviceId: resolveStandaloneDeviceIdForRefresh(
-          devices,
+          visibleDevices,
           state.standaloneDeviceId,
           state.standaloneWorkspacePath
         ),
@@ -986,8 +1003,43 @@ export function useWorkbenchDataRefresh({
       return createCommand()
     }, [services.deviceApi])
 
+  const updateRuntimeProject = useCallback(
+    (update: RuntimeProjectUpdate) => {
+      workListRefreshRevisionRef.current += 1
+      cloudBackgroundRequestControllerRef.current?.abort()
+      const projectUpdate = (work: RuntimeWorkListResponse) =>
+        updateRuntimeWorkProject(work, update, devicesRef.current)
+      if (localRuntimeWorkRef.current)
+        localRuntimeWorkRef.current = projectUpdate(localRuntimeWorkRef.current)
+      if (runtimeWorkRef.current) runtimeWorkRef.current = projectUpdate(runtimeWorkRef.current)
+      cachedRemoteRuntimeWorkRef.current = {
+        userId: user.id,
+        runtimeWork: writeCachedRemoteRuntimeWork(
+          user.id,
+          projectUpdate(cachedRemoteRuntimeWorkRef.current.runtimeWork)
+        ),
+      }
+      const cloud = clearCloudRuntimeSync(cloudRuntimeStateRef.current)
+      updateCloudRuntimeState({
+        ...cloud,
+        current: cloud.current
+          ? { ...cloud.current, runtimeWork: projectUpdate(cloud.current.runtimeWork) }
+          : null,
+        lastGood: cloud.lastGood
+          ? { ...cloud.lastGood, runtimeWork: projectUpdate(cloud.lastGood.runtimeWork) }
+          : null,
+      })
+      dispatch({ type: 'runtime_local_project_updated', ...update })
+    },
+    [dispatch, updateCloudRuntimeState, user.id]
+  )
+
+  const getRuntimeWorkSnapshot = useCallback(() => runtimeWorkRef.current, [])
+
   return {
     cloudWorkStatus,
+    getRuntimeWorkSnapshot,
+    updateRuntimeProject,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
     refreshWorkLists,

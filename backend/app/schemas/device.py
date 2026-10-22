@@ -16,6 +16,7 @@ from pydantic import (
     Field,
     ValidationError,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -109,6 +110,24 @@ class RuntimeInteractiveSessionFeatures(BaseModel):
     terminal: bool = True
 
 
+class RuntimeProjectEditingFeatures(BaseModel):
+    """Independent project editing capabilities; unknown flags grant no writes."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    multi_roots: Optional[bool] = Field(None, alias="multiRoots")
+    ai_settings: Optional[bool] = Field(None, alias="aiSettings")
+    default_project_space: Optional[bool] = Field(None, alias="defaultProjectSpace")
+    plugins: Optional[bool] = None
+
+    @field_validator(
+        "multi_roots", "ai_settings", "default_project_space", "plugins", mode="before"
+    )
+    @classmethod
+    def normalize_flag(cls, value: Any) -> Optional[bool]:
+        return value if isinstance(value, bool) else None
+
+
 _runtime_feature_normalizers: dict[str, Callable[[Any], Any | None]] = {}
 
 
@@ -136,6 +155,23 @@ class RuntimeFeatures(BaseModel):
         alias="interactiveSessions",
     )
     worktrees: Optional[RuntimeWorktreeFeatures] = None
+    project_editing: Optional[RuntimeProjectEditingFeatures] = Field(
+        default=None, alias="projectEditing"
+    )
+
+    @field_validator("project_editing", mode="before")
+    @classmethod
+    def normalize_project_editing(cls, value: Any) -> Any:
+        # Retain malformed advertisements conservatively instead of inferring a legacy contract.
+        return value if isinstance(value, (dict, RuntimeProjectEditingFeatures)) else {}
+
+    @model_serializer(mode="wrap")
+    def serialize_features(self, handler: Any) -> Dict[str, Any]:
+        result = handler(self)
+        if self.project_editing is None:
+            result.pop("projectEditing", None)
+            result.pop("project_editing", None)
+        return result
 
     @model_validator(mode="before")
     @classmethod
@@ -159,14 +195,40 @@ class RuntimeFeatures(BaseModel):
 
 
 def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:
-    """Treat malformed optional Runtime feature metadata as absent."""
+    """Drop malformed metadata without erasing explicit project write denials."""
 
     if value is None:
         return None
     try:
         return RuntimeFeatures.model_validate(value)
     except ValidationError:
-        return None
+        if not isinstance(value, dict):
+            return None
+        editing_key = next(
+            (key for key in ("projectEditing", "project_editing") if key in value), None
+        )
+        if editing_key is None:
+            return None
+        editing = value[editing_key]
+        denied_flags = (
+            {key: False for key, flag in editing.items() if flag is False}
+            if isinstance(editing, dict)
+            else {}
+        )
+        try:
+            header = RuntimeFeatures.model_validate(
+                {
+                    "schemaVersion": value.get(
+                        "schemaVersion", value.get("schema_version")
+                    )
+                }
+            )
+            schema_version = header.schema_version
+        except ValidationError:
+            schema_version = 1
+        return RuntimeFeatures.model_validate(
+            {"schemaVersion": schema_version, "projectEditing": denied_flags}
+        )
 
 
 class DeviceInfo(BaseModel):
@@ -210,6 +272,12 @@ class DeviceInfo(BaseModel):
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
     runtime_transfer_host: Optional[str] = Field(
         None, description="Host peers should use for runtime direct transfers"
+    )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
     )
     runtime_instance_id: Optional[str] = Field(
         None, description="Stable runtime installation ID shared by all routes"
@@ -409,6 +477,12 @@ class DeviceRegisterPayload(BaseModel):
         max_length=255,
         description="Host peers should use for runtime direct transfers",
     )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
+    )
     runtime_instance_id: Optional[str] = Field(
         None,
         max_length=100,
@@ -478,6 +552,12 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
     )
     runtime_instance_id: Optional[str] = Field(
         None,

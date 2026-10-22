@@ -13,8 +13,10 @@ pub mod computer_use_mcp;
 pub mod config;
 mod connector_gateway;
 pub mod connector_mcp;
+pub(crate) mod directory_link;
 pub mod emitter;
 pub mod envd;
+mod file_lease;
 pub mod heartbeat;
 pub mod hooks;
 pub mod image_preprocessor;
@@ -29,6 +31,7 @@ pub mod process_environment;
 pub mod prompt_enrichment;
 mod prompt_mentions;
 pub mod protocol;
+mod repository_identity;
 pub mod runner;
 pub mod runtime_work;
 pub mod server;
@@ -38,6 +41,7 @@ pub mod task_runtime;
 mod url_origin;
 pub mod version;
 mod workspace_paths;
+pub use workspace_paths::metadata::migrate as migrate_workspace_metadata;
 
 #[cfg(test)]
 pub(crate) mod test_env {
@@ -61,7 +65,9 @@ pub(crate) mod test_env {
     ];
 
     #[used]
-    #[link_section = "__DATA,__mod_init_func"]
+    #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
+    #[cfg_attr(windows, link_section = ".CRT$XCU")]
+    #[cfg_attr(all(unix, not(target_os = "macos")), link_section = ".init_array")]
     static SCRUB_WEGENT_ENV: extern "C" fn() = {
         extern "C" fn scrub() {
             for key in HOST_STATE_VARS {

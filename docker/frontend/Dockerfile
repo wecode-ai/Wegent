@@ -47,6 +47,7 @@ COPY --from=deps /app/packages/collaboration/node_modules ./packages/collaborati
 # Copy source code
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
+COPY shared/assets/codex-models ./shared/assets/codex-models
 COPY frontend ./frontend
 
 # Disable Next.js telemetry to speed up build

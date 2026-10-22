@@ -1,4 +1,5 @@
 import { observeOperation } from '@/telemetry/observeOperation'
+import { trackBusinessEvent } from '@/telemetry/businessEvents'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { UnlistenFn } from '@/desktop/disposeDesktopListener'
 
@@ -29,6 +30,10 @@ export interface HarnessAppManifest {
     spec: string
     path?: string
   }>
+  /** Capability requests; a request is not a grant. */
+  capabilities?: {
+    decisionModel?: boolean
+  }
   defaultModel?: Record<string, unknown>
 }
 
@@ -46,6 +51,10 @@ export interface HarnessAppInstallation {
   smartAppId?: number | null
   releaseId?: number | null
   source: 'managed' | 'linked' | 'market'
+  /** Capabilities Wework authorized for this installation. */
+  grantedCapabilities: {
+    decisionModel: boolean
+  }
 }
 
 export interface HarnessAppPreview {
@@ -65,6 +74,24 @@ export interface HarnessAppExport {
 
 export interface HarnessAppSavedExport extends HarnessAppExport {
   destinationPath: string
+}
+
+/**
+ * Options for `harnessAppsApi.start`.
+ *
+ * Positional arguments were replaced with an object so that each additional
+ * launch capability is named at the call site and cannot be slipped in by
+ * position. `decisionBaseUrl` and `decisionProtocolVersion` carry the Wework
+ * decision router route; the Electron host re-validates them and refuses to
+ * inject them for an installation that was not granted the capability.
+ */
+export interface SmartAppStartOptions {
+  installationId: string
+  modelBaseUrl?: string | null
+  contextBaseUrl?: string | null
+  contextToken?: string | null
+  decisionBaseUrl?: string | null
+  decisionProtocolVersion?: number | null
 }
 
 export type HarnessAppVerificationStage =
@@ -200,22 +227,22 @@ export const harnessAppsApi = {
       releaseId: source?.releaseId ?? null,
     })
   },
-  start(
-    installationId: string,
-    modelBaseUrl: string | null,
-    contextBaseUrl: string | null = null,
-    contextToken: string | null = null
-  ) {
+  start(options: SmartAppStartOptions) {
+    const startupId = crypto.randomUUID()
+    trackBusinessEvent('smart_app_start_attempted', { startup_id: startupId })
     return observeOperation(
       'smart_app.start',
       () =>
         invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
-          installationId,
-          modelBaseUrl,
-          contextBaseUrl,
-          contextToken,
+          installationId: options.installationId,
+          modelBaseUrl: options.modelBaseUrl ?? null,
+          contextBaseUrl: options.contextBaseUrl ?? null,
+          contextToken: options.contextToken ?? null,
+          decisionBaseUrl: options.decisionBaseUrl ?? null,
+          decisionProtocolVersion: options.decisionProtocolVersion ?? null,
         }),
-      result => result.state === 'running'
+      result => result.state === 'running',
+      { properties: { startup_id: startupId } }
     )
   },
   stop(installationId: string) {

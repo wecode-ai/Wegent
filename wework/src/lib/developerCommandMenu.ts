@@ -57,7 +57,7 @@ export function installDeveloperCommandMenu() {
   )
 }
 
-function openDeveloperCommandMenu() {
+export function openDeveloperCommandMenu() {
   closeDeveloperCommandMenu()
   setEmbeddedBrowserOcclusion(DEVELOPER_COMMAND_MENU_OCCLUSION_ID, true)
 

@@ -4,7 +4,7 @@ This host-side DeepSeek Harness plugin bridges the DSH process to the Electron
 main process through two inherited private pipes. It exposes a versioned,
 loopback-only HTTP carrier to the first-party Wework DSH application.
 
-This plugin belongs only to the bundled Core Runtime `0.1.1-rc.2`. The
+This plugin belongs only to the bundled Core Runtime `0.2.0-rc.2`. The
 Workbench Runtime `0.1.0-rc.8` does not contain it and receives no Electron
 Host pipe. The new Electron architecture no longer supports `0.1.0-rc.7`.
 

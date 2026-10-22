@@ -185,6 +185,9 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
           timeoutMs: uiTimeoutMs,
         })
         await control.command('click', '[data-testid="quick-phrase-option-default-create-plan"]')
+        await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('fill', COMPOSER_SELECTOR, { value: PLAN_PROMPT })
         await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
           timeoutMs: uiTimeoutMs,

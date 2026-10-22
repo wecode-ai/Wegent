@@ -21,126 +21,33 @@
 //! field with its schema default.
 use serde::Serialize;
 
-use crate::board_snapshot::repository::{ProjectRow, datetime_is_unset};
+use crate::board_snapshot::repository::ProjectRow;
 use crate::state::AppState;
 
+use super::execution::{ApprovalView, ExecutionRow, execution_ai_state, execution_display_state};
 use super::{
-    ASSIGNEE_PREFIX, CREATOR_PREFIX, PRIORITY_PREFIX, PageIssue, STATUS_PREFIX, has_permission,
-    parent_id_from_issue,
+    ASSIGNEE_PREFIX, CREATOR_PREFIX, PRIORITY_PREFIX, PageIssue, SECURITY_PREFIX, STATUS_PREFIX,
+    has_permission, parent_id_from_issue,
 };
 
-/// One `loop_item_executions` row projected by `_with_execution_state`.
-/// Only the columns consumed by the overlay are selected.
-#[derive(Debug, brz_mysql::FromMysqlRow)]
-#[allow(
-    dead_code,
-    reason = "selected to mirror the source execution projection"
-)]
-struct ExecutionRow {
-    id: i64,
-    agent_id: Option<String>,
-    status: Option<String>,
-    observed_state: Option<String>,
-    sync_state: Option<String>,
-    attempt_no: Option<i64>,
-    last_event_seq: Option<i64>,
-    queued_at: Option<chrono::NaiveDateTime>,
-    execution_note: Option<String>,
-    approval_status: Option<String>,
-    approved_by_user_id: Option<i64>,
-    approved_at: Option<chrono::NaiveDateTime>,
-    rejected_reason: Option<String>,
+/// The bare `users` entity column list SQLAlchemy renders for
+/// `Session.get(User, id)`: every mapped column, no labels, no `LIMIT`.
+const USER_ENTITY_COLUMNS: &str = "users.id, users.user_name, users.password_hash, \
+     users.email, users.git_info, users.is_active, users.`role`, users.auth_source, \
+     users.preferences, users.created_at, users.updated_at";
+
+/// `LoopItemPermissions` (`app.schemas.delivery`): the per-item capability
+/// flags emitted on every item. The external-provider path never narrows
+/// them, so all four serialize `false`.
+#[derive(Debug, Default, Serialize)]
+struct Permissions {
+    edit_content: bool,
+    comment: bool,
+    assign: bool,
+    execute: bool,
 }
 
-impl ExecutionRow {
-    /// `loop_item_execution_service.latest_for_item`: the newest run for the
-    /// task regardless of terminal state. SQLAlchemy renders the string
-    /// `loop_item_id` as a quoted literal in a COM_QUERY.
-    async fn latest_for_item<M: brz_mysql::Mysql>(
-        mysql: &M,
-        item_id: &str,
-    ) -> Result<Option<Self>, brz_mysql::MysqlError> {
-        mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT loop_item_executions.id, loop_item_executions.agent_id, \
-                     loop_item_executions.status, loop_item_executions.observed_state, \
-                     loop_item_executions.sync_state, loop_item_executions.attempt_no, \
-                     loop_item_executions.last_event_seq, loop_item_executions.queued_at, \
-                     loop_item_executions.execution_note, \
-                     loop_item_executions.approval_status, \
-                     loop_item_executions.approved_by_user_id, \
-                     loop_item_executions.approved_at, \
-                     loop_item_executions.rejected_reason \
-                     FROM loop_item_executions \
-                     WHERE loop_item_executions.loop_item_id = '{item_id}' \
-                     ORDER BY loop_item_executions.id DESC LIMIT 1"
-                ),
-                (),
-            )
-            .await
-    }
-
-    /// `_optional_dt` + pydantic `isoformat()`: naive datetimes serialize
-    /// without an offset, with 6-digit microseconds when nonzero.
-    fn naive_iso(value: Option<chrono::NaiveDateTime>) -> Option<String> {
-        let value = value?;
-        if datetime_is_unset(Some(value)) {
-            return None;
-        }
-        Some(value.format("%Y-%m-%dT%H:%M:%S%.6f").to_string())
-    }
-
-    /// `_execution_approval_view(execution)`: the approval projection.
-    fn approval_view(&self) -> Option<ApprovalView> {
-        let status = self.approval_status.as_deref()?;
-        if status.is_empty() {
-            return None;
-        }
-        // The `status` discriminant is always emitted first; the per-status
-        // branch fields follow. `approval` is `dict[str, Any] | None` in the
-        // source schema, so missing branch fields must serialize as `null`
-        // (not be omitted) to match the source's `view[key] = value` writes,
-        // which leave a branch's other keys unset only because pydantic later
-        // re-serializes the dict as-is. The recorded cases have no executions,
-        // so this branch is reached only on the unrecorded execution path.
-        let (requested_at, approved_by_user_id, approved_at, rejected_reason) = match status {
-            "pending" => (Self::naive_iso(self.queued_at), None, None, None),
-            "approved" => (
-                None,
-                self.approved_by_user_id,
-                Self::naive_iso(self.approved_at),
-                None,
-            ),
-            "rejected" => (None, None, None, self.rejected_reason.clone()),
-            _ => (None, None, None, None),
-        };
-        Some(ApprovalView {
-            status: status.to_string(),
-            requested_at,
-            approved_by_user_id,
-            approved_at,
-            rejected_reason,
-        })
-    }
-}
-
-/// `_execution_approval_view(execution)`: the approval projection shape.
-/// All four branch fields are always present; the source sets only the
-/// fields for the active status, and the others stay `null`. The field
-/// order (`status`, `requested_at`, `approved_by_user_id`, `approved_at`,
-/// `rejected_reason`) is the union of the source's per-status dict writes
-/// in declaration order.
-#[derive(Debug, Serialize)]
-struct ApprovalView {
-    status: String,
-    requested_at: Option<String>,
-    approved_by_user_id: Option<i64>,
-    approved_at: Option<String>,
-    rejected_reason: Option<String>,
-}
-
-/// `LoopItemResponse` (`app.schemas.delivery`): the 47-field board-task
+/// `LoopItemResponse` (`app.schemas.delivery`): the 52-field board-task
 /// view. Field declaration order mirrors the source pydantic schema's
 /// serialization order exactly, so serde emits fields in the recorded
 /// order without any manual reordering.
@@ -151,7 +58,7 @@ struct ApprovalView {
 /// never omitted. This preserves the byte-level output of the previous
 /// `serde_json::Value` + `order_item_fields` path.
 #[derive(Debug, Serialize)]
-pub(super) struct LoopItemResponse {
+pub(crate) struct LoopItemResponse {
     id: String,
     cloud_project_id: String,
     sequence_number: i64,
@@ -160,12 +67,14 @@ pub(super) struct LoopItemResponse {
     description: String,
     status: String,
     assignee_user_id: Option<i64>,
+    assignee_group_id: Option<String>,
+    assignee_group_name: Option<String>,
     assignee_name: Option<String>,
     assignee_agent_id: Option<String>,
     assignee_agent_name: Option<String>,
     assignee_team_id: Option<i64>,
     assignee_team_name: Option<String>,
-    ai_state: Option<Box<serde_json::value::RawValue>>,
+    ai_state: Option<brz_json::RawJson>,
     execution_id: Option<i64>,
     execution_state: Option<String>,
     execution_control_state: Option<String>,
@@ -174,15 +83,15 @@ pub(super) struct LoopItemResponse {
     execution_attempt_no: Option<i64>,
     execution_last_event_seq: Option<i64>,
     can_approve: bool,
-    assignment_history: Vec<Box<serde_json::value::RawValue>>,
-    status_history: Vec<Box<serde_json::value::RawValue>>,
+    assignment_history: Vec<brz_json::RawJson>,
+    status_history: Vec<brz_json::RawJson>,
     approval: Option<ApprovalView>,
     queued_at: Option<String>,
     execution_note: Option<String>,
     execution_error: Option<String>,
-    automation: Option<Box<serde_json::value::RawValue>>,
-    workflow: Option<Box<serde_json::value::RawValue>>,
-    execution_config: Option<Box<serde_json::value::RawValue>>,
+    automation: Option<brz_json::RawJson>,
+    workflow: Option<brz_json::RawJson>,
+    execution_config: Option<brz_json::RawJson>,
     priority: String,
     due_at: Option<String>,
     sort_order: i64,
@@ -190,9 +99,12 @@ pub(super) struct LoopItemResponse {
     created_by_user_id: i64,
     created_by_user_name: Option<String>,
     can_view_detail: bool,
+    security_level: String,
     can_edit: bool,
+    permissions: Permissions,
     detail_loaded: bool,
     content_revision: i64,
+    activity_read_sequence: i64,
     is_unread: bool,
     current_delivery_id: Option<String>,
     version: i64,
@@ -208,25 +120,64 @@ impl LoopItemResponse {
         self.id.clone()
     }
 
-    /// `_with_execution_state`: overlay the active run's `execution_id` and
-    /// `approval` on the provider view. When no execution row exists the view
-    /// is returned unchanged (both fields keep their `None` schema default).
+    /// `_base_response`'s `can_view_detail`, consumed by callers that gate on
+    /// provider visibility (for example `external_loop_item_provider.get`).
+    pub(crate) fn can_view_detail(&self) -> bool {
+        self.can_view_detail
+    }
+
+    /// `_with_execution_state` (`app.services.loop_items.external_provider`):
+    /// overlay the active run's execution, approval, and AI state on the
+    /// provider view. When no execution row exists the view is returned
+    /// unchanged (every overlaid field keeps its `None` schema default).
     async fn with_execution_state(
         self,
         state: &AppState,
         item_id: &str,
+        user_id: i32,
     ) -> Result<Self, brz_mysql::MysqlError> {
         let Some(execution) = ExecutionRow::latest_for_item(&state.mysql, item_id).await? else {
             return Ok(self);
         };
-        // `_with_execution_state` overlays `execution_id` and `approval` (and
-        // the remaining run fields) when a run exists. All 17 comparison cases
-        // have no executions, so only the `None` branch is exercised on the
-        // recorded path; the schema defaults set in [`issue_response`] then
-        // match the recorded source output.
+        // `_execution_can_approve`: only a `pending_approval` run whose agent
+        // was created by the caller can be approved. `db.get(ProjectChatAgent,
+        // execution.agent_id)` resolves the agent creator.
+        let can_approve = if execution.status.as_deref() == Some("pending_approval") {
+            match execution.agent_id.as_deref().filter(|id| !id.is_empty()) {
+                Some(agent_id) => {
+                    let agent = ExecutionRow::chat_agent(&state.mysql, agent_id).await?;
+                    agent.and_then(|agent| agent.created_by_user_id) == Some(user_id)
+                }
+                None => false,
+            }
+        } else {
+            false
+        };
+        // `execution_ai_state(db, execution)`: the authoritative run
+        // projection. The agent lookup here is a second, independent
+        // `Session.get` in the recorded source, so it is not deduplicated
+        // against the base-response lookup.
+        let ai_state = execution_ai_state(&state.mysql, &execution).await?;
+        // `merged["version"] = int(merged["version"]) + int(execution.id)`.
+        let version = self.version + execution.id;
         Ok(LoopItemResponse {
             execution_id: Some(execution.id),
+            execution_state: Some(execution_display_state(&execution)),
+            execution_control_state: execution.status.clone(),
+            execution_observed_state: execution.observed_state.clone(),
+            execution_sync_state: execution.sync_state.clone(),
+            execution_attempt_no: execution.attempt_no,
+            execution_last_event_seq: execution.last_event_seq,
+            can_approve,
             approval: execution.approval_view(),
+            queued_at: ExecutionRow::optional_iso(execution.queued_at),
+            execution_note: execution
+                .execution_note
+                .as_deref()
+                .filter(|note| !note.is_empty())
+                .map(str::to_string),
+            ai_state: ai_state.map(|value| brz_json::raw_json(&value)),
+            version,
             ..self
         })
     }
@@ -236,7 +187,7 @@ impl LoopItemResponse {
 /// `_with_execution_state`. Emits the complete `LoopItemResponse` field set
 /// (all 47 fields), mirroring the source's pydantic serialization order and
 /// defaults.
-pub(super) async fn issue_response(
+pub(crate) async fn issue_response(
     state: &AppState,
     project: &ProjectRow,
     role: &str,
@@ -246,7 +197,6 @@ pub(super) async fn issue_response(
     let labels = issue.labels();
     let creator_id = creator_id_from_labels(&labels);
     let creator_name = creator_name_from_labels(&labels);
-    let (can_view, can_edit) = permissions(role, creator_id, user_id);
     let number = issue.number();
     let parent_id = parent_id_from_issue(project, issue).and_then(Option::from);
     // `include_description=False` on this path: the description is always "".
@@ -260,7 +210,14 @@ pub(super) async fn issue_response(
         .unwrap_or(created_at_raw);
     let created_at = datetime_reformat(created_at_raw);
     let updated_at = datetime_reformat(updated_at_raw);
-    let (assignee_user_id, assignee_name) = assignee_user_from_labels(state, &labels).await?;
+    let (assignee_user_id, assignee_name, assignee_agent_id, assignee_agent_name) =
+        assignee_from_labels(&state.mysql, &labels).await?;
+    // `_security_level(labels, project)` and `_permissions(access, ...)`: the
+    // security level drives `can_view`, whose `related` disjunct also depends
+    // on the resolved assignee, so both follow the assignee lookup.
+    let security_level = security_level_from_labels(&labels, project);
+    let (can_view, can_edit) =
+        permissions(role, &security_level, creator_id, assignee_user_id, user_id);
     let version = derived_version(updated_at_raw);
 
     let key = project.project_key.clone().unwrap_or_default();
@@ -290,9 +247,11 @@ pub(super) async fn issue_response(
         description,
         status: item_status,
         assignee_user_id,
+        assignee_group_id: None,
+        assignee_group_name: None,
         assignee_name,
-        assignee_agent_id: None,
-        assignee_agent_name: None,
+        assignee_agent_id,
+        assignee_agent_name,
         assignee_team_id: None,
         assignee_team_name: None,
         ai_state: None,
@@ -320,9 +279,12 @@ pub(super) async fn issue_response(
         created_by_user_id: creator_id,
         created_by_user_name: creator_name,
         can_view_detail: can_view,
+        security_level,
         can_edit,
+        permissions: Permissions::default(),
         detail_loaded: false,
         content_revision: 1,
+        activity_read_sequence: 0,
         is_unread: false,
         current_delivery_id: None,
         version,
@@ -332,7 +294,86 @@ pub(super) async fn issue_response(
     };
 
     let item_id = response.id();
-    response.with_execution_state(state, &item_id).await
+    response
+        .with_execution_state(state, &item_id, user_id)
+        .await
+}
+
+impl LoopItemResponse {
+    /// Convert the issue projection into the shared `loop_items` response body.
+    ///
+    /// The external projection does not carry the local-only `assignee_group_*`,
+    /// `security_level`, `permissions`, or `activity_read_sequence` fields. The
+    /// source's `_base_response` never sets `permissions` or
+    /// `activity_read_sequence`, so those stay at their pydantic defaults; the
+    /// external `security_level` is not represented on this path and therefore
+    /// stays at the schema default (`open`).
+    pub(crate) fn into_loop_items(self) -> crate::loop_items::response::LoopItemResponse {
+        fn raw_value(raw: &brz_json::RawJson) -> serde_json::Value {
+            serde_json::from_str(raw.get()).unwrap_or(serde_json::Value::Null)
+        }
+        crate::loop_items::response::LoopItemResponse {
+            id: self.id,
+            cloud_project_id: self.cloud_project_id,
+            sequence_number: self.sequence_number,
+            parent_id: self.parent_id,
+            title: self.title,
+            description: self.description,
+            status: self.status,
+            assignee_user_id: self.assignee_user_id.map(|id| id as i32),
+            assignee_group_id: None,
+            assignee_group_name: None,
+            assignee_name: self.assignee_name,
+            assignee_agent_id: self.assignee_agent_id,
+            assignee_agent_name: self.assignee_agent_name,
+            assignee_team_id: self.assignee_team_id.map(|id| id as i32),
+            assignee_team_name: self.assignee_team_name,
+            ai_state: self.ai_state.as_ref().map(raw_value),
+            execution_id: self.execution_id,
+            execution_state: self.execution_state,
+            execution_control_state: self.execution_control_state,
+            execution_observed_state: self.execution_observed_state,
+            execution_sync_state: self.execution_sync_state,
+            execution_attempt_no: self.execution_attempt_no,
+            execution_last_event_seq: self.execution_last_event_seq,
+            can_approve: self.can_approve,
+            assignment_history: self.assignment_history.iter().map(raw_value).collect(),
+            status_history: self.status_history.iter().map(raw_value).collect(),
+            approval: self
+                .approval
+                .and_then(|view| serde_json::to_value(view).ok()),
+            queued_at: self.queued_at,
+            execution_note: self.execution_note,
+            execution_error: self.execution_error,
+            automation: self.automation.as_ref().map(raw_value),
+            workflow: self.workflow.as_ref().map(raw_value),
+            execution_config: self.execution_config.as_ref().map(raw_value),
+            priority: self.priority,
+            due_at: self.due_at,
+            sort_order: self.sort_order,
+            tags: self.tags,
+            created_by_user_id: self.created_by_user_id,
+            created_by_user_name: self.created_by_user_name,
+            can_view_detail: self.can_view_detail,
+            security_level: "open",
+            can_edit: self.can_edit,
+            permissions: crate::loop_items::response::LoopItemPermissions {
+                edit_content: false,
+                comment: false,
+                assign: false,
+                execute: false,
+            },
+            detail_loaded: self.detail_loaded,
+            content_revision: self.content_revision,
+            activity_read_sequence: 0,
+            is_unread: self.is_unread,
+            current_delivery_id: self.current_delivery_id,
+            version: self.version,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            completed_at: self.completed_at,
+        }
+    }
 }
 
 /// `_creator_id(labels)`: the numeric creator id from the creator label, 0
@@ -383,65 +424,107 @@ fn public_tags(labels: &[String]) -> Vec<String> {
                 && !label.starts_with(STATUS_PREFIX)
                 && !label.starts_with(CREATOR_PREFIX)
                 && !label.starts_with(ASSIGNEE_PREFIX)
+                && !label.starts_with(SECURITY_PREFIX)
         })
         .cloned()
         .collect()
 }
 
-/// `_permissions(access, creator_id, user_id)`: public visitors only see
-/// their own items; members view everything and edit with Developer+.
-pub(super) fn permissions(role: &str, creator_id: i64, user_id: i32) -> (bool, bool) {
-    if role == "RestrictedAnalyst" {
-        let owns = creator_id > 0 && creator_id == i64::from(user_id);
-        return (owns, owns);
+/// `_security_level(labels, project)`: the `wegent:security:` label value when
+/// it names a known level, otherwise the project's `default_issue_security`.
+fn security_level_from_labels(labels: &[String], project: &ProjectRow) -> String {
+    let value = labels
+        .iter()
+        .find_map(|label| label.strip_prefix(SECURITY_PREFIX));
+    match value {
+        Some(value) if matches!(value, "open" | "related") => value.to_string(),
+        _ => project.default_issue_security().to_string(),
     }
-    (true, has_permission(role, "Developer"))
 }
 
-/// `_assignee_from_labels` for the `user` kind: `(assignee_user_id,
-/// assignee_name)`. When the label carries no name, the name is resolved
-/// from the `users` table (`db.get(User, id)`).
-async fn assignee_user_from_labels(
-    state: &AppState,
+/// `_permissions(access, ...)`: `can_view` is granted to members with
+/// `Maintainer` or higher, to any `open` item, and to `related` items the
+/// caller created or is assigned; `can_edit` additionally needs `Developer`.
+///
+/// The source's `related` disjunct also consults `is_related_item(db, ...)`,
+/// which this read path does not issue; projects that opt into
+/// `default_issue_security = related` therefore rely on the creator/assignee
+/// match alone.
+pub(super) fn permissions(
+    role: &str,
+    security_level: &str,
+    creator_id: i64,
+    assignee_user_id: Option<i64>,
+    user_id: i32,
+) -> (bool, bool) {
+    let user_id = i64::from(user_id);
+    let related = security_level == "related"
+        && ((creator_id > 0 && creator_id == user_id) || assignee_user_id == Some(user_id));
+    let can_view = has_permission(role, "Maintainer") || security_level == "open" || related;
+    let can_edit = can_view && has_permission(role, "Developer");
+    (can_view, can_edit)
+}
+
+/// `_assignee_from_labels` + the per-kind name resolution in
+/// `_base_response`. The `user` kind resolves the display name from the
+/// `users` table (`Session.get(User, id)`) when the label carries no name;
+/// the `agent` kind resolves `agent.title or agent.name` through
+/// `Session.get(ProjectChatAgent, id)` the same way. The `team` and `group`
+/// kinds are not exercised by the recorded provider pages and keep the
+/// source's raw-label semantics (id kept as-is when parsable, name from the
+/// label only).
+#[allow(clippy::type_complexity)]
+async fn assignee_from_labels<M: brz_mysql::Mysql>(
+    mysql: &M,
     labels: &[String],
-) -> Result<(Option<i64>, Option<String>), brz_mysql::MysqlError> {
+) -> Result<(Option<i64>, Option<String>, Option<String>, Option<String>), brz_mysql::MysqlError> {
     let Some(label) = labels.iter().find(|l| l.starts_with(ASSIGNEE_PREFIX)) else {
-        return Ok((None, None));
+        return Ok((None, None, None, None));
     };
     let rest = label.trim_start_matches(ASSIGNEE_PREFIX);
     let mut parts = rest.splitn(3, ':');
     let kind = parts.next().unwrap_or("");
     let id = parts.next().unwrap_or("");
     let name = parts.next().map(str::trim).unwrap_or("");
-    if kind != "user" || id.is_empty() {
-        return Ok((None, None));
+    match kind {
+        "user" if !id.is_empty() => {
+            let assignee_user_id: i64 = id.parse().unwrap_or(0);
+            let assignee_name = if name.is_empty() {
+                user_name_by_id(mysql, assignee_user_id).await?
+            } else {
+                Some(name.to_string())
+            };
+            Ok((Some(assignee_user_id), assignee_name, None, None))
+        }
+        "agent" if !id.is_empty() => {
+            let assignee_agent_name = if name.is_empty() {
+                let agent = ExecutionRow::chat_agent(mysql, id).await?;
+                agent.and_then(|agent| agent.display_name())
+            } else {
+                Some(name.to_string())
+            };
+            Ok((None, None, Some(id.to_string()), assignee_agent_name))
+        }
+        _ => Ok((None, None, None, None)),
     }
-    let assignee_user_id: i64 = id.parse().unwrap_or(0);
-    let assignee_name = if name.is_empty() {
-        user_name_by_id(state, assignee_user_id).await?
-    } else {
-        Some(name.to_string())
-    };
-    Ok((Some(assignee_user_id), assignee_name))
 }
 
-/// `db.get(User, id)`: the user's `user_name` when the row exists. SQLAlchemy
-/// renders the primary-key lookup with an inline integer literal.
-async fn user_name_by_id(
-    state: &AppState,
+/// `db.get(User, id)`: the user's `user_name` when the row exists. The ORM
+/// `Session.get` renders the bare entity column list with the id inlined as
+/// an integer literal, matching the recorded exchange.
+async fn user_name_by_id<M: brz_mysql::Mysql>(
+    mysql: &M,
     user_id: i64,
 ) -> Result<Option<String>, brz_mysql::MysqlError> {
     #[derive(Debug, brz_mysql::FromMysqlRow)]
     struct NameRow {
-        #[mysql(rename = "users_user_name")]
         user_name: String,
     }
-    let row: Option<NameRow> = state
-        .mysql
+    let row: Option<NameRow> = mysql
         .fetch_optional(
             &format!(
-                "SELECT users.id AS users_id, users.user_name AS users_user_name \
-                 FROM users WHERE users.id = {user_id}"
+                "SELECT {USER_ENTITY_COLUMNS} \nFROM users \n\
+                 WHERE users.id = {user_id}"
             ),
             (),
         )
@@ -491,390 +574,9 @@ fn datetime_reformat(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn page_issue_status_from_labels() {
-        let issue = PageIssue {
-            number: Some(1),
-            iid: None,
-            title: None,
-            _state: None,
-            labels: serde_json::from_str(r#"["wegent:status:in_review"]"#).unwrap(),
-            description: None,
-            body: None,
-            created_at: None,
-            updated_at: None,
-            closed_at: None,
-            pull_request: None,
-        };
-        assert_eq!(issue.status(), "in_review");
-    }
-
-    #[test]
-    fn page_issue_status_defaults_to_pending() {
-        let issue = PageIssue {
-            number: Some(1),
-            iid: None,
-            title: None,
-            _state: None,
-            labels: serde_json::from_str("[]").unwrap(),
-            description: None,
-            body: None,
-            created_at: None,
-            updated_at: None,
-            closed_at: None,
-            pull_request: None,
-        };
-        assert_eq!(issue.status(), "pending");
-    }
-
-    #[test]
-    fn datetime_reformat_renders_single_offset_sign() {
-        // Pydantic re-serializes the parsed timestamp with 6-digit
-        // microseconds and the original offset: exactly one `+` before the
-        // offset, never `++08:00`.
-        assert_eq!(
-            datetime_reformat("2026-09-10T19:51:51.762+08:00"),
-            serde_json::json!("2026-09-10T19:51:51.762000+08:00")
-        );
-        assert_eq!(
-            datetime_reformat("2026-09-10T19:51:51+08:00"),
-            serde_json::json!("2026-09-10T19:51:51+08:00")
-        );
-        assert_eq!(
-            datetime_reformat("2026-09-10T11:51:51.762Z"),
-            serde_json::json!("2026-09-10T11:51:51.762000+00:00")
-        );
-    }
-
-    /// The full `LoopItemResponse` field order and defaults, serialized to a
-    /// JSON object string. This is the canonical byte output the recorded
-    /// traffic expects; the typed struct must reproduce it exactly — every
-    /// field present, `None` as `null`, defaults at their schema values.
-    #[test]
-    fn loop_item_response_serializes_all_fields_in_schema_order() {
-        let response = LoopItemResponse {
-            id: "wg-1".to_string(),
-            cloud_project_id: "123".to_string(),
-            sequence_number: 1,
-            parent_id: None,
-            title: "t".to_string(),
-            description: String::new(),
-            status: "pending".to_string(),
-            assignee_user_id: None,
-            assignee_name: None,
-            assignee_agent_id: None,
-            assignee_agent_name: None,
-            assignee_team_id: None,
-            assignee_team_name: None,
-            ai_state: None,
-            execution_id: None,
-            execution_state: None,
-            execution_control_state: None,
-            execution_observed_state: None,
-            execution_sync_state: None,
-            execution_attempt_no: None,
-            execution_last_event_seq: None,
-            can_approve: false,
-            assignment_history: Vec::new(),
-            status_history: Vec::new(),
-            approval: None,
-            queued_at: None,
-            execution_note: None,
-            execution_error: None,
-            automation: None,
-            workflow: None,
-            execution_config: None,
-            priority: "none".to_string(),
-            due_at: None,
-            sort_order: 1,
-            tags: Vec::new(),
-            created_by_user_id: 0,
-            created_by_user_name: None,
-            can_view_detail: true,
-            can_edit: false,
-            detail_loaded: false,
-            content_revision: 1,
-            is_unread: false,
-            current_delivery_id: None,
-            version: 1,
-            created_at: "2026-09-10T19:51:51+08:00".to_string(),
-            updated_at: "2026-09-10T19:51:51+08:00".to_string(),
-            completed_at: None,
-        };
-        let serialized = serde_json::to_string(&response).unwrap();
-        // Field order and defaults mirror the source `LoopItemResponse`
-        // pydantic schema exactly; `null` for every unset Optional field.
-        let expected = concat!(
-            r#"{"id":"wg-1","cloud_project_id":"123","sequence_number":1,"parent_id":null,"#,
-            r#""title":"t","description":"","status":"pending","assignee_user_id":null,"#,
-            r#""assignee_name":null,"assignee_agent_id":null,"assignee_agent_name":null,"#,
-            r#""assignee_team_id":null,"assignee_team_name":null,"ai_state":null,"#,
-            r#""execution_id":null,"execution_state":null,"execution_control_state":null,"#,
-            r#""execution_observed_state":null,"execution_sync_state":null,"#,
-            r#""execution_attempt_no":null,"execution_last_event_seq":null,"can_approve":false,"#,
-            r#""assignment_history":[],"status_history":[],"approval":null,"queued_at":null,"#,
-            r#""execution_note":null,"execution_error":null,"automation":null,"workflow":null,"#,
-            r#""execution_config":null,"priority":"none","due_at":null,"sort_order":1,"tags":[],"#,
-            r#""created_by_user_id":0,"created_by_user_name":null,"can_view_detail":true,"#,
-            r#""can_edit":false,"detail_loaded":false,"content_revision":1,"is_unread":false,"#,
-            r#""current_delivery_id":null,"version":1,"#,
-            r#""created_at":"2026-09-10T19:51:51+08:00","updated_at":"2026-09-10T19:51:51+08:00","#,
-            r#""completed_at":null}"#
-        );
-        assert_eq!(serialized, expected);
-    }
-
-    /// `completed_at` carries a value only when the status is `completed`;
-    /// otherwise it is `null` (never omitted).
-    #[test]
-    fn completed_at_is_present_and_null_when_not_completed() {
-        let response = LoopItemResponse {
-            id: "wg-1".to_string(),
-            cloud_project_id: "123".to_string(),
-            sequence_number: 1,
-            parent_id: None,
-            title: "t".to_string(),
-            description: String::new(),
-            status: "pending".to_string(),
-            assignee_user_id: None,
-            assignee_name: None,
-            assignee_agent_id: None,
-            assignee_agent_name: None,
-            assignee_team_id: None,
-            assignee_team_name: None,
-            ai_state: None,
-            execution_id: None,
-            execution_state: None,
-            execution_control_state: None,
-            execution_observed_state: None,
-            execution_sync_state: None,
-            execution_attempt_no: None,
-            execution_last_event_seq: None,
-            can_approve: false,
-            assignment_history: Vec::new(),
-            status_history: Vec::new(),
-            approval: None,
-            queued_at: None,
-            execution_note: None,
-            execution_error: None,
-            automation: None,
-            workflow: None,
-            execution_config: None,
-            priority: "none".to_string(),
-            due_at: None,
-            sort_order: 1,
-            tags: Vec::new(),
-            created_by_user_id: 0,
-            created_by_user_name: None,
-            can_view_detail: true,
-            can_edit: false,
-            detail_loaded: false,
-            content_revision: 1,
-            is_unread: false,
-            current_delivery_id: None,
-            version: 1,
-            created_at: "2026-09-10T19:51:51+08:00".to_string(),
-            updated_at: "2026-09-10T19:51:51+08:00".to_string(),
-            completed_at: None,
-        };
-        let serialized = serde_json::to_string(&response).unwrap();
-        assert!(
-            serialized.contains(r#""completed_at":null"#),
-            "completed_at must be present as null, not omitted: {serialized}"
-        );
-        assert!(
-            !serialized.contains(r#""completed_at":""#),
-            "completed_at must not be an empty string: {serialized}"
-        );
-    }
-
-    /// `due_at` is always `null` on the provider path (not omitted, not an
-    /// empty string), matching the source's `due_at: None`.
-    #[test]
-    fn due_at_is_null_not_omitted() {
-        let response = LoopItemResponse {
-            id: "wg-1".to_string(),
-            cloud_project_id: "123".to_string(),
-            sequence_number: 1,
-            parent_id: None,
-            title: "t".to_string(),
-            description: String::new(),
-            status: "pending".to_string(),
-            assignee_user_id: None,
-            assignee_name: None,
-            assignee_agent_id: None,
-            assignee_agent_name: None,
-            assignee_team_id: None,
-            assignee_team_name: None,
-            ai_state: None,
-            execution_id: None,
-            execution_state: None,
-            execution_control_state: None,
-            execution_observed_state: None,
-            execution_sync_state: None,
-            execution_attempt_no: None,
-            execution_last_event_seq: None,
-            can_approve: false,
-            assignment_history: Vec::new(),
-            status_history: Vec::new(),
-            approval: None,
-            queued_at: None,
-            execution_note: None,
-            execution_error: None,
-            automation: None,
-            workflow: None,
-            execution_config: None,
-            priority: "none".to_string(),
-            due_at: None,
-            sort_order: 1,
-            tags: Vec::new(),
-            created_by_user_id: 0,
-            created_by_user_name: None,
-            can_view_detail: true,
-            can_edit: false,
-            detail_loaded: false,
-            content_revision: 1,
-            is_unread: false,
-            current_delivery_id: None,
-            version: 1,
-            created_at: "2026-09-10T19:51:51+08:00".to_string(),
-            updated_at: "2026-09-10T19:51:51+08:00".to_string(),
-            completed_at: None,
-        };
-        let serialized = serde_json::to_string(&response).unwrap();
-        assert!(
-            serialized.contains(r#""due_at":null"#),
-            "due_at must be present as null: {serialized}"
-        );
-    }
-
-    /// When the provider emits no `created_at`/`updated_at`, the raw strings
-    /// are `""` and `datetime_reformat("")` yields an empty JSON string — not
-    /// `null` and not omitted. This matches the previous `json!(value)` path,
-    /// where `json!("")` serialized as `""`. The source pydantic schema types
-    /// `created_at`/`updated_at` as non-optional `datetime`, so an empty
-    /// string round-trips as the raw string the provider sent.
-    #[test]
-    fn empty_datetime_serializes_as_empty_string_not_null() {
-        assert_eq!(datetime_reformat(""), serde_json::json!(""));
-        // And within a full response, `created_at`/`updated_at` appear as
-        // `""`, never `null`.
-        let response = LoopItemResponse {
-            id: "wg-1".to_string(),
-            cloud_project_id: "123".to_string(),
-            sequence_number: 1,
-            parent_id: None,
-            title: "t".to_string(),
-            description: String::new(),
-            status: "pending".to_string(),
-            assignee_user_id: None,
-            assignee_name: None,
-            assignee_agent_id: None,
-            assignee_agent_name: None,
-            assignee_team_id: None,
-            assignee_team_name: None,
-            ai_state: None,
-            execution_id: None,
-            execution_state: None,
-            execution_control_state: None,
-            execution_observed_state: None,
-            execution_sync_state: None,
-            execution_attempt_no: None,
-            execution_last_event_seq: None,
-            can_approve: false,
-            assignment_history: Vec::new(),
-            status_history: Vec::new(),
-            approval: None,
-            queued_at: None,
-            execution_note: None,
-            execution_error: None,
-            automation: None,
-            workflow: None,
-            execution_config: None,
-            priority: "none".to_string(),
-            due_at: None,
-            sort_order: 1,
-            tags: Vec::new(),
-            created_by_user_id: 0,
-            created_by_user_name: None,
-            can_view_detail: true,
-            can_edit: false,
-            detail_loaded: false,
-            content_revision: 1,
-            is_unread: false,
-            current_delivery_id: None,
-            version: 1,
-            created_at: datetime_reformat(""),
-            updated_at: datetime_reformat(""),
-            completed_at: None,
-        };
-        let serialized = serde_json::to_string(&response).unwrap();
-        assert!(
-            serialized.contains(r#""created_at":"","updated_at":""#),
-            "empty datetimes must be empty strings, not null: {serialized}"
-        );
-        assert!(
-            !serialized.contains(r#""created_at":null"#),
-            "created_at must not be null for an empty raw value: {serialized}"
-        );
-    }
-}
+#[path = "projection_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod json_contract_tests {
-    use super::*;
-    #[test]
-    fn loop_projection_json_baseline() {
-        let dates = [
-            "",
-            "invalid",
-            "2026-09-10T11:51:51Z",
-            "2026-09-10T19:51:51.762+08:00",
-            "2026-09-10T19:51:51.123456789-05:30",
-        ];
-        let mut output: Vec<serde_json::Value> = dates
-            .iter()
-            .map(|date| crate::json_contract_tests::serialized(datetime_reformat(date)).unwrap())
-            .collect();
-        for status in [
-            None,
-            Some(""),
-            Some("pending"),
-            Some("approved"),
-            Some("rejected"),
-            Some("custom"),
-        ] {
-            for populated in [false, true] {
-                let date = populated.then(|| {
-                    chrono::NaiveDateTime::parse_from_str(
-                        "2026-09-12 01:02:03",
-                        "%Y-%m-%d %H:%M:%S",
-                    )
-                    .unwrap()
-                });
-                let execution = ExecutionRow {
-                    id: 1,
-                    agent_id: None,
-                    status: None,
-                    observed_state: None,
-                    sync_state: None,
-                    attempt_no: None,
-                    last_event_seq: None,
-                    queued_at: date,
-                    execution_note: None,
-                    approval_status: status.map(str::to_owned),
-                    approved_by_user_id: populated.then_some(0),
-                    approved_at: date,
-                    rejected_reason: populated.then(String::new),
-                };
-                output.push(
-                    crate::json_contract_tests::serialized(execution.approval_view()).unwrap(),
-                );
-            }
-        }
-        crate::json_contract_tests::assert_fixture("loop_projection", output);
-    }
-}
+#[path = "projection_json_contract_tests.rs"]
+mod json_contract_tests;

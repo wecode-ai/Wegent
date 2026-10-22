@@ -8,13 +8,9 @@ Kubernetes-style CRD models for cloud-native agent management.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, func
 
 from .base import Base
-
-
-def utc_now_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Kind(Base):
@@ -29,11 +25,13 @@ class Kind(Base):
     namespace = Column(String(100), nullable=False, default="default")
     json = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=utc_now_naive)
+    # Use the database clock (NOW() evaluated in the session time zone) so
+    # kinds stay on the same basis as other tables instead of a hardcoded UTC.
+    created_at = Column(DateTime, default=func.now())
     updated_at = Column(
         DateTime,
-        default=utc_now_naive,
-        onupdate=utc_now_naive,
+        default=func.now(),
+        onupdate=func.now(),
     )
 
     __table_args__ = (

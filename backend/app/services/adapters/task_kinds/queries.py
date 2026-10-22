@@ -13,9 +13,10 @@ from sqlalchemy.orm import Session
 from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.stores.tasks import task_access_store, task_store
+from shared.telemetry.decorators import trace_sync
 
 from .converters import convert_to_task_dict, convert_to_task_dict_optimized
-from .filters import filter_tasks_for_display, filter_tasks_with_title_match
+from .filters import filter_tasks_for_display
 from .helpers import (
     build_lite_task_groups,
     build_lite_task_list,
@@ -37,7 +38,6 @@ from .task_detail_helpers import (
     get_bots_for_subtasks,
     get_requested_skills_from_task,
 )
-from .task_skills_resolver import resolve_task_skills
 
 logger = logging.getLogger(__name__)
 
@@ -249,21 +249,31 @@ class TaskQueryMixin:
 
         return valid_tasks
 
+    @trace_sync("search_tasks_by_title", "tasks.service")
     def get_user_tasks_by_title_with_pagination(
-        self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        title: str,
+        skip: int = 0,
+        limit: int = 100,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Fuzzy search tasks by title for current user (pagination)."""
-        task_ids, _ = get_owned_task_ids_and_total(
-            db, user_id=user_id, skip=skip, limit=limit, extra_limit=100
+        task_ids, total = get_owned_task_ids_and_total(
+            db,
+            user_id=user_id,
+            skip=skip,
+            limit=limit,
+            extra_limit=0,
+            title=title,
         )
         if not task_ids:
-            return [], 0
+            return [], total
 
         tasks = load_tasks_by_ids(db, task_ids)
-        title_lower = title.lower()
-        id_to_task = filter_tasks_with_title_match(tasks, title_lower)
+        id_to_task = {task.id: task for task in tasks}
         filtered_tasks = restore_task_order(task_ids, id_to_task, limit)
-        total = len(id_to_task)
         if not filtered_tasks:
             return [], total
 
@@ -413,9 +423,3 @@ class TaskQueryMixin:
 
         refresh_task_image_download_urls(task_dict)
         return task_dict
-
-    def get_task_skills(
-        self, db: Session, *, task_id: int, user_id: int
-    ) -> Dict[str, Any]:
-        """Get all skills associated with a task."""
-        return resolve_task_skills(db, task_id=task_id, user_id=user_id)

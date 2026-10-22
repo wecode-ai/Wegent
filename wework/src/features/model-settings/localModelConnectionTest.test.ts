@@ -5,6 +5,40 @@ const APPLY_PATCH_PROBE =
   '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n'
 
 describe('localModelConnectionTest', () => {
+  test.each([
+    '*** Begin Patch\n*** Add File: probe.txt\n+PING\n*** End Patch',
+    APPLY_PATCH_PROBE.trim(),
+  ])(
+    'connection testing accepts a populated custom tool call without exact payload matching: %s',
+    async input => {
+      const fetcher = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            output: [{ type: 'custom_tool_call', name: 'apply_patch', input }],
+          })
+        )
+      )
+      await expect(
+        testLocalModelConnection(
+          { baseUrl: 'https://models.local/v1', modelId: 'deepseek-flash' },
+          { fetcher, verifyExactProbePayload: false }
+        )
+      ).resolves.toEqual({ status: 200, toolCalling: true })
+    }
+  )
+  test.each([
+    { type: 'custom_tool_call', name: 'apply_patch', input: '' },
+    { type: 'custom_tool_call', name: 'other', input: APPLY_PATCH_PROBE },
+    { type: 'message', content: 'PING' },
+  ])('connection testing rejects empty, unrelated or missing tool calls', async item => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ output: [item] })))
+    await expect(
+      testLocalModelConnection(
+        { baseUrl: 'https://models.local/v1', modelId: 'gpt-5' },
+        { fetcher, verifyExactProbePayload: false }
+      )
+    ).rejects.toThrow('required capability probe tool call')
+  })
   test('rejects a text-only response because it does not prove agent tool capability', async () => {
     const fetcher = vi
       .fn()

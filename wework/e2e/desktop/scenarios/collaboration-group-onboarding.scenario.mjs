@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
+import { inCollaborationSidebar, inProjectCreateDialog } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const PROJECT_NAME = `协作小组上手验收-${process.pid}`
 const GROUP_NAME = `项目推进小组-${process.pid}`
-const ISSUE_NAME = `验证小组分配-${process.pid}`
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -112,7 +111,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         scoped('[data-testid="collaboration-workspace-project-create"]')
       )
       await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
-      const dialog = scoped('[data-testid="collaboration-project-create-dialog"]')
+      const dialog = inProjectCreateDialog()
       await control.command('waitFor', dialog, { timeoutMs: uiTimeoutMs })
       const initialDialog = await snapshot(control, dialog)
       assert.ok(
@@ -133,25 +132,36 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         initialDialog.text.includes('我'),
         'Project creation did not include the current user'
       )
-      await control.command('waitFor', scoped('.collaboration-project-create-collaborator-token'), {
-        text: '当前设备智能体',
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        inProjectCreateDialog('.collaboration-project-create-collaborator-token'),
+        {
+          text: '当前设备智能体',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
 
-      await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
-        value: PROJECT_NAME,
-      })
-      await control.command('click', scoped('[aria-label="取消 当前设备智能体"]'))
+      await control.command(
+        'fill',
+        inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+        {
+          value: PROJECT_NAME,
+        }
+      )
+      await control.command('click', inProjectCreateDialog('[aria-label="取消 当前设备智能体"]'))
       assert.equal(
         Number(
-          await control.command('getElementCount', scoped('[aria-label="取消 当前设备智能体"]'))
+          await control.command(
+            'getElementCount',
+            inProjectCreateDialog('[aria-label="取消 当前设备智能体"]')
+          )
         ),
         0,
         'The default local Agent could not be removed from the new project'
       )
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-create-add-collaborator"]')
+        inProjectCreateDialog('[data-testid="collaboration-project-create-add-collaborator"]')
       )
       assert.equal(
         Number(
@@ -170,13 +180,17 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'body'
       )
       await control.command('click', `[data-testid="${defaultAgentOptionTestId}"]`)
-      await control.command('waitFor', scoped('.collaboration-project-create-collaborator-token'), {
-        text: '当前设备智能体',
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        inProjectCreateDialog('.collaboration-project-create-collaborator-token'),
+        {
+          text: '当前设备智能体',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command(
         'clickWhenEnabled',
-        scoped('[data-testid="collaboration-project-create-confirm"]'),
+        inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
         { timeoutMs: uiTimeoutMs }
       )
       await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
@@ -188,16 +202,32 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
+      // Creating an Issue does not require an initialized execution environment.
+      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-create-dialog"]'))
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped(
+              '[data-testid="collaboration-project-settings-environments"][aria-current="page"]'
+            )
+          )
+        ),
+        0,
+        'Issue creation must not redirect to execution environment settings'
+      )
+      await control.command('click', scoped('[data-testid="cloud-todo-modal-close"]'))
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-project-settings-participants"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       assert.equal(
         Number(
           await control.command(
             'getElementCount',
-            scoped('[data-testid="collaboration-participants-tab-agents"]')
+            scoped('[data-testid="collaboration-project-settings-agents"]')
           )
         ),
         1,
@@ -205,7 +235,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-participants-tab-agents"]')
+        scoped('[data-testid="collaboration-project-settings-agents"]')
       )
       await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
         text: '当前设备智能体',
@@ -223,11 +253,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'click',
-        scoped('[data-testid="collaboration-participants-tab-groups"]')
+        scoped('[data-testid="collaboration-project-settings-groups"]')
       )
       await control.command(
         'waitFor',
-        scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
+        scoped('[data-testid="collaboration-project-settings-groups"][aria-current="page"]'),
         { timeoutMs: uiTimeoutMs }
       )
       assert.equal(
@@ -302,47 +332,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'collaboration-group-detail-local-group-',
         uiTimeoutMs
       )
-      const groupId = groupDetailTestId.slice('collaboration-group-detail-'.length)
-
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
+      await control.command('waitFor', scoped(`[data-testid="${groupDetailTestId}"]`), {
+        text: GROUP_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
-        value: ISSUE_NAME,
-      })
-      await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-create-assignee-option-group:${groupId}"]`
-      )
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="cloud-todo-create-assignee"]'),
-          { value: 'data-value' }
-        ),
-        `group:${groupId}`,
-        'The collaboration group could not be selected during Issue creation'
-      )
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="cloud-todo-create-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="cloud-todo-detail-assignee"]'),
-          { value: 'data-value' }
-        ),
-        `group:${groupId}`,
-        'The created Issue did not retain its collaboration group assignee'
-      )
     },
 
     diagnostics() {

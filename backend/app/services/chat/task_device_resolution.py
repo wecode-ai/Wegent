@@ -31,16 +31,7 @@ def resolve_chat_task_device_id(
     """Resolve the immutable device target used to dispatch a chat task."""
 
     if task is not None:
-        if extract_task_type(task) == "code":
-            return None
-        task_device_id = extract_task_device_id(task)
-        if not task_device_id:
-            return None
-        return resolve_local_executor_device_id(
-            db,
-            user_id=user_id,
-            device_id=task_device_id,
-        )
+        return resolve_task_device_id(db, user_id=user_id, task=task)
 
     explicit_device_id = _clean_string(params.device_id)
     if explicit_device_id:
@@ -66,6 +57,32 @@ def resolve_chat_task_device_id(
         )
 
     return None
+
+
+def resolve_task_device_id(
+    db: Session,
+    *,
+    user_id: int,
+    task: TaskResource | None,
+) -> str | None:
+    """Resolve the device recorded on an existing task.
+
+    Follow-ups reuse their task, so the device bound to that task - not the
+    caller supplied payload - decides which Runtime must execute the message.
+    """
+
+    if task is None or extract_task_type(task) == "code":
+        return None
+
+    task_device_id = extract_task_device_id(task)
+    if not task_device_id:
+        return None
+
+    return resolve_local_executor_device_id(
+        db,
+        user_id=user_id,
+        device_id=task_device_id,
+    )
 
 
 def resolve_local_executor_device_id(

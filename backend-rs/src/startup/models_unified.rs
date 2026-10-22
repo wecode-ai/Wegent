@@ -35,6 +35,7 @@ async fn build_redis(
 ) -> Result<brz_redis::RedisService> {
     let config = crate::config::RedisConfig::from_urls(redis_url, redis_slave_url)?;
     let options = brz_redis::RedisServiceOptions::default()
+        .with_resource_name(super::redis::resource_name())
         .with_password(config.password.clone())
         .with_timeout(Duration::from_millis(200));
     let master = config.endpoint();

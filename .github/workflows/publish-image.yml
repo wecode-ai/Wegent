@@ -784,6 +784,7 @@ jobs:
           cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-standalone:buildcache-amd64,mode=max
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+            WEWORK_SOURCE_SHA=${{ github.sha }}
 
       - name: Verify standalone image startup (amd64)
         env:
@@ -829,6 +830,7 @@ jobs:
           cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-standalone:buildcache-arm64,mode=max
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+            WEWORK_SOURCE_SHA=${{ github.sha }}
 
       - name: Verify standalone image startup (arm64)
         env:

@@ -8,6 +8,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.services.device.git_credential_paths import managed_git_cli_command
 from app.services.device.git_credentials_command import (
     SYNC_GIT_CREDENTIALS_COMMAND,
 )
@@ -200,17 +201,6 @@ print(
 """.strip()
 
 
-def managed_git_cli_command(command: str) -> str:
-    """Load Wegent-managed CLI config before executing a fixed command."""
-
-    argv = shlex.split(command)
-    shell = (
-        'if [ -f "$HOME/.wecode/git-auth/env.sh" ]; then '
-        '. "$HOME/.wecode/git-auth/env.sh"; fi; exec "$@"'
-    )
-    return " ".join(shlex.quote(part) for part in ["sh", "-c", shell, "--", *argv])
-
-
 def git_hosting_cli_status_command(tool: str) -> str:
     """Build a safe CLI status command for a fixed provider tool."""
     return managed_git_cli_command(
@@ -218,7 +208,7 @@ def git_hosting_cli_status_command(tool: str) -> str:
     )
 
 
-WORKSPACE_ROOT_GUARD_SCRIPT = """
+WORKSPACE_FILE_HELPERS_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
     raise SystemExit(code)
@@ -231,53 +221,13 @@ def is_relative_to(path, root):
     except ValueError:
         return False
 
-
-def configured_workspace_roots():
-    roots = []
-    for raw_root in os.environ.get("WEGENT_WORKSPACE_ROOTS", "").split(os.pathsep):
-        raw_root = raw_root.strip()
-        if raw_root:
-            roots.append(Path(raw_root).expanduser().resolve())
-
-    raw_projects_root = os.environ.get("WEGENT_EXECUTOR_PROJECTS_DIR", "").strip()
-    if raw_projects_root:
-        projects_root = Path(raw_projects_root).expanduser().resolve()
-        roots.append(projects_root)
-        if projects_root.name == "projects":
-            roots.append(projects_root.parent / "worktrees")
-        else:
-            roots.append(projects_root / "worktrees")
-
-    wecode_home = Path(os.environ.get("WECODE_HOME", Path.home() / ".wecode"))
-    executor_workspace = wecode_home.expanduser() / "wegent-executor" / "workspace"
-    roots.extend(
-        [
-            executor_workspace / "projects",
-            executor_workspace / "worktrees",
-            Path("/workspace/projects"),
-            Path("/workspace/worktrees"),
-        ]
-    )
-    return tuple(dict.fromkeys(root.resolve() for root in roots))
-
-
-def require_workspace_root(path):
-    for allowed_root in configured_workspace_roots():
-        if is_relative_to(path, allowed_root):
-            return allowed_root
-
-    fail("workspace path is outside allowed workspace roots")
 """.strip()
 
 WORKSPACE_TREE_SCRIPT = """
 import json
-import os
 import stat as stat_module
 from datetime import datetime, timezone
 from pathlib import Path
-
-
-__WORKSPACE_ROOT_GUARD_SCRIPT__
 
 
 def iso_mtime(path_stat):
@@ -285,9 +235,6 @@ def iso_mtime(path_stat):
 
 
 root = Path.cwd().resolve()
-workspace_root = require_workspace_root(root)
-if not is_relative_to(root, workspace_root):
-    fail("workspace path is outside allowed workspace root")
 
 entries = []
 for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
@@ -310,13 +257,10 @@ for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
 
 entries.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
 print(json.dumps({"path": str(root), "entries": entries}, ensure_ascii=False))
-""".replace(
-    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
-).strip()
+""".strip()
 
 WORKSPACE_READ_TEXT_FILE_SCRIPT = """
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -324,17 +268,14 @@ from pathlib import Path
 MAX_BYTES = 262144
 
 
-__WORKSPACE_ROOT_GUARD_SCRIPT__
+__WORKSPACE_FILE_HELPERS_SCRIPT__
 
 
 if len(sys.argv) != 2:
     fail("file name is required")
 
 root = Path.cwd().resolve()
-workspace_root = require_workspace_root(root)
 target = (root / sys.argv[1]).resolve()
-if not is_relative_to(target, workspace_root):
-    fail("file path is outside workspace root")
 if not is_relative_to(target, root):
     fail("file path is outside workspace")
 if not target.is_file():
@@ -360,7 +301,7 @@ print(
     )
 )
 """.replace(
-    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+    "__WORKSPACE_FILE_HELPERS_SCRIPT__", WORKSPACE_FILE_HELPERS_SCRIPT
 ).strip()
 
 WORKSPACE_READ_FILE_CHUNK_SCRIPT = """
@@ -373,7 +314,7 @@ from pathlib import Path
 MAX_BYTES = 1024 * 1024
 
 
-__WORKSPACE_ROOT_GUARD_SCRIPT__
+__WORKSPACE_FILE_HELPERS_SCRIPT__
 
 
 if len(sys.argv) != 3:
@@ -387,10 +328,7 @@ if offset < 0:
     fail("file offset must be a non-negative integer")
 
 root = Path.cwd().resolve()
-workspace_root = require_workspace_root(root)
 target = (root / sys.argv[1]).resolve()
-if not is_relative_to(target, workspace_root):
-    fail("file path is outside workspace root")
 if not is_relative_to(target, root):
     fail("file path is outside workspace")
 if not target.is_file():
@@ -415,7 +353,7 @@ print(
     )
 )
 """.replace(
-    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+    "__WORKSPACE_FILE_HELPERS_SCRIPT__", WORKSPACE_FILE_HELPERS_SCRIPT
 ).strip()
 
 PROJECT_FOLDER_STATUS_SCRIPT = """
@@ -1157,168 +1095,6 @@ print(json.dumps(payload, ensure_ascii=False))
 
 CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"
 
-GIT_GENERATE_COMMIT_MESSAGE_SCRIPT = r'''
-import json
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-MAX_DIFF_BYTES = 200000
-MAX_MESSAGE_CHARS = 180
-
-
-def emit(payload, code=0):
-    print(json.dumps(payload, ensure_ascii=False))
-    raise SystemExit(code)
-
-
-def decode_output(data):
-    return data.decode("utf-8", errors="replace").strip()
-
-
-def run_git(*args, max_bytes=MAX_DIFF_BYTES):
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=15,
-            check=False,
-        )
-    except Exception as exc:
-        emit({"success": False, "error": str(exc)}, 1)
-
-    if result.returncode != 0:
-        emit(
-            {
-                "success": False,
-                "error": decode_output(result.stderr) or "Git command failed",
-            },
-            1,
-        )
-
-    output = result.stdout
-    truncated = len(output) > max_bytes
-    return output[:max_bytes].decode("utf-8", errors="replace"), truncated
-
-
-def resolve_codex_binary():
-    value = os.environ.get("CODEX_BINARY_PATH") or os.environ.get("CODEX_BIN") or "codex"
-    if "/" in value or "\\" in value:
-        return value
-    if value == "codex" and sys.platform == "darwin":
-        app_binary = Path("/Applications/Codex.app/Contents/Resources/codex")
-        if app_binary.exists():
-            return str(app_binary)
-    return shutil.which(value) or value
-
-
-def clean_candidate(line):
-    value = line.strip().lstrip("-* ").strip()
-    lowered = value.lower()
-    for prefix in ("commit message:", "message:", "subject:"):
-        if lowered.startswith(prefix):
-            value = value[len(prefix):].strip()
-            break
-    return value.strip("\"'`").strip()
-
-
-def sanitize_message(raw):
-    for line in raw.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("```"):
-            continue
-        candidate = clean_candidate(stripped)
-        if candidate:
-            return candidate[:MAX_MESSAGE_CHARS]
-    return ""
-
-
-status, status_truncated = run_git("status", "--short", max_bytes=20000)
-diff_stat, stat_truncated = run_git("diff", "--cached", "--stat", max_bytes=20000)
-diff, diff_truncated = run_git("diff", "--cached", "--", max_bytes=MAX_DIFF_BYTES)
-
-if not diff_stat.strip() and not diff.strip():
-    emit({"success": False, "error": "No staged changes to summarize"}, 1)
-
-prompt = f"""Generate a Git commit subject line from the staged changes.
-Return exactly one line.
-Use Conventional Commits when a clear type is available, such as feat:, fix:, refactor:, docs:, test:, chore:, or style:.
-Do not include Markdown, quotes, bullets, explanations, or a body.
-Keep the line under 72 characters when possible.
-
-Git status:
-{status}
-
-Staged diff stat:
-{diff_stat}
-
-Staged diff:
-{diff}
-"""
-
-output_path = None
-try:
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as output_file:
-        output_path = output_file.name
-
-    result = subprocess.run(
-        [
-            resolve_codex_binary(),
-            "exec",
-            "--ephemeral",
-            "--ignore-rules",
-            "--sandbox",
-            "read-only",
-            "--output-last-message",
-            output_path,
-            "-",
-        ],
-        input=prompt,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=90,
-        check=False,
-    )
-    if result.returncode != 0:
-        emit(
-            {
-                "success": False,
-                "error": result.stderr.strip()
-                or result.stdout.strip()
-                or "Codex failed to generate a commit message",
-            },
-            1,
-        )
-
-    raw_message = Path(output_path).read_text(encoding="utf-8", errors="replace")
-finally:
-    if output_path:
-        try:
-            Path(output_path).unlink()
-        except OSError:
-            pass
-
-message = sanitize_message(raw_message)
-if not message:
-    emit({"success": False, "error": "Codex returned an empty commit message"}, 1)
-
-emit(
-    {
-        "success": True,
-        "message": message,
-        "diff_truncated": bool(status_truncated or stat_truncated or diff_truncated),
-    }
-)
-'''
-GIT_GENERATE_COMMIT_MESSAGE_COMMAND = (
-    f"python3 -c {shlex.quote(GIT_GENERATE_COMMIT_MESSAGE_SCRIPT)}"
-)
-
 TURN_FILE_CHANGES_SCRIPT = """
 import gzip
 import hashlib
@@ -1578,7 +1354,14 @@ OPEN_TERMINAL_COMMAND = (
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
-    "home_dir": LocalDeviceCommandDefinition(command="printenv HOME"),
+    "home_dir": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            '\'case "$(uname -s)" in '
+            'MINGW*|MSYS*|CYGWIN*) cygpath -w "$HOME" ;; '
+            '* ) printf "%s\\n" "$HOME" ;; esac\''
+        )
+    ),
     "project_workspace_root": LocalDeviceCommandDefinition(
         command=(
             "sh -c "
@@ -1753,10 +1536,6 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     ),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "git_push": LocalDeviceCommandDefinition(command=GIT_PUSH_COMMAND),
-    "git_generate_commit_message": LocalDeviceCommandDefinition(
-        command=GIT_GENERATE_COMMIT_MESSAGE_COMMAND,
-        post_processor="json",
-    ),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
         post_processor="json",

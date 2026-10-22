@@ -306,6 +306,8 @@ class TestRetrieve:
         assert len(result["records"]) == 1
         assert result["records"][0]["content"] == "test content"
         assert result["records"][0]["score"] == 0.9
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 10
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch_collection()
@@ -496,6 +498,8 @@ class TestRetrieve:
 
         assert "records" in result
         mock_embed_model.get_query_embedding.assert_not_called()
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 10
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch_collection()
@@ -585,6 +589,136 @@ class TestRetrieve:
         assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {
             "weights": [0.75, 0.25]
         }
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
+    def test_retrieve_hybrid_widens_candidate_pool_within_bounds(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """
+        Hybrid asks the store for top_k * 4 candidates, floored at 50 and capped
+        at 1000, so the store always sees a pool wider than the returned top_k.
+        """
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+        small_top_k_query = mock_store.query.call_args.args[0]
+        assert small_top_k_query.similarity_top_k == 50
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 300,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+        large_top_k_query = mock_store.query.call_args.args[0]
+        assert large_top_k_query.similarity_top_k == 1000
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
+    def test_retrieve_hybrid_candidate_pool_never_undercuts_top_k(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """
+        Beyond the ceiling the pool must not shrink below the requested top_k,
+        otherwise the caller silently gets fewer records than asked for.
+        """
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 1001,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 1001
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
+    def test_retrieve_hybrid_returns_at_most_top_k_fused_records(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """Fused candidates beyond top_k are truncated in order."""
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        nodes = []
+        for rank in range(8):
+            node = MagicMock()
+            node.text = f"fused candidate {rank}"
+            node.metadata = {"source_file": "fused.txt", "knowledge_id": "kb_1"}
+            nodes.append(node)
+        mock_store.query.return_value = MagicMock(
+            nodes=nodes, similarities=[0.9 - rank * 0.05 for rank in range(8)]
+        )
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+
+        assert [record["content"] for record in result["records"]] == [
+            f"fused candidate {rank}" for rank in range(5)
+        ]
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch_collection()

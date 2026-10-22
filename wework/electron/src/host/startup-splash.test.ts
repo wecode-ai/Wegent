@@ -3,13 +3,36 @@ import { basename, join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  createStartupReadyHandler,
   createStartupSplash,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   startupSplashBlocksMainWindowActivation,
   type StartupSplashSnapshot,
   type StartupSplashTheme,
   type StartupSplashWindow,
 } from './startup-splash.js'
+
+describe('startup readiness notifications', () => {
+  test('presents the main window only once across concurrent and later notifications', async () => {
+    const presentMainWindow = vi.fn(async () => {})
+    const ready = createStartupReadyHandler<string>(presentMainWindow)
+    await Promise.all([ready('task-list'), ready('other')])
+    await ready('task-list')
+    expect(presentMainWindow).toHaveBeenCalledExactlyOnceWith('task-list')
+  })
+
+  test('allows startup completion after a failed attempt', async () => {
+    const complete = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('close failed'))
+      .mockResolvedValue(undefined)
+    const ready = createStartupReadyHandler(complete)
+    await expect(ready('task-list')).rejects.toThrow('close failed')
+    await ready('task-list')
+    expect(complete).toHaveBeenCalledTimes(2)
+  })
+})
 
 class FakeSplashWindow implements StartupSplashWindow {
   private readonly closeListeners: Array<(event: { preventDefault: () => void }) => void> = []
@@ -57,7 +80,7 @@ class FakeSplashWindow implements StartupSplashWindow {
   }
 }
 
-function createFixture(theme: StartupSplashTheme = 'light') {
+function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () => void) {
   const target = new FakeSplashWindow()
   const writePng = vi.fn(async () => undefined)
   let timestamp = 100
@@ -66,6 +89,7 @@ function createFixture(theme: StartupSplashTheme = 'light') {
     theme,
     now: () => timestamp++,
     writePng,
+    onCloseRequest,
   })
   const show = () => splash.show()
   return { show, splash, target, writePng }
@@ -148,7 +172,10 @@ describe('StartupSplash', () => {
     )
   })
 
-  test('invokes recoverWorkbench after confirming workbench recovery', async () => {
+  test.each([
+    ['#startup-recover', 'recoverWorkbench'],
+    ['#startup-reset-open', 'resetAppState'],
+  ])('retries failed cleanup selected by %s', async (selector, action) => {
     const electronRoot =
       basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
     const script = await readFile(
@@ -163,7 +190,11 @@ describe('StartupSplash', () => {
       elements.set(selector, created)
       return created
     }
-    const recoverWorkbench = vi.fn(async () => undefined)
+    const cleanup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Cleanup failed'))
+      .mockResolvedValue(undefined)
+    const retry = vi.fn()
     const windowListeners = new Map<string, () => void>()
     const documentElement = element('documentElement')
 
@@ -192,18 +223,25 @@ describe('StartupSplash', () => {
         setInterval: vi.fn(),
         setTimeout: vi.fn(),
         weworkStartupRecovery: {
-          recoverWorkbench,
-          resetAppState: vi.fn(),
-          retry: vi.fn(),
+          [action]: cleanup,
+          retry,
         },
       },
     })
 
-    element('#startup-recover').click()
+    element('#startup-retry').click()
+    expect(retry).toHaveBeenCalledOnce()
+    retry.mockClear()
+    element(selector).click()
     element('#startup-confirmation-submit').click()
     await Promise.resolve()
 
-    expect(recoverWorkbench).toHaveBeenCalledOnce()
+    expect(cleanup).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(element('#startup-action-error').hidden).toBe(false))
+    element('#startup-retry').click()
+    await Promise.resolve()
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(retry).not.toHaveBeenCalled()
   })
 
   test('shows the branded animation in the main startup window and records its timeline', async () => {
@@ -269,6 +307,19 @@ describe('StartupSplash', () => {
     expect(resolveStartupSplashTheme(undefined, true)).toBe('dark')
   })
 
+  test('holds the splash only for the desktop E2E harness', () => {
+    const hold = (environment: NodeJS.ProcessEnv) =>
+      resolveStartupSplashHoldMs({ VITE_WEWORK_E2E: 'true', ...environment })
+
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '5000' })).toBe(5000)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '0' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '-1' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: 'not-a-number' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '999999' })).toBe(120_000)
+    expect(resolveStartupSplashHoldMs({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '5000' })).toBe(0)
+  })
+
   test('blocks main-window activation until the startup splash closes', () => {
     const snapshot = (state: StartupSplashSnapshot['state']): StartupSplashSnapshot => ({
       state,
@@ -317,6 +368,22 @@ describe('StartupSplash', () => {
     await splash.close()
 
     expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
+    expect(target.isDestroyed()).toBe(true)
+  })
+
+  test('reports refused native close requests so the host can decide what closing means', async () => {
+    const onCloseRequest = vi.fn()
+    const { show, splash, target } = createFixture('light', onCloseRequest)
+    await show()
+
+    expect(target.requestNativeClose()).toBe(false)
+    expect(onCloseRequest).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('visible')
+
+    await splash.close()
+
+    expect(onCloseRequest).toHaveBeenCalledOnce()
     expect(splash.snapshot().state).toBe('closed')
     expect(target.isDestroyed()).toBe(true)
   })

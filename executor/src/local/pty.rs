@@ -21,6 +21,7 @@ use std::os::unix::io::RawFd;
 
 const PTY_READ_BUFFER_SIZE: usize = 8 * 1024;
 const PTY_READ_QUEUE_CAPACITY: usize = 64;
+#[cfg(unix)]
 const PTY_DESCENDANT_EXIT_GRACE: Duration = Duration::from_millis(100);
 
 pub struct UnixPtyManager;

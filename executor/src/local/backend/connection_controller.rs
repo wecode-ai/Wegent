@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
+    agents::backend_url::backend_http_client,
     config::device::{ConnectionConfig, DeviceConfig},
     local::{
         app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
@@ -302,7 +303,9 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
                 "{}/api/quota/claude/quota",
                 connection.backend_url.trim_end_matches('/')
             );
-            let response = reqwest::Client::new()
+            let client = backend_http_client()
+                .map_err(|error| AppIpcError::new("backend_quota_unavailable", error))?;
+            let response = client
                 .get(endpoint)
                 .bearer_auth(&connection.auth_token)
                 .timeout(Duration::from_secs(10))
@@ -442,15 +445,7 @@ fn optional_connection_field(
 }
 
 fn auth_executor_home() -> Result<std::path::PathBuf, AppIpcError> {
-    std::env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .ok_or_else(|| {
-            AppIpcError::new(
-                "plugin_auth_package_missing",
-                "Executor home is unavailable",
-            )
-        })
+    Ok(crate::config::paths::executor_home())
 }
 
 #[cfg(test)]

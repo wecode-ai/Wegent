@@ -175,6 +175,7 @@ class OpenAIRequestConverter:
             "team_id": request.team_id,
             "team_name": request.team_name,
             "team_namespace": request.team_namespace,
+            "team_owner": request.team_owner,
             "bot": request.bot,  # Include bot config with shell_type for executor
             "bot_name": request.bot_name,
             "bot_namespace": request.bot_namespace,
@@ -228,6 +229,7 @@ class OpenAIRequestConverter:
             "skip_git_clone": request.skip_git_clone,
             "fork_runtime": request.fork_runtime,
             "inherited_sessions": request.inherited_sessions,
+            "legacy_session_bindings": request.legacy_session_bindings,
             # Fields needed by executor-manager for container management
             "executor_image": request.executor_image,
             "executor_type": request.executor_type,
@@ -344,6 +346,7 @@ class OpenAIRequestConverter:
             team_id=metadata.get("team_id", 0),
             team_name=metadata.get("team_name", ""),
             team_namespace=metadata.get("team_namespace"),
+            team_owner=metadata.get("team_owner") or {},
             bot=metadata.get("bot", []),  # Bot config with shell_type for executor
             bot_name=metadata.get("bot_name", ""),
             bot_namespace=metadata.get("bot_namespace", ""),
@@ -400,6 +403,7 @@ class OpenAIRequestConverter:
             skip_git_clone=metadata.get("skip_git_clone", False),
             fork_runtime=metadata.get("fork_runtime"),
             inherited_sessions=metadata.get("inherited_sessions", []),
+            legacy_session_bindings=metadata.get("legacy_session_bindings", []),
             # Fields for executor-manager container management
             executor_image=metadata.get("executor_image"),
             executor_type=metadata.get("executor_type"),

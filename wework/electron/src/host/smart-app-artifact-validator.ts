@@ -4,7 +4,10 @@ import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createContext, Script } from 'node:vm'
-import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
+import {
+  workbenchClientRendererPackage,
+  type WorkbenchAppManifest,
+} from '../runtime/workbench-dsh-runtime.js'
 import { runtimeNodeArgs } from '../runtime/electron-node-runtime.js'
 import type {
   SmartAppVerificationContract,
@@ -73,6 +76,7 @@ export async function validateSmartAppArtifacts(
   if (options.contract.capabilities.client) {
     validateClientMetadata(
       packageManifest,
+      options.manifest.requirements.dsh,
       options.contract.capabilities.remote,
       packagePath,
       options.projectRoot,
@@ -127,6 +131,7 @@ export async function validateSmartAppArtifacts(
 
 function validateClientMetadata(
   packageManifest: BundlePackageManifest,
+  dshVersion: string,
   remote: boolean,
   packagePath: string,
   projectRoot: string,
@@ -135,7 +140,7 @@ function validateClientMetadata(
   const client = record(record(packageManifest.dsh).client)
   const inject = stringArray(client.inject) ?? []
   const requiredInject = [
-    '@deepseek-ai/dsh-client-runtime',
+    workbenchClientRendererPackage(dshVersion),
     ...(remote ? ['@deepseek-ai/dsh-api-gateway'] : []),
   ]
   if (client.platform === 'web' && requiredInject.every(name => inject.includes(name))) return

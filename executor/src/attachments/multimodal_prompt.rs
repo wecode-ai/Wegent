@@ -195,12 +195,7 @@ fn prepare_base64_image_for_model(media_type: &str, data: &str) -> (String, Stri
 }
 
 fn default_executor_home() -> PathBuf {
-    if let Some(home) = std::env::var_os("WEGENT_EXECUTOR_HOME") {
-        return PathBuf::from(home);
-    }
-    dirs::home_dir()
-        .map(|home| home.join(".wegent-executor"))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
+    crate::config::paths::executor_home()
 }
 
 fn image_extension(media_type: &str) -> &'static str {

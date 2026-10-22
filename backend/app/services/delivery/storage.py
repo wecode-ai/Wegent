@@ -42,7 +42,9 @@ class DeliveryStorage:
             access_key = settings.ATTACHMENT_S3_ACCESS_KEY
             secret_key = settings.ATTACHMENT_S3_SECRET_KEY
             if not endpoint or not access_key or not secret_key:
-                raise ValueError("MinIO credentials are not configured")
+                raise DeliveryStorageUnavailableError(
+                    "Delivery object storage is not configured"
+                )
             self._client = Minio(
                 endpoint.replace("https://", "").replace("http://", ""),
                 access_key=access_key,

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from openai import APIConnectionError
 
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
@@ -74,8 +75,14 @@ def _build_fake_openai_module(calls: dict, events=None):
         def __init__(self, **kwargs):
             calls["client_kwargs"] = kwargs
             self.responses = _FakeResponses()
+            self.base_url = kwargs["base_url"].rstrip("/") + "/"
 
-    return SimpleNamespace(AsyncOpenAI=_FakeAsyncOpenAI)
+        async def close(self):
+            calls["client_closed"] = True
+
+    return SimpleNamespace(
+        AsyncOpenAI=_FakeAsyncOpenAI, APIConnectionError=APIConnectionError
+    )
 
 
 def _make_request(subtask_id: int, request_id: str = ""):
@@ -109,7 +116,7 @@ async def test_dispatch_sse_keeps_existing_metadata_request_id():
     with (
         patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls)}),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",
@@ -148,7 +155,7 @@ async def test_dispatch_sse_uses_request_request_id_when_metadata_missing():
     with (
         patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls)}),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",
@@ -187,7 +194,7 @@ async def test_dispatch_sse_generates_request_id_when_missing():
     with (
         patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls)}),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",
@@ -233,7 +240,7 @@ async def test_sequential_sse_dispatches_restore_caller_context(failure):
         request_context("caller-context"),
         patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls)}),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             side_effect=lambda request: {"model": "test-model", "input": "hello"},
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),
@@ -269,7 +276,7 @@ async def test_dispatch_sse_emits_error_when_stream_ends_without_terminal_event(
     with (
         patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls, [])}),
         patch(
-            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            "app.services.execution.chat_shell_sse.OpenAIRequestConverter.from_execution_request",
             return_value={
                 "model": "test-model",
                 "input": "hello",

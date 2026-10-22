@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Activity, createRef, useState } from 'react'
+import { EditorState } from 'prosemirror-state'
 import { describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerProseMirrorEditor, type ComposerEditorHandle } from './ComposerProseMirrorEditor'
@@ -11,6 +12,19 @@ import {
 } from './composerProseMirrorModel'
 
 const TABLE_MARKDOWN = '| 项目 | 说明 |\n| --- | --- |\n| 中文 | **重点** |\n| 空单元格 |  |'
+
+const INLINE_FORMAT_CASES = [
+  { name: 'strikethrough', delimiter: '~~', selector: 's', html: '<s>example</s>' },
+  { name: 'inline code', delimiter: '`', selector: 'code', html: '<code>example</code>' },
+  { name: 'bold', delimiter: '**', selector: 'strong', html: '<strong>example</strong>' },
+  { name: 'italic', delimiter: '*', selector: 'em', html: '<em>example</em>' },
+  {
+    name: 'bold italic',
+    delimiter: '***',
+    selector: 'strong em',
+    html: '<strong><em>example</em></strong>',
+  },
+]
 
 function pasteMarkdown(editor: HTMLElement, value: string) {
   fireEvent.paste(editor, {
@@ -87,6 +101,93 @@ describe('ComposerProseMirrorEditor', () => {
     act(() => editorRef.current!.setValue(reference, reference.length))
     expect(screen.getByTestId('composer-path-chip-test-label')).toHaveTextContent(/^test-label$/)
     expect(editorRef.current!.getSnapshot().value).toBe(reference)
+  })
+
+  describe.each(INLINE_FORMAT_CASES)(
+    '$name formatting boundaries',
+    ({ delimiter, selector, html }) => {
+      test('ends formatting at the boundary while preserving edits inside it', () => {
+        const doc = createComposerDocument(`${delimiter}some text${delimiter}`)
+        expect(() => doc.check()).not.toThrow()
+        const state = EditorState.create({ doc })
+        expect(serializeComposerDocument(state.tr.insertText(' appended', 10).doc)).toBe(
+          `${delimiter}some text${delimiter} appended`
+        )
+        expect(serializeComposerDocument(state.tr.insertText('new ', 6).doc)).toBe(
+          `${delimiter}some new text${delimiter}`
+        )
+      })
+
+      test.each(['markdown', 'html', 'draft'])(
+        'keeps native input outside formatting after %s insertion',
+        async kind => {
+          const value = `${delimiter}example${delimiter}`
+          const { editorRef } = renderEditor('')
+          const editor = screen.getByTestId('composer-editor')
+          if (kind === 'draft') {
+            act(() => editorRef.current!.setValue(value, value.length))
+          } else {
+            fireEvent.paste(editor, {
+              clipboardData: {
+                files: [],
+                getData: (type: string) =>
+                  type === 'text/html' && kind === 'html'
+                    ? html
+                    : type === 'text/plain'
+                      ? kind === 'html'
+                        ? 'example'
+                        : value
+                      : '',
+              },
+            })
+          }
+          const formatted = editor.querySelector(selector)!
+          act(() => {
+            const text = formatted.firstChild as Text
+            text.appendData(' appended text')
+            window.getSelection()!.collapse(text, text.length)
+            fireEvent.input(editor, { inputType: 'insertText', data: ' appended text' })
+          })
+          await waitFor(() => {
+            expect(editorRef.current!.getSnapshot().value).toBe(`${value} appended text`)
+          })
+          expect(editor.querySelector(selector)).toHaveTextContent(/^example$/)
+        }
+      )
+    }
+  )
+
+  test('preserves outer italic formatting when typing past an inner bold boundary', () => {
+    const state = EditorState.create({ doc: createComposerDocument('*some **bold** text*') })
+    const updated = state.tr.insertText(' added', 10).doc
+    expect(serializeComposerDocument(updated)).toBe('*some **bold** added text*')
+  })
+
+  test('preserves the link and italic formatting after typing past pasted bold text', async () => {
+    const { editorRef } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+    pasteMarkdown(editor, '[*some **bold** text*](https://example.com)')
+    expect(editorRef.current!.getSnapshot().value).toBe(
+      '*[some **bold** text](https://example.com)*'
+    )
+    const bold = editor.querySelector('strong')!
+    act(() => {
+      const text = document.createTreeWalker(bold, NodeFilter.SHOW_TEXT).nextNode() as Text
+      text.appendData('x')
+      window.getSelection()!.collapse(text, text.length)
+      fireEvent.input(editor, { inputType: 'insertText', data: 'x' })
+    })
+    await waitFor(() => {
+      expect(editorRef.current!.getSnapshot().value).toBe(
+        '*[some **bold**x text](https://example.com)*'
+      )
+    })
+    expect(editor.querySelector('strong')).toHaveTextContent(/^bold$/)
+    for (const selector of ['em', 'a[href="https://example.com"]']) {
+      expect(Array.from(editor.querySelectorAll(selector), node => node.textContent).join('')).toBe(
+        'some boldx text'
+      )
+    }
   })
 
   test('keeps native input after a pasted URL outside the link', async () => {

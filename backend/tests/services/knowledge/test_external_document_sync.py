@@ -744,6 +744,14 @@ async def test_schedule_failure_does_not_rollback_prior_batch_metadata(
 ) -> None:
     first = _create_synced_document(test_db, test_user, remote_version="v1")
     second = _create_synced_document(test_db, test_user, remote_version="v1")
+
+    @contextmanager
+    def session_local():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_sync.SessionLocal", session_local
+    )
     provider = _provider(
         {
             first.id: RemoteDocumentState(
@@ -765,10 +773,11 @@ async def test_schedule_failure_does_not_rollback_prior_batch_metadata(
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync.cache_manager.set", AsyncMock()
     )
+    prepare_refresh = MagicMock(side_effect=RuntimeError("broker unavailable"))
     monkeypatch.setattr(
         "app.services.knowledge.external_document_sync."
         "external_document_import_service.prepare_source_refresh",
-        MagicMock(side_effect=RuntimeError("broker unavailable")),
+        prepare_refresh,
     )
 
     report = await ExternalDocumentSyncModule().run_daily_sync(test_db, scan_limit=100)
@@ -779,6 +788,7 @@ async def test_schedule_failure_does_not_rollback_prior_batch_metadata(
     assert first is not None
     assert second is not None
     assert report.failed == 2
+    prepare_refresh.assert_called_once()
     assert first.external_source_config["status"] == "sync_error"
     assert first.external_source_config["sync"]["last_error_code"] == (
         "wiki_connection_failed"

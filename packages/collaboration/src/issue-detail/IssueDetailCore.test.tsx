@@ -12,6 +12,15 @@ import {
 } from "./IssueDetailDraft";
 
 describe("IssueDetailCore", () => {
+  it("retains the local user with ID zero when opening an Issue", () => {
+    expect(issueAssigneeTarget({ assignee_user_id: 0 })).toBe("user:0");
+    expect(issueAssigneeTarget({ assignee_user_id: null })).toBe("");
+    expect(parseIssueAssigneeTarget("user:0")).toEqual({
+      assigneeUserId: 0,
+      assigneeAgentId: null,
+      assigneeTeamId: null,
+    });
+  });
   it("retains collaboration group ownership when opening an Issue", () => {
     expect(issueAssigneeTarget({ assignee_group_id: "squad-1" })).toBe(
       "group:squad-1",

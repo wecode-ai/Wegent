@@ -8,9 +8,12 @@ Wework 桌面应用使用 Electron。正式构建和发布由
 `.github/workflows/wework-app.yml` 负责；该工作流同时生成 macOS、Windows 和
 Linux 的 Electron 安装包。
 
-macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建先
-校验 Rosetta 2，再通过 `actions/setup-node` 安装 x64 Node.js；安装依赖前，
-工作流校验运行中的 Node.js 架构与目标架构一致。Harness Runtime 的原生依赖按
+macOS arm64 发布使用 Apple Silicon `macos-14` runner，x64 发布使用原生 Intel
+`macos-15-intel` runner。安装依赖前，工作流校验宿主硬件、运行中的 Node.js
+架构与目标架构一致，避免在 Rosetta 转译下运行发布工具。Intel 构建可能更慢；
+不能仅为缩短编译时间恢复转译路径。资源准备日志记录各子进程的命令、PID 和
+完成状态，失败时保留退出码或信号，以定位并行准备中的具体失败步骤。
+Harness Runtime 的原生依赖按
 运行中的 Node.js 架构准备，仅指定 Electron Builder 的目标架构不足以交叉构建
 完整运行环境。架构不匹配时应修正 Node.js 架构并重新构建，不能复用错误架构的
 产物或仅重跑发布步骤。
@@ -18,6 +21,40 @@ macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建
 正式 macOS arm64 包验证失败时，工作流会清理体积较大的临时运行时目录，并上传
 保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
 E2E 断言隐藏失败。
+
+## macOS 应用图标
+
+macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
+构建时生成的 `Assets.car`，通过 `CFBundleIconName=Wework` 注册资产目录
+中的 App 图标。macOS 27 会给未注册的 ICNS 图标再加一层底板并缩小图案；注册资产
+目录可避免重复处理。目录中的所有尺寸直接取自现有 ICNS，保留 macOS 15 的圆角、
+留白和图案，不回退旧图标，也不使用 Icon Composer 重新生成旧系统的位图。
+
+Electron Packager 本地包、Electron Builder 安装包和在线更新包必须都将资产目录
+放在 `Contents/Resources/Assets.car`，并保留 `CFBundleIconFile` 指向的 ICNS。
+macOS 打包需要完整 Xcode。Packager 在打包前、Builder 在 `beforePack` 阶段自动
+从当前 ICNS 编译图标，安装包和在线更新包使用同一生成流程。编译失败会阻止打包。
+产物写入已忽略的 `wework/electron/resources/macos/`，不提交生成的二进制文件。
+
+```mermaid
+flowchart LR
+  ICNS[Existing ICNS artwork] --> Compiler[iconutil and actool]
+  Compiler --> Catalog[Generated Assets.car]
+  Catalog --> Packager[Local app bundle]
+  Catalog --> Builder[Installer and online update]
+```
+
+修改 ICNS 后，可在安装完整 Xcode 的 Mac 上单独检查编译和产物：
+
+```bash
+node wework/electron/scripts/compile-macos-app-icon.mjs
+pnpm --dir wework/electron test scripts/macos-app-icon.test.mjs
+```
+
+脚本从 ICNS 提取全部十个尺寸表示并编译标准 `.appiconset`，同时更新
+同一生成目录下 `app-icon.json` 的源文件和产物 SHA-256。编译产物以原子替换方式
+写入，避免并行安装包和在线更新构建读取不完整文件；回归测试实际编译目录并核对
+十种尺寸和哈希。
 
 ## 版本与产物
 
@@ -47,13 +84,9 @@ Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 如果所选通道尚未发布 Electron 版本，对应 YAML 清单可以不存在；客户端将其视为
 “暂无可用更新”，而不是网络错误。其他检查失败仍需原样报告。
 
-macOS 和 Windows 的正式版本 Release 必须分别包含 ZIP 和 NSIS 安装器对应的
-`.blockmap`。macOS 客户端将完整下载或差分下载成功后的 ZIP、blockmap、版本、
-架构、URL 和 SHA-512 作为一组经过验证的差分基线原子保存；后续更新只使用这组本地
-基线，不根据新产物文件名猜测旧 blockmap 地址。首次更新、缓存基线不完整或校验
-失败时下载完整安装包并建立新基线。差分校验失败时只再执行一次完整下载。构建产物
-缺少任一 blockmap 时发布流程必须失败。差分计划、累计下载量和回退原因记录在应用
-日志目录的 `app-update.log` 中。
+Wework 禁用 `electron-updater` 的差分下载和旧 ZIP 缓存。macOS 与 Windows
+客户端只下载经过压缩的完整 Host 更新包，避免低复用率差分产生大量 Range 请求、
+重复流量和额外磁盘占用。组件更新仍按内容哈希复用未变化的组件。
 
 发布流程只生成 Electron YAML 更新清单和组件清单。macOS 和 Windows 使用
 Electron 自身的 ZIP/NSIS 更新链路；Linux 暂不提供应用内自动升级，继续使用
@@ -145,12 +178,23 @@ preload、打包资源或发布边界发生变化时，工作流才提升应用�
 已有用户因此只下载实际发生变化的组件，无需因为纯 Wework UI 或组件改动重复下载
 Electron 和 Chromium。
 
+版本 Release 的组件附件上传前会校验已有同名附件的上传状态、大小和 SHA-256，
+完全一致时直接复用，不覆盖不可变组件。如果 GitHub CLI 上传报错，脚本会重新
+查询附件列表；只有远端附件已完整上传且与本地压缩包完全一致才继续发布。
+缺失、不完整或摘要不符的附件仍会阻止发布，原始 CLI 错误会保留在日志中。
+
+发布 Job 检出发布源码后，使用共享的 `setup-node-workspace` action 准备 Node.js、
+pnpm 和工作区依赖，再运行发布脚本。Harness Runtime 归档收集使用 Wework 声明的
+`tar` 包；构建 Job 中已安装的依赖不会自动传递到发布 Job。
+
 Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 Electron 清单只有
 在当前已发布版本声明 `componentizedHostUpdate: 1` 后，才会指向不含上述七个托管
 组件的精简宿主包；客户端会先暂存目标应用版本的完整组件集合，再安装宿主更新。
 不具备该能力的旧客户端会先收到一次包含托管组件的迁移宿主包，避免升级后缺少
 运行资源。组件清单和压缩包必须先于 Electron YAML 发布，防止客户端看到宿主更新
-时对应组件尚不可下载。完整安装包始终包含所有组件，以支持离线首次安装。
+时对应组件尚不可下载。`WeWorkHostUpdate` ZIP 必须使用正常压缩，不能使用仅封装
+原始字节的 `store` 模式；正式 Release E2E 会读取 ZIP 摘要并拒绝未压缩的宿主更新
+产物。完整安装包始终包含所有组件，以支持离线首次安装。
 
 客户端只接受与当前 Electron 应用版本、通道、平台和架构完全匹配的组件清单。
 清单中的 `downloadUrl` 可以指向版本 Release、共享依赖 Release 或独立对象存储，
@@ -163,8 +207,8 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 应用更新由主进程中的单个任务管理。同一版本和通道的自动下载、手动下载与重复检查
 共享任务，检查操作不得清空正在进行的下载。缺失组件最多使用三个并发下载；全部
 完成大小、压缩包哈希和解包内容校验后才写入 `pending`。更新进度依次覆盖组件、
-宿主下载、校验和安装就绪阶段，并累计差分失败前已经传输的字节；Squirrel.Mac 对
-本地缓存 ZIP 的安装交接不计入网络下载量。
+宿主下载和安装就绪阶段；Squirrel.Mac 对已下载 ZIP 的本地安装交接不计入网络
+下载量。
 
 单个组件下载遇到明确的瞬时传输失败时，客户端最多尝试三次，并在失败后分别等待
 一秒、两秒再重试。可重试范围仅包括连接中断、DNS/连接/请求超时、HTTP 408、429
@@ -281,3 +325,29 @@ workflow 中复制另一份资源列表。
 未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是不完整的更高版本，
 工作流必须失败，避免用旧版本覆盖。组件压缩包不可覆盖，只能在对应内容哈希尚不
 存在时上传。
+
+## 组件更新准备的 I/O 并发
+
+正式包验证中的 `component-update` 需要在现有预算内暂存完整组件集。
+组件哈希由发布脚本和 Electron 运行时共享同一个实现：每棵目录树最多并行
+读取八个文件，再按排序后的路径顺序写入哈希。目录记录、文件摘要和路径分隔符
+保持一致，不改变已有组件摘要；符号链接等不支持的条目仍拒绝校验。
+独立组件的校验和缓存准备并行执行，全部成功后才下载缺失组件并写入 pending 状态。
+不得通过扩大 E2E 超时或省略摘要校验掩盖串行 I/O 的耗时。
+
+## 正式安装包验证的 Runner 容量
+
+正式安装包的三个检查点由共享 runner 依次执行，并发上限为一。
+`release-package-startup`、`component-update` 和 `app-update-full` 全部保留。
+每个隔离应用都要解包自己的 Core Runtime；三个应用并发冷启动时，发布日志记录
+单次解包约 121 秒，两个应用在连接控制器或等待首个 UI 操作时耗尽现有预算。
+这属于正式包验证的资源争用，不能通过重跑或增大测试超时处理。
+常规桌面 CI 的分片与并发不变，正式包的场景代码、断言和超时也不变。
+
+## Apple 票据服务的传输错误
+
+公证上传、票据附加和票据校验复用同一套有限的传输重试，默认最多三次，
+间隔依次为五秒和十秒。只处理已识别的连接断开、超时等网络错误；公证拒绝、
+无效票据和其他验证失败立即停止。`stapler validate` 的 CloudKit 查询同样会
+出现 `NSURLErrorDomain -1005`，不能把这种查询失败当成缺少票据再重复提交公证。
+传输重试耗尽后仍让发布失败，不跳过最终票据验证。

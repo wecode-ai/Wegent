@@ -20,7 +20,12 @@ import {
   isContextCompactionToolBlock,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
-import { usePersistentProcessingExpansion } from './processingExpansionState'
+import {
+  collapsePersistentProcessingExpansions,
+  getProcessingDetailStateKey,
+  useAnyPersistentProcessingExpansion,
+  usePersistentProcessingExpansion,
+} from './processingExpansionState'
 import { getDurationText } from './processingDuration'
 import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
 import { SubagentActivityGroup } from './SubagentBlockItem'
@@ -61,8 +66,10 @@ interface ToolBlocksDisplayProps {
   processingPhase?: 'live' | 'intermediate' | 'final'
   showInterToolThinking?: boolean
   thinkingContent?: string
+  showThinkingBlocks?: boolean
   showSummary?: boolean
   stateKey?: string
+  detailStateScopeKey?: string
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -81,8 +88,10 @@ export function ToolBlocksDisplay({
   processingPhase = 'live',
   showInterToolThinking = false,
   thinkingContent = '',
+  showThinkingBlocks = false,
   showSummary = true,
   stateKey,
+  detailStateScopeKey,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -99,6 +108,7 @@ export function ToolBlocksDisplay({
     stateKey ? `${stateKey}:processing` : undefined
   )
   const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
+  const [hasLocallyExpandedPreviewDetail, setHasLocallyExpandedPreviewDetail] = useState(false)
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -193,6 +203,16 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const effectiveDetailStateScopeKey = detailStateScopeKey ?? stateKey
+  const previewDetailStateKeys = useMemo(
+    () =>
+      effectiveDetailStateScopeKey
+        ? rows.map(row => getProcessingDetailStateKey(effectiveDetailStateScopeKey, row.id))
+        : [],
+    [effectiveDetailStateScopeKey, rows]
+  )
+  const hasExpandedPreviewDetail =
+    useAnyPersistentProcessingExpansion(previewDetailStateKeys) || hasLocallyExpandedPreviewDetail
   const hasSubagentActivity = displayItems.some(item => item.type === 'subagent_group')
   const sourceFileEditDurations = useMemo(
     () => fileEditDurationsBySourceBlock ?? getFileEditDurationsBySourceBlock(blocks),
@@ -237,11 +257,13 @@ export function ToolBlocksDisplay({
       !expanded &&
       (hasRunningToolActivity ||
         (hasLivePreview && !livePreviewCollapsed) ||
+        hasExpandedPreviewDetail ||
         (usesUnifiedToolList && userExpanded))
         ? rows
         : [],
     [
       expanded,
+      hasExpandedPreviewDetail,
       hasLivePreview,
       hasRunningToolActivity,
       livePreviewCollapsed,
@@ -253,10 +275,20 @@ export function ToolBlocksDisplay({
   const summaryExpanded = expanded || previewRows.length > 0
   const toggleSummary = () => {
     if (hasLivePreview) {
+      if (!livePreviewCollapsed) {
+        setHasLocallyExpandedPreviewDetail(false)
+        collapsePersistentProcessingExpansions(previewDetailStateKeys)
+      }
       setLivePreviewCollapsed(value => !value)
       return
     }
-    setUserExpanded(value => !value)
+    if (summaryExpanded) {
+      setHasLocallyExpandedPreviewDetail(false)
+      collapsePersistentProcessingExpansions(previewDetailStateKeys)
+      setUserExpanded(false)
+      return
+    }
+    setUserExpanded(true)
   }
   const hasToolActivity = rows.some(
     row =>
@@ -330,9 +362,14 @@ export function ToolBlocksDisplay({
               <ToolBlockItem
                 key={item.id}
                 block={item.block}
-                stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
+                stateKey={
+                  effectiveDetailStateScopeKey
+                    ? getProcessingDetailStateKey(effectiveDetailStateScopeKey, item.id)
+                    : undefined
+                }
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                showThinkingContent={showThinkingBlocks}
                 fileEditDurations={fileEditDurations}
               />
             )
@@ -344,10 +381,11 @@ export function ToolBlocksDisplay({
       expanded,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
+      showThinkingBlocks,
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
-      stateKey,
+      effectiveDetailStateScopeKey,
       onOpenSubagent,
     ]
   )
@@ -389,7 +427,8 @@ export function ToolBlocksDisplay({
           thinkingContent={thinkingContent}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
-          stateKey={stateKey}
+          detailStateScopeKey={effectiveDetailStateScopeKey}
+          onExpandedDetailChange={setHasLocallyExpandedPreviewDetail}
           onOpenSubagent={onOpenSubagent}
         />
       ) : null}

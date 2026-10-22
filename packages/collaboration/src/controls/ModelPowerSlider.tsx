@@ -1,59 +1,64 @@
 import { useCallback, useMemo } from "react";
 import type { CollaborationTranslate } from "../i18n";
 import {
-  type ModelControlConfig,
   getControlsForModel,
   getModelDisplayLabel,
   isSameModelSelection,
-  normalizeModelOptionValue,
 } from "./model-ui";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 import { ReasoningSlider } from "./ReasoningSlider";
 import {
-  getCodexModelPowerSettings,
+  type ModelPowerSetting,
   isSelectedPowerSetting,
+  modelPowerOptions,
 } from "./model-selector-utils";
 
 interface ModelPowerSliderProps {
   translate: CollaborationTranslate;
-  control: ModelControlConfig;
-  models: UnifiedModel[];
+  powerSettings: ModelPowerSetting[];
   selectedModel: UnifiedModel | null;
   selectedModelOptions: ModelOptions;
-  onSelectModel: (model: UnifiedModel | null) => void;
+  onSelectModel: (model: UnifiedModel | null) => boolean | void;
   onSelectModelAndOptions?: (
     model: UnifiedModel,
     options: ModelOptions,
   ) => void;
   onSelectModelOption: (optionId: string, value: string) => void;
   onInteractionChange?: (interacting: boolean) => void;
+  compact?: boolean;
+  accentPulse?: boolean;
 }
 
 export function ModelPowerSlider({
   translate: t,
-  control,
-  models,
+  powerSettings,
   selectedModel,
   selectedModelOptions,
   onSelectModel,
   onSelectModelAndOptions,
   onSelectModelOption,
   onInteractionChange,
+  compact = false,
+  accentPulse = false,
 }: ModelPowerSliderProps) {
   const resolveLabel = useCallback(
     (key: string, fallback: string) => t(key, fallback),
     [t],
   );
-  const powerSettings = useMemo(
-    () => getCodexModelPowerSettings(models),
-    [models],
-  );
   const selectedReasoningValue =
-    normalizeModelOptionValue("reasoning", selectedModelOptions.reasoning) ??
-    control.defaultValue;
-  const selectedPowerSetting = powerSettings.find((setting) =>
-    isSelectedPowerSetting(setting, selectedModel, selectedReasoningValue),
-  );
+    selectedModelOptions.reasoning ??
+    getControlsForModel(selectedModel).find(
+      (control) => control.id === "reasoning",
+    )?.defaultValue;
+  const selectedPowerSetting =
+    powerSettings.find(
+      (setting) =>
+        setting.reasoningEffort !== undefined &&
+        isSelectedPowerSetting(setting, selectedModel, selectedReasoningValue),
+    ) ??
+    powerSettings.find((setting) =>
+      isSelectedPowerSetting(setting, selectedModel, selectedReasoningValue),
+    );
   const steps = useMemo(
     () =>
       powerSettings.map((setting) => {
@@ -73,9 +78,13 @@ export function ModelPowerSlider({
           : setting.reasoningEffort;
         return {
           value: setting.id,
-          label: `${getModelDisplayLabel(setting.model, {}, resolveLabel)} ${reasoningLabel}`,
+          label: [
+            getModelDisplayLabel(setting.model, {}, resolveLabel),
+            reasoningLabel,
+          ]
+            .filter(Boolean)
+            .join(" "),
           dataTestId: `model-power-setting-${setting.id.replace(/[^a-z0-9]+/giu, "-")}`,
-          ultra: setting.reasoningEffort === "ultra",
         };
       }),
     [powerSettings, resolveLabel],
@@ -87,20 +96,22 @@ export function ModelPowerSlider({
       );
       if (!setting) return;
 
-      if (isSameModelSelection(setting.model, selectedModel)) {
+      if (
+        isSameModelSelection(setting.model, selectedModel) &&
+        setting.reasoningEffort !== undefined
+      ) {
         onSelectModelOption("reasoning", setting.reasoningEffort);
         return;
       }
-      const nextOptions = {
-        ...selectedModelOptions,
-        reasoning: setting.reasoningEffort,
-      };
+      const nextOptions = modelPowerOptions(setting, selectedModelOptions);
       if (onSelectModelAndOptions) {
         onSelectModelAndOptions(setting.model, nextOptions);
         return;
       }
-      onSelectModel(setting.model);
-      onSelectModelOption("reasoning", setting.reasoningEffort);
+      if (onSelectModel(setting.model) === false) return;
+      if (setting.reasoningEffort !== undefined) {
+        onSelectModelOption("reasoning", setting.reasoningEffort);
+      }
     },
     [
       onSelectModel,
@@ -115,14 +126,21 @@ export function ModelPowerSlider({
   return (
     <ReasoningSlider
       translate={t}
-      control={control}
+      control={{
+        id: "reasoning",
+        label: t("workbench.model_picker_title", "Model"),
+        defaultValue: steps[0]?.value ?? "",
+        options: [],
+      }}
       selectedModelOptions={selectedModelOptions}
       onSelectOption={onSelectModelOption}
+      compact={compact}
       clearSubmenuOnHover={false}
       onInteractionChange={onInteractionChange}
       steps={steps.length > 0 ? steps : undefined}
       selectedStepValue={selectedPowerSetting?.id}
       onSelectStep={steps.length > 0 ? selectPowerSetting : undefined}
+      accentPulse={accentPulse}
     />
   );
 }

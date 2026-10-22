@@ -34,9 +34,9 @@ from app.services.channels.callback import forward_event_to_channel_callbacks
 from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
 from app.services.channels.telegram import callback as _telegram_cb  # noqa: F401
 from app.services.chat.storage import session_manager
-from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.execution.response_parser import ResponsesAPIEventParser
 from app.stores.tasks import task_store
 from shared.models import EventType
 
@@ -268,9 +268,11 @@ async def handle_batch_callback(
             await emitter.emit(event)
             await emitter.close()
 
-            # Note: batch callback events are typically terminal (DONE/ERROR).
-            # Terminal events are handled by TaskCompletedEvent via
-            # StatusUpdatingEmitter, so no need to forward to channels here.
+            # Publish to the callback stream channel so active OpenAI
+            # v1/responses SSE consumers receive the device events. Without
+            # this, a batch reporting executor updates the database while the
+            # response stream stalls after its first events.
+            await session_manager.publish_callback_event(request.subtask_id, event)
 
             processed += 1
 

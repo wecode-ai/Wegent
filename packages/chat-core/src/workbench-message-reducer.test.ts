@@ -1272,3 +1272,39 @@ describe('normalizeWorkbenchBlockStatus', () => {
     expect(normalizeWorkbenchBlockStatus()).toBe('pending')
   })
 })
+
+test.each([
+  'assistant_cancelled',
+  'assistant_done',
+  'assistant_error'
+] as const)('%s cannot manufacture successful context compaction', (type) => {
+  const state: WorkbenchMessage[] = [
+    {
+      id: 'assistant',
+      subtaskId: 'turn',
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      createdAt: '2026-09-24T00:00:00Z',
+      blocks: ['pending', 'done', 'error'].map((status, index) => ({
+        id: `compact-${index}`,
+        subtaskId: 'turn',
+        type: 'tool',
+        toolName: 'context_compaction',
+        status: status as 'pending' | 'done' | 'error',
+        createdAt: 1
+      }))
+    }
+  ]
+  const action =
+    type === 'assistant_error'
+      ? { type, subtaskId: 'turn', error: 'failed' }
+      : { type, subtaskId: 'turn' }
+  const result = reduceWorkbenchMessages(state, action)
+  expect(result[0].blocks?.map((block) => block.status)).toEqual([
+    'error',
+    'done',
+    'error'
+  ])
+  expect(state[0].blocks?.[0].status).toBe('pending')
+})

@@ -25,9 +25,6 @@ test('generates Electron and component rolling manifests from one release', asyn
     `WeWork_${version}_macos_arm64.zip`,
     `WeWork_${version}_macos_x64.zip`,
     `WeWork_${version}_windows_x64-setup.exe`,
-    `WeWork_${version}_macos_arm64.zip.blockmap`,
-    `WeWork_${version}_macos_x64.zip.blockmap`,
-    `WeWork_${version}_windows_x64-setup.exe.blockmap`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
@@ -115,9 +112,6 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
     `WeWorkHostUpdate_${version}_macos_arm64.zip`,
     `WeWorkHostUpdate_${version}_macos_x64.zip`,
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe`,
-    `WeWorkHostUpdate_${version}_macos_arm64.zip.blockmap`,
-    `WeWorkHostUpdate_${version}_macos_x64.zip.blockmap`,
-    `WeWorkHostUpdate_${version}_windows_x64-setup.exe.blockmap`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
@@ -154,40 +148,6 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe`
   )
-})
-
-test('rejects a release without every differential update blockmap', async () => {
-  const root = await mkdtemp(resolve(tmpdir(), 'wework-release-blockmaps-'))
-  temporaryDirectories.push(root)
-  const assets = resolve(root, 'assets')
-  const output = resolve(root, 'output')
-  const notes = resolve(root, 'notes.md')
-  await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
-  const version = '1.2.3'
-  for (const name of [
-    `WeWork_${version}_macos_arm64.zip`,
-    `WeWork_${version}_macos_x64.zip`,
-    `WeWork_${version}_windows_x64-setup.exe`,
-    `WeWork_${version}_macos_arm64.zip.blockmap`,
-    `WeWork_${version}_windows_x64-setup.exe.blockmap`,
-  ]) {
-    await writeFile(resolve(assets, name), name)
-  }
-  await writeFile(notes, '## Changes\n')
-
-  await expect(
-    run([
-      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
-      assets,
-      output,
-      version,
-      'stable',
-      'wecode-ai/Wegent',
-      'wework-v1.2.3',
-      notes,
-      'a'.repeat(40),
-    ])
-  ).rejects.toThrow('manifest generator exited with code 1')
 })
 
 test('rejects an invalid release source SHA', async () => {

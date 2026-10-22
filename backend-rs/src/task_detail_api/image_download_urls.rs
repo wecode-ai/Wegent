@@ -10,13 +10,13 @@
 //! The result payloads are opaque stored JSON whose unknown keys must survive
 //! byte-for-byte (`dict(block)` copy semantics), so the walk works on the
 //! decoded value and re-serializes only a payload it actually refreshed.
+use brz_json::RawJson;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
-use serde_json::value::RawValue;
 
 use crate::attachments::public_link::{build_public_attachment_download_url, public_base_url};
 use crate::config::AuthConfig;
-use crate::json_compat::raw_json;
+use brz_json::raw_json;
 
 /// `IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS`.
 const IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS: i64 = 3600;
@@ -28,7 +28,7 @@ const IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS: i64 = 3600;
 /// timestamp per request keeps that difference sub-second.
 pub(crate) fn refresh_task_image_download_urls(
     config: &AuthConfig,
-    results: &mut [&mut Box<RawValue>],
+    results: &mut [&mut RawJson],
     now: DateTime<Utc>,
 ) -> anyhow::Result<()> {
     for result in results.iter_mut() {
@@ -46,7 +46,7 @@ fn refresh_image_result_download_urls(
     config: &AuthConfig,
     raw: &str,
     now: DateTime<Utc>,
-) -> anyhow::Result<Option<Box<RawValue>>> {
+) -> anyhow::Result<Option<RawJson>> {
     // A payload that is not stored JSON is not a `dict` in the source and
     // stays unchanged.
     let Ok(mut payload) = serde_json::from_str::<Value>(raw) else {
@@ -118,7 +118,7 @@ mod tests {
         DateTime::from_timestamp(1_789_887_883, 0).expect("fixed time")
     }
 
-    fn raw(value: Value) -> Box<RawValue> {
+    fn raw(value: Value) -> RawJson {
         raw_json(&value)
     }
 
@@ -143,7 +143,7 @@ mod tests {
 
     /// Refresh one stored payload text and return the resulting text.
     fn refresh_text(text: &str) -> String {
-        let mut boxed = serde_json::from_str::<Box<RawValue>>(text).expect("test payload is JSON");
+        let mut boxed = serde_json::from_str::<RawJson>(text).expect("test payload is JSON");
         refresh_task_image_download_urls(&config(), &mut [&mut boxed], now()).expect("refreshes");
         boxed.get().to_owned()
     }
@@ -258,7 +258,7 @@ mod tests {
             raw(json!({"blocks": [{"type": "image", "image_attachment_ids": [2]}]}));
         let mut untouched = raw(json!({"value": "no image"}));
         let untouched_before = untouched.get().to_owned();
-        let mut results: Vec<&mut Box<RawValue>> =
+        let mut results: Vec<&mut RawJson> =
             vec![&mut task_result, &mut subtask_result, &mut untouched];
         refresh_task_image_download_urls(&config(), &mut results, now()).expect("refreshes");
         drop(results);

@@ -12,7 +12,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.api.endpoints.adapter.shells import list_unified_shells
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
@@ -1341,13 +1340,14 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
                 "displayName": "Shared Model",
             },
             "spec": {
+                "capability": "Fast responses for everyday tasks",
                 "modelConfig": {
                     "env": {
                         "model": "openai",
                         "model_id": "gpt-test",
                         "api_key": "publisher-secret",
                     }
-                }
+                },
             },
         },
         is_active=True,
@@ -1393,6 +1393,11 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
         test_db, source, user_id=consumer.id
     ).is_installed
     source.json["spec"]["modelConfig"]["env"]["model_id"] = "gpt-updated"
+    assert (
+        source.json["spec"]["capability"]["description"]
+        == "Fast responses for everyday tasks"
+    )
+    source.json["spec"]["capability"]["description"] = "Updated model capabilities"
     flag_modified(source, "json")
     test_db.commit()
 
@@ -1407,6 +1412,7 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
     )
     referenced_model = next(item for item in models if item["name"] == source.name)
     assert referenced_model["modelId"] == "gpt-updated"
+    assert referenced_model["capability"] == "Updated model capabilities"
     assert referenced_model["isReference"] is True
     assert referenced_model["listingId"] == source.id
 
@@ -1598,15 +1604,6 @@ def test_foundation_resource_references_follow_source_updates(
         assert shell_info["shell_type"] == "ClaudeCode"
         assert shell_info["base_image"] == "shell:v2"
         assert shell_info["is_reference"] is True
-        unified = list_unified_shells(
-            scope="personal",
-            group_name=None,
-            db=test_db,
-            current_user=consumer,
-        )
-        referenced = next(item for item in unified["data"] if item["name"] == name)
-        assert referenced["isReference"] is True
-        assert referenced["listingId"] == source.id
         bot = Kind(
             user_id=consumer.id,
             kind="Bot",

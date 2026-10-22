@@ -99,11 +99,9 @@ pub struct HookRegistryStore {
 
 impl HookRegistryStore {
     pub fn from_env() -> Self {
-        let executor_home = std::env::var_os("WEGENT_EXECUTOR_HOME")
-            .map(PathBuf::from)
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."));
-        Self { executor_home }
+        Self {
+            executor_home: crate::config::paths::executor_home(),
+        }
     }
 
     #[cfg(test)]
@@ -116,7 +114,20 @@ impl HookRegistryStore {
     }
 
     pub fn discover(&self) -> Vec<ResolvedHookPlugin> {
+        let bundled_root = std::env::var_os("WEGENT_BUNDLED_HOOKS_DIR").map(PathBuf::from);
+        let managed_root = std::env::var_os("WEGENT_MANAGED_HOOKS_DIR").map(PathBuf::from);
+        self.discover_with_roots(bundled_root.as_deref(), managed_root.as_deref())
+    }
+
+    fn discover_with_roots(
+        &self,
+        bundled_root: Option<&Path>,
+        managed_root: Option<&Path>,
+    ) -> Vec<ResolvedHookPlugin> {
         let mut registry = self.read_registry();
+        let mut registry_changed = bundled_root
+            .map(|root| refresh_bundled_paths(root, &mut registry))
+            .unwrap_or(false);
         let mut candidates = Vec::new();
         for entry in registry.plugins.values() {
             candidates.push((
@@ -127,11 +138,11 @@ impl HookRegistryStore {
             ));
         }
         self.collect_root(&self.plugins_dir(), HookSource::User, &mut candidates);
-        if let Some(path) = std::env::var_os("WEGENT_BUNDLED_HOOKS_DIR") {
-            self.collect_root(Path::new(&path), HookSource::Bundled, &mut candidates);
+        if let Some(path) = bundled_root {
+            self.collect_root(path, HookSource::Bundled, &mut candidates);
         }
-        if let Some(path) = std::env::var_os("WEGENT_MANAGED_HOOKS_DIR") {
-            self.collect_root(Path::new(&path), HookSource::Managed, &mut candidates);
+        if let Some(path) = managed_root {
+            self.collect_root(path, HookSource::Managed, &mut candidates);
         }
         let mut loaded = Vec::new();
         let mut ids = HashMap::<String, usize>::new();
@@ -146,7 +157,6 @@ impl HookRegistryStore {
                 loaded.push(plugin);
             }
         }
-        let mut registry_changed = false;
         for plugin in &mut loaded {
             if ids.get(&plugin.manifest.id).copied().unwrap_or_default() > 1 {
                 plugin.health = HookHealth::DuplicatePluginId;
@@ -165,7 +175,7 @@ impl HookRegistryStore {
                 });
         }
         // Discovery also serves the background rollout observer, so it must not
-        // rewrite the registry file unless a plugin was actually registered.
+        // rewrite the registry file unless a plugin was registered or relocated.
         if registry_changed {
             let _ = self.write_registry(&registry);
         }
@@ -332,6 +342,35 @@ impl HookRegistryStore {
     fn write_registry(&self, registry: &RegistryFile) -> Result<(), String> {
         atomic_json_write(&self.registry_path(), registry)
     }
+}
+
+fn refresh_bundled_paths(root: &Path, registry: &mut RegistryFile) -> bool {
+    let Ok(entries) = fs::read_dir(root) else {
+        return false;
+    };
+    let mut paths = HashMap::<String, Vec<PathBuf>>::new();
+    for entry in entries.flatten().filter(|entry| entry.path().is_dir()) {
+        let path = entry.path();
+        if let Ok(manifest) = read_json::<HookPluginManifest>(path.join("plugin.json")) {
+            paths.entry(manifest.id).or_default().push(path);
+        }
+    }
+    let mut changed = false;
+    for (id, paths) in paths {
+        // Do not hide actual duplicate IDs in the current application's bundle.
+        let [path] = paths.as_slice() else {
+            continue;
+        };
+        let Some(entry) = registry.plugins.get_mut(&id) else {
+            continue;
+        };
+        if entry.source == HookSource::Bundled && entry.install_path != *path {
+            // Keep user preferences, but bind bundled code to the current app.
+            entry.install_path = path.clone();
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn load_plugin(
@@ -586,6 +625,113 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn write_plugin(directory: &Path) {
+        fs::create_dir_all(directory).unwrap();
+        fs::write(
+            directory.join("plugin.json"),
+            r#"{"schemaVersion":1,"id":"reporter","name":"Reporter","version":"1"}"#,
+        )
+        .unwrap();
+        fs::write(directory.join("hooks.json"), r#"{"PostToolUse":[]}"#).unwrap();
+    }
+
+    #[test]
+    fn relocates_bundled_hooks_without_resetting_preferences_or_rewriting_on_rediscovery() {
+        for enabled in [false, true] {
+            for old_app_exists in [false, true] {
+                let fixture = tempdir().unwrap();
+                let store = HookRegistryStore::new(fixture.path().join("executor"));
+                let old_root = fixture.path().join("old-app/bundled-hooks");
+                let new_root = fixture.path().join("new-app/bundled-hooks");
+                write_plugin(&old_root.join("reporter"));
+                write_plugin(&new_root.join("reporter"));
+                store.discover_with_roots(Some(&old_root), None);
+                let mut registry = store.read_registry();
+                registry.plugins.get_mut("reporter").unwrap().enabled = enabled;
+                store.write_registry(&registry).unwrap();
+                if !old_app_exists {
+                    fs::remove_dir_all(&old_root).unwrap();
+                }
+
+                let plugins = store.discover_with_roots(Some(&new_root), None);
+
+                assert_eq!(plugins.len(), 1);
+                assert_eq!(plugins[0].directory, new_root.join("reporter"));
+                assert_eq!(plugins[0].enabled, enabled);
+                assert_eq!(plugins[0].source, HookSource::Bundled);
+                assert_eq!(
+                    plugins[0].health,
+                    if enabled {
+                        HookHealth::Ready
+                    } else {
+                        HookHealth::Disabled
+                    }
+                );
+                let persisted = store.read_registry();
+                let entry = &persisted.plugins["reporter"];
+                assert_eq!(entry.install_path, new_root.join("reporter"));
+                assert_eq!(entry.enabled, enabled);
+                assert_eq!(entry.policy, registry.plugins["reporter"].policy);
+                // A no-op discovery must preserve the exact file, not reserialize it.
+                let padded = format!("{}\n\n", fs::read_to_string(store.registry_path()).unwrap());
+                fs::write(store.registry_path(), &padded).unwrap();
+                store.discover_with_roots(Some(&new_root), None);
+                assert_eq!(fs::read_to_string(store.registry_path()).unwrap(), padded);
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_discovery_does_not_replace_user_or_managed_hooks_with_the_same_id() {
+        for source in [HookSource::User, HookSource::Managed] {
+            let fixture = tempdir().unwrap();
+            let store = HookRegistryStore::new(fixture.path().join("executor"));
+            let registered_path = fixture.path().join("installed/reporter");
+            let bundled_root = fixture.path().join("app/bundled-hooks");
+            write_plugin(&registered_path);
+            write_plugin(&bundled_root.join("reporter"));
+            let mut registry = RegistryFile::default();
+            registry.plugins.insert(
+                "reporter".to_owned(),
+                RegistryEntry {
+                    enabled: false,
+                    source,
+                    install_path: registered_path.clone(),
+                    policy: HookPolicy::for_source(source),
+                },
+            );
+            store.write_registry(&registry).unwrap();
+
+            let plugins = store.discover_with_roots(Some(&bundled_root), None);
+
+            assert_eq!(plugins.len(), 2);
+            assert!(plugins
+                .iter()
+                .all(|p| p.health == HookHealth::DuplicatePluginId));
+            assert_eq!(
+                store.read_registry().plugins["reporter"].install_path,
+                registered_path
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_duplicate_id_errors_inside_the_current_bundle() {
+        let fixture = tempdir().unwrap();
+        let store = HookRegistryStore::new(fixture.path().join("executor"));
+        let root = fixture.path().join("app/bundled-hooks");
+        write_plugin(&root.join("one"));
+        store.discover_with_roots(Some(&root), None);
+        write_plugin(&root.join("two"));
+
+        let plugins = store.discover_with_roots(Some(&root), None);
+
+        assert_eq!(plugins.len(), 2);
+        assert!(plugins
+            .iter()
+            .all(|p| p.health == HookHealth::DuplicatePluginId));
+    }
+
     #[test]
     fn validates_supported_platform_commands() {
         let mut hook = CommandHookConfig {
@@ -623,7 +769,8 @@ mod tests {
             .unwrap();
             fs::write(dir.join("hooks.json"), r#"{"PostToolUse":[]}"#).unwrap();
         }
-        let plugins = HookRegistryStore::new(home.path().to_path_buf()).discover();
+        let plugins =
+            HookRegistryStore::new(home.path().to_path_buf()).discover_with_roots(None, None);
         assert_eq!(plugins.len(), 2);
         assert!(plugins
             .iter()

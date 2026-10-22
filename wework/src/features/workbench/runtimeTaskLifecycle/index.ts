@@ -1,4 +1,5 @@
 export { getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
+export { summarizeRuntimeTaskExecution } from './projection'
 export {
   consumeRuntimeTaskLifecycleBlock,
   createRuntimeTaskLifecycleOwnershipView,

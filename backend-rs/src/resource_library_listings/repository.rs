@@ -13,7 +13,7 @@
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 
-use crate::json_compat::JsonProjection;
+use brz_json::JsonProjection;
 
 use super::models::KindPayload;
 
@@ -52,6 +52,17 @@ pub const RESOURCE_MEMBER_COLUMNS: &str = "resource_members.id AS resource_membe
      resource_members.requested_at AS resource_members_requested_at, \
      resource_members.created_at AS resource_members_created_at, \
      resource_members.updated_at AS resource_members_updated_at";
+
+/// `MarketplaceResource` column projection with SQLAlchemy's
+/// `marketplace_resources_<column>` aliases.
+pub const MARKETPLACE_RESOURCE_COLUMNS: &str = "marketplace_resources.kind_id AS \
+     marketplace_resources_kind_id, marketplace_resources.owner_user_id AS \
+     marketplace_resources_owner_user_id, marketplace_resources.resource_type AS \
+     marketplace_resources_resource_type, marketplace_resources.recommendation_score AS \
+     marketplace_resources_recommendation_score, marketplace_resources.install_count AS \
+     marketplace_resources_install_count, marketplace_resources.published_at AS \
+     marketplace_resources_published_at, marketplace_resources.updated_at AS \
+     marketplace_resources_updated_at";
 
 /// One `kinds` row read through [`KIND_COLUMNS`]. The binding probes only
 /// read the identity, namespace and JSON members.
@@ -157,10 +168,32 @@ pub struct NamespaceRow {
     pub namespace_name: String,
 }
 
-/// One `users` row read only for `user_name`.
+/// One `users` entity row read through the bare `Session.get` projection
+/// SQLAlchemy renders for `db.get(User, id)`; only `user_name` is projected
+/// into the listing body.
 #[derive(Debug, FromMysqlRow)]
 pub struct UserNameRow {
-    pub users_user_name: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub id: i64,
+    pub user_name: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub password_hash: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub email: Option<String>,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub git_info: brz_mysql::Json<brz_json::OpaqueJson>,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub is_active: i8,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub role: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub auth_source: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub preferences: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub created_at: chrono::NaiveDateTime,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 /// One `resource_members.id` presence row.
@@ -168,6 +201,32 @@ pub struct UserNameRow {
 pub struct PresenceRow {
     #[allow(dead_code, reason = "presence only; the id value is unused")]
     pub resource_members_id: i64,
+}
+
+/// One `marketplace_resources` publication row read through
+/// [`MARKETPLACE_RESOURCE_COLUMNS`]. `list_published` reads the publication's
+/// `kind_id` and `install_count`; the remaining selected columns stay in the
+/// statement to match the recorded exchange.
+#[derive(Debug, FromMysqlRow)]
+pub struct PublishedRow {
+    pub marketplace_resources_kind_id: i64,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub marketplace_resources_owner_user_id: i64,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub marketplace_resources_resource_type: String,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub marketplace_resources_recommendation_score: i64,
+    pub marketplace_resources_install_count: i64,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub marketplace_resources_published_at: Option<NaiveDateTime>,
+    #[allow(dead_code, reason = "selected to match the source column list")]
+    pub marketplace_resources_updated_at: NaiveDateTime,
+}
+
+/// The `count(*)` row of `query.count()`.
+#[derive(Debug, FromMysqlRow)]
+struct CountRow {
+    count_1: i64,
 }
 
 /// A decoded discovery cursor position
@@ -285,7 +344,8 @@ fn keyword_filter(normalized_keyword: &str) -> String {
         lower_json_text("$.spec.capability.displayName"),
         lower_json_text("$.spec.displayName"),
         lower_json_text("$.metadata.displayName"),
-        lower_json_text("$.spec.capability.description"),
+        // Source: `func.lower(case((Kind.kind != "Skill", ...), else_=""))`.
+        "lower(CASE WHEN (kinds.kind != 'Skill') THEN coalesce(json_unquote(json_extract(kinds.json, '$.spec.capability.description')), '') ELSE '' END)".to_owned(),
         lower_json_text("$.spec.description"),
         lower_json_text("$.spec.capability.tags"),
         lower_json_text("$.spec.tags"),
@@ -322,20 +382,38 @@ fn lower_json_text(path: &str) -> String {
 /// The cursor continuation predicate for the selected score and sort
 /// expressions. `_decode_discovery_cursor` without a score keeps the legacy
 /// `(updated_at, id)` ordering.
+///
+/// The rendered text mirrors the SQLAlchemy compound expression exactly: the
+/// source nests `or_` inside an `and_` inside the outer `and_` filter chain, so
+/// only the outer `or_` needs parentheses. MySQL `AND` binds tighter than `OR`,
+/// and SQLAlchemy emits no redundant group around either child, so the recorded
+/// statement is `... AND (score < S OR score = S AND (time < T OR time = T AND
+/// id < I))`. Replay matches this statement against the recorded exchange, so
+/// the grouping must stay identical.
 fn cursor_predicate(cursor: &CursorPosition, score_expr: &str, sort_expr: &str) -> String {
-    let time = quote_literal(
-        &cursor
-            .updated_at
-            .format("%Y-%m-%d %H:%M:%S%.6f")
-            .to_string(),
-    );
+    let time = quote_literal(&sql_datetime_literal(cursor.updated_at));
     let id = cursor.kind_id;
     match cursor.recommendation_score {
-        None => format!("({sort_expr} < {time} OR ({sort_expr} = {time} AND kinds.id < {id}))"),
+        None => format!("({sort_expr} < {time} OR {sort_expr} = {time} AND kinds.id < {id})"),
         Some(score) => format!(
-            "({score_expr} < {score} OR ({score_expr} = {score} AND ({sort_expr} < {time} OR \
-             ({sort_expr} = {time} AND kinds.id < {id}))))"
+            "({score_expr} < {score} OR {score_expr} = {score} AND ({sort_expr} < {time} OR \
+             {sort_expr} = {time} AND kinds.id < {id}))"
         ),
+    }
+}
+
+/// One `kinds.updated_at` style value as the source's inline MySQL literal.
+/// pymysql escapes a bound `datetime` as `datetime.isoformat(" ")`, which omits
+/// the fractional part when the microseconds are zero and otherwise keeps six
+/// digits; SQLAlchemy's inline literal rendering of the cursor bound follows the
+/// same rule.
+fn sql_datetime_literal(value: NaiveDateTime) -> String {
+    let base = value.format("%Y-%m-%d %H:%M:%S").to_string();
+    let micros = value.and_utc().timestamp_subsec_micros();
+    if micros == 0 {
+        base
+    } else {
+        format!("{base}.{micros:06}")
     }
 }
 
@@ -372,19 +450,25 @@ fn json_escape(value: &str) -> String {
 
 /// `quote_literal`: MySQL single-quoted string escaping for the request
 /// strings that the source renders inline (keyword and tag LIKE patterns).
+///
+/// Escapes by character, not byte: SQLAlchemy renders a `str` literal through
+/// pymysql, which escapes the special characters and keeps every other
+/// character (including multi-byte UTF-8) intact. Iterating bytes and pushing
+/// `char::from(byte)` would re-encode each UTF-8 byte as a separate Latin-1
+/// character, so a keyword like `微博` would reach MySQL as `å¾®å`.
 #[must_use]
 pub fn quote_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('\'');
-    for byte in value.bytes() {
-        match byte {
-            b'\'' => out.push_str("\\'"),
-            b'\\' => out.push_str("\\\\"),
-            b'\0' => out.push_str("\\0"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            0x1a => out.push_str("\\Z"),
-            other => out.push(char::from(other)),
+    for character in value.chars() {
+        match character {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\0' => out.push_str("\\0"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{1a}' => out.push_str("\\Z"),
+            other => out.push(other),
         }
     }
     out.push('\'');
@@ -478,20 +562,130 @@ where
         .await
 }
 
-/// `db.get(User, id)` for the resolved publisher.
+/// `db.get(User, id)` for the resolved publisher: the unlabeled entity
+/// projection SQLAlchemy renders for a `Session.get` lookup, with the id
+/// bound as a statement parameter like the source driver.
 pub async fn fetch_user_name<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<UserNameRow>>
 where
     M: Mysql,
 {
     mysql
         .fetch_optional(
-            format!(
-                "SELECT users.user_name AS users_user_name \nFROM users \nWHERE users.id = \
-                 {user_id}"
-            ),
+            "SELECT users.id, users.user_name, users.password_hash, users.email, \
+             users.git_info, users.is_active, users.`role`, users.auth_source, \
+             users.preferences, users.created_at, users.updated_at \
+             \nFROM users \nWHERE users.id = ?",
+            (user_id,),
+        )
+        .await
+}
+
+/// `list_published`'s publication filter: `owner_user_id == current_user.id`
+/// plus the optional `resource_type` equality. A resource type is an
+/// endpoint-pattern value, rendered as an inline literal like the source.
+fn published_filter(owner_user_id: i64, resource_type: Option<&str>) -> String {
+    match resource_type {
+        Some(value) => format!(
+            "marketplace_resources.owner_user_id = {owner_user_id} AND \
+             marketplace_resources.resource_type = {}",
+            quote_literal(value)
+        ),
+        None => format!("marketplace_resources.owner_user_id = {owner_user_id}"),
+    }
+}
+
+/// `publication_query.order_by(None).count()`: the source wraps the filtered
+/// `MarketplaceResource` projection in `SELECT count(*) AS count_1 ... AS anon_1`.
+#[must_use]
+pub fn published_count_sql(owner_user_id: i64, resource_type: Option<&str>) -> String {
+    format!(
+        "SELECT count(*) AS count_1 \nFROM (SELECT {MARKETPLACE_RESOURCE_COLUMNS} \n\
+         FROM marketplace_resources \nWHERE {}) AS anon_1",
+        published_filter(owner_user_id, resource_type)
+    )
+}
+
+/// `publication_query.order_by(updated_at.desc(), kind_id.desc())
+/// .offset((page - 1) * limit).limit(limit)`. SQLAlchemy renders the offset
+/// and limit as inline literals; both are validated integers, so inlining is
+/// injection-safe.
+#[must_use]
+pub fn published_page_sql(
+    owner_user_id: i64,
+    resource_type: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> String {
+    format!(
+        "SELECT {MARKETPLACE_RESOURCE_COLUMNS} \nFROM marketplace_resources \n\
+         WHERE {} ORDER BY marketplace_resources.updated_at DESC, \
+         marketplace_resources.kind_id DESC \n LIMIT {offset}, {limit}",
+        published_filter(owner_user_id, resource_type)
+    )
+}
+
+/// `list_published`'s `order_by(None).count()`.
+pub async fn fetch_published_count<M>(
+    mysql: &M,
+    owner_user_id: i64,
+    resource_type: Option<&str>,
+) -> MysqlResult<i64>
+where
+    M: Mysql,
+{
+    let row: Option<CountRow> = mysql
+        .fetch_optional(published_count_sql(owner_user_id, resource_type), ())
+        .await?;
+    Ok(row.map_or(0, |row| row.count_1))
+}
+
+/// `list_published`'s page query.
+pub async fn fetch_published_page<M>(
+    mysql: &M,
+    owner_user_id: i64,
+    resource_type: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> MysqlResult<Vec<PublishedRow>>
+where
+    M: Mysql,
+{
+    mysql
+        .fetch_all(
+            published_page_sql(owner_user_id, resource_type, offset, limit),
             (),
         )
         .await
+}
+
+/// `list_published`'s batch `db.query(Kind).filter(Kind.id.in_(kind_ids),
+/// Kind.is_active == True).all()`. `None` when `kind_ids` is empty, which is
+/// the source's `resources = [...] if kind_ids else []` skip. The `IN` list
+/// follows the publication order the source's list comprehension keeps.
+#[must_use]
+pub fn published_kinds_sql(ids: &[i64]) -> Option<String> {
+    if ids.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id IN ({}) AND \
+         kinds.is_active = true",
+        ids.iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+/// `list_published`'s batch Kind lookup.
+pub async fn fetch_kinds_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<KindRow>>
+where
+    M: Mysql,
+{
+    let Some(sql) = published_kinds_sql(ids) else {
+        return Ok(Vec::new());
+    };
+    mysql.fetch_all(sql, ()).await
 }
 
 /// `has_personal_capability_reference`.
@@ -552,139 +746,5 @@ fn quote_list(values: &[&str]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::NaiveDate;
-
-    fn parts<'a>(
-        kinds: &'a [&'a str],
-        published: bool,
-        installed: &'a [i64],
-        cursor: Option<&'a CursorPosition>,
-    ) -> QueryParts<'a> {
-        QueryParts {
-            kinds,
-            published,
-            resource_type: None,
-            score_floor: true,
-            installed_skill_ids: installed,
-            keyword: None,
-            tags: &[],
-            cursor,
-            batch_size: 21,
-        }
-    }
-
-    fn time() -> NaiveDateTime {
-        NaiveDate::from_ymd_opt(2026, 9, 11)
-            .unwrap()
-            .and_hms_opt(8, 30, 41)
-            .unwrap()
-    }
-
-    #[test]
-    fn system_query_keeps_the_source_projection_and_filters() {
-        let sql = build_discovery_query(&parts(&["Skill"], false, &[7, 3], None));
-        assert!(sql.starts_with("SELECT kinds.id AS kinds_id"));
-        assert!(
-            sql.contains(
-                "kinds.user_id = 0 AND kinds.kind IN ('Skill') AND kinds.is_active = true"
-            )
-        );
-        assert!(sql.contains("AS SIGNED INTEGER) END >= 80"));
-        assert!(sql.contains("AS SIGNED INTEGER) END AS recommendation_score"));
-        assert!(sql.contains("(kinds.kind != 'Skill' OR (kinds.id NOT IN (7, 3)))"));
-        assert!(sql.contains("ORDER BY CASE WHEN"));
-        assert!(sql.contains("kinds.updated_at DESC, kinds.id DESC"));
-        assert!(sql.ends_with("LIMIT 21"));
-        assert!(!sql.contains("marketplace_resources"));
-    }
-
-    #[test]
-    fn published_query_adds_the_resource_type_and_score_filters() {
-        let mut query = parts(&["Team"], true, &[], None);
-        query.resource_type = Some("agent");
-        let sql = build_discovery_query(&query);
-        assert!(sql.contains(
-            "FROM marketplace_resources INNER JOIN kinds ON kinds.id = marketplace_resources.kind_id"
-        ));
-        assert!(sql.contains("kinds.user_id != 0 AND kinds.kind IN ('Team')"));
-        assert!(sql.contains("marketplace_resources.resource_type = 'agent'"));
-        assert!(sql.contains("marketplace_resources.recommendation_score >= 80"));
-        assert!(sql.contains(
-            "ORDER BY marketplace_resources.recommendation_score DESC, marketplace_resources.updated_at DESC, kinds.id DESC"
-        ));
-        assert!(!sql.contains("kinds.kind != 'Skill'"));
-    }
-
-    #[test]
-    fn featured_only_omits_the_score_floor() {
-        let mut query = parts(&["Skill"], false, &[], None);
-        query.score_floor = false;
-        let sql = build_discovery_query(&query);
-        assert!(!sql.contains(">= 80"));
-    }
-
-    #[test]
-    fn keyword_and_tag_filters_escape_like_wildcards() {
-        let tag = "daily_work".to_owned();
-        let mut query = parts(&["Skill"], false, &[], None);
-        query.keyword = Some("100%");
-        query.tags = std::slice::from_ref(&tag);
-        let sql = build_discovery_query(&query);
-        assert!(sql.contains("lower(kinds.name) LIKE '%100\\\\%%' ESCAPE '\\\\'"));
-        assert!(sql.contains("$.metadata.displayName"));
-        assert!(sql.contains("LIKE '%\"daily\\\\_work\"%' ESCAPE '\\\\'"));
-    }
-
-    #[test]
-    fn cursor_predicate_follows_score_then_time_then_id() {
-        let cursor = CursorPosition {
-            recommendation_score: Some(80),
-            updated_at: time(),
-            kind_id: 12,
-        };
-        let sql = build_discovery_query(&parts(&["Skill"], false, &[], Some(&cursor)));
-        assert!(sql.contains("AND (CASE WHEN"));
-        assert!(sql.contains("< 80 OR (CASE WHEN"));
-        assert!(sql.contains("kinds.id < 12"));
-        assert!(sql.contains("'2026-09-11 08:30:41.000000'"));
-    }
-
-    #[test]
-    fn legacy_cursor_orders_by_time_only() {
-        let cursor = CursorPosition {
-            recommendation_score: None,
-            updated_at: time(),
-            kind_id: 12,
-        };
-        let sql = build_discovery_query(&parts(&["Skill"], false, &[], Some(&cursor)));
-        assert!(sql.contains("AND (kinds.updated_at < '2026-09-11 08:30:41.000000' OR"));
-    }
-
-    #[test]
-    fn installed_filter_renders_the_cpython_set_order() {
-        // Case ba098165: the user's default bindings arrive in
-        // `created_at DESC` order, and the source's `set[int]` renders the
-        // recorded `NOT IN` list in CPython slot order.
-        let mut ids = super::super::set_order::SetOrder::new();
-        for id in [
-            283_712, 200_318, 269_285, 127_443, 237_510, 214_204, 187_623, 188_646, 187_624,
-            110_603, 133_755, 133_269, 127_449, 273_990, 266_010, 127_444, 256_262,
-        ] {
-            ids.add(id);
-        }
-        assert_eq!(
-            installed_skill_filter(&ids.order()).unwrap(),
-            "(kinds.kind != 'Skill' OR (kinds.id NOT IN (283712, 269285, 237510, 187623, \
-             188646, 187624, 273990, 110603, 256262, 127443, 127444, 133269, 127449, 266010, \
-             133755, 214204, 200318)))"
-        );
-    }
-
-    #[test]
-    fn quote_literal_matches_mysql_escaping() {
-        assert_eq!(quote_literal("a'b\\c"), "'a\\'b\\\\c'");
-        assert_eq!(escape_sql_like("50%_x"), "50\\%\\_x");
-    }
-}
+#[path = "repository_tests.rs"]
+mod tests;

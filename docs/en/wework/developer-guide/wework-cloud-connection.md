@@ -38,11 +38,17 @@ Users may enter either the Backend root URL or an `/api` URL. The frontend norma
 
 The desktop authorization window defaults to `1000 × 640` with a minimum size of `960 × 620`, which accommodates enterprise login pages that do not provide responsive layouts. It stays hidden until positioning completes, remains above ordinary windows after it is shown, and repositions when the Wework main window moves or its display scale changes. Placement is clamped to the usable area of Wework's current display. On macOS, positioning uses AppKit's unified logical desktop coordinates directly so moving between Retina and non-Retina displays cannot send the window off-screen through physical-to-logical pixel conversion.
 
-Wework resolves the Socket.IO address in this order: the URL explicitly entered by the user, the packaged Socket URL when it belongs to the current Backend, the `socket_url` returned by Backend `/auth/wework/config`, and finally the Backend same-origin default. Backend declares its public Socket.IO origin through `WEGENT_SOCKET_URL`; HTTPS deployments should configure a `wss://` URL. Saved connections are refreshed and migrated with the same priority order on startup. Wework passes the resolved address to its local executor through Electron IPC. The executor uses that address for its Backend Socket.IO connection while HTTP APIs continue to use the Backend URL, so split-origin deployments do not require users to configure the WSS URL again.
+Wework resolves the Socket.IO address in this order: the URL explicitly entered by the user, the packaged Socket URL when it belongs to the current Backend, the `socket_url` returned by Backend `/auth/wework/config`, and finally the Backend same-origin default. Backend declares its public Socket.IO origin through `WEGENT_SOCKET_URL`; HTTPS deployments should configure a `wss://` URL. When the desktop connects to a loopback Backend and the returned Socket URL only replaces its host while keeping the same port and path, the desktop keeps using loopback. Explicit Socket URLs and deployments with a separate Socket port are unaffected. Saved connections are refreshed and migrated with the same priority order on startup. Wework passes the resolved address to its local executor through Electron IPC. The executor uses that address for its Backend Socket.IO connection while HTTP APIs continue to use the Backend URL, so split-origin deployments do not require users to configure the WSS URL again.
 
 Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
 
+After authorization succeeds, the page shows a three-second countdown and then closes automatically. Failed or cancelled authorization does not start the countdown. If the browser restricts automatic closing, the page asks the user to close it manually and return to Wework.
+
 Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
+
+When the underlying Socket.IO connection closes, the local executor immediately clears its connected status and starts the existing reconnect flow. Account operations therefore do not treat the Backend as available while waiting for a heartbeat to detect the disconnect. Registration tracks the close epoch and uses the same lock to publish readiness and process close notifications, so registration cannot overwrite a recent disconnect. A stale connection's close callback cannot invalidate a newer connection.
+
+Plugin account authentication processes disable Python bytecode writes so imports do not modify verified shared plugin packages. New publication records inventory bytecode paths included in the archive. If generated caches cause verification to fail, a non-mutating hash check first proves that excluding candidate caches restores the original content. Only then are they removed under the publication lock, followed by full verification. Published bytecode stays protected. When an older record cannot establish cache ownership, verification rejects the package without changing it. It never rewrites the record or ignores files that could still execute. Modified sources, special files, and symlinks inside caches remain rejected; bytecode already included in the verified original archive remains unchanged. Concurrent synchronization and publication share the same lock. Package publication, repository operations, and Agent Home locks share an ownership guard that explicitly unlocks when the owning operation ends, so inherited descriptors in concurrently launched child processes cannot extend the lock lifetime.
 
 ## Interaction Entry
 
@@ -156,7 +162,20 @@ dispatch rules: `wework <path>` opens a workspace, while
 
 ## Model Identity and Execution Transport
 
+Task composers always display the model selector, including initial loading,
+catalog refresh failures, empty catalogs, and task restoration after a cloud
+model is retired or a local configuration is deleted. Sending remains blocked
+until an available model is selected, while the selector still allows adding
+a local model or connecting to the cloud. Selecting a replacement resumes
+follow-ups in the same task. Never use send readiness to hide the selector or
+silently replace the task's model. Desktop and compact composers follow the
+same rule. The `task-model-deletion` desktop E2E checkpoint covers reopening a
+task after local configuration deletion, cold restoration after cloud model
+deletion, and continuing the original conversation with a replacement model.
+
 Models keep one canonical identity across the UI, task state, and execution requests: `name`, `type`, `namespace`, and `resourceUserId`. The frontend must not add `local:` or `cloud:` prefixes to distinguish execution locations, and model config must not carry a separate transport source. When catalogs are merged, an Executor-discovered model wins over a Backend-synthesized runtime Codex model with the same `modelId`.
+
+The picker's local and cloud catalogs are independent. The local catalog depends on the local Executor state and on the desktop preferences, so when either prerequisite fails it must degrade to local custom models only: it must not fail the whole list and must not keep the cloud catalog from loading, which has to start on its own inside the same `listModels` call. A desktop preferences file whose contents cannot be parsed is quarantined as `app-preferences.json.corrupt-<timestamp>` and the app continues with defaults, while operational read errors such as permission or sharing failures are reported instead of moving the file aside. One broken file thus costs the quarantined preferences instead of permanently hiding every model.
 
 The target device alone selects the transport: local devices call Executor through IPC, while remote devices call Executor through the WebSocket relay. Both paths use the same `runtime.tasks.*` protocol and model selection. Public, personal, and group model resource identity is forwarded to Executor and resolved by the same model gateway. User-configured local models use `local-model:<config-id>`; when a cloud or remote device is selected, Wework synchronizes the model's Codex capability catalog on demand and sends the task's model connection configuration directly to the target Executor.
 

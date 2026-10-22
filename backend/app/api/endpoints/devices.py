@@ -10,8 +10,6 @@ Online status is managed via Redis with heartbeat mechanism.
 """
 
 import logging
-import os
-import posixpath
 from datetime import datetime
 from typing import Any, Literal, Optional
 
@@ -22,8 +20,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.constants import CLIENT_ORIGIN_WEWORK
-from app.models.project import Project
 from app.models.user import User
 from app.schemas.device import (
     DeviceCommandRequest,
@@ -35,7 +31,6 @@ from app.schemas.git_credentials import (
     DeviceGitAccountSyncRequest,
     DeviceGitAccountSyncResponse,
 )
-from app.schemas.project import ProjectConfig
 from app.services.device.command_service import (
     DeviceCommandConfigurationError,
     DeviceCommandError,
@@ -54,20 +49,10 @@ from app.services.device.git_credentials import (
 )
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
-from app.services.runtime_work_kind_store import list_device_workspace_kinds
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-WORKSPACE_FILE_COMMAND_KEYS = {
-    "workspace_tree",
-    "workspace_read_text_file",
-    "workspace_read_file_chunk",
-}
-WORKSPACE_ROOTS_ENV = "WEGENT_WORKSPACE_ROOTS"
-WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS = 5
-
 
 # ==================== Request/Response Schemas ====================
 
@@ -127,229 +112,6 @@ class DeviceUpgradeResponse(BaseModel):
 
     success: bool = Field(..., description="Whether the upgrade command was sent")
     message: str = Field(..., description="Human-readable status message")
-
-
-def _normalize_device_path(path: str) -> str:
-    normalized = posixpath.normpath(path.strip())
-    if normalized == ".":
-        return ""
-    return normalized.rstrip("/") or "/"
-
-
-def _is_device_path_within(path: str, root: str) -> bool:
-    normalized_path = _normalize_device_path(path)
-    normalized_root = _normalize_device_path(root)
-    if normalized_root == "/":
-        return normalized_path.startswith("/")
-    return normalized_path == normalized_root or normalized_path.startswith(
-        f"{normalized_root}/"
-    )
-
-
-def _dedupe_paths(paths: list[str]) -> list[str]:
-    seen = set()
-    deduped = []
-    for path in paths:
-        normalized = _normalize_device_path(path)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        deduped.append(normalized)
-    return deduped
-
-
-def _wework_local_workspace_roots_for_command(
-    *,
-    db: Session,
-    user_id: int,
-    device_id: str,
-    path: Optional[str],
-) -> list[str]:
-    if not path:
-        return []
-
-    roots = []
-    projects = (
-        db.query(Project)
-        .filter(
-            Project.user_id == user_id,
-            Project.client_origin == CLIENT_ORIGIN_WEWORK,
-            Project.is_active.is_(True),
-        )
-        .all()
-    )
-    for project in projects:
-        try:
-            config = ProjectConfig.model_validate(project.config or {})
-        except Exception:
-            continue
-        if (
-            not config.execution
-            or not config.workspace
-            or config.execution.deviceId != device_id
-        ):
-            continue
-        workspace_paths: list[str] = []
-        if config.workspace.source == "local_path" and config.workspace.localPath:
-            workspace_paths.append(config.workspace.localPath)
-        elif (
-            config.workspace.source == "git"
-            and config.workspace.checkoutPath
-            and posixpath.isabs(config.workspace.checkoutPath)
-        ):
-            workspace_paths.append(config.workspace.checkoutPath)
-
-        for workspace_path in workspace_paths:
-            root = _normalize_device_path(workspace_path)
-            if _is_device_path_within(path, root):
-                roots.append(root)
-
-    return _dedupe_paths(roots)
-
-
-def _runtime_device_workspace_roots_for_command(
-    *,
-    db: Session,
-    user_id: int,
-    device_id: str,
-    path: Optional[str],
-) -> list[str]:
-    if not path:
-        return []
-
-    roots = []
-    for mapping in list_device_workspace_kinds(db=db, user_id=user_id):
-        if mapping.device_id != device_id or not mapping.workspace_path:
-            continue
-        root = _normalize_device_path(mapping.workspace_path)
-        if _is_device_path_within(path, root):
-            roots.append(root)
-
-    return _dedupe_paths(roots)
-
-
-def _runtime_workspace_roots_from_rpc_result(
-    result: dict[str, Any], path: str
-) -> list[str]:
-    roots: list[str] = []
-    raw_workspaces = result.get("workspaces")
-    if not isinstance(raw_workspaces, list):
-        return roots
-
-    for raw_workspace in raw_workspaces:
-        if not isinstance(raw_workspace, dict):
-            continue
-        workspace_path = raw_workspace.get("workspacePath") or raw_workspace.get(
-            "workspace_path"
-        )
-        if isinstance(workspace_path, str) and workspace_path.strip():
-            root = _normalize_device_path(workspace_path)
-            if _is_device_path_within(path, root):
-                roots.append(root)
-
-        raw_tasks = (
-            raw_workspace.get("tasks")
-            or raw_workspace.get("localTasks")
-            or raw_workspace.get("local_tasks")
-            or []
-        )
-        if not isinstance(raw_tasks, list):
-            continue
-        for raw_task in raw_tasks:
-            if not isinstance(raw_task, dict):
-                continue
-            task_path = raw_task.get("workspacePath") or raw_task.get("workspace_path")
-            if not isinstance(task_path, str) or not task_path.strip():
-                continue
-            root = _normalize_device_path(task_path)
-            if _is_device_path_within(path, root):
-                roots.append(root)
-
-    return _dedupe_paths(roots)
-
-
-async def _runtime_local_task_workspace_roots_for_command(
-    *,
-    user_id: int,
-    device_id: str,
-    path: Optional[str],
-) -> list[str]:
-    if not path:
-        return []
-
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=device_id,
-            method="runtime.tasks.list",
-            payload={},
-            timeout_seconds=WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS,
-        )
-    except RuntimeRpcError:
-        return []
-
-    return _runtime_workspace_roots_from_rpc_result(result, path)
-
-
-async def _device_command_env(
-    *,
-    db: Session,
-    user_id: int,
-    device_id: str,
-    request: DeviceCommandRequest,
-) -> dict[str, str]:
-    env = dict(request.env)
-    if request.command_key not in WORKSPACE_FILE_COMMAND_KEYS:
-        return env
-
-    env.pop(WORKSPACE_ROOTS_ENV, None)
-    path = request.path or request.cwd
-    roots = _wework_local_workspace_roots_for_command(
-        db=db,
-        user_id=user_id,
-        device_id=device_id,
-        path=path,
-    )
-    roots += _runtime_device_workspace_roots_for_command(
-        db=db,
-        user_id=user_id,
-        device_id=device_id,
-        path=path,
-    )
-    roots = _dedupe_paths(roots)
-    if not roots:
-        roots = await _runtime_local_task_workspace_roots_for_command(
-            user_id=user_id,
-            device_id=device_id,
-            path=path,
-        )
-    if roots:
-        env[WORKSPACE_ROOTS_ENV] = os.pathsep.join(roots)
-    return env
-
-
-# Hybrid mode deliberately leaves this handler disabled so backend-rs owns
-# GET /api/devices.
-# MIGRATION-CANDIDATE(api="GET /api/devices"): remove after final confirmation.
-# @router.get("", response_model=DeviceListResponse)
-# async def get_all_devices(
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(security.get_current_user),
-# ):
-#     """
-#     Get all devices for the current user (including offline).
-#
-#     Returns all registered devices with their current online status.
-#     Devices auto-register via WebSocket when they connect.
-#
-#     Returns:
-#         DeviceListResponse with all devices list
-#     """
-#     devices = await device_service.get_all_devices(db, current_user.id)
-#     return DeviceListResponse(
-#         items=[DeviceInfo(**d) for d in devices],
-#         total=len(devices),
-#     )
 
 
 @router.get("/online", response_model=DeviceListResponse)
@@ -766,12 +528,7 @@ async def execute_device_command(
             command_key=request.command_key,
             path=request.path or request.cwd,
             args=request.args,
-            env=await _device_command_env(
-                db=db,
-                user_id=user_id,
-                device_id=device_id,
-                request=request,
-            ),
+            env=request.env,
             timeout_seconds=request.timeout_seconds,
             max_output_bytes=request.max_output_bytes,
             allow_app_device=False,

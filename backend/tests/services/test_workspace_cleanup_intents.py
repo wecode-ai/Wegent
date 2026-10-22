@@ -19,6 +19,7 @@ from app.services.workspace_cleanup_intents import (
     due_execution_targets,
     pull_due,
 )
+from tests.utils.collaboration import authorize_project
 
 
 def _project(db, user) -> CloudProject:
@@ -32,6 +33,7 @@ def _project(db, user) -> CloudProject:
         storage_prefix=f"projects/{public_id}",
         metadata_json={},
     )
+    authorize_project(db, project)
     db.add(project)
     db.commit()
     db.refresh(project)

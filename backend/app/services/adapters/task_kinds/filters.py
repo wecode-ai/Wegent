@@ -102,46 +102,6 @@ def filter_tasks_for_display(
     return id_to_task
 
 
-def filter_tasks_with_title_match(
-    tasks: List[TaskResource],
-    title_lower: str,
-) -> Dict[int, TaskResource]:
-    """
-    Filter tasks for display with additional title matching.
-
-    Filters out:
-    - DELETE status tasks
-    - Tasks that don't match the title search
-    - Non-interacted Subscription tasks
-
-    Args:
-        tasks: List of TaskResource objects to filter
-        title_lower: Lowercase title string to match
-
-    Returns:
-        Dict mapping task ID to TaskResource for valid tasks
-    """
-    id_to_task = {}
-    for t in tasks:
-        task_crd = Task.model_validate(t.json)
-        status = task_crd.status.status if task_crd.status else "PENDING"
-        task_title = task_crd.spec.title or ""
-
-        # Filter: not DELETE and title matches
-        if status == "DELETE":
-            continue
-        if title_lower not in task_title.lower():
-            continue
-
-        # Filter out non-interacted Subscription tasks
-        if is_non_interacted_subscription_task(task_crd):
-            continue
-
-        id_to_task[t.id] = t
-
-    return id_to_task
-
-
 def filter_tasks_since_id(
     tasks: List[TaskResource],
 ) -> Dict[int, TaskResource]:

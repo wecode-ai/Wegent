@@ -28,6 +28,7 @@ import {
   GOAL_IDLE_FOLLOW_UP_PROMPT,
   GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
+  GOAL_IDLE_CONTINUATION_TEXT,
   GOAL_IDLE_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_PROMPT,
   GOAL_SNAPSHOT_RECONCILIATION_TEXT,
@@ -44,6 +45,7 @@ import {
   SUPERVISOR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  ensureModelOptionVisible,
   processIsAlive,
   readFile,
   selectE2EModel,
@@ -146,12 +148,12 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
 }
 
 async function selectSupervisorModel(control) {
+  const selector = '[data-testid="task-supervisor-model"] [data-testid="model-selector-button"]'
+  await ensureModelOptionVisible(control, CLOUD_PUBLIC_MODEL_NAME, selector, undefined)
   await control.command(
     'click',
-    '[data-testid="task-supervisor-model"] [data-testid="model-selector-button"]'
+    `[data-testid="model-selector-menu"] [data-testid="model-option-${CLOUD_PUBLIC_MODEL_NAME}"]`
   )
-  await control.command('click', '[data-testid="model-control-menu-model"]')
-  await control.command('click', `[data-testid="model-option-${CLOUD_PUBLIC_MODEL_NAME}"]`)
 }
 
 async function getSelectedSupervisorModel(control) {
@@ -302,6 +304,32 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     [GOAL_IDLE_PROMPT]: 1,
     [GOAL_IDLE_INITIAL_TEXT]: 1,
   })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: GOAL_IDLE_CONTINUATION_TEXT,
+    }
+  )
+  const goalStatusText = await control.command('getText', '[data-testid="goal-status-bar"]')
+  assert.doesNotMatch(
+    goalStatusText,
+    /正在开始下一轮|Starting next turn/,
+    'A continuation producing output must leave the startup state'
+  )
+  const outputDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const subtaskId = snapshot.pane?.messageStyleComparison?.currentStreaming?.subtaskId
+      return Boolean(subtaskId && subtaskId === snapshot.workbench?.activeLifecycle?.turn?.id)
+    },
+    'Continuation output did not reach the active turn debug projection'
+  )
+  assert.equal(
+    outputDebugSnapshot.pane?.messageStyleComparison?.currentStreaming?.subtaskId,
+    outputDebugSnapshot.workbench?.activeLifecycle?.turn?.id,
+    'Continuation output must belong to its active turn'
+  )
   await captureVerificationScreenshot(control, 'goal-idle-02-automatic-continuation.png')
 
   const readyCountBeforeContinuationReload = control.readyCount
@@ -1147,6 +1175,7 @@ async function waitForRecoveringExecutorGoal(control, taskIds) {
       return (
         taskIds.includes(taskId) &&
         candidate.running === false &&
+        observedTasks.some(other => other.taskId !== taskId && other.running === true) &&
         (goalExecutionStatus === 'recovering' ||
           (goalStatus === 'active' && candidate.status === 'queued'))
       )

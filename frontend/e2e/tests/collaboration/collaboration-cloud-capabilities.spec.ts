@@ -5,10 +5,16 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { webApi } from '../../utils/collaboration-test-support'
+import {
+  openBlankProjectCreation,
+  selectCollaborationProjectView,
+  webApi,
+  writeSharedComposer,
+} from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient } from '../../utils/api-client'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 
 const appBaseUrl = process.env.E2E_BASE_URL || 'http://localhost:3000'
 const evidenceDir = process.env.COLLABORATION_EVIDENCE_DIR
@@ -139,8 +145,7 @@ async function createProjectByUi(
     `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
   )
 
-  await page.getByTestId('collaboration-workspace-project-create').click()
-  await page.getByTestId('collaboration-workspace-project-create-blank').click()
+  await openBlankProjectCreation(page)
   await page.getByTestId('collaboration-project-name-input').fill(projectName)
   await page.getByTestId('collaboration-project-create-advanced').click()
   await page
@@ -254,7 +259,7 @@ async function addProjectMember(
   page: Page,
   projectId: string,
   userId: number,
-  role: 'Developer' | 'Reporter' | 'RestrictedAnalyst'
+  role: 'Maintainer' | 'Developer' | 'Viewer'
 ): Promise<void> {
   await webApi(page, `/api/v1/cloud-projects/${encodeURIComponent(projectId)}/members`, {
     method: 'POST',
@@ -354,14 +359,13 @@ async function openRegularUserProject(
 }
 
 test.describe('Collaboration cloud capabilities', () => {
-  test('aligns Web resource navigation and collaboration-group assignment with cloud collaboration', async ({
+  test('aligns Web resource navigation and assigns human groups without a runner', async ({
     page,
   }) => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     const workspaceGroupName = `Workspace group ${suffix}`
     const projectName = `Group project ${suffix}`
-    const issueTitle = `Group issue ${suffix}`
     let projectId = ''
     let workspaceId = ''
 
@@ -412,8 +416,7 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(workspaceGroup.members).toContainEqual(workspaceGroup.leader)
 
       await page.getByTestId('collaboration-workspace-nav-projects').click()
-      await page.getByTestId('collaboration-workspace-project-create').click()
-      await page.getByTestId('collaboration-workspace-project-create-blank').click()
+      await openBlankProjectCreation(page)
       await page.getByTestId('collaboration-project-name-input').fill(projectName)
       await page.getByTestId('collaboration-project-create-add-collaborator').click()
       await page
@@ -457,31 +460,30 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(projectGroup.members).toContainEqual(projectGroup.leader)
 
       await page.getByTestId('collaboration-issue-create').click()
-      await page.getByTestId('cloud-todo-title').fill(issueTitle)
+      await expect(page.getByTestId('collaboration-issue-create-dialog')).toBeAttached()
+      await expect(page.getByTestId('cloud-todo-title')).toBeVisible()
+      await page.getByTestId('cloud-todo-title').fill(`Human Issue ${suffix}`)
+      await expect(page.getByTestId('cloud-todo-create-confirm')).toBeEnabled()
       await page.getByTestId('cloud-todo-create-assignee').click()
       await page.getByTestId(`cloud-todo-create-assignee-option-group:${projectGroup.id}`).click()
-      await expect(page.getByTestId('cloud-todo-create-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${projectGroup.id}`
+      await expect(page.getByTestId('cloud-todo-create-confirm')).toBeEnabled()
+      await expect(page.getByTestId('collaboration-issue-create-dialog')).toHaveAttribute(
+        'data-execution-environment-readiness',
+        'unassigned'
       )
+      await expect(page.getByTestId('issue-execution-environment-notice')).toHaveCount(0)
       await page.getByTestId('cloud-todo-create-confirm').click()
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
-      const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
-      await expect
-        .poll(async () => {
-          const created = await issue(page, issueId)
-          return {
-            groupId: created.assignee_group_id,
-            groupName: created.assignee_group_name,
-          }
+      const createdIssues = await webApi<{ items: CloudIssue[] }>(
+        page,
+        `/api/v1/cloud-projects/${encodeURIComponent(project.id)}/loop-items`
+      )
+      expect(createdIssues.items).toContainEqual(
+        expect.objectContaining({
+          title: `Human Issue ${suffix}`,
+          assignee_user_id: null,
+          assignee_group_id: projectGroup.id,
         })
-        .toEqual({
-          groupId: projectGroup.id,
-          groupName: projectGroup.name,
-        })
-      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${projectGroup.id}`
       )
       await captureEvidence(page, 'web-00-cloud-collaboration-group')
     } finally {
@@ -514,10 +516,11 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
+      // Project metadata can show a read-only parent label before the workspace catalog arrives.
+      await page.getByTestId(`collaboration-workspace-home-${workspace.id}`).click()
+      await expect(page).toHaveURL(`/collaboration/workspaces/${workspace.id}`)
       const workspaceToggle = page.getByTestId(`collaboration-workspace-toggle-${workspace.id}`)
-      if ((await workspaceToggle.getAttribute('aria-expanded')) !== 'true') {
-        await workspaceToggle.click()
-      }
+      await expect(workspaceToggle).toHaveAttribute('aria-expanded', 'true')
       const projectNavigation = page.getByTestId(`collaboration-workspace-project-${project.id}`)
       await expect(projectNavigation).toContainText(project.name)
       await captureEvidence(page, 'web-01-project-home')
@@ -545,6 +548,7 @@ test.describe('Collaboration cloud capabilities', () => {
         project.name
       )
 
+      await initializeProjectExecutionEnvironment(page)
       await page.getByTestId('collaboration-issue-create').click()
       await page.getByTestId('cloud-todo-title').fill(`Cloud Issue ${suffix}`)
       await page
@@ -577,13 +581,16 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       const issueId = createdIssue.id
 
-      await page.getByTestId('collaboration-issue-comment').fill('Cloud E2E persistent comment')
+      await writeSharedComposer(
+        page.getByTestId('collaboration-issue-comment'),
+        'Cloud E2E persistent comment'
+      )
       await page.getByTestId('collaboration-issue-comment-submit').click()
       await expect(page.getByTestId('collaboration-comments')).toContainText(
         'Cloud E2E persistent comment'
       )
 
-      await page.getByTestId('cloud-todo-edit-content').click()
+      await page.getByTestId('cloud-todo-detail-description').click()
       await page.getByTestId('cloud-todo-attachment-input').setInputFiles({
         name: `issue-${suffix}.txt`,
         mimeType: 'text/plain',
@@ -674,15 +681,17 @@ test.describe('Collaboration cloud capabilities', () => {
       await selectGroupBy(page, project.id, 'status')
       const reorderResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
-        return response.request().method() === 'POST' && pathname.endsWith('/loop-items/reorder')
+        return (
+          response.request().method() === 'PATCH' &&
+          pathname.endsWith(`/loop-items/${statusIssue.id}`)
+        )
       })
       await dragIssueTo(page, statusIssue.id, 'completed')
       const reordered = await reorderResponse
       expect(reordered.ok(), `Board reorder failed: ${await reordered.text()}`).toBe(true)
-      const reorderedItems = (await reordered.json()) as { items: CloudIssue[] }
-      expect(reorderedItems.items.find(item => item.id === statusIssue.id)?.status).toBe(
-        'completed'
-      )
+      const moved = (await reordered.json()) as CloudIssue
+      expect(moved.status).toBe('completed')
+      expect(reordered.request().postDataJSON()).toHaveProperty('position')
       expect((await issue(page, statusIssue.id)).status).toBe('completed')
       await page.getByTestId(`collaboration-issue-${statusIssue.id}`).scrollIntoViewIfNeeded()
       await captureEvidence(page, 'web-06-status-board')
@@ -872,93 +881,7 @@ test.describe('Collaboration cloud capabilities', () => {
     }
   })
 
-  test('renders and advances a shared cloud workflow from the Web Issue detail', async ({
-    page,
-  }) => {
-    test.setTimeout(120_000)
-    const suffix = Date.now()
-    const stageId = `review-${suffix}`
-    let projectId = ''
-    let workspaceId = ''
-
-    try {
-      await page.goto('/collaboration')
-      const workspace = await createWorkspaceByApi(page, `Workflow Workspace ${suffix}`)
-      workspaceId = workspace.id
-      const project = await createProjectByApi(page, workspace.id, `Workflow ${suffix}`)
-      projectId = project.id
-      const created = await createIssueByApi(page, project.id, `Workflow Issue ${suffix}`, {
-        workflow: {
-          version: 1,
-          definition_version: 1,
-          stage_mode: 'dag',
-          advancement_policy: 'manual',
-          coordinator_prompt: '',
-          nodes: [
-            {
-              id: stageId,
-              name: 'Web 人工验收',
-              prompt: '通过 Web 共享详情页完成人工验收。',
-              execution_mode: 'human',
-              depends_on: [],
-              dependency_context: {},
-              required: true,
-              required_deliverables: [],
-              workspace_policy: 'none',
-              automation_rule_id: null,
-              execution_config: null,
-              execution_config_override: false,
-              status: 'awaiting_approval',
-              task_ids: [],
-            },
-          ],
-        },
-      })
-
-      await page.goto(collaborationProjectPath(workspace.id, project.id, { issueId: created.id }))
-      await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
-      await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
-      await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toBeVisible()
-      await captureEvidence(page, 'web-11-workflow-awaiting-approval')
-
-      const decisionResponse = page.waitForResponse(response => {
-        const pathname = new URL(response.url()).pathname
-        return (
-          response.request().method() === 'POST' &&
-          pathname.endsWith(
-            `/loop-items/${encodeURIComponent(created.id)}/workflow-nodes/${encodeURIComponent(
-              stageId
-            )}/decision`
-          )
-        )
-      })
-      await page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`).click()
-      const response = await decisionResponse
-      expect(response.ok(), `Workflow approval failed: ${await response.text()}`).toBe(true)
-      await expect
-        .poll(async () => {
-          const updated = await issue(page, created.id)
-          return updated.workflow?.nodes.find(node => node.id === stageId)?.status
-        })
-        .toBe('completed')
-
-      await page.reload()
-      await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
-      await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
-      await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toHaveCount(0)
-      await expect(page.getByTestId(`cloud-todo-workflow-node-${stageId}`)).toContainText(
-        /已完成|Completed/
-      )
-      await captureEvidence(page, 'web-12-workflow-completed')
-    } finally {
-      if (projectId) await archiveProject(page, projectId)
-      if (workspaceId) await archiveWorkspace(page, workspaceId)
-    }
-  })
-
-  test('manages members, visibility, tags, statuses and card fields, then blocks RestrictedAnalyst direct views', async ({
+  test('manages members, visibility, tags, statuses and card fields, then blocks Viewer direct views', async ({
     browser,
     page,
   }) => {
@@ -977,11 +900,10 @@ test.describe('Collaboration cloud capabilities', () => {
       const member = await regularUser(page)
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
 
-      await page.getByTestId('collaboration-project-settings-participants').click()
-      await page.getByTestId('collaboration-participants-tab-members').click()
+      await page.getByTestId('collaboration-project-settings-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
-      await page.getByTestId('cloud-member-role').selectOption('Reporter')
+      await page.getByTestId('cloud-member-role').selectOption('Developer')
       await page.getByTestId(`cloud-member-result-${member.id}`).click()
       await expect(page.getByTestId(`cloud-project-member-${member.id}`)).toBeVisible()
       await expect
@@ -992,7 +914,7 @@ test.describe('Collaboration cloud capabilities', () => {
           )
           return response.find(candidate => candidate.user_id === member.id)?.role
         })
-        .toBe('Reporter')
+        .toBe('Developer')
 
       await page.getByTestId('collaboration-project-settings-project').click()
       await page.getByTestId('cloud-project-manage-visibility-public').click()
@@ -1006,6 +928,7 @@ test.describe('Collaboration cloud capabilities', () => {
         })
         .toBe('public')
 
+      await page.getByTestId('cloud-project-manage-tags-toggle').click()
       await page.getByRole('button', { name: /新建标签|New tag/ }).click()
       await page.getByTestId('cloud-project-tag-create-input').fill(tagName)
       await page.getByTestId('cloud-project-tag-create-confirm').click()
@@ -1027,7 +950,7 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
           )
         ).board_config?.statuses.length ?? 0
-      await page.getByTestId('collaboration-tab-board').click()
+      await selectCollaborationProjectView(page, 'board')
       await page.getByTestId('collaboration-board-settings').click()
       await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()
@@ -1072,7 +995,7 @@ test.describe('Collaboration cloud capabilities', () => {
         `/api/v1/cloud-projects/${encodeURIComponent(project.id)}/members/${member.id}`,
         {
           method: 'PATCH',
-          body: { role: 'RestrictedAnalyst' },
+          body: { role: 'Viewer' },
         }
       )
 
@@ -1112,6 +1035,61 @@ test.describe('Collaboration cloud capabilities', () => {
     }
   })
 
+  test('sets public role and default issue security independently during project creation', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(120_000)
+    const suffix = Date.now()
+    let projectId = ''
+    let workspaceId = ''
+
+    try {
+      await page.goto('/collaboration')
+      const workspace = await createWorkspaceByApi(page, `Permission Workspace ${suffix}`)
+      workspaceId = workspace.id
+      await page.goto(`/collaboration/workspaces/${encodeURIComponent(workspace.id)}`)
+      await openBlankProjectCreation(page)
+      await page.getByTestId('collaboration-project-name-input').fill(`Permissions ${suffix}`)
+      await page.getByTestId('cloud-project-visibility-public').click()
+      await page.getByTestId('cloud-project-public-access-viewer').click()
+      await page.getByTestId('cloud-project-default-issue-security-related').click()
+      await page.getByTestId('collaboration-project-create-confirm').click()
+      await expect(page).toHaveURL(/\/projects\/[^/?]+$/)
+      projectId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
+      const project = await webApi<
+        CloudProject & {
+          visibility: string
+          public_access: { role: string } | null
+          default_issue_security: string
+        }
+      >(page, `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`)
+      expect(project.visibility).toBe('public')
+      expect(project.public_access?.role).toBe('Viewer')
+      expect(project.default_issue_security).toBe('related')
+
+      const ownerIssue = await createIssueByApi(page, project.id, `Owner issue ${suffix}`)
+      const regular = await openRegularUserProject(browser, page, workspace.id, project.id)
+      try {
+        await expect(regular.page.getByTestId('collaboration-board')).toBeVisible()
+        await expect(regular.page.getByTestId(`collaboration-issue-${ownerIssue.id}`)).toHaveCount(
+          0
+        )
+        expect(
+          await webApiStatus(
+            regular.page,
+            `/api/v1/loop-items/${encodeURIComponent(ownerIssue.id)}`
+          )
+        ).toBe(404)
+      } finally {
+        await regular.context.close()
+      }
+    } finally {
+      if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
+    }
+  })
+
   test('shows related tasks only while keeping the project available to every signed-in user', async ({
     browser,
     page,
@@ -1127,20 +1105,27 @@ test.describe('Collaboration cloud capabilities', () => {
       workspaceId = workspace.id
       const project = await createProjectByApi(page, workspace.id, `Related Tasks ${suffix}`)
       projectId = project.id
-      const ownerIssue = await createIssueByApi(page, project.id, `Owner only ${suffix}`)
-
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
       await page.getByTestId('collaboration-project-settings-project').click()
-      await page.getByTestId('cloud-project-manage-visibility-public-restricted').click()
+      await page.getByTestId('cloud-project-manage-visibility-public').click()
+      await expect(page.getByTestId('cloud-project-public-access-role')).toHaveValue('Viewer')
+      await expect(
+        page.getByTestId('cloud-project-public-access-role').locator('option[value="Developer"]')
+      ).toHaveCount(0)
+      await page.getByTestId('cloud-project-default-issue-security').selectOption('related')
       await expect
         .poll(async () => {
-          const updated = await webApi<CloudProject & { visibility: string }>(
-            page,
-            `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
-          )
-          return updated.visibility
+          const updated = await webApi<
+            CloudProject & {
+              visibility: string
+              public_access: { role: string } | null
+              default_issue_security: string
+            }
+          >(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`)
+          return [updated.visibility, updated.public_access?.role, updated.default_issue_security]
         })
-        .toBe('public_restricted')
+        .toEqual(['public', 'Viewer', 'related'])
+      const ownerIssue = await createIssueByApi(page, project.id, `Owner only ${suffix}`)
 
       const regular = await openRegularUserProject(browser, page, workspace.id, project.id)
       try {
@@ -1160,6 +1145,12 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/loop-items/${encodeURIComponent(ownerIssue.id)}`
           )
         ).toBe(404)
+
+        await expect(
+          createIssueByApi(regular.page, project.id, `Read-only public user ${suffix}`)
+        ).rejects.toThrow(/: 403 /)
+        const member = await regularUser(page)
+        await addProjectMember(page, project.id, member.id, 'Developer')
 
         const regularIssue = await createIssueByApi(
           regular.page,

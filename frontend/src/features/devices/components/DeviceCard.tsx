@@ -76,6 +76,12 @@ export function DeviceCard({
 }: DeviceCardProps) {
   const { t } = useTranslation('devices')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const upgradeHint =
+    device.device_type === 'app'
+      ? t('version.upgradeInWework')
+      : device.device_type === 'remote'
+        ? t('version.repullRemoteImage')
+        : undefined
   const deleteDisabled =
     device.device_type !== 'cloud' &&
     (device.status !== 'offline' || device.running_tasks.length > 0 || device.slot_used > 0)
@@ -142,11 +148,12 @@ export function DeviceCard({
                 <VersionBadge
                   executorVersion={device.executor_version}
                   latestVersion={device.latest_version}
-                  updateAvailable={device.update_available}
+                  updateAvailable={device.update_available && !upgradeHint}
                   onUpgrade={
                     device.update_available &&
                     device.status === 'online' &&
                     !isUpgrading &&
+                    !upgradeHint &&
                     !isOpenClawDevice(device)
                       ? () => onUpgrade?.(device)
                       : undefined
@@ -156,6 +163,16 @@ export function DeviceCard({
                 />
               )}
             </div>
+            {device.update_available &&
+              upgradeHint &&
+              (device.device_type !== 'remote' || device.status !== 'offline') && (
+                <p
+                  data-testid="device-manual-upgrade-hint"
+                  className="mt-1 text-sm text-text-secondary"
+                >
+                  {upgradeHint}
+                </p>
+              )}
             {/* Slot indicator - only show for online devices */}
             {device.status !== 'offline' && (
               <div className="mt-1">

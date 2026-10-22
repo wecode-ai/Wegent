@@ -1,3 +1,6 @@
+import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
+import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
+import { useAgentRuntimeTab } from './useAgentRuntimeTab'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
@@ -22,13 +25,14 @@ import type {
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { UnifiedModel, UnifiedSkill } from '@/types/api'
+import type { UnifiedSkill } from '@/types/api'
 import { parseAgentMcpServers } from './agentFormModel'
 import { useCurrentAgentDevice } from './useCurrentAgentDevice'
 
 type AgentResourceApi = ReturnType<typeof createAgentResourceApi>
 
 interface WeworkAgentResourceFormProps {
+  projectId?: string
   api: AgentResourceApi
   /** Team id of the Agent resource to edit. Omit to create a new resource. */
   editingTeamId?: number
@@ -41,18 +45,6 @@ interface WeworkAgentResourceFormProps {
   workspaceName: string
 }
 
-function modelIndex(models: UnifiedModel[], model: AgentResourceDetail['model']): string {
-  if (!model.name) return ''
-  const exact = models.findIndex(
-    candidate =>
-      candidate.name === model.name &&
-      (model.type ? candidate.type === model.type : true) &&
-      (candidate.namespace || 'default') === (model.namespace || 'default')
-  )
-  const found = exact >= 0 ? exact : models.findIndex(candidate => candidate.name === model.name)
-  return found >= 0 ? String(found) : ''
-}
-
 /** Resolve bound Skill names to catalog ids; refs written by older clients may lack ids. */
 function boundSkillIds(detail: AgentResourceDetail, catalog: UnifiedSkill[]): number[] {
   return detail.skills
@@ -62,6 +54,7 @@ function boundSkillIds(detail: AgentResourceDetail, catalog: UnifiedSkill[]): nu
 
 export function WeworkAgentResourceForm({
   api,
+  projectId,
   deviceApi,
   editingTeamId,
   namespace,
@@ -77,9 +70,14 @@ export function WeworkAgentResourceForm({
   const [name, setName] = useState(createAgentResourceName)
   const [displayName, setDisplayName] = useState('')
   const [runtime, setRuntime] = useState<UnifiedAgentRuntime>('Codex')
-  const [capabilityMode, setCapabilityMode] = useState<UnifiedAgentCapabilityMode>('follow_device')
-  const [models, setModels] = useState<UnifiedModel[]>([])
-  const [selectedModelIndex, setSelectedModelIndex] = useState('')
+  const routing = useAgentRouting(api, runtime === 'Codex' ? 'codex' : 'claude_code', projectId, {
+    defer: true,
+    creation: !editing,
+  })
+  const runtimeTab = useAgentRuntimeTab(routing)
+  const loadRouting = routing.load
+  const [selectedCapabilityMode, setCapabilityMode] =
+    useState<UnifiedAgentCapabilityMode>('follow_device')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [mcpConfig, setMcpConfig] = useState('{}')
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
@@ -88,41 +86,20 @@ export function WeworkAgentResourceForm({
   const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([])
   const [detail, setDetail] = useState<AgentResourceDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(editing)
-  const [loadingModels, setLoadingModels] = useState(true)
   const [loadingSkills, setLoadingSkills] = useState(true)
   const [loadingPlugins, setLoadingPlugins] = useState(Boolean(pluginApi))
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
-  const [modelLoadError, setModelLoadError] = useState<string | null>(null)
   const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
   const [pluginLoadError, setPluginLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [capabilitiesActive, setCapabilitiesActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const modelPrefilled = useRef(false)
   const skillsPrefilled = useRef(false)
-  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi)
+  const deviceState = useCurrentAgentDevice(deviceApi, pluginApi, capabilitiesActive)
 
   useEffect(() => {
+    if (!capabilitiesActive) return
     let active = true
-
-    void api
-      .listModels()
-      .then(loadedModels => {
-        if (!active) return
-        setModels(
-          loadedModels.filter(model => model.isActive !== false && !model.compatibilityDisabled)
-        )
-      })
-      .catch(cause => {
-        if (!active) return
-        setModelLoadError(
-          cause instanceof Error
-            ? cause.message
-            : t('workbench.agent_creator_models_load_failed', '加载模型失败')
-        )
-      })
-      .finally(() => {
-        if (active) setLoadingModels(false)
-      })
 
     void api
       .listSkills()
@@ -163,7 +140,7 @@ export function WeworkAgentResourceForm({
     return () => {
       active = false
     }
-  }, [api, pluginApi, t])
+  }, [api, capabilitiesActive, pluginApi, t])
 
   useEffect(() => {
     if (editingTeamId == null) return
@@ -179,6 +156,7 @@ export function WeworkAgentResourceForm({
         setSystemPrompt(loaded.systemPrompt)
         setMcpConfig(JSON.stringify(loaded.mcpServers ?? {}, null, 2))
         setCapabilityMode(loaded.capabilityMode)
+        loadRouting(loaded.executionPolicy, loaded.modelPolicy)
         setSelectedPluginIds(loaded.plugins.map(plugin => plugin.id))
       })
       .catch(cause => {
@@ -195,13 +173,7 @@ export function WeworkAgentResourceForm({
     return () => {
       active = false
     }
-  }, [api, editingTeamId, t])
-
-  useEffect(() => {
-    if (!detail || modelPrefilled.current || loadingModels) return
-    modelPrefilled.current = true
-    setSelectedModelIndex(modelIndex(models, detail.model))
-  }, [detail, loadingModels, models])
+  }, [api, editingTeamId, t, loadRouting])
 
   useEffect(() => {
     if (!detail || skillsPrefilled.current || loadingSkills) return
@@ -221,6 +193,10 @@ export function WeworkAgentResourceForm({
     () => resolveAgentPromptCapabilityReferences(systemPrompt, availablePlugins, availableSkills),
     [availablePlugins, availableSkills, systemPrompt]
   )
+  const capabilityMode =
+    promptCapabilities.pluginIds.size || promptCapabilities.skillIds.size
+      ? 'manual'
+      : selectedCapabilityMode
   const effectiveSelectedPluginSet = useMemo(
     () => new Set([...selectedPluginSet, ...promptCapabilities.pluginIds]),
     [promptCapabilities.pluginIds, selectedPluginSet]
@@ -229,12 +205,10 @@ export function WeworkAgentResourceForm({
     () => new Set([...selectedSkillSet, ...promptCapabilities.skillIds]),
     [promptCapabilities.skillIds, selectedSkillSet]
   )
-  const selectedModel =
-    selectedModelIndex === '' ? null : (models[Number(selectedModelIndex)] ?? null)
 
   const saveAgent = async () => {
     const technicalName = name
-    if (!selectedModel) {
+    if (!routing.valid || !routing.executionPolicy || !routing.modelPolicy) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
     }
@@ -255,22 +229,26 @@ export function WeworkAgentResourceForm({
       namespace: detail?.namespace ?? selectedNamespace,
       capabilityMode,
       runtime,
+      executionPolicy: routing.executionPolicy,
+      modelPolicy: routing.modelPolicy,
       model: {
-        name: selectedModel.name,
-        type: selectedModel.type,
-        namespace: selectedModel.namespace,
+        name: routing.model?.cloud_model?.name ?? routing.model?.model_id ?? '',
+        type: routing.model?.cloud_model?.type ?? 'runtime',
+        namespace: routing.model?.cloud_model?.namespace,
       },
       systemPrompt,
       skills:
         capabilityMode === 'manual'
-          ? availableSkills
-              .filter(skill => effectiveSelectedSkillIds.has(skill.id))
-              .map(skill => ({
-                skillId: skill.id,
-                name: skill.name,
-                namespace: skill.namespace || 'default',
-                isPublic: skill.is_public,
-              }))
+          ? !capabilitiesActive && detail
+            ? detail.skills
+            : availableSkills
+                .filter(skill => effectiveSelectedSkillIds.has(skill.id))
+                .map(skill => ({
+                  skillId: skill.id,
+                  name: skill.name,
+                  namespace: skill.namespace || 'default',
+                  isPublic: skill.is_public,
+                }))
           : [],
       plugins:
         capabilityMode === 'manual' && runtime === 'Codex'
@@ -312,6 +290,8 @@ export function WeworkAgentResourceForm({
 
   return (
     <AgentFormDialog
+      onAdvancedOpen={() => setCapabilitiesActive(true)}
+      runtimeTab={runtimeTab}
       advanced={
         <>
           {unsupportedRuntime ? (
@@ -325,15 +305,6 @@ export function WeworkAgentResourceForm({
                 '这个智能体使用此表单不支持的执行器，请在 Wegent 资源库中修改。'
               )}
               {` (${detail?.shellName || 'unknown'})`}
-            </p>
-          ) : null}
-          {modelLoadError ? (
-            <p
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
-              data-testid="wework-agent-model-load-error"
-              role="alert"
-            >
-              {modelLoadError}
             </p>
           ) : null}
         </>
@@ -351,8 +322,8 @@ export function WeworkAgentResourceForm({
               ),
         title:
           capabilityMode === 'follow_device'
-            ? t('workbench.agent_creator_follow_device_summary', '能力：跟随运行设备')
-            : t('workbench.agent_creator_manual_summary', '能力：固定到智能体'),
+            ? t('workbench.agent_creator_follow_device_summary', '使用环境能力')
+            : t('workbench.agent_creator_manual_summary', '自定义能力'),
       }}
       busy={busy}
       capabilities={
@@ -410,14 +381,8 @@ export function WeworkAgentResourceForm({
       }
       description={
         editing
-          ? t(
-              'workbench.agent_editor_description',
-              '修改智能体资源的执行器、模型、Skill、插件和 MCP，保存后立即对项目生效。'
-            )
-          : t(
-              'workbench.agent_creator_description',
-              '设置名称、模型和提示词即可创建，其他能力默认跟随运行设备。'
-            )
+          ? t('workbench.agent_editor_description', '修改执行环境、模型和提示词。')
+          : t('workbench.agent_creator_description', '定义智能体的职责，按需调整运行设置。')
       }
       displayName={{
         label: t('workbench.agent_creator_display_name', '智能体名称'),
@@ -469,24 +434,12 @@ export function WeworkAgentResourceForm({
           value={capabilityMode}
         />
       }
-      footerHint={
-        capabilityMode === 'follow_device'
-          ? t(
-              'workbench.agent_creator_follow_device_footer',
-              '默认使用 Codex，并从任务运行设备获取能力。'
-            )
-          : t(
-              'workbench.agent_creator_manual_footer',
-              '默认使用 Codex；所选能力会随智能体同步到执行设备。'
-            )
-      }
       labels={{
         advanced: t('workbench.agent_creator_advanced', '高级设置'),
         advancedDescription: t(
           'workbench.agent_creator_advanced_description',
           'MCP 与其他运行参数'
         ),
-        capabilitiesSection: t('workbench.agent_creator_capabilities', '运行配置'),
         cancel: t('workbench.cancel', '取消'),
         close: t('workbench.close', '关闭'),
         owner: t('workbench.agent_creator_owner', '保存位置'),
@@ -504,18 +457,20 @@ export function WeworkAgentResourceForm({
             }
           : undefined
       }
-      model={{
-        disabled: loadingModels,
-        label: t('workbench.agent_creator_model', '模型'),
-        onChange: setSelectedModelIndex,
-        options: models.map((model, index) => ({
-          label: model.displayName || model.name,
-          value: String(index),
-        })),
-        placeholder: t('workbench.agent_creator_model_placeholder', '请选择模型'),
-        testId: 'wework-agent-model',
-        value: selectedModelIndex,
-      }}
+      executionControl={
+        <AgentEnvironmentFields
+          routing={routing}
+          disabled={saving || loadingDetail}
+          prefix="wework-agent"
+        />
+      }
+      modelControl={
+        <AgentModelFields
+          routing={routing}
+          disabled={saving || loadingDetail}
+          prefix="wework-agent"
+        />
+      }
       namespace={detail?.namespace ?? selectedNamespace}
       onClose={onClose}
       onSave={() => void saveAgent()}
@@ -556,6 +511,7 @@ export function WeworkAgentResourceForm({
       }}
       promptEditor={
         <AgentPromptEditor
+          onFocus={() => setCapabilitiesActive(true)}
           busy={busy}
           field={{
             label: t('workbench.agent_creator_prompt', '提示词'),
@@ -582,7 +538,16 @@ export function WeworkAgentResourceForm({
           }
         />
       }
-      saveDisabled={loadingModels || unsupportedRuntime || !selectedModel || (editing && !detail)}
+      saveDisabled={
+        !routing.valid ||
+        unsupportedRuntime ||
+        (editing && !detail) ||
+        (capabilityMode === 'manual' &&
+          capabilitiesActive &&
+          (loadingSkills ||
+            loadingPlugins ||
+            (editing && Boolean(skillLoadError || pluginLoadError))))
+      }
       saveLabel={
         editing
           ? t('workbench.agent_editor_save', '保存')

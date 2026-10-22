@@ -1,0 +1,52 @@
+.issue-assignment-history-disclosure {
+  min-width: 0;
+}
+
+.issue-assignment-history-summary {
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.issue-assignment-history-summary::-webkit-details-marker {
+  display: none;
+}
+
+.issue-assignment-history-summary:hover {
+  background: rgb(var(--color-bg-muted));
+}
+
+.issue-assignment-history-summary:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
+}
+
+.issue-assignment-history-chevron {
+  color: rgb(var(--color-text-muted));
+}
+
+.issue-assignment-history-hide,
+.issue-assignment-history-disclosure[open] .issue-assignment-history-show {
+  display: none;
+}
+
+.issue-assignment-history-disclosure[open] .issue-assignment-history-hide {
+  display: inline;
+}
+
+.issue-assignment-history-disclosure[open] .issue-assignment-history-chevron {
+  transform: rotate(180deg);
+}
+
+.issue-assignment-history-entries {
+  margin: 4px 6px 6px;
+  border: 1px solid rgb(var(--color-border) / 60%);
+  border-radius: 8px;
+  padding: 4px;
+  background: rgb(var(--color-bg-muted) / 45%);
+}
+
+.issue-assignment-history-entries .issue-assignment-history-route {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}

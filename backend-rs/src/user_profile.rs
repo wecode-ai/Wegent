@@ -7,6 +7,7 @@
 use crate::auth::UserRow;
 use async_trait::async_trait;
 use serde::{Serialize, Serializer};
+use serde_json::{Map, Value};
 
 pub use crate::users_me::{GitInfoEntry, UserView, stored_git_info};
 
@@ -31,6 +32,33 @@ pub struct StoredGitInfo;
 
 #[async_trait]
 impl UserGitInfoProvider for StoredGitInfo {}
+
+/// Post-update `git_info` rewrite for `PUT /api/users/me`. The source wraps
+/// `UserService.update_current_user` with an application patch that runs after
+/// the public update refreshes the row: it re-masks the stored `git_info` and
+/// commits it a second time whenever the masked document is not `None`
+/// through its registered masking provider.
+///
+/// The public default returns `None`, so the public update emits no second
+/// write. An application whose deployment keeps placeholder Git credentials in
+/// `users.git_info` registers its own implementation, whose result the handler
+/// persists with the same `UPDATE users SET git_info=…, updated_at=now()`,
+/// cache invalidation, `COMMIT`, and refresh as the source.
+#[async_trait]
+pub trait UserGitInfoMasker: Send + Sync {
+    /// The `git_info` document to persist after the update, or `None` to skip
+    /// the second write. Called with the refreshed `users.git_info` value; the
+    /// source skips only when its mask returns `None` (a Python `None` input).
+    async fn masked_git_info(&self, _git_info: &Value) -> Option<Value> {
+        None
+    }
+}
+
+/// No application Git token masking is registered.
+pub struct NoGitInfoMasking;
+
+#[async_trait]
+impl UserGitInfoMasker for NoGitInfoMasking {}
 
 /// Application-specific typed fields for the user view and its preferences.
 pub struct UserViewExt {
@@ -83,6 +111,17 @@ struct NoProfileFields {}
 
 /// Supplies application-specific typed fields for the shared user views.
 pub trait UserViewExtension: Send + Sync {
+    /// Compose deployment-specific preference updates with the public schema.
+    /// Implementations retain declaration order and omit fields managed by
+    /// dedicated endpoints. The input contains only the request's preferences.
+    fn preference_update_dump(
+        &self,
+        _input: &Map<String, Value>,
+        public_dump: Map<String, Value>,
+    ) -> Map<String, Value> {
+        public_dump
+    }
+
     fn current_user_ext(&self, _user: &UserRow) -> UserViewExt {
         UserViewExt::empty()
     }
@@ -90,6 +129,30 @@ pub trait UserViewExtension: Send + Sync {
     fn cached_user_ext(&self, _preferences: Option<&str>) -> UserViewExt {
         UserViewExt::empty()
     }
+
+    /// `GET /api/users/me/wegent-runtime`'s encrypted payload fields. The
+    /// public endpoint sends an empty `employee_id`, `user.user_name` as
+    /// `name`, and `str(user.id)` as `uid`; an application whose deployment
+    /// extends the endpoint can override these resolutions with its
+    /// own identity fields.
+    fn runtime_user_payload_fields(&self, user: &UserRow) -> RuntimeUserPayloadFields {
+        RuntimeUserPayloadFields {
+            employee_id: String::new(),
+            name: user.user_name.clone(),
+            uid: user.id.to_string(),
+        }
+    }
+}
+
+/// The application-resolved `GET /api/users/me/wegent-runtime` payload
+/// fields: `employee_id`, `name`, and `uid` of the encrypted JSON.
+pub struct RuntimeUserPayloadFields {
+    /// `payload["employee_id"]` (`""` in the public endpoint).
+    pub employee_id: String,
+    /// `payload["name"]` (`user.user_name` in the public endpoint).
+    pub name: String,
+    /// `payload["uid"]` (`str(user.id)` in the public endpoint).
+    pub uid: String,
 }
 
 /// The public response schema has no external account fields.

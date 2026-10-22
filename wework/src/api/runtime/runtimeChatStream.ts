@@ -168,10 +168,13 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       })
       .catch(error => {
         nativeSubscribePromise = null
-        console.error('[Wework] Runtime chat stream native listener failed', {
-          error: error instanceof Error ? error.message : String(error),
-          activeSubscriptions: activeRuntimeChatStreamSubscriptions,
-        })
+        console.error(
+          '[Wework] Runtime chat stream native listener failed',
+          JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            activeSubscriptions: activeRuntimeChatStreamSubscriptions,
+          })
+        )
         logRuntimeChatStreamNativeSubscription('native-listener-failed', {
           error: error instanceof Error ? error.message : String(error),
         })
@@ -496,7 +499,8 @@ function projectTaskAssignedPayload(
   const projectName = stringField(payload, 'projectName')
   const itemId = stringField(payload, 'itemId')
   const itemTitle = stringField(payload, 'itemTitle')
-  const assignerName = stringField(payload, 'assignerName')
+  // The server names the acting member "actorName" for every notification kind.
+  const assignerName = stringField(payload, 'actorName')
   if (!projectId || !itemId || !itemTitle || !assignerName) return null
   return {
     projectId,
@@ -504,6 +508,15 @@ function projectTaskAssignedPayload(
     itemId,
     itemTitle,
     assignerName,
+    ...(payload.projectStore === 'local' || payload.projectStore === 'backend'
+      ? { projectStore: payload.projectStore }
+      : {}),
+    ...(stringField(payload, 'assignmentId')
+      ? { assignmentId: stringField(payload, 'assignmentId')! }
+      : {}),
+    ...(stringField(payload, 'recipientUserId')
+      ? { recipientUserId: stringField(payload, 'recipientUserId')! }
+      : {}),
   }
 }
 
@@ -560,7 +573,7 @@ function logRuntimeChatStreamEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.info('[Wework] Runtime chat stream event', {
+  console.debug('[Wework] Runtime chat stream event', {
     subscriptionId,
     activeSubscriptions: activeRuntimeChatStreamSubscriptions,
     sequence: event.sequence,
@@ -595,7 +608,7 @@ function logRuntimeChatStreamNativeEvent(
   const data = asRecord(payload.data)
   const updates = asRecord(data.updates)
   const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
-  console.info('[Wework] Runtime chat stream native event', {
+  console.debug('[Wework] Runtime chat stream native event', {
     sequence: event.sequence,
     event: event.event,
     taskId: stringField(payload, 'taskId'),

@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -27,6 +27,7 @@ use crate::{emitter::EventEnvelope, logging::log_executor_event, runner::EventSi
 mod tests;
 
 const MAX_LIVE_COMPACTED_EVENTS: usize = 256;
+const DELTA_BATCH_WINDOW: Duration = Duration::from_millis(75);
 
 #[derive(Clone)]
 pub(crate) struct StreamingEventDispatcher {
@@ -43,6 +44,7 @@ enum QueuedStreamEvent {
         log_name: &'static str,
         fields: Vec<(&'static str, String)>,
         compactable: bool,
+        queued_at: Instant,
     },
     Flush {
         done: oneshot::Sender<()>,
@@ -70,6 +72,12 @@ fn compact_stream_event(
         }
         if let (Some(text), Some(delta)) = (existing.text.as_mut(), event.data["delta"].as_str()) {
             if existing.event.data["item_id"] != event.data["item_id"]
+                || existing.event.data["content_index"] != event.data["content_index"]
+                || existing.event.data["output_index"] != event.data["output_index"]
+                || existing.event.data["block_offset"]
+                    .as_u64()
+                    .map(|offset| offset + existing.text_chars as u64)
+                    != event.data["block_offset"].as_u64()
                 || existing.event.data["offset"]
                     .as_u64()
                     .map(|offset| offset + existing.text_chars as u64)
@@ -127,6 +135,8 @@ async fn send_compacted_event<S>(
     }
     let task_id = compacted.event.task_id.clone();
     let subtask_id = compacted.event.subtask_id.clone();
+    let event_type = compacted.event.event_type.clone();
+    let started = Instant::now();
     if let Err(message) = sink.send(compacted.event).await {
         let fields = vec![
             ("task_id", task_id.clone()),
@@ -141,6 +151,8 @@ async fn send_compacted_event<S>(
         ("subtask_id", subtask_id),
         ("text_chars", text_chars.to_string()),
         ("input_events", compacted.input_events.to_string()),
+        ("event_type", event_type),
+        ("elapsed_ms", started.elapsed().as_millis().to_string()),
     ];
     log_executor_event(
         if is_text {
@@ -157,17 +169,21 @@ impl StreamingEventDispatcher {
     where
         S: EventSink,
     {
-        Self::with_compaction(sink, false)
+        Self::with_compaction(sink, false, Some(DELTA_BATCH_WINDOW))
     }
 
     pub(crate) fn with_live_compaction<S>(sink: S) -> Self
     where
         S: EventSink,
     {
-        Self::with_compaction(sink, true)
+        Self::with_compaction(sink, true, None)
     }
 
-    fn with_compaction<S>(sink: S, compact_while_streaming: bool) -> Self
+    fn with_compaction<S>(
+        sink: S,
+        compact_while_streaming: bool,
+        batch_window: Option<Duration>,
+    ) -> Self
     where
         S: EventSink,
     {
@@ -179,25 +195,54 @@ impl StreamingEventDispatcher {
         let (failure_sender, failure) = watch::channel(None);
         let worker = tokio::spawn(async move {
             let mut compacted_event: Option<CompactedStreamEvent> = None;
-            while let Some(queued) = receiver.recv().await {
+            let mut first_text_dispatched = false;
+            let mut first_reasoning_dispatched = false;
+            let mut batch_deadline = tokio::time::Instant::now();
+            loop {
+                let queued = tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(batch_deadline),
+                        if batch_window.is_some() && compacted_event.is_some()
+                            && !worker_compact_pending.load(Ordering::Relaxed) => {
+                        send_compacted_event(&sink, &mut compacted_event, &failure_sender).await;
+                        continue;
+                    }
+                    queued = receiver.recv() => queued,
+                };
+                let Some(queued) = queued else {
+                    send_compacted_event(&sink, &mut compacted_event, &failure_sender).await;
+                    break;
+                };
                 match queued {
                     QueuedStreamEvent::Callback {
                         event,
                         log_name,
                         fields,
                         compactable,
+                        queued_at,
                     } => {
-                        let event = if worker_compact_pending.load(Ordering::Relaxed) && compactable
+                        let first_delta = match event.event_type.as_str() {
+                            "response.output_text.delta" => !first_text_dispatched,
+                            "response.reasoning_summary_text.delta" => !first_reasoning_dispatched,
+                            _ => false,
+                        };
+                        let compact_now = worker_compact_pending.load(Ordering::Relaxed);
+                        let event = if compactable
+                            && (compact_now || (batch_window.is_some() && !first_delta))
                         {
+                            if compacted_event.is_none() {
+                                batch_deadline =
+                                    tokio::time::Instant::now() + batch_window.unwrap_or_default();
+                            }
                             match compact_stream_event(&mut compacted_event, event) {
                                 Ok(()) => {
                                     worker_pending.fetch_sub(1, Ordering::Relaxed);
                                     // Send the latest queued progress without waiting for
                                     // the turn to end or for another event to arrive.
                                     // Bound each batch so continuous input cannot starve it.
-                                    if compact_while_streaming
-                                        && (receiver.is_empty()
-                                            || compacted_event.as_ref().is_some_and(|event| {
+                                    if (compact_while_streaming && receiver.is_empty())
+                                        || ((compact_while_streaming || !compact_now)
+                                            && compacted_event.as_ref().is_some_and(|event| {
                                                 event.input_events >= MAX_LIVE_COMPACTED_EVENTS
                                             }))
                                     {
@@ -218,7 +263,13 @@ impl StreamingEventDispatcher {
                         send_compacted_event(&sink, &mut compacted_event, &failure_sender).await;
                         let event = *event;
                         let started = Instant::now();
+                        let queue_wait_ms = started.duration_since(queued_at).as_millis();
                         let event_type = event.event_type.clone();
+                        let first_text =
+                            !first_text_dispatched && event_type == "response.output_text.delta";
+                        first_text_dispatched |= first_text;
+                        first_reasoning_dispatched |=
+                            event_type == "response.reasoning_summary_text.delta";
                         let task_id = event.task_id.clone();
                         let subtask_id = event.subtask_id.clone();
                         let message_id = event.message_id.map(|value| value.to_string());
@@ -232,16 +283,24 @@ impl StreamingEventDispatcher {
                             .fetch_sub(1, Ordering::Relaxed)
                             .saturating_sub(1);
                         let elapsed_ms = started.elapsed().as_millis();
-                        if elapsed_ms >= 1_000 {
+                        if first_text || elapsed_ms >= 1_000 || queue_wait_ms >= 1_000 {
                             let fields = vec![
                                 ("task_id", task_id),
                                 ("subtask_id", subtask_id),
                                 ("event_type", event_type),
                                 ("elapsed_ms", elapsed_ms.to_string()),
+                                ("queue_wait_ms", queue_wait_ms.to_string()),
                                 ("pending_depth", remaining.to_string()),
                                 ("message_id", message_id.unwrap_or_default()),
                             ];
-                            log_executor_event("streaming callback dispatch slow", &fields);
+                            log_executor_event(
+                                if first_text {
+                                    "streaming first text dispatch finished"
+                                } else {
+                                    "streaming callback dispatch slow"
+                                },
+                                &fields,
+                            );
                         }
                     }
                     QueuedStreamEvent::Flush { done } => {
@@ -346,6 +405,7 @@ impl StreamingEventDispatcher {
                 log_name,
                 fields,
                 compactable,
+                queued_at: Instant::now(),
             })
             .is_err()
         {

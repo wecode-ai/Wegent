@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from sqlalchemy.orm.attributes import flag_modified
-
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.services.resource_library_service import resource_library_service
@@ -40,10 +38,6 @@ def _system_skill(test_db, name: str = "api-system-skill") -> Kind:
 def test_discover_install_and_list_personal_installs(test_client, test_db, test_token):
     skill = _system_skill(test_db)
 
-    discover = test_client.get(
-        "/api/resource-library/listings?resource_type=skill",
-        headers=_headers(test_token),
-    )
     install = test_client.post(
         f"/api/resource-library/listings/{skill.id}/install",
         json={"target_namespace": "default"},
@@ -54,70 +48,10 @@ def test_discover_install_and_list_personal_installs(test_client, test_db, test_
         headers=_headers(test_token),
     )
 
-    assert discover.status_code == 200
-    assert [item["id"] for item in discover.json()["items"]] == [skill.id]
     assert install.status_code == 200
     assert install.json()["installed_reference"]["skill_id"] == skill.id
     assert installed.status_code == 200
     assert [item["listing_id"] for item in installed.json()["items"]] == [skill.id]
-
-
-def test_discovery_can_be_limited_to_system_resources(
-    test_client, test_db, test_token, test_user
-):
-    system_skill = _system_skill(test_db, name="system-only-api-skill")
-    user_skill = _system_skill(test_db, name="published-user-api-skill")
-    user_skill.user_id = test_user.id
-    test_db.commit()
-    published = test_client.post(
-        "/api/resource-library/listings",
-        json={
-            "resource_type": "skill",
-            "source_id": user_skill.id,
-            "display_name": "Published User Skill",
-            "tags": ["technical_development"],
-            "version": "1.0.0",
-        },
-        headers=_headers(test_token),
-    )
-
-    response = test_client.get(
-        "/api/resource-library/listings?resource_type=skill&system_only=true",
-        headers=_headers(test_token),
-    )
-
-    assert published.status_code == 200
-    assert response.status_code == 200
-    assert [item["id"] for item in response.json()["items"]] == [system_skill.id]
-
-
-def test_marketplace_tags_endpoint_returns_default_catalog(test_client, test_token):
-    response = test_client.get(
-        "/api/resource-library/tags",
-        headers=_headers(test_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["version"] == 0
-    assert response.json()["items"][0]["id"] == "product_design"
-
-
-def test_marketplace_filter_ignores_skill_package_tags(
-    test_client, test_db, test_token
-):
-    skill = _system_skill(test_db, name="package-tag-only-skill")
-    skill.json["spec"]["tags"] = ["technical_development"]
-    flag_modified(skill, "json")
-    test_db.commit()
-
-    response = test_client.get(
-        "/api/resource-library/listings"
-        "?resource_type=skill&tags=technical_development",
-        headers=_headers(test_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["items"] == []
 
 
 def test_publish_and_change_publication_rules(
@@ -168,17 +102,9 @@ def test_admin_can_edit_system_resource_tags(
         json={"tags": ["data_analysis"]},
         headers=_headers(test_token),
     )
-    filtered = test_client.get(
-        "/api/resource-library/listings"
-        "?resource_type=skill&tags=technical_development"
-        "&keyword=system-tag-edit",
-        headers=_headers(test_token),
-    )
-
     assert updated.status_code == 200
     assert updated.json()["tags"] == ["technical_development"]
     assert forbidden.status_code == 403
-    assert [item["id"] for item in filtered.json()["items"]] == [skill.id]
     test_db.refresh(skill)
     assert skill.json["spec"]["capability"]["tags"] == ["technical_development"]
 

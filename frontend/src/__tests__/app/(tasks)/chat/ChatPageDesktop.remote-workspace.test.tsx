@@ -66,7 +66,6 @@ jest.mock('@/features/tasks/components/sidebar', () => ({
   TaskSidebar: () => <div>task-sidebar</div>,
   ResizableSidebar: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   CollapsedSidebarButtons: () => <div>collapsed-sidebar-buttons</div>,
-  SearchDialog: () => <div>search-dialog</div>,
 }))
 
 jest.mock('@/features/layout/GithubStarButton', () => ({
@@ -109,12 +108,6 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
     taskState: null,
     selectTask: jest.fn(),
     refreshSelectedTaskDetail: jest.fn(),
-  }),
-}))
-
-jest.mock('@/features/tasks/hooks/useSearchShortcut', () => ({
-  useSearchShortcut: () => ({
-    shortcutDisplayText: 'Ctrl+K',
   }),
 }))
 

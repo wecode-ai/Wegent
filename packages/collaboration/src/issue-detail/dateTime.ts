@@ -11,6 +11,19 @@ export interface DueDateSourceContext {
   sourceInputValue: string;
 }
 
+export function isScheduleRangeInvalid(start: string, due: string): boolean {
+  if (!start || !due) return false;
+  const timestamp = (value: string) =>
+    new Date(value.length === 10 ? `${value}T00:00` : value).getTime();
+  const startTimestamp = timestamp(start);
+  const dueTimestamp = timestamp(due);
+  return (
+    Number.isFinite(startTimestamp) &&
+    Number.isFinite(dueTimestamp) &&
+    startTimestamp > dueTimestamp
+  );
+}
+
 export function dueDateTimeLocalFromSource(value: string | null): string {
   if (!value) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00`;

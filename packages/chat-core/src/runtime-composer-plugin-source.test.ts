@@ -5,6 +5,7 @@ import {
 } from './runtime-composer-plugin-source'
 import { decodeRuntimeComposerSnapshot } from './runtime-composer-snapshot'
 import { toInstalledPlugin } from './codex-installed-plugins'
+import { isComposerAppSelectable } from './composer-plugin-metadata'
 
 const address = { deviceId: 'device-b', taskId: 'task-b' }
 const translate = (key: string) => key
@@ -22,7 +23,11 @@ const plugin = {
   name: 'pdf',
   enabled: true,
   source: { path: './plugins/pdf' },
-  interface: { displayName: 'PDF', logo: 'assets/icon.svg', defaultPrompt: 'Read this document' },
+  interface: {
+    displayName: 'PDF',
+    logo: 'assets/icon.svg',
+    defaultPrompt: 'Read this document',
+  },
 }
 const snapshot = () =>
   decodeRuntimeComposerSnapshot(address, {
@@ -99,12 +104,16 @@ describe('runtime composer plugin source', () => {
     expect(read).toHaveBeenCalledTimes(3)
   })
 
-  it('keeps inaccessible apps inaccessible instead of adding a second selectable entry', () => {
+  it('exposes the installed package for chat authorization without enabling the inaccessible app', () => {
     const value = snapshot()
     value.apps = [{ id: 'pdf', name: 'PDF', isAccessible: false }]
     const apps = composerAppsFromRuntimeSnapshot(value, address.deviceId, translate)
     expect(apps).toHaveLength(1)
     expect(apps[0].isAccessible).toBe(false)
+    expect(apps[0].source).toBe('installed-plugin')
+    expect(apps[0].skillPath).toBe('plugin://pdf@local-tools')
+    expect(isComposerAppSelectable(apps[0])).toBe(true)
+    expect(value.apps[0].isAccessible).toBe(false)
   })
 
   it('uses explicit project enablement and the PC personal-marketplace preference', () => {

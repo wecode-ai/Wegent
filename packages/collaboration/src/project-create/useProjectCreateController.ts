@@ -85,6 +85,10 @@ export function useProjectCreateController({
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
   const [visibility, setVisibility] = useState<ProjectVisibility>("private");
+  const [publicAccessRole, setPublicAccessRole] = useState<"Viewer">("Viewer");
+  const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
+    "open" | "related"
+  >("open");
   const [repositoryAddress, setRepositoryAddress] = useState("");
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
@@ -137,12 +141,6 @@ export function useProjectCreateController({
     ]);
   }, [defaultAgentResourceIdsKey]);
 
-  useEffect(() => {
-    if (taskProvider !== "local" && visibility === "public_restricted") {
-      setVisibility("private");
-    }
-  }, [taskProvider, visibility]);
-
   async function submit() {
     if (!canSubmit) return;
     setSaving(true);
@@ -170,7 +168,15 @@ export function useProjectCreateController({
         description: description.trim(),
         taskProvider,
         providerConfig,
-        ...(location === "cloud" ? { visibility } : {}),
+        ...(location === "cloud"
+          ? {
+              visibility,
+              ...(visibility === "public"
+                ? { publicAccess: { role: publicAccessRole } }
+                : {}),
+              ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
+            }
+          : {}),
         ...(location === "local" && resourceSetup
           ? {
               includeDefaultAgent:
@@ -206,6 +212,8 @@ export function useProjectCreateController({
       location,
       taskProvider,
       visibility,
+      publicAccessRole,
+      defaultIssueSecurity,
       repositoryAddress,
       token,
       aitableUrl,
@@ -226,6 +234,8 @@ export function useProjectCreateController({
       setLocation,
       setTaskProvider,
       setVisibility,
+      setPublicAccessRole,
+      setDefaultIssueSecurity,
       setRepositoryAddress,
       setToken,
       setAitableUrl,

@@ -162,6 +162,9 @@ export async function GET() {
       // External Wework URL for coding entry points.
       // Runtime-only by design; no NEXT_PUBLIC_* fallback.
       weworkCodeUrl: process.env.RUNTIME_WEWORK_CODE_URL || '',
+
+      // Public model selection guide URL, configured at runtime.
+      modelSelectionGuideUrl: process.env.WEGENT_MODEL_SELECTION_GUIDE_URL?.trim() || '',
     },
     {
       headers: {

@@ -4,11 +4,10 @@
 
 use super::*;
 use crate::agents::replace_config;
-use std::io::{BufReader, Read};
 use toml_edit::{value, DocumentMut};
 
 const WEWORK_PERSONAL_MARKETPLACE: &str = "wework-personal";
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct LocalPluginInstallTarget {
     plugin_key: String,
     source_root: PathBuf,
@@ -31,6 +30,90 @@ struct LocalPluginRequestContext {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn sync_bundled_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let target = resolve_local_plugin_install_target(&payload)
+            .map_err(|error| AppIpcError::new("invalid_bundled_plugin", error))?;
+        let manifest_path = string_field(&payload, "marketplacePath").unwrap_or_default();
+        let catalog = read_json_file(Path::new(&manifest_path), "bundled marketplace")
+            .map_err(|error| AppIpcError::new("invalid_bundled_plugin", error))?;
+        let name = string_field(&payload, "pluginName").unwrap_or_default();
+        if !catalog
+            .get("plugins")
+            .and_then(Value::as_array)
+            .is_some_and(|plugins| {
+                plugins.iter().any(|plugin| {
+                    plugin.get("name").and_then(Value::as_str) == Some(name.as_str())
+                        && plugin
+                            .pointer("/policy/installation")
+                            .and_then(Value::as_str)
+                            == Some("INSTALLED_BY_DEFAULT")
+                })
+            })
+        {
+            return Err(AppIpcError::new(
+                "invalid_bundled_plugin",
+                "Plugin is not installed by default",
+            ));
+        }
+        self.sync_bundled_plugin_target(target).await
+    }
+
+    async fn sync_bundled_plugin_target(
+        &self,
+        target: LocalPluginInstallTarget,
+    ) -> Result<Value, AppIpcError> {
+        // Unchanged plugins remain usable while unrelated work or RPCs are active.
+        let check_target = target.clone();
+        let current = tokio::task::spawn_blocking(move || {
+            let _lock = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+                &check_target
+                    .codex_home
+                    .join("plugins/cache/wework-personal"),
+            )?;
+            bundled_plugin_cache_is_current(&check_target)
+        })
+        .await
+        .map_err(|error| AppIpcError::new("bundled_plugin_update_failed", error.to_string()))?
+        .map_err(|error| AppIpcError::new("bundled_plugin_update_failed", error))?;
+        if current {
+            return Ok(json!({"status": "ready", "updated": false}));
+        }
+        let name = target.plugin_key.clone();
+        // Completed turns can still own live processes in the app-server.
+        let _turn_admission = self.turn_queue_operation.lock().await;
+        let active_tasks = self
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned")
+            .active_tasks;
+        if active_tasks > 0 || self.background_terminal_count() > 0 {
+            return Ok(json!({"status": "deferred", "updated": false}));
+        }
+        let result = self
+            .codex_app_server
+            .mutate_configuration_if_idle(|| async move {
+                tokio::task::spawn_blocking(move || sync_bundled_plugin_files(&target))
+                    .await
+                    .map_err(|error| error.to_string())?
+            })
+            .await;
+        match result {
+            Ok(changed) => {
+                log_executor_event(
+                    "bundled plugin cache synchronized",
+                    &[("plugin", name), ("changed", changed.to_string())],
+                );
+                Ok(json!({"status": "ready", "updated": changed}))
+            }
+            Err(CodexIdleMutationError::Busy { .. }) => {
+                Ok(json!({"status": "deferred", "updated": false}))
+            }
+            Err(CodexIdleMutationError::Update(error)) => {
+                Err(AppIpcError::new("bundled_plugin_update_failed", error))
+            }
+        }
+    }
+
     pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_install_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
@@ -153,17 +236,20 @@ fn resolve_local_plugin_install_target(
 fn resolve_local_plugin_uninstall_target(
     payload: &Value,
 ) -> Result<LocalPluginUninstallTarget, String> {
-    let context = resolve_local_plugin_request_context(payload)?;
-    let plugin_key = format!("{}@{WEWORK_PERSONAL_MARKETPLACE}", context.plugin_name);
-    let cache_root = context
-        .codex_home
+    // Uninstall only needs an identity and the device-owned cache, not a live catalog.
+    let plugin_name =
+        string_field(payload, "pluginName").ok_or_else(|| "pluginName is required".to_owned())?;
+    validate_path_segment(&plugin_name, "pluginName")?;
+    let codex_home = crate::agents::wework_codex_home();
+    let plugin_key = format!("{plugin_name}@{WEWORK_PERSONAL_MARKETPLACE}");
+    let cache_root = codex_home
         .join("plugins/cache")
         .join(WEWORK_PERSONAL_MARKETPLACE)
-        .join(&context.plugin_name);
+        .join(&plugin_name);
     Ok(LocalPluginUninstallTarget {
         plugin_key,
         cache_root,
-        codex_home: context.codex_home,
+        codex_home,
     })
 }
 
@@ -221,83 +307,67 @@ fn read_json_file(path: &Path, label: &str) -> Result<Value, String> {
 }
 
 fn install_local_plugin_files(target: &LocalPluginInstallTarget) -> Result<(), String> {
-    replace_cache_from_source(&target.source_root, &target.cache_root)?;
-    if let Err(error) = set_plugin_config_enabled(&target.codex_home, &target.plugin_key, true) {
-        let _ = fs::remove_dir_all(&target.cache_root);
-        return Err(error);
+    let _lock = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &target.codex_home.join("plugins/cache/wework-personal"),
+    )?;
+    crate::local::plugin_cache::replace_cache(&target.source_root, &target.cache_root, || {
+        set_plugin_config_enabled(&target.codex_home, &target.plugin_key, true)
+    })
+}
+
+fn sync_bundled_plugin_files(target: &LocalPluginInstallTarget) -> Result<(bool, bool), String> {
+    use crate::local::{
+        personal_marketplace_lock::acquire_personal_marketplace_lock, plugin_cache,
+    };
+    let _lock = acquire_personal_marketplace_lock(
+        &target.codex_home.join("plugins/cache/wework-personal"),
+    )?;
+    let configured = bundled_plugin_is_configured(target)?;
+    if configured && plugin_cache::cache_matches_source(&target.source_root, &target.cache_root)? {
+        return Ok((false, false));
     }
-    if !local_plugin_install_is_committed(target)? {
-        return Err("local plugin files did not match the committed installation".to_owned());
-    }
-    Ok(())
+    plugin_cache::replace_cache(&target.source_root, &target.cache_root, || {
+        if configured {
+            Ok(())
+        } else {
+            set_plugin_config_enabled(&target.codex_home, &target.plugin_key, true)
+        }
+    })?;
+    Ok((true, true))
+}
+
+fn bundled_plugin_cache_is_current(target: &LocalPluginInstallTarget) -> Result<bool, String> {
+    Ok(bundled_plugin_is_configured(target)?
+        && crate::local::plugin_cache::cache_matches_source(
+            &target.source_root,
+            &target.cache_root,
+        )?)
+}
+
+fn bundled_plugin_is_configured(target: &LocalPluginInstallTarget) -> Result<bool, String> {
+    let config_path = target.codex_home.join("config.toml");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.to_string()),
+    };
+    let document = content
+        .parse::<DocumentMut>()
+        .map_err(|_| "Invalid Codex config".to_owned())?;
+    Ok(document
+        .get("plugins")
+        .and_then(|plugins| plugins.get(&target.plugin_key))
+        .is_some())
 }
 
 fn uninstall_local_plugin_files(target: &LocalPluginUninstallTarget) -> Result<(), String> {
+    let _lock = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &target.codex_home.join("plugins/cache/wework-personal"),
+    )?;
     remove_plugin_config(&target.codex_home, &target.plugin_key)?;
     if target.cache_root.is_dir() {
         fs::remove_dir_all(&target.cache_root)
             .map_err(|error| format!("failed to remove local plugin cache: {error}"))?;
-    }
-    Ok(())
-}
-
-fn replace_cache_from_source(source: &Path, destination: &Path) -> Result<(), String> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| "local plugin cache path has no parent".to_owned())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to prepare local plugin cache: {error}"))?;
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let staging = parent.join(format!(".wework-install-{}-{unique}", std::process::id()));
-    let backup = parent.join(format!(".wework-backup-{}-{unique}", std::process::id()));
-    if let Err(error) = copy_directory(source, &staging) {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
-
-    let had_destination = destination.exists();
-    if had_destination {
-        fs::rename(destination, &backup)
-            .map_err(|error| format!("failed to stage existing plugin cache: {error}"))?;
-    }
-    if let Err(error) = fs::rename(&staging, destination) {
-        if had_destination {
-            let _ = fs::rename(&backup, destination);
-        }
-        let _ = fs::remove_dir_all(&staging);
-        return Err(format!("failed to commit local plugin cache: {error}"));
-    }
-    if had_destination {
-        let _ = fs::remove_dir_all(&backup);
-    }
-    Ok(())
-}
-
-fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::create_dir_all(destination)
-        .map_err(|error| format!("failed to create local plugin cache directory: {error}"))?;
-    let entries = fs::read_dir(source)
-        .map_err(|error| format!("failed to read local plugin source: {error}"))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("failed to read plugin source entry: {error}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("failed to inspect plugin source entry: {error}"))?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_directory(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)
-                .map_err(|error| format!("failed to copy local plugin file: {error}"))?;
-        } else {
-            let _ = fs::remove_dir_all(destination);
-            return Err("plugin source contains an unsupported file type".to_owned());
-        }
     }
     Ok(())
 }
@@ -310,10 +380,14 @@ fn set_plugin_config_enabled(
     fs::create_dir_all(codex_home)
         .map_err(|error| format!("failed to prepare Codex home: {error}"))?;
     let config_path = codex_home.join("config.toml");
-    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("Failed to read Codex config: {error}")),
+    };
     let mut document = content
         .parse::<DocumentMut>()
-        .map_err(|error| format!("invalid Codex config: {error}"))?;
+        .map_err(|_| "Invalid Codex config".to_owned())?;
     document["plugins"][plugin_key]["enabled"] = value(enabled);
     replace_config(&config_path, document.to_string())
 }
@@ -339,13 +413,7 @@ fn remove_plugin_config(codex_home: &Path, plugin_key: &str) -> Result<(), Strin
     replace_config(&config_path, document.to_string())
 }
 
-fn local_plugin_install_is_committed(target: &LocalPluginInstallTarget) -> Result<bool, String> {
-    Ok(
-        plugin_config_enabled(&target.codex_home, &target.plugin_key)?
-            && source_files_match_cache(&target.source_root, &target.cache_root)?,
-    )
-}
-
+#[cfg(test)]
 fn plugin_config_enabled(codex_home: &Path, plugin_key: &str) -> Result<bool, String> {
     let config_path = codex_home.join("config.toml");
     let content = match fs::read_to_string(&config_path) {
@@ -364,119 +432,71 @@ fn plugin_config_enabled(codex_home: &Path, plugin_key: &str) -> Result<bool, St
         == Some(true))
 }
 
-fn source_files_match_cache(source_root: &Path, cache_root: &Path) -> Result<bool, String> {
-    if !cache_root.is_dir() {
-        return Ok(false);
-    }
-    source_directory_matches_cache(source_root, cache_root)
-}
-
-fn source_directory_matches_cache(source: &Path, cache: &Path) -> Result<bool, String> {
-    let entries = fs::read_dir(source)
-        .map_err(|error| format!("failed to read plugin source directory: {error}"))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("failed to read plugin source entry: {error}"))?;
-        let source_path = entry.path();
-        let cache_path = cache.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("failed to inspect plugin source entry: {error}"))?;
-        if file_type.is_dir() {
-            if !cache_path.is_dir() || !source_directory_matches_cache(&source_path, &cache_path)? {
-                return Ok(false);
-            }
-        } else if file_type.is_file() {
-            if !cache_path.is_file() || !files_equal(&source_path, &cache_path)? {
-                return Ok(false);
-            }
-        } else {
-            return Err("plugin source contains an unsupported file type".to_owned());
-        }
-    }
-    Ok(true)
-}
-
-fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
-    let left_file = fs::File::open(left)
-        .map_err(|error| format!("failed to read plugin source file: {error}"))?;
-    let right_file = fs::File::open(right)
-        .map_err(|error| format!("failed to read plugin cache file: {error}"))?;
-    if left_file.metadata().ok().map(|metadata| metadata.len())
-        != right_file.metadata().ok().map(|metadata| metadata.len())
-    {
-        return Ok(false);
-    }
-    readers_equal(left_file, right_file)
-}
-
-fn readers_equal(left: impl Read, right: impl Read) -> Result<bool, String> {
-    let mut left_reader = BufReader::new(left);
-    let mut right_reader = BufReader::new(right);
-    let mut left_buffer = [0_u8; 16 * 1024];
-    let mut right_buffer = [0_u8; 16 * 1024];
-    loop {
-        let left_read = fill_read_buffer(&mut left_reader, &mut left_buffer, "source")?;
-        let right_read = fill_read_buffer(&mut right_reader, &mut right_buffer, "cache")?;
-        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
-            return Ok(false);
-        }
-        if left_read == 0 {
-            return Ok(true);
-        }
-    }
-}
-
-fn fill_read_buffer(
-    reader: &mut impl Read,
-    buffer: &mut [u8],
-    file_kind: &str,
-) -> Result<usize, String> {
-    let mut filled = 0;
-    while filled < buffer.len() {
-        match reader.read(&mut buffer[filled..]) {
-            Ok(0) => break,
-            Ok(count) => filled += count,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => {
-                return Err(format!("failed to read plugin {file_kind} file: {error}"));
-            }
-        }
-    }
-    Ok(filled)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    struct ChunkedReader {
-        bytes: Vec<u8>,
-        offset: usize,
-        chunk_size: usize,
-    }
-
-    impl Read for ChunkedReader {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            if self.offset == self.bytes.len() {
-                return Ok(0);
-            }
-            let count = self
-                .chunk_size
-                .min(buffer.len())
-                .min(self.bytes.len() - self.offset);
-            buffer[..count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
-            self.offset += count;
-            Ok(count)
-        }
-    }
-
-    fn chunked_reader(content: &str, chunk_size: usize) -> ChunkedReader {
-        ChunkedReader {
-            bytes: content.as_bytes().to_vec(),
-            offset: 0,
-            chunk_size,
-        }
+    #[tokio::test]
+    async fn background_terminals_defer_plugin_mutation_until_native_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home,
+        };
+        install_local_plugin_files(&target).unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("background-plugin-test", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let mut link =
+            RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+        link.thread_id = Some("thread-1".into());
+        handler.upsert_local_task(link);
+        handler.persist_completed_codex_turn_from_notification("task-1", &json!({
+            "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                "id": "turn-1", "status": "completed", "items": [{"id": "command-1", "type": "commandExecution", "command": "node server.js", "status": "inProgress", "processId": "42"}]
+            }}
+        }));
+        assert_eq!(handler.background_terminal_count(), 1);
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "ready", "updated": false})
+        );
+        fs::write(target.cache_root.join("skills/example/SKILL.md"), "old").unwrap();
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "deferred", "updated": false})
+        );
+        assert_eq!(
+            fs::read_to_string(target.cache_root.join("skills/example/SKILL.md")).unwrap(),
+            "old"
+        );
+        handler.record_background_terminal_notification("task-1", &json!({
+            "method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1", "item": {
+                "id": "command-1", "type": "commandExecution", "command": "node server.js", "status": "completed", "exitCode": 0
+            }}
+        }));
+        assert_eq!(handler.background_terminal_count(), 0);
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "ready", "updated": true})
+        );
+        assert_eq!(
+            fs::read_to_string(target.cache_root.join("skills/example/SKILL.md")).unwrap(),
+            "new"
+        );
     }
 
     fn write_plugin_fixture(root: &Path, content: &str) {
@@ -490,32 +510,56 @@ mod tests {
         fs::write(root.join("skills/example/SKILL.md"), content).unwrap();
     }
 
-    #[test]
-    fn source_cache_match_ignores_generated_cache_files_but_detects_source_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        let cache = temp.path().join("cache");
-        write_plugin_fixture(&source, "source");
-        write_plugin_fixture(&cache, "source");
-        fs::write(cache.join("generated.txt"), "generated").unwrap();
+    #[tokio::test]
+    async fn busy_runtime_allows_current_plugins_but_defers_changed_or_missing_plugins() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home: codex_home.clone(),
+        };
+        install_local_plugin_files(&target).unwrap();
+        set_plugin_config_enabled(&codex_home, &target.plugin_key, false).unwrap();
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        let handler = RuntimeWorkRpcHandler::new("bundled-plugin-busy-test", "/bin/false");
+        handler.turn_scheduler.lock().unwrap().active_tasks = 1;
 
-        assert!(source_files_match_cache(&source, &cache).unwrap());
-        fs::write(cache.join("skills/example/SKILL.md"), "stale").unwrap();
-        assert!(!source_files_match_cache(&source, &cache).unwrap());
-    }
-
-    #[test]
-    fn reader_comparison_accumulates_short_reads_before_comparing() {
-        assert!(readers_equal(
-            chunked_reader("identical content", 1),
-            chunked_reader("identical content", 7),
-        )
-        .unwrap());
-        assert!(!readers_equal(
-            chunked_reader("identical content", 1),
-            chunked_reader("identical contenx", 7),
-        )
-        .unwrap());
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "ready", "updated": false})
+        );
+        fs::write(target.cache_root.join("skills/example/SKILL.md"), "old").unwrap();
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "deferred", "updated": false})
+        );
+        assert_eq!(
+            fs::read_to_string(target.cache_root.join("skills/example/SKILL.md")).unwrap(),
+            "old"
+        );
+        fs::remove_dir_all(&target.cache_root).unwrap();
+        assert_eq!(
+            handler
+                .sync_bundled_plugin_target(target.clone())
+                .await
+                .unwrap(),
+            json!({"status": "deferred", "updated": false})
+        );
+        assert!(!target.cache_root.exists());
+        assert_eq!(
+            fs::read_to_string(codex_home.join("config.toml")).unwrap(),
+            config
+        );
     }
 
     #[test]
@@ -548,7 +592,12 @@ mod tests {
         };
 
         install_local_plugin_files(&target).unwrap();
-        assert!(local_plugin_install_is_committed(&target).unwrap());
+        assert!(plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
+        assert!(crate::local::plugin_cache::cache_matches_source(
+            &target.source_root,
+            &target.cache_root
+        )
+        .unwrap());
 
         let uninstall_target = LocalPluginUninstallTarget {
             plugin_key: target.plugin_key.clone(),
@@ -560,6 +609,52 @@ mod tests {
         assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
         let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
         assert!(!config.contains(&target.plugin_key));
+    }
+
+    #[test]
+    fn bundled_sync_repairs_same_version_cache_without_changing_disabled_state_or_chats() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        let source = root.path().join("source");
+        write_plugin_fixture(&source, "new");
+        fs::create_dir_all(codex_home.join("sessions")).unwrap();
+        fs::write(codex_home.join("sessions/chat.jsonl"), "chat").unwrap();
+        fs::write(codex_home.join("auth.json"), "synthetic-auth").unwrap();
+        fs::write(codex_home.join("config.toml"), "[plugins.\"example@wework-personal\"]\nenabled = false\n[plugins.\"other@wework-personal\"]\nenabled = true\n").unwrap();
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home: codex_home.clone(),
+        };
+        fs::create_dir_all(&target.cache_root).unwrap();
+        fs::write(target.cache_root.join("obsolete.js"), "old").unwrap();
+        assert_eq!(sync_bundled_plugin_files(&target).unwrap(), (true, true));
+        assert_eq!(sync_bundled_plugin_files(&target).unwrap(), (false, false));
+        assert!(!target.cache_root.join("obsolete.js").exists());
+        assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
+        assert!(plugin_config_enabled(&codex_home, "other@wework-personal").unwrap());
+        assert_eq!(
+            fs::read_to_string(codex_home.join("sessions/chat.jsonl")).unwrap(),
+            "chat"
+        );
+        assert_eq!(
+            fs::read_to_string(codex_home.join("auth.json")).unwrap(),
+            "synthetic-auth"
+        );
+    }
+
+    #[test]
+    fn uninstall_resolves_identity_when_the_marketplace_has_been_deleted() {
+        let target = resolve_local_plugin_uninstall_target(&json!({
+            "pluginName": "smart-app-builder",
+            "marketplacePath": "/nonexistent-marketplace/.agents/plugins/marketplace.json",
+        }))
+        .unwrap();
+        assert_eq!(target.plugin_key, "smart-app-builder@wework-personal");
+        assert!(
+            resolve_local_plugin_uninstall_target(&json!({"pluginName": "../sessions"})).is_err()
+        );
     }
 
     #[test]

@@ -3,9 +3,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import semver from 'semver'
 import { runtimeNodeArgs } from '../runtime/electron-node-runtime.js'
+import { dshBrowserAuthenticationCookies } from '../runtime/dsh-browser-auth.js'
 import {
   prepareWorkbenchDshLaunch,
+  WORKBENCH_DSH_VERSION,
   type PrepareWorkbenchDshOptions,
   type WorkbenchAppManifest,
   type WorkbenchDshLaunch,
@@ -37,6 +40,7 @@ const SAFE_ENVIRONMENT_KEYS = new Set([
   'WEWORK_NODE_PATH',
   'WEWORK_NODE_RUNTIME_KIND',
   'WEWORK_RUNTIME_BIN',
+  'WEWORK_HARNESS_RESOURCE_ROOT',
 ])
 
 export interface VerifySmartAppRuntimeOptions {
@@ -65,6 +69,7 @@ export interface SmartAppRuntimeVerifierDependencies {
     environment: NodeJS.ProcessEnv
     script: string
     baseUrl: string
+    cookieHeader?: string
   }) => Promise<{ issues: SmartAppVerificationIssue[] }>
   copyProject: (projectRoot: string, destination: string) => Promise<void>
   reservePort: () => Promise<number>
@@ -91,7 +96,11 @@ export async function verifySmartAppRuntime(
     const home = join(temporaryRoot, 'home')
     await mkdir(home, { recursive: true, mode: 0o700 })
     const installationId = 'verification'
-    await createIsolatedCredentials(temporaryRoot, installationId)
+    await createIsolatedCredentials(
+      temporaryRoot,
+      installationId,
+      options.manifest.requirements.dsh
+    )
     const isolatedProject = join(temporaryRoot, 'project')
     await dependencies.copyProject(options.projectRoot, isolatedProject)
     const environment = isolatedVerificationEnvironment(options.environment, home)
@@ -151,12 +160,19 @@ export async function verifySmartAppRuntime(
           issues: [runtimeIssue('SA-RUNTIME-PROBE-MISSING', 'Remote verification has no probe')],
         }
       }
+      let cookieHeader: string | undefined
+      if (launch.environment.WEWORK_DSH_BROWSER_AUTH === '1') {
+        const { session } = await import('electron')
+        const cookies = await dshBrowserAuthenticationCookies(session.defaultSession, launch.url)
+        cookieHeader = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+      }
       return dependencies.runProbe({
         projectRoot: isolatedProject,
         runtimeRoot: options.runtimeRoot,
         environment,
         script,
         baseUrl: launch.url,
+        ...(cookieHeader ? { cookieHeader } : {}),
       })
     }
     return { issues: [] }
@@ -180,11 +196,17 @@ export async function verifySmartAppRuntime(
 
 async function createIsolatedCredentials(
   dataDirectory: string,
-  installationId: string
+  installationId: string,
+  versionRequirement: string
 ): Promise<void> {
   const dshHome = join(dataDirectory, 'harness-apps', 'instances', installationId)
   await mkdir(dshHome, { recursive: true, mode: 0o700 })
-  await writeFile(join(dshHome, '.credentials.yaml'), 'version: "1"\n', { mode: 0o600 })
+  const version = semver.satisfies(WORKBENCH_DSH_VERSION, versionRequirement, {
+    includePrerelease: true,
+  })
+    ? '1'
+    : '"1"'
+  await writeFile(join(dshHome, '.credentials.yaml'), `version: ${version}\n`, { mode: 0o600 })
 }
 
 function isolatedVerificationEnvironment(

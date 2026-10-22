@@ -12,10 +12,10 @@ pub mod executor_binding;
 pub mod file;
 pub mod kind_refs;
 pub mod kinds;
-pub mod py_set_order;
 pub mod task_detail;
-pub mod task_store;
 pub mod user_cache;
+pub mod video_refresh;
+pub(crate) mod workspace_root;
 
 mod handler;
 

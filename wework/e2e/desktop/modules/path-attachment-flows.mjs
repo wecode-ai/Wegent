@@ -1,4 +1,5 @@
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
+import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -9,6 +10,7 @@ import {
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_FOLDER_NAME,
   IMAGE_ARTIFACT_BASE64,
+  MODEL_REQUEST_TIMEOUT_MS,
   PASTED_PATH_COMPLETION_TEXT,
   PASTED_PATH_FILE_NAME,
   PASTED_PATH_FOLDER_NAME,
@@ -104,11 +106,12 @@ async function verifyComposerEditorScroll({ composerSelector, control }) {
   await control.command('fill', composerSelector, { value: '' })
 }
 
-async function verifyPastedZipAttachment({ composerSelector, control }) {
+async function verifyPastedZipAttachment({ composerSelector, control, prepareConversation }) {
   control.setScenario('pasted_zip_attachment')
   await control.command('snapshot', 'body')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await prepareConversation?.()
   const shortPaste = 'test\n'.repeat(999)
   await control.command('pasteText', composerSelector, { value: shortPaste })
   assert.equal(await control.command('getValue', composerSelector), shortPaste)
@@ -297,6 +300,11 @@ async function verifySystemDragPanelLayout(control) {
   )
   try {
     assert.equal(
+      control.activeControlClientId,
+      control.controlClientsByWindow.get('main'),
+      'Registering the system-drag Popout Window changed the default control target'
+    )
+    assert.equal(
       focusSnapshot.mainFocused,
       false,
       'Completing a system drag incorrectly focused the main window'
@@ -360,6 +368,16 @@ async function verifyPersistedWorkspacePaths(control, folderName, fileName, comp
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await verifySentWorkspacePaths(control, folderName, fileName)
+}
+
+function assertSourceAttachmentPath(control, scenario, sourcePath) {
+  const requests = control.scenarioRequests.get(scenario) ?? []
+  assert.equal(requests.length, 1, 'The source attachment did not send exactly one model request')
+  const requestText = JSON.stringify(requests[0].body).replaceAll('\\\\', '/')
+  assert.ok(
+    requestText.includes(sourcePath.replaceAll('\\', '/')),
+    'The local attachment was copied instead of referencing its source path'
+  )
 }
 
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
@@ -427,6 +445,7 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.awaitScenarioRequestCount('pasted_workspace_paths', 1)
+  assertSourceAttachmentPath(control, 'pasted_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PASTED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -471,7 +490,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
   await control.command('click', '[data-testid="right-workspace-file-option"]')
   await control.command('waitFor', '[data-testid="workspace-file-path"]', {
-    text: workspacePath,
+    text: workspacePath.replaceAll('\\', '/'),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
@@ -565,8 +584,13 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('terminalInput', '[data-testid="embedded-local-terminal"]', {
-    value: `printf '${TERMINAL_DRAG_TEXT}\\n'\r`,
+    value: `echo ${TERMINAL_DRAG_TEXT}\r`,
   })
+  await waitForTerminalOutput(
+    () => control.command('getTerminalText', '[data-testid="embedded-local-terminal"]'),
+    TERMINAL_DRAG_TEXT,
+    'The local shell did not print the terminal selection fixture'
+  )
   await control.command('waitFor', '.xterm-accessibility-tree [role="listitem"]', {
     text: TERMINAL_DRAG_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -661,6 +685,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.awaitScenarioRequestCount('dropped_workspace_paths', 1)
+  assertSourceAttachmentPath(control, 'dropped_workspace_paths', filePath)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: DROPPED_PATH_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -698,15 +723,62 @@ async function verifySideChatAttachmentIsolation({
     ACTIVE_WORKBENCH_SELECTOR
   )
   control.setScenario('side_chat_attachment')
-  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-  await control.command('waitFor', '[data-testid="right-workspace-chat-option"]', {
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  const visibleEntryPoint = async () => {
+    const [newTabCount, chatOptionCount] = await Promise.all([
+      control
+        .command('getElementCount', '[data-testid="right-workspace-new-tab-button"]', {
+          visible: true,
+        })
+        .then(Number),
+      control
+        .command('getElementCount', '[data-testid="right-workspace-chat-option"]', {
+          visible: true,
+        })
+        .then(Number),
+    ])
+    if (newTabCount > 0) return 'new-tab'
+    if (chatOptionCount > 0) return 'launcher'
+    return null
+  }
+  let entryPoint = await visibleEntryPoint()
+  if (!entryPoint) {
+    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    entryPoint = await withTimeout(
+      (async () => {
+        let visible = null
+        while (!visible) {
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+          visible = await visibleEntryPoint()
+        }
+        return visible
+      })(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The right workspace panel did not expose a visible temporary-chat entry point'
+    )
+  }
+  const usesNewTabMenu = entryPoint === 'new-tab'
+  const chatOptionSelector = usesNewTabMenu
+    ? '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
+    : '[data-testid="right-workspace-chat-option"]'
+  if (usesNewTabMenu) {
+    await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]', {
+      stableMs: 300,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="right-workspace-new-tab-menu"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await control.command('waitFor', chatOptionSelector, {
     stableMs: 300,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const [launcherMetrics] = JSON.parse(
     await control.command('getElementMetrics', rightPanelShellSelector)
   )
-  await control.command('click', '[data-testid="right-workspace-chat-option"]')
+  await control.command('click', chatOptionSelector)
   await control.command('waitFor', sideComposerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
 
   await waitForElementWidth(
@@ -820,21 +892,30 @@ async function verifySideChatAttachmentIsolation({
     sideChatSelector
   )
 
+  control.releaseSideChatGuidanceToolExecution()
+  await withTimeout(
+    control.awaitScenarioRequestCount('side_chat_guidance', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The side-chat turn did not report its tool output before guidance'
+  )
+  await withTimeout(
+    (async () => {
+      while (control.sideChatGuidanceStage !== 'awaiting_guidance') {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The side-chat turn did not remain open after reporting its tool output'
+  )
+
   await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_GUIDANCE_FOLLOW_UP })
   await control.command('click', `${sideChatSelector} [data-testid="send-mode-menu-button"]`)
   await control.command('click', '[data-testid="guide-current-turn-option"]')
-  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
-    text: SIDE_CHAT_GUIDANCE_FOLLOW_UP,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const sideChatGuidanceStatus = await control.command(
-    'getText',
-    `${sideChatSelector} [data-testid="conversation-queue-panel"]`
-  )
-  assert.match(
-    sideChatGuidanceStatus,
-    /引导中|Guiding/,
-    'The side-chat follow-up was queued instead of guiding the active turn'
+  await control.awaitScenarioRequestCount('side_chat_guidance', 3, MODEL_REQUEST_TIMEOUT_MS)
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    '',
+    'Applying side-chat guidance did not clear the side composer'
   )
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
   for (const prompt of [
@@ -854,7 +935,7 @@ async function verifySideChatAttachmentIsolation({
     )
   }
   control.releaseSideChatGuidanceResponse()
-  await control.awaitScenarioRequestCount('side_chat_guidance', 5)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 6, MODEL_REQUEST_TIMEOUT_MS)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),

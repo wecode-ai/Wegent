@@ -18,6 +18,8 @@ import {
 } from '@wegent/chat-core/project-space-context'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
 import { selectedModelExecutionFields } from '../controls/runtimeModelSelection'
+import { isExecutionTerminal } from '../issue-detail/executionStatus'
+import { compareIssueTimestamps } from '../issue-detail/issueTimestamp'
 
 export interface CommentExecutionTask {
   id: string
@@ -29,7 +31,8 @@ export interface CommentRuntimeCreateOptions<ExecutionProject> {
   project?: ExecutionProject | null
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   executionModel?: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
-  modelSelection?: Required<ModelSelectionConfig>
+  modelSelection?: Required<ModelSelectionConfig> | null
+  wegentTeamId?: number
   collaborationMode?: 'default' | 'plan'
   cloudProjectId?: string
   origin?: RuntimeTaskOrigin
@@ -59,7 +62,9 @@ export interface CommentExecutionServices<Task extends CommentExecutionTask> {
     unbindTask(taskId: string, address: RuntimeTaskAddress): Promise<void>
     getLoopItem(taskId: string): Promise<Task>
   }
-  chatStream?: { subscribe(handlers: ChatStreamHandlers): (() => void) | Promise<() => void> }
+  chatStream?: {
+    subscribe(handlers: ChatStreamHandlers): (() => void) | Promise<() => void>
+  }
 }
 export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecutionTask> {
   client: ProjectChatClient
@@ -67,7 +72,12 @@ export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecu
   runtime: TaskAiRuntimeBridge<ExecutionProject>
   project: ProjectSpaceContext
   task: Task
-  agent: { id: string; name: string; systemPrompt?: string }
+  agent: {
+    id: string
+    name: string
+    systemPrompt?: string
+    wegentTeamId?: number | null
+  }
   executionProject?: ExecutionProject | null
   prompt: string
   trigger?: ProjectChatMessage
@@ -76,7 +86,11 @@ export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecu
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
-  replyTo?: { runtimeDeviceId: string; runtimeTaskId: string } | null
+  replyTo?: {
+    runtimeDeviceId: string
+    runtimeTaskId: string
+    address?: RuntimeTaskAddress
+  } | null
   threadRootId?: string | null
   deviceId?: string | null
   attachments?: Attachment[]
@@ -145,7 +159,24 @@ export function mergeProjectChatMessages(
   const byId = new Map(current.map(message => [message.messageId, message]))
   for (const message of incoming) {
     const previous = byId.get(message.messageId)
-    byId.set(message.messageId, previous ? { ...previous, ...message } : message)
+    if (!previous) {
+      byId.set(message.messageId, message)
+      continue
+    }
+    const order = compareIssueTimestamps(message.updatedAt, previous.updatedAt)
+    const agent = previous.sender.type === 'agent' && message.sender.type === 'agent'
+    const previousTerminal = isExecutionTerminal(previous.status)
+    const incomingTerminal = isExecutionTerminal(message.status)
+    const terminalTransition = agent && !previousTerminal && incomingTerminal
+    // Snapshots and acknowledgements can arrive after live updates. A turn's
+    // terminal result wins even when an acknowledgement has a later timestamp.
+    if ((order < 0 && !terminalTransition) || (agent && previousTerminal && !incomingTerminal)) {
+      continue
+    }
+    // Active status projections carry empty placeholders, not content deletions.
+    const content =
+      agent && !incomingTerminal && !message.content ? previous.content : message.content
+    byId.set(message.messageId, { ...previous, ...message, content })
   }
   return Array.from(byId.values()).sort((left, right) => left.sequenceNumber - right.sequenceNumber)
 }
@@ -174,6 +205,36 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
   startFailedText,
   onBindingChange,
 }: StartTaskAiRunInput<ExecutionProject, Task>): Promise<boolean> {
+  if (client.executeTaskComment) {
+    try {
+      const comment =
+        trigger ??
+        (await client.send({
+          projectId: project.id,
+          taskId: task.id,
+          clientMessageId: crypto.randomUUID(),
+          text: prompt,
+          mentions: [{ type: 'agent', id: agent.id, label: agent.name }],
+          replyToMessageId: threadRootId ?? null,
+          model: null,
+        }))
+      onMessages([comment])
+      const responses = await client.executeTaskComment({
+        projectId: project.id,
+        taskId: task.id,
+        triggerMessageId: comment.messageId,
+        attachmentIds: remoteAttachmentIds(attachments ?? []),
+      })
+      onMessages(responses)
+      if (services.deliveryApi && onTaskUpdated) {
+        onTaskUpdated(await services.deliveryApi.getLoopItem(task.id))
+      }
+      return true
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : startFailedText)
+      return false
+    }
+  }
   const responseRef: { current: ProjectChatMessage | null } = { current: null }
   // The executor can fail a turn asynchronously (lost thread, no model
   // progress). The backend event relay is not guaranteed to close the
@@ -314,13 +375,15 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
     let continued = false
     try {
       stopWatching = await watchRuntimeFailure(replyTo.runtimeDeviceId, replyTo.runtimeTaskId)
+      const continuationAddress = replyTo.address ?? {
+        deviceId: replyTo.runtimeDeviceId,
+        taskId: replyTo.runtimeTaskId,
+      }
       continued = await runtime.sendRuntimePaneMessage(
         {
-          address: {
-            deviceId: replyTo.runtimeDeviceId,
-            taskId: replyTo.runtimeTaskId,
-          },
+          address: continuationAddress,
           message: prompt,
+          queueIfBusy: true,
           ...(executionModel
             ? {
                 ...(executionModel.modelId ? { modelId: executionModel.modelId } : {}),
@@ -379,12 +442,14 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
       id: trigger?.messageId,
     }),
     project: executionProject ?? null,
+    ...(agent.wegentTeamId ? { wegentTeamId: agent.wegentTeamId } : {}),
     ...(executionModel ? { executionModel } : {}),
-    ...(modelSelection ? { modelSelection } : {}),
+    ...(modelSelection ? { modelSelection } : agent.wegentTeamId ? { modelSelection: null } : {}),
     collaborationMode: 'default',
     cloudProjectId: String(project.id),
     origin: {
       type: 'board_comment',
+      dispatchRole: 'executor',
       cloudProjectId: String(project.id),
       loopItemId: String(task.id),
       projectStore: project.project_store,
@@ -412,7 +477,10 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
         throw new Error('项目空间任务绑定服务不可用')
       }
       await deliveryApi.bindTask(task.id, nextAddress, task.title)
-      const projectRef = { projectId: project.id, projectStore: project.project_store }
+      const projectRef = {
+        projectId: project.id,
+        projectStore: project.project_store,
+      }
       onBindingChange?.({
         task: nextAddress,
         project: projectRef,

@@ -9,7 +9,7 @@ const attemptedDeviceIds = new Set<string>()
 const reportedDeviceIds = new Set<string>()
 const reportedPayloadKeys = new Set<string>()
 const settledDeviceIds = new Set<string>()
-const inFlightDeviceIds = new Set<string>()
+const inFlightDeviceIds = new Map<string, symbol>()
 
 export function clearPluginDeviceAutoSyncAttempts() {
   attemptedDeviceIds.clear()
@@ -23,8 +23,14 @@ export function clearPluginDeviceAutoSyncAttempts() {
 export function beginPluginDeviceSync(deviceId: string): (() => void) | null {
   const normalized = deviceId.trim()
   if (!normalized || inFlightDeviceIds.has(normalized)) return null
-  inFlightDeviceIds.add(normalized)
-  return () => inFlightDeviceIds.delete(normalized)
+  const owner = Symbol(normalized)
+  inFlightDeviceIds.set(normalized, owner)
+  return () => {
+    // A late completion must not release a newer synchronization lease.
+    if (inFlightDeviceIds.get(normalized) === owner) {
+      inFlightDeviceIds.delete(normalized)
+    }
+  }
 }
 
 export function hasAttemptedPluginDeviceAutoSync(deviceId: string): boolean {

@@ -28,13 +28,13 @@
 //! (`RestrictedAnalyst`), so the source raises the 403 after the project and
 //! membership lookups; the rule scan is implemented for the permitted path.
 use brz_http_server::StatusCode;
+use brz_json::RawJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 use serde::Serialize;
-use serde_json::value::RawValue;
 
 use crate::auth::SessionUser;
-use crate::cloud_projects::{PROJECT_COLUMNS, ProjectListRow};
+use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -80,7 +80,7 @@ struct AutomationRuleRow {
 struct RuleMetadata {
     action: Option<String>,
     event_type: Option<String>,
-    event_config: Option<Box<RawValue>>,
+    event_config: Option<RawJson>,
     cron_expression: Option<String>,
     timezone: Option<String>,
     last_run_at: Option<String>,
@@ -218,7 +218,7 @@ async fn list_rule_rows<M: Mysql>(
              ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
          AND loop_items.resource_type IN ('automation_rule') \
          ORDER BY loop_items.updated_at DESC",
-        crate::cloud_projects::PROJECT_COLUMNS
+        crate::cloud_projects::LOOP_ITEMS_COLUMNS
     );
     mysql.fetch_all(sql, ()).await
 }
@@ -248,7 +248,7 @@ async fn automations(
         .mysql
         .fetch_optional(
             &format!(
-                "SELECT {PROJECT_COLUMNS} \nFROM loop_items \n\
+                "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
                  WHERE loop_items.id = '{project_id}' AND loop_items.status = 'active' \
                  AND loop_items.resource_type IN ('project') \n LIMIT 1"
             ),
@@ -406,7 +406,7 @@ struct ProjectAutomationView {
     #[serde(rename = "eventType")]
     event_type: Option<String>,
     #[serde(rename = "eventConfig")]
-    event_config: Box<RawValue>,
+    event_config: RawJson,
     #[serde(rename = "assignmentMode")]
     assignment_mode: String,
     #[serde(rename = "managerType")]
@@ -448,8 +448,8 @@ struct ProjectAutomationView {
 }
 
 /// A raw empty JSON object for the `event_config` default.
-fn raw_empty_object() -> Box<RawValue> {
-    serde_json::value::to_raw_value(&std::collections::BTreeMap::<String, String>::new())
+fn raw_empty_object() -> RawJson {
+    brz_json::to_raw_value(&std::collections::BTreeMap::<String, String>::new())
         .expect("empty object serializes")
 }
 

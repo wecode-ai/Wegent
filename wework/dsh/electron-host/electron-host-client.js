@@ -4,6 +4,8 @@ import { createInterface } from 'node:readline'
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
+const RUNTIME_PREPARATION_TIMEOUT_MS = 15 * 60_000
+const RUNTIME_PREPARATION_CAPABILITIES = new Set(['smartApps.start', 'smartApps.verify'])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export class ElectronHostError extends Error {
@@ -134,7 +136,9 @@ export class ElectronHostClient {
     try {
       return await withTimeout(
         response.promise,
-        this.timeoutMs,
+        RUNTIME_PREPARATION_CAPABILITIES.has(capability)
+          ? Math.max(this.timeoutMs, RUNTIME_PREPARATION_TIMEOUT_MS)
+          : this.timeoutMs,
         `Electron host request timed out: ${capability}`
       )
     } finally {

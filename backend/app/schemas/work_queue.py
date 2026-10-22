@@ -360,16 +360,6 @@ class UserPublicQueuesResponse(BaseModel):
     queues: List[PublicQueueResponse]
 
 
-# Unread count schema
-class UnreadCountResponse(BaseModel):
-    """Response model for unread message count."""
-
-    total: int
-    byQueue: Dict[int, int] = Field(
-        default_factory=dict, description="Unread count by queue ID"
-    )
-
-
 class ExternalSender(BaseModel):
     """External sender information for ingest API."""
 

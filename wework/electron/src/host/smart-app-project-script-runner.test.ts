@@ -116,32 +116,37 @@ describe('runSmartAppProjectScripts', () => {
     expect(environment).not.toHaveProperty('WEWORK_HARNESS_CONTEXT_TOKEN')
   })
 
-  test('gives a runtime probe only the runtime URL in addition to managed process state', async () => {
-    const root = await projectRoot()
-    const run = vi.fn<SmartAppScriptCommandRunner>().mockResolvedValue({
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-    })
+  test.each([undefined, 'dsh-auth-verification=isolated-cookie'])(
+    'gives a runtime probe only its URL and isolated cookie (%s) beyond managed process state',
+    async cookieHeader => {
+      const root = await projectRoot()
+      const run = vi.fn<SmartAppScriptCommandRunner>().mockResolvedValue({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      })
 
-    const result = await runSmartAppRuntimeProbe({
-      ...options(root),
-      script: 'runtime:probe',
-      baseUrl: 'http://127.0.0.1:41001/',
-      environment: {
+      const result = await runSmartAppRuntimeProbe({
+        ...options(root),
+        script: 'runtime:probe',
+        baseUrl: 'http://127.0.0.1:41001/',
+        cookieHeader,
+        environment: {
+          PATH: '/managed/bin',
+          DSH_HOME: '/personal/dsh',
+          WEWORK_HARNESS_CONTEXT_TOKEN: 'secret',
+        },
+        run,
+      })
+
+      expect(result).toEqual({ issues: [] })
+      expect(run.mock.calls[0]?.[2].env).toEqual({
         PATH: '/managed/bin',
-        DSH_HOME: '/personal/dsh',
-        WEWORK_HARNESS_CONTEXT_TOKEN: 'secret',
-      },
-      run,
-    })
-
-    expect(result).toEqual({ issues: [] })
-    expect(run.mock.calls[0]?.[2].env).toEqual({
-      PATH: '/managed/bin',
-      SMART_APP_BASE_URL: 'http://127.0.0.1:41001/',
-    })
-  })
+        SMART_APP_BASE_URL: 'http://127.0.0.1:41001/',
+        ...(cookieHeader ? { SMART_APP_COOKIE: cookieHeader } : {}),
+      })
+    }
+  )
 })
 
 function options(projectRoot: string) {

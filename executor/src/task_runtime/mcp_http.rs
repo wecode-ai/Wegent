@@ -32,8 +32,8 @@ use crate::logging::log_executor_event;
 
 use super::{
     mcp::{
-        handle_request_with_context, SpaceMcpRequestContext, WeworkMcpSurface,
-        SPACE_MCP_SERVER_NAME,
+        handle_request_with_context, CloudCollaborationRoundDispatcher, SpaceMcpRequestContext,
+        WeworkMcpSurface, SPACE_MCP_SERVER_NAME,
     },
     TaskRuntime,
 };
@@ -65,6 +65,8 @@ struct SpaceMcpHttpState {
     token: String,
     sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
+    collaboration_dispatcher: std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
+    event_sender: std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>>,
 }
 
 static SPACE_MCP_START_LOCK: Mutex<()> = Mutex::const_new(());
@@ -97,6 +99,22 @@ fn running_endpoint() -> &'static StdMutex<Option<RunningSpaceMcpEndpoint>> {
     RUNNING.get_or_init(|| StdMutex::new(None))
 }
 
+fn collaboration_dispatcher_registry(
+) -> &'static std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>> {
+    static DISPATCHER: OnceLock<
+        std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
+    > = OnceLock::new();
+    DISPATCHER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
+}
+
+fn event_sender_registry(
+) -> &'static std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>> {
+    static SENDER: OnceLock<
+        std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>>,
+    > = OnceLock::new();
+    SENDER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
+}
+
 fn local_mcp_token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN.get_or_init(|| Uuid::new_v4().to_string())
@@ -104,17 +122,11 @@ fn local_mcp_token() -> &'static str {
 
 pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint, String> {
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
     let _guard = SPACE_MCP_START_LOCK.lock().await;
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
 
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
@@ -136,6 +148,8 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         token: endpoint.token.clone(),
         sessions: std::sync::Arc::new(Mutex::new(HashMap::new())),
         contexts: contexts.clone(),
+        collaboration_dispatcher: collaboration_dispatcher_registry().clone(),
+        event_sender: event_sender_registry().clone(),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -210,35 +224,6 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
     Ok(endpoint)
 }
 
-async fn endpoint_is_reachable(endpoint: &SpaceMcpEndpoint) -> bool {
-    let health_url = endpoint.url.trim_end_matches("/mcp").to_owned() + "/health";
-    reqwest::Client::new()
-        .get(health_url)
-        .bearer_auth(&endpoint.token)
-        .timeout(std::time::Duration::from_secs(1))
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success())
-}
-
-fn discard_endpoint(endpoint: &SpaceMcpEndpoint) {
-    let discarded = if let Ok(mut running) = running_endpoint().lock() {
-        if running
-            .as_ref()
-            .is_some_and(|value| value.endpoint.url == endpoint.url)
-        {
-            running.take()
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    if let Some(discarded) = discarded {
-        discarded.stop();
-    }
-}
-
 fn active_endpoint() -> Option<SpaceMcpEndpoint> {
     let mut running = running_endpoint().lock().ok()?;
     if running.as_ref().is_some_and(|running| {
@@ -267,8 +252,7 @@ pub(crate) fn register_space_mcp_context(
         #[cfg(test)]
         {
             return Ok(RegisteredSpaceMcpContext {
-                endpoint: space_mcp_http_endpoint()
-                    .expect("test project-space MCP endpoint should exist"),
+                endpoint: unstarted_test_endpoint(),
                 context_handle: "test-space-mcp-context-handle".to_owned(),
             });
         }
@@ -295,12 +279,33 @@ pub(crate) fn register_space_mcp_context(
     })
 }
 
+pub(crate) fn register_cloud_collaboration_dispatcher(
+    dispatcher: CloudCollaborationRoundDispatcher,
+) -> Result<(), String> {
+    *collaboration_dispatcher_registry()
+        .lock()
+        .map_err(|_| "Executor collaboration coordinator is unavailable".to_owned())? =
+        Some(dispatcher);
+    Ok(())
+}
+
+pub(crate) fn register_runtime_event_sender(sender: tokio::sync::broadcast::Sender<Value>) {
+    *event_sender_registry()
+        .lock()
+        .expect("Executor event sender registry should not be poisoned") = Some(sender);
+}
+
+#[cfg(test)]
+fn unstarted_test_endpoint() -> SpaceMcpEndpoint {
+    SpaceMcpEndpoint {
+        url: "http://127.0.0.1:1/mcp".to_owned(),
+        token: local_mcp_token().to_owned(),
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
-    Some(SpaceMcpEndpoint {
-        url: "http://127.0.0.1:1/mcp".to_owned(),
-        token: "test-space-mcp-instance-token".to_owned(),
-    })
+    Some(active_endpoint().unwrap_or_else(unstarted_test_endpoint))
 }
 
 #[cfg(not(test))]
@@ -349,7 +354,7 @@ async fn handle_mcp_for_surface(
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let (session_id, context) = if method == "initialize" {
+    let (session_id, mut context) = if method == "initialize" {
         let expected_surface = if notifications_only {
             WeworkMcpSurface::Notifications
         } else {
@@ -389,7 +394,20 @@ async fn handle_mcp_for_surface(
         };
         (session_id, context)
     };
-
+    context.set_cloud_collaboration_dispatcher(
+        state
+            .collaboration_dispatcher
+            .lock()
+            .ok()
+            .and_then(|dispatcher| dispatcher.clone()),
+    );
+    context.set_event_sender(
+        state
+            .event_sender
+            .lock()
+            .ok()
+            .and_then(|sender| sender.clone()),
+    );
     match handle_request_with_context(&state.runtime, &request, &context).await {
         Some(response) => json_rpc_response(response, &session_id),
         None => StatusCode::ACCEPTED.into_response(),
@@ -550,12 +568,24 @@ mod tests {
 
     #[tokio::test]
     async fn persistent_endpoint_authenticates_and_reuses_one_mcp_session() {
+        use futures_util::FutureExt;
+
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
-        let same_endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
+        // Reusing an owned live server must not depend on a timed HTTP probe:
+        // discarding it on timeout invalidates concurrent turns and MCP contexts.
+        let same_endpoint = ensure_space_mcp_http_endpoint()
+            .now_or_never()
+            .expect("Reusing a live MCP endpoint must not wait for network scheduling")
+            .unwrap();
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
+        let active = space_mcp_http_endpoint().unwrap();
+        assert_eq!(active.url, endpoint.url);
+        assert_eq!(active.token, endpoint.token);
         let registered =
             register_space_mcp_context(SpaceMcpRequestContext::new(None, None, None)).unwrap();
+        assert_eq!(registered.endpoint.url, active.url);
+        assert_eq!(registered.endpoint.token, active.token);
 
         let client = reqwest::Client::new();
         let unauthorized = client
@@ -627,7 +657,6 @@ mod tests {
                 "item_id": "ISSUE-1",
                 "device_id": null,
                 "automation_run_id": null,
-                "automation_manager": false,
                 "expires_at_unix": expires_at_unix
             }))
             .unwrap(),

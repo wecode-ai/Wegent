@@ -8,8 +8,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.kind import EmbeddingModelRef, RetrieverRef
-from shared.models import MAX_SEARCH_QUERY_LENGTH, SearchHints
-from shared.models.splitter_config import (  # noqa: F401
+from shared.knowledge_contracts.splitter_config import (  # noqa: F401
     FlatChunkConfig,
     HierarchicalChunkConfig,
     MarkdownEnhancementConfig,
@@ -19,6 +18,7 @@ from shared.models.splitter_config import (  # noqa: F401
     SmartSplitterConfig,
     SplitterConfig,
 )
+from shared.models import MAX_SEARCH_QUERY_LENGTH, SearchHints
 
 
 class RetrievalMode(str, Enum):

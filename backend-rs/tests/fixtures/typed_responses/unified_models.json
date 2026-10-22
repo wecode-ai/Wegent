@@ -13,6 +13,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -41,6 +42,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -69,6 +71,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -98,6 +101,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -127,6 +131,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -155,6 +160,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -183,6 +189,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -212,6 +219,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": null,
     "runtime": {
       "family": null,
@@ -241,6 +249,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": null,
     "runtime": {
       "family": "value.http",
@@ -269,6 +278,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": null,
     "runtime": {
       "family": "value.http",
@@ -297,6 +307,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": null,
     "runtime": {
       "family": "value.http",
@@ -326,6 +337,7 @@
     "contextWindow": null,
     "maxOutputTokens": null,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": null,
     "runtime": {
       "family": "value.http",
@@ -355,6 +367,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": {
       "images": true
     },
@@ -389,6 +402,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": {
       "images": true
     },
@@ -423,6 +437,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": {
       "images": true
     },
@@ -458,6 +473,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": null,
+    "capability": null,
     "modelCapabilities": {
       "images": true
     },
@@ -493,6 +509,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": {
       "images": true
     },
@@ -527,6 +544,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": {
       "images": true
     },
@@ -561,6 +579,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": {
       "images": true
     },
@@ -596,6 +615,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "",
+    "capability": "",
     "modelCapabilities": {
       "images": true
     },
@@ -631,6 +651,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": {
       "images": true
     },
@@ -665,6 +686,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": {
       "images": true
     },
@@ -699,6 +721,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": {
       "images": true
     },
@@ -734,6 +757,7 @@
     "contextWindow": 0,
     "maxOutputTokens": 1024,
     "costIndex": "value",
+    "capability": "value",
     "modelCapabilities": {
       "images": true
     },

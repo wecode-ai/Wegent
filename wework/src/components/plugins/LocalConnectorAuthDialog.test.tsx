@@ -110,11 +110,16 @@ describe('LocalConnectorAuthDialog browser oauth', () => {
     await waitFor(() => expect(authMocks.cancel).toHaveBeenCalledWith(executorTarget, 'session-2'))
   })
 
-  test('keeps the executor session alive when the dialog is remounted by its host', async () => {
-    authMocks.start.mockResolvedValue({
-      status: 'waiting_browser',
-      sessionId: 'session-remount',
-    })
+  test('cancels the abandoned session and starts a new session after a host remount', async () => {
+    authMocks.start
+      .mockResolvedValueOnce({
+        status: 'waiting_browser',
+        sessionId: 'session-remount',
+      })
+      .mockResolvedValue({
+        status: 'waiting_browser',
+        sessionId: 'session-new',
+      })
     authMocks.poll.mockImplementation(() => new Promise(() => undefined))
 
     const view = render(
@@ -126,7 +131,7 @@ describe('LocalConnectorAuthDialog browser oauth', () => {
     render(<LocalConnectorAuthDialog open target={target} onSuccess={vi.fn()} onCancel={vi.fn()} />)
 
     await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
-    expect(authMocks.cancel).not.toHaveBeenCalled()
+    expect(authMocks.cancel).toHaveBeenCalledExactlyOnceWith(executorTarget, 'session-remount')
   })
 
   test('shows a string executor error once', async () => {

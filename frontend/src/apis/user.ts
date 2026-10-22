@@ -18,6 +18,7 @@ import type {
   UserPreferences,
   DefaultTeamsResponse,
   WelcomeConfigResponse,
+  TaskType,
 } from '@/types/api'
 import type { NotificationChannelInfo } from '@/types/subscription'
 
@@ -53,6 +54,12 @@ export interface SearchUsersResponse {
   total: number
 }
 
+export interface RecentTeamsOptions {
+  includeFallback?: boolean
+  mode?: TaskType
+  signal?: AbortSignal
+}
+
 /**
  * System-level feature flags from backend configuration
  */
@@ -68,6 +75,26 @@ export interface McpProviderServiceConfig {
   detail_url: string
   enabled: boolean
   url: string
+  auth_mode: 'url' | 'oauth'
+  oauth_supported: boolean
+  oauth_connected: boolean
+  oauth_expires_at: number | null
+  oauth_account: string | null
+}
+
+export interface McpProviderOAuthSession {
+  session_id: string
+  poll_token: string
+  authorize_url: string
+  expires_at: number
+  poll_interval_seconds: number
+}
+
+export interface McpProviderOAuthPoll {
+  status: 'pending' | 'success' | 'declined' | 'failed'
+  error?: string | null
+  account?: string | null
+  expires_at?: number | null
 }
 
 const TOKEN_KEY = 'auth_token'
@@ -262,8 +289,16 @@ export const userApis = {
     return request
   },
 
-  async getRecentTeams(isCode = false): Promise<QuickAccessTeam[]> {
-    return apiClient.get(`/users/recent-teams?is_code=${isCode}`)
+  async getRecentTeams(
+    isCode = false,
+    options: RecentTeamsOptions = {}
+  ): Promise<QuickAccessTeam[]> {
+    const params = new URLSearchParams({ is_code: String(isCode) })
+    if (options.includeFallback !== undefined) {
+      params.set('include_fallback', String(options.includeFallback))
+    }
+    if (options.mode) params.set('mode', options.mode)
+    return apiClient.get(`/users/recent-teams?${params}`, { signal: options.signal })
   },
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {
@@ -310,11 +345,37 @@ export const userApis = {
   async updateMcpProviderService(
     providerId: string,
     serviceId: string,
-    data: Pick<McpProviderServiceConfig, 'enabled' | 'url'>
+    data: Pick<McpProviderServiceConfig, 'enabled' | 'url' | 'auth_mode'>
   ): Promise<McpProviderServiceConfig> {
     return apiClient.put(
       `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`,
       data
+    )
+  },
+
+  async createMcpProviderOAuthSession(
+    providerId: string,
+    serviceId: string
+  ): Promise<McpProviderOAuthSession> {
+    return apiClient.post(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}/oauth/sessions`
+    )
+  },
+
+  async pollMcpProviderOAuthSession(
+    providerId: string,
+    serviceId: string,
+    session: Pick<McpProviderOAuthSession, 'session_id' | 'poll_token'>
+  ): Promise<McpProviderOAuthPoll> {
+    const params = new URLSearchParams({ poll_token: session.poll_token })
+    return apiClient.get(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}/oauth/sessions/${encodeURIComponent(session.session_id)}/poll?${params.toString()}`
+    )
+  },
+
+  async disconnectMcpProviderOAuth(providerId: string, serviceId: string): Promise<void> {
+    return apiClient.delete(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}/oauth/connection`
     )
   },
 

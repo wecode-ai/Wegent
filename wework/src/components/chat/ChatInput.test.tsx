@@ -340,6 +340,88 @@ describe('ChatInput', () => {
     }
   )
 
+  test.each(['desktop', 'compact'] as const)(
+    'keeps the %s model selector usable with an empty unresolved catalog',
+    async variant => {
+      const props = {
+        value: 'follow-up draft',
+        onChange: vi.fn(),
+        onSubmit: vi.fn(),
+        disabled: false,
+        variant,
+      }
+      const { rerender } = render(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({
+            models: [],
+            selectedModel: null,
+            isModelSelectionReady: false,
+          })}
+        />
+      )
+
+      const trigger = screen.getByTestId('model-selector-button')
+      expect(trigger).toHaveTextContent('No models available')
+      expect(trigger).toBeEnabled()
+      expect(screen.getByTestId('send-message-button')).toBeDisabled()
+      await userEvent.click(trigger)
+      expect(screen.getByTestId('model-selector-empty-state')).toBeInTheDocument()
+      expect(screen.getByTestId('model-selector-add-custom-model')).toBeInTheDocument()
+      await userEvent.keyboard('{Escape}')
+
+      const model: UnifiedModel = { name: 'replacement', type: 'runtime' }
+      const setSelectedModel = vi.fn()
+      rerender(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: null,
+            isModelSelectionReady: false,
+            setSelectedModel,
+          })}
+        />
+      )
+      expect(screen.getByTestId('model-selector-button')).toBe(trigger)
+      await userEvent.click(trigger)
+      await userEvent.click(screen.getByTestId('model-option-replacement'))
+      expect(setSelectedModel).toHaveBeenCalledWith(model)
+
+      rerender(
+        <ChatInput
+          {...props}
+          projectChat={projectChatControls({ models: [model], selectedModel: model })}
+        />
+      )
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    }
+  )
+
+  test('keeps model recovery visible in the fullscreen compact editor', async () => {
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="compact"
+        projectChat={projectChatControls({
+          models: [],
+          selectedModel: null,
+          isModelSelectionReady: false,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(screen.getByTestId('fullscreen-input-sheet')).toContainElement(trigger)
+    expect(trigger).toBeEnabled()
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('model-selector-empty-state')).toBeInTheDocument()
+  })
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
@@ -819,7 +901,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     await userEvent.click(screen.getByTestId('model-option-local-model:second'))
 
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
@@ -839,12 +920,58 @@ describe('ChatInput', () => {
     expect(onModelSelectorOpenChange).toHaveBeenLastCalledWith(false, 'dismiss')
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     await userEvent.click(screen.getByTestId('model-option-local-model:second'))
     await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
     expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
+  test('recovers a deleted model in the same conversation despite its unavailable placeholder', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'codex-official-unavailable',
+      type: 'runtime',
+      provider: 'local',
+      isActive: false,
+      config: { weworkModelKind: 'codex-official' },
+    }
+    const targetModel: UnifiedModel = {
+      name: 'replacement-model',
+      type: 'public',
+      provider: 'openai',
+      displayName: 'Replacement Model',
+      isActive: true,
+    }
+    const setSelectedModel = vi.fn()
+    const continueInNewConversation = vi.fn()
+
+    render(
+      <ChatInput
+        value="Continue the original task"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [targetModel],
+          activeModel,
+          selectedModel: null,
+          isModelSelectionReady: false,
+          setSelectedModel,
+          continueInNewConversation,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-option-replacement-model'))
+    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+      'Switching to Replacement Model may change how the existing context is understood.'
+    )
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(continueInNewConversation).not.toHaveBeenCalled()
   })
 
   test('continues in a new referenced conversation when switching Codex providers', async () => {
@@ -888,7 +1015,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     await userEvent.click(screen.getByTestId('model-option-router-model'))
 
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
@@ -932,7 +1058,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     await userEvent.click(screen.getByTestId('model-option-local-model:first'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
@@ -973,7 +1098,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     await userEvent.click(screen.getByTestId('model-option-local-model:second'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(selectedModel)
@@ -2227,7 +2351,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop model menu with real model options and closes it after selection', async () => {
+  test('opens the compact desktop picker and switches to the model list', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -2292,61 +2416,36 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
       'z-system-popover',
-      'w-[224px]'
+      'w-[254px]'
     )
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body
     )
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-reasoning')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
-    expect(screen.getByTestId('model-reset-default-button')).toBeDisabled()
-    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-control-reasoning-slider')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-control-reasoning-high')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'simple')
+    expect(screen.getByTestId('model-control-reasoning-slider')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-collaborationMode-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-control-collaborationMode-plan')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Select effort')
 
-    expect(screen.getByTestId('model-selector-submenu')).toHaveAttribute(
-      'data-enter-animation',
-      'submenu'
-    )
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ width: '280px' })
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'advanced')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
+    expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
     expect(modelOption.querySelectorAll('span')).toHaveLength(2)
     expect(screen.getByTestId('model-option-cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
-    expect(
-      screen
-        .getByTestId('model-control-menu-model')
-        .compareDocumentPosition(screen.getByTestId('model-control-menu-reasoning')) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(
-      screen
-        .getByTestId('model-control-menu-speed')
-        .compareDocumentPosition(screen.getByTestId('model-reset-default-button')) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
-
-    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'simple')
   })
 
-  test('opens desktop speed options from a collapsed model control submenu', async () => {
+  test('toggles desktop fast mode from the compact picker', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -2380,33 +2479,9 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
-    expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
-
-    await userEvent.hover(screen.getByTestId('model-control-menu-speed'))
-
-    expect(screen.getByTestId('model-control-speed-standard')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('快速')
-    expect(screen.getByTestId('model-control-speed-fast')).not.toHaveTextContent('⚡')
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ width: '233px' })
-
-    const speedMenuItem = screen.getByTestId('model-control-menu-speed')
-    const resetRow = screen.getByTestId('model-reset-default-row')
-    const resetButton = screen.getByTestId('model-reset-default-button')
-    expect(speedMenuItem).toHaveClass('bg-muted')
-    expect(resetButton).toHaveClass('text-text-muted', 'hover:bg-muted', 'hover:text-text-primary')
-    expect(resetRow).not.toHaveClass('bg-muted', 'hover:bg-muted')
-    expect(resetButton.querySelector('.lucide-rotate-ccw')).toBeInTheDocument()
-    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
-
-    await userEvent.hover(resetRow)
-
-    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
-    expect(speedMenuItem).not.toHaveClass('bg-muted')
-
-    await userEvent.hover(speedMenuItem)
-
-    await userEvent.click(screen.getByTestId('model-control-speed-fast'))
+    const fastModeButton = screen.getByTestId('model-advanced-fast-mode-toggle')
+    expect(fastModeButton).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(fastModeButton)
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
@@ -2452,8 +2527,19 @@ describe('ChatInput', () => {
 
     await userEvent.click(trigger)
 
-    expect(screen.getByTestId('model-control-menu-speed')).toHaveTextContent('快速')
-    expect(screen.getByTestId('model-control-menu-speed')).not.toHaveTextContent('⚡')
+    expect(screen.getByTestId('model-advanced-fast-mode-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('model-advanced-fast-mode-toggle')).toHaveAttribute(
+      'data-enabled',
+      'true'
+    )
+    expect(screen.getByTestId('model-control-reasoning-progress')).toHaveAttribute(
+      'data-accent-pulse',
+      'true'
+    )
+    expect(screen.getByTestId('model-control-reasoning-thumb')).toBeInTheDocument()
   })
 
   test('offers model setup actions when no desktop models are available', async () => {
@@ -2639,27 +2725,14 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
-
-    const submenu = screen.getByTestId('model-selector-submenu')
-    expect(within(submenu).getByTestId('model-control-reasoning-minimal')).toHaveTextContent(
-      'Minimal'
-    )
-    expect(within(submenu).getByTestId('model-control-reasoning-low')).toHaveTextContent('Low')
-    expect(within(submenu).getByTestId('model-control-reasoning-xhigh')).toHaveTextContent(
-      'Extra high'
-    )
-    expect(within(submenu).getByTestId('model-control-reasoning-max')).toHaveTextContent('Maximum')
-    expect(within(submenu).getByTestId('model-control-reasoning-ultra')).toHaveTextContent('Ultra')
-    expect(within(submenu).queryByTestId('model-control-reasoning-none')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
 
     expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-minimal')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-max')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-ultra')).toBeInTheDocument()
-    expect(screen.queryByTestId('model-power-setting-gpt-5-6-sol-low')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-minimal')).toHaveAccessibleName('Minimal')
+    expect(screen.getByTestId('model-control-reasoning-low')).toHaveAccessibleName('Low')
+    expect(screen.getByTestId('model-control-reasoning-xhigh')).toHaveAccessibleName('Extra high')
+    expect(screen.getByTestId('model-control-reasoning-max')).toHaveAccessibleName('Maximum')
+    expect(screen.getByTestId('model-control-reasoning-ultra')).toHaveAccessibleName('Ultra')
+    expect(screen.queryByTestId('model-control-reasoning-none')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('model-control-reasoning-max'))
 
@@ -2704,9 +2777,10 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'advanced')
     expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
-    expect(screen.getByTestId('model-control-reasoning-minimal')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-slider')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-option-local-model:single-effort')).toBeInTheDocument()
   })
 
   test('shows the API advanced slider when exactly two efforts are configured', async () => {
@@ -2752,7 +2826,52 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-control-reasoning-low')).not.toBeInTheDocument()
   })
 
-  test('does not treat a same-id API model as the default Codex reset target', async () => {
+  test('keeps reasoning effort selection for a cloud GPT model', async () => {
+    const cloudModel: UnifiedModel = {
+      name: 'cloud-gpt-6-sol',
+      type: 'public',
+      displayName: '云端 GPT-6 Sol',
+      modelId: 'gpt-6-sol',
+      config: {
+        ui: {
+          family: 'gpt',
+          modelLabel: 'GPT-6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [cloudModel],
+          selectedModel: cloudModel,
+          selectedModelOptions: { reasoning: 'high' },
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'simple')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Select effort')
+    expect(screen.getByTestId('model-control-reasoning-low')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-control-reasoning-xhigh'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'xhigh')
+  })
+
+  test('does not add a synthetic Default row for non-Codex models', async () => {
     const apiSol: UnifiedModel = {
       name: 'local-model:api-sol',
       type: 'runtime',
@@ -2793,7 +2912,12 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
-    expect(screen.getByTestId('model-reset-default-button')).toBeDisabled()
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Selected API Minimal')
+    expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-option-local-model:selected-api')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
   })
 
   test('renders the advertised ultra effort with purple summary and slider treatment', async () => {
@@ -2825,7 +2949,6 @@ describe('ChatInput', () => {
         },
       },
     }
-    const setSelectedModelAndOptions = vi.fn()
     const setSelectedModelOption = vi.fn()
 
     render(
@@ -2839,7 +2962,6 @@ describe('ChatInput', () => {
           models: [model, terraModel],
           selectedModel: model,
           selectedModelOptions: { reasoning: 'ultra', speed: 'standard' },
-          setSelectedModelAndOptions,
           setSelectedModelOption,
         })}
       />
@@ -2850,28 +2972,12 @@ describe('ChatInput', () => {
     expect(trigger.querySelector('.text-reasoning-ultra-text')).toHaveTextContent('Extra High')
 
     await userEvent.click(trigger)
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
 
     expect(screen.queryByTestId('model-control-reasoning-max')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-ultra')).toHaveTextContent(
-      'Faster, uses more quota'
-    )
-    expect(
-      within(screen.getByTestId('model-selector-submenu')).getAllByText('Extra High')
-    ).toHaveLength(2)
-
-    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
-
-    expect(screen.getByTestId('model-advanced-panel')).toHaveAttribute(
-      'data-enter-animation',
-      'advanced'
-    )
-    expect(screen.queryByTestId('model-control-menu-model')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-control-menu-reasoning')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-control-menu-speed')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-ultra')).toHaveAccessibleName('Extra High')
     expect(screen.queryByTestId('reasoning-slider-faster-label')).not.toBeInTheDocument()
     expect(screen.queryByTestId('reasoning-slider-smarter-label')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveClass('h-14')
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveClass('h-9')
     expect(
       screen.getByTestId('model-advanced-toggle').querySelector('.lucide-chevron-right')
     ).toBeInTheDocument()
@@ -2894,59 +3000,32 @@ describe('ChatInput', () => {
       .querySelectorAll('[data-sparkle-index]')
     expect(sparkles).toHaveLength(10)
     expect(sparkles[1]).toHaveStyle({ animationDelay: '-260ms' })
-    const powerSettings = [
-      'gpt-5-6-terra-low',
-      'gpt-5-6-sol-low',
-      'gpt-5-6-sol-medium',
-      'gpt-5-6-sol-high',
-      'gpt-5-6-sol-xhigh',
-      'gpt-5-6-sol-ultra',
-    ]
-    powerSettings.forEach(setting => {
-      expect(screen.getByTestId(`model-power-setting-${setting}`)).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('model-power-setting-gpt-5-6-sol-max')).not.toBeInTheDocument()
-    const solLowSetting = screen.getByTestId('model-power-setting-gpt-5-6-sol-low')
+    const solLowSetting = screen.getByTestId('model-control-reasoning-low')
     expect(solLowSetting).not.toHaveAttribute('title')
-    expect(screen.queryByText('GPT 5.6 Sol Low')).not.toBeInTheDocument()
 
     fireEvent.pointerDown(solLowSetting, { button: 0, clientX: 160, pointerId: 9 })
     expect(screen.getByTestId('model-control-reasoning-slider')).toHaveAttribute(
       'data-interacting',
       'true'
     )
-    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
-    expect(screen.getByTestId('reasoning-slider-faster-label')).toHaveTextContent('Faster')
-    expect(screen.getByTestId('reasoning-slider-smarter-label')).toHaveTextContent('Smarter')
     fireEvent.pointerUp(solLowSetting, { button: 0, clientX: 160, pointerId: 9 })
     expect(screen.getByTestId('model-control-reasoning-slider')).toHaveAttribute(
       'data-interacting',
       'false'
     )
     expect(screen.getByTestId('model-advanced-toggle')).toBeInTheDocument()
-    expect(screen.getByTestId('model-advanced-intelligence-icon')).toBeInTheDocument()
-    expect(screen.queryByTestId('reasoning-slider-faster-label')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('model-power-setting-gpt-5-6-terra-low'))
-    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(terraModel, {
-      reasoning: 'low',
-      speed: 'standard',
-    })
+    await userEvent.click(screen.getByTestId('model-control-reasoning-low'))
+    expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'low')
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('model-advanced-toggle'))
-    expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-reasoning')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('model-advanced-toggle').querySelector('.lucide-chevron-up')
-    ).toBeInTheDocument()
-    expect(screen.queryByTestId('model-advanced-fast-mode-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'advanced')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.6 Sol Extra High')
+    expect(screen.getByTestId('model-option-gpt-5.6-sol')).toBeInTheDocument()
   })
 
-  test('persists the desktop power view across close, reopen, and a new composer mount', async () => {
+  test('reopens the desktop picker in the simple view', async () => {
     const model: UnifiedModel = {
       name: 'gpt-5.6-sol',
       type: 'runtime',
@@ -2977,28 +3056,28 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.click(screen.getByTestId('model-advanced-toggle'))
-    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
-    expect(localStorage.getItem('wework:model-selector-view')).toBe('power')
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'advanced')
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'simple')
 
     firstRender.unmount()
     render(<ChatInput {...props} />)
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
-    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'simple')
   })
 
-  test('offers a Sol medium reset when another model is selected without losing view preference', async () => {
-    localStorage.setItem('wework:model-selector-view', 'power')
+  test('offers the Codex-reported default model when another model is selected', async () => {
     const solModel: UnifiedModel = {
       name: 'gpt-5.6-sol',
       type: 'runtime',
       displayName: 'GPT 5.6 Sol',
       config: {
+        codexAuthConfigured: true,
+        codexIsDefault: true,
         ui: {
           family: 'codex-official',
           modelLabel: 'GPT 5.6 Sol',
@@ -3013,6 +3092,7 @@ describe('ChatInput', () => {
       type: 'runtime',
       displayName: 'GPT 5.6 Terra',
       config: {
+        codexAuthConfigured: true,
         ui: {
           family: 'codex-official',
           modelLabel: 'GPT 5.6 Terra',
@@ -3041,19 +3121,398 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
-    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
-    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-reset-default-button')).toHaveTextContent('重置为默认设置')
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.getByTestId('model-option-default')).toHaveTextContent('默认推荐模型集')
+    expect(screen.getByTestId('model-option-default')).toHaveClass(
+      'hover:bg-muted',
+      'focus-visible:bg-muted'
+    )
+    expect(screen.getByTestId('model-option-default')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('model-option-gpt-5.6-terra')).toHaveAttribute('aria-checked', 'true')
 
-    await userEvent.click(screen.getByTestId('model-reset-default-button'))
+    await userEvent.click(screen.getByTestId('model-option-default'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(solModel, {
       reasoning: 'medium',
       speed: 'standard',
     })
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(localStorage.getItem('wework:model-selector-view')).toBe('power')
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-panel', 'simple')
+  })
+
+  test('keeps Default and its concrete Codex model mutually exclusive', async () => {
+    const defaultModel: UnifiedModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT-6.1 Sol',
+      config: {
+        codexAuthConfigured: true,
+        codexIsDefault: true,
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT-6.1 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const cloudModel: UnifiedModel = {
+      name: 'cloud-gpt',
+      type: 'public',
+      provider: 'cloud',
+      displayName: 'Cloud GPT',
+      config: {
+        ui: {
+          family: 'gpt',
+          modelLabel: 'Cloud GPT',
+          reasoningEfforts: ['low', 'medium'],
+          defaultReasoningEffort: 'medium',
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [defaultModel, cloudModel],
+          selectedModel: defaultModel,
+          selectedModelOptions: { reasoning: 'medium', speed: 'standard' },
+          setSelectedModel: vi.fn(),
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+    const defaultOption = screen.getByTestId('model-option-default')
+    const concreteOption = screen.getByTestId('model-option-gpt-6.1-sol')
+    expect(screen.getByTestId('model-source-local-chatgpt')).toContainElement(defaultOption)
+    expect(screen.getByTestId('model-group-codex-official')).not.toContainElement(defaultOption)
+    expect(screen.getByTestId('model-group-codex-official')).toContainElement(concreteOption)
+    expect(screen.getByTestId('model-group-gpt')).not.toContainElement(defaultOption)
+    expect(defaultOption).toHaveAttribute('aria-checked', 'true')
+    expect(concreteOption).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(concreteOption)
+
+    expect(defaultOption).toHaveAttribute('aria-checked', 'false')
+    expect(concreteOption).toHaveAttribute('aria-checked', 'true')
+  })
+
+  test('matches the ChatGPT order in the advanced model list', async () => {
+    const model = (name: string, label: string, family: string): UnifiedModel => ({
+      name,
+      type: family === 'codex-official' ? 'runtime' : 'public',
+      provider: family === 'codex-official' ? 'local' : undefined,
+      displayName: label,
+      config: {
+        weworkModelKind: family,
+        ui: {
+          family,
+          modelLabel: label,
+          reasoningEfforts: ['low', 'medium'],
+          defaultReasoningEffort: 'medium',
+        },
+      },
+    })
+    const orderedModels = [
+      model('gpt-5.6-sol', 'GPT-5.6 Sol', 'codex-official'),
+      model('gpt-6.1-sol', 'GPT-6.1 Sol', 'codex-official'),
+      model('gpt-6-astra', 'GPT-6 Astra', 'codex-official'),
+      model('gpt-5.6-terra', 'GPT-5.6 Terra', 'codex-official'),
+      model('gpt-6-sol', 'GPT-6 Sol', 'codex-official'),
+      model('gpt-5.6-luna', 'GPT-5.6 Luna', 'codex-official'),
+      model('gpt-6-luna', 'GPT-6 Luna', 'codex-official'),
+      model('gpt-5.5', 'GPT-5.5', 'codex-official'),
+      model('cloud-gpt-5.6-sol', 'GPT 5.6 Sol', 'gpt'),
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: orderedModels,
+          selectedModel: orderedModels[0],
+          selectedModelOptions: { reasoning: 'medium' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+    const codexGroup = screen.getByTestId('model-group-codex-official')
+    const remoteGroup = screen.getByTestId('model-group-gpt')
+    expect(screen.getByTestId('model-source-local-chatgpt')).toHaveTextContent('本机 ChatGPT 账户')
+    expect(remoteGroup).toHaveTextContent('GPT')
+    expect(
+      codexGroup.compareDocumentPosition(remoteGroup) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    const optionNames = Array.from(
+      screen
+        .getByTestId('model-selector-menu')
+        .querySelectorAll<HTMLElement>('[data-testid^="model-option-"]')
+    ).map(option => option.dataset.testid)
+    expect(optionNames).toEqual([
+      'model-option-gpt-6.1-sol',
+      'model-option-gpt-6-astra',
+      'model-option-gpt-6-sol',
+      'model-option-gpt-6-luna',
+      'model-option-gpt-5.6-sol',
+      'model-option-gpt-5.6-terra',
+      'model-option-gpt-5.6-luna',
+      'model-option-gpt-5.5',
+      'model-option-cloud-gpt-5.6-sol',
+    ])
+  })
+
+  test('switches both model and reasoning effort from the ChatGPT power slider', async () => {
+    const solModel: UnifiedModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT-6.1 Sol',
+      config: {
+        codexAuthConfigured: true,
+        codexIsDefault: true,
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT-6.1 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+        },
+      },
+    }
+    const lunaModel: UnifiedModel = {
+      name: 'gpt-6-luna',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT-6 Luna',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT-6 Luna',
+          reasoningEfforts: ['high'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+    const setSelectedModelAndOptions = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [solModel, lunaModel],
+          selectedModel: solModel,
+          selectedModelOptions: { reasoning: 'low', speed: 'standard' },
+          setSelectedModelAndOptions,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-power-setting-gpt-6-luna-high'))
+
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(lunaModel, {
+      reasoning: 'high',
+      speed: 'standard',
+    })
+  })
+
+  test('uses a cloud-provided default model set and slider configuration', async () => {
+    const defaultCloudModel: UnifiedModel = {
+      name: 'cloud-sol',
+      type: 'public',
+      provider: 'cloud',
+      displayName: 'Cloud Sol',
+      config: {
+        ui: {
+          family: 'cloud-openai',
+          modelLabel: 'Cloud Sol',
+          defaultModel: true,
+          reasoningEfforts: ['low', 'medium', 'high'],
+          defaultReasoningEffort: 'medium',
+          sliderModelsConfig: {
+            defaultPreset: 'recommended',
+            presets: [
+              {
+                name: 'recommended',
+                label: '推荐',
+                description: '日常推荐',
+                models: [
+                  { model: 'cloud-luna', reasoning_effort: 'high' },
+                  { model: 'cloud-sol', reasoning_effort: 'low' },
+                  { model: 'cloud-sol', reasoning_effort: 'medium' },
+                  { model: 'cloud-sol', reasoning_effort: 'high' },
+                ],
+              },
+              {
+                name: 'quality',
+                label: '高质量',
+                description: '更重视质量',
+                models: [
+                  { model: 'cloud-terra', reasoning_effort: 'high' },
+                  { model: 'not-visible', reasoning_effort: 'high' },
+                ],
+              },
+              {
+                name: 'unavailable',
+                label: '不可用',
+                models: [{ model: 'not-visible', reasoning_effort: 'high' }],
+              },
+            ],
+          },
+        },
+      },
+    }
+    const cloudLunaModel: UnifiedModel = {
+      name: 'cloud-luna',
+      type: 'public',
+      provider: 'cloud',
+      displayName: 'Cloud Luna',
+      config: {
+        ui: {
+          family: 'cloud-openai',
+          modelLabel: 'Cloud Luna',
+          reasoningEfforts: ['high'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+    const cloudTerraModel: UnifiedModel = {
+      name: 'cloud-terra',
+      type: 'public',
+      provider: 'cloud',
+      displayName: 'Cloud Terra',
+      config: {
+        ui: {
+          family: 'cloud-openai',
+          modelLabel: 'Cloud Terra',
+          reasoningEfforts: ['high'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+    const setSelectedModelAndOptions = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [cloudLunaModel, defaultCloudModel, cloudTerraModel],
+          selectedModel: defaultCloudModel,
+          selectedModelOptions: { reasoning: 'low' },
+          setSelectedModelAndOptions,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.getByTestId('model-option-default')).toHaveTextContent('默认日常推荐')
+    expect(screen.getByTestId('model-option-preset-quality')).toHaveTextContent('高质量更重视质量')
+    expect(screen.queryByTestId('model-option-preset-unavailable')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('model-option-preset-quality'))
+
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(cloudTerraModel, {
+      reasoning: 'high',
+    })
+
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    await userEvent.click(screen.getByTestId('model-option-default'))
+    await userEvent.click(screen.getByTestId('model-power-setting-cloud-luna-high'))
+
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(cloudLunaModel, {
+      reasoning: 'high',
+    })
+  })
+
+  test('uses the selected model reasoning slider after choosing an explicit model', async () => {
+    const solModel: UnifiedModel = {
+      name: 'gpt-6.1-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT-6.1 Sol',
+      config: {
+        codexIsDefault: true,
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT-6.1 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+        },
+      },
+    }
+    const lunaModel: UnifiedModel = {
+      name: 'gpt-6-luna',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT-6 Luna',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT-6 Luna',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'high',
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [solModel, lunaModel],
+          selectedModel: lunaModel,
+          selectedModelOptions: { reasoning: 'xhigh', speed: 'standard' },
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Select effort')
+    expect(screen.getByTestId('model-simple-header')).toHaveTextContent('Extra High')
+    expect(screen.getByTestId('model-simple-header')).toHaveTextContent('GPT-6 Luna')
+    expect(screen.getByTestId('model-control-reasoning-track')).toHaveAttribute(
+      'aria-valuetext',
+      'Extra High'
+    )
+
+    await userEvent.click(screen.getByTestId('model-control-reasoning-low'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'low')
   })
 
   test('keeps Advanced available for the Terra light setting shown on the power slider', async () => {
@@ -3130,7 +3589,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-tooltip')).toBeInTheDocument()
   })
 
-  test('keeps the desktop model submenu open after the pointer leaves the menu', async () => {
+  test('keeps the flat desktop model menu open after the pointer leaves', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -3160,13 +3619,12 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
-    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-option-overseas-gpt-5.5')).toBeInTheDocument()
 
     fireEvent.mouseLeave(screen.getByTestId('model-selector-menu').parentElement as HTMLElement)
 
-    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
   test('keeps the desktop model menu in narrow Electron windows', async () => {
@@ -3208,8 +3666,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('data-mobile')
     expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('aria-modal')
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
-    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-option-codex-gpt-5.5')).toBeInTheDocument()
   })
 
   test('opens the desktop model menu when the external open signal changes', async () => {
@@ -3261,7 +3718,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
+  test('keeps the desktop model menu open after selecting a model opened by external signal', async () => {
     const model: UnifiedModel = {
       name: 'ali-qwen3-coder-plus',
       type: 'user',
@@ -3293,15 +3750,14 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('constrains the desktop model submenu to the available viewport height', async () => {
+  test('constrains the flat desktop model menu to the available viewport height', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
@@ -3318,26 +3774,6 @@ describe('ChatInput', () => {
             right: 736,
             width: 256,
             height: 140,
-          } as DOMRect
-        }
-        if (testId === 'model-control-menu-model') {
-          return {
-            top: 780,
-            bottom: 812,
-            left: 492,
-            right: 724,
-            width: 232,
-            height: 32,
-          } as DOMRect
-        }
-        if (testId === 'model-selector-submenu') {
-          return {
-            top: 0,
-            bottom: 192,
-            left: 0,
-            right: 288,
-            width: 288,
-            height: 192,
           } as DOMRect
         }
         return {
@@ -3382,12 +3818,9 @@ describe('ChatInput', () => {
       )
 
       await userEvent.click(screen.getByTestId('model-selector-button'))
-      await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
       await waitFor(() => {
-        expect(screen.getByTestId('model-selector-submenu').style.maxHeight).toBe(
-          'min(var(--radix-popover-content-available-height), calc(100vh - 16px))'
-        )
+        expect(screen.getByTestId('model-selector-menu')).toHaveStyle({ maxHeight: '920px' })
       })
     } finally {
       Object.defineProperty(window, 'innerHeight', {
@@ -3446,7 +3879,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
     expect(disabledOption).not.toBeDisabled()
@@ -3495,7 +3927,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'medium')
@@ -3584,11 +4015,10 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
     expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
     expect(screen.getByTestId('model-option-overseas-gpt-5.5')).toBeInTheDocument()
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-reasoning-auto')).not.toBeInTheDocument()
   })
@@ -3639,8 +4069,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
-    expect(screen.getByTestId('model-control-menu-speed')).toBeDisabled()
-    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+    expect(screen.queryByTestId('model-control-menu-speed')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
   })

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { getNativeFilePath } from '@/desktop/nativeFilePaths'
 import {
   hasWorkspacePathDragData,
   inspectNativeWorkspacePaths,
@@ -201,6 +202,7 @@ describe('workspace path transfer', () => {
         referenceEntries: [],
       })
       expect(await file.text()).toBe('small context')
+      expect(getNativeFilePath(file)).toBe('/Users/alice/project/context.md')
       expect(mocks.readDroppedFiles).not.toHaveBeenCalled()
     }
   )
@@ -214,6 +216,21 @@ describe('workspace path transfer', () => {
       referenceEntries: [],
     })
     expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
+  test('retains the source path of an image pasted with a file URI', async () => {
+    const file = new File(['image'], 'preview.png', { type: 'image/png' })
+    const path = '/Users/alice/Pictures/preview.png'
+    mocks.desktopHost.mockResolvedValue([{ path, isDirectory: false }])
+
+    const transfer = await resolveDataTransferWorkspacePaths(
+      clipboardData({ 'text/uri-list': `file://${path}` }, [file]),
+      'clipboard'
+    )
+
+    expect(transfer.attachmentFiles).toEqual([file])
+    expect(getNativeFilePath(file)).toBe(path)
+    expect(mocks.readDroppedFiles).not.toHaveBeenCalled()
   })
 
   test('keeps pathless pasted images as attachments', async () => {

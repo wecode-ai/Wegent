@@ -66,6 +66,12 @@ import DingTalkChatCardFields, {
   readChatCardConfig,
   serializeChatCardConfig,
 } from './DingTalkChatCardFields'
+import DingTalkNotificationCardFields, {
+  DingTalkNotificationCardConfig,
+  emptyNotificationCard,
+  readNotificationCardConfig,
+  serializeNotificationCardConfig,
+} from './DingTalkNotificationCardFields'
 
 // User mapping mode type
 type UserMappingMode = 'staff_id' | 'email' | 'select_user'
@@ -109,6 +115,7 @@ const IMChannelList: React.FC = () => {
     weibo_token_endpoint: string
     card_template_id: string
     chat_card: DingTalkChatCardConfig
+    notification_card: DingTalkNotificationCardConfig
     user_mapping_mode: UserMappingMode
     target_user_id: number
   }>({
@@ -126,6 +133,7 @@ const IMChannelList: React.FC = () => {
     weibo_token_endpoint: '',
     card_template_id: '',
     chat_card: { ...emptyChatCard },
+    notification_card: { ...emptyNotificationCard },
     user_mapping_mode: 'select_user',
     target_user_id: 0,
   })
@@ -310,6 +318,7 @@ const IMChannelList: React.FC = () => {
 
       if (formData.channel_type === 'dingtalk') {
         config.chat_card = serializeChatCardConfig(formData.chat_card)
+        config.notification_card = serializeNotificationCardConfig(formData.notification_card)
       }
 
       // Add card_template_id if provided (for AI card notifications)
@@ -418,6 +427,7 @@ const IMChannelList: React.FC = () => {
 
       if (selectedChannel.channel_type === 'dingtalk') {
         newConfig.chat_card = serializeChatCardConfig(formData.chat_card)
+        newConfig.notification_card = serializeNotificationCardConfig(formData.notification_card)
       }
 
       // Add card_template_id if provided (for AI card notifications)
@@ -519,6 +529,7 @@ const IMChannelList: React.FC = () => {
       weibo_token_endpoint: '',
       card_template_id: '',
       chat_card: { ...emptyChatCard },
+      notification_card: { ...emptyNotificationCard },
       user_mapping_mode: 'select_user',
       target_user_id: 0,
     })
@@ -549,6 +560,7 @@ const IMChannelList: React.FC = () => {
       weibo_token_endpoint: (channel.config?.token_endpoint as string) || '',
       card_template_id: (channel.config?.card_template_id as string) || '',
       chat_card: readChatCardConfig(channel.config?.chat_card),
+      notification_card: readNotificationCardConfig(channel.config?.notification_card),
       user_mapping_mode: userMappingMode,
       target_user_id: targetUserId,
     })
@@ -902,6 +914,13 @@ const IMChannelList: React.FC = () => {
                 onChange={chat_card => setFormData({ ...formData, chat_card })}
               />
             )}
+            {formData.channel_type === 'dingtalk' && (
+              <DingTalkNotificationCardFields
+                idPrefix="create-im"
+                value={formData.notification_card}
+                onChange={notification_card => setFormData({ ...formData, notification_card })}
+              />
+            )}
             <div className="space-y-2">
               <Label htmlFor="default_team">{t('admin:im_channels.form.default_team')} *</Label>
               <Select
@@ -1124,6 +1143,13 @@ const IMChannelList: React.FC = () => {
                 idPrefix="edit-im"
                 value={formData.chat_card}
                 onChange={chat_card => setFormData({ ...formData, chat_card })}
+              />
+            )}
+            {formData.channel_type === 'dingtalk' && (
+              <DingTalkNotificationCardFields
+                idPrefix="edit-im"
+                value={formData.notification_card}
+                onChange={notification_card => setFormData({ ...formData, notification_card })}
               />
             )}
             <div className="space-y-2">

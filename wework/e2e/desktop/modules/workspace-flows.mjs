@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
+import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
 
 import {
   ensureExperimentalFeaturesDisabled,
@@ -9,6 +12,8 @@ import {
 import {
   ACTIVE_COMPOSER_SELECTOR,
   DEFAULT_STEP_TIMEOUT_MS,
+  DEFAULT_MODEL_ID,
+  MODEL_PROVIDER_ID,
   TASK_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -34,24 +39,103 @@ export function inCollaborationSidebar(selector, contentSelector = '') {
   return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
 }
 
-export async function selectCollaborationDomain(control, contentSelector, domain) {
-  const selector = `${contentSelector} [data-testid="collaboration-domain-${domain}"]`
-  await control.command('waitFor', selector, {
+export function inProjectCreateDialog(selector = '') {
+  const dialog = '[data-testid="collaboration-project-create-dialog"]'
+  return selector ? `${dialog} ${selector}` : dialog
+}
+
+export async function openDirectProjectCreation(
+  control,
+  contentSelector,
+  testId = 'collaboration-workspace-project-create'
+) {
+  const trigger = `${contentSelector} [data-testid="${testId}"]`
+  await control.command('waitFor', trigger, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  if (
-    (await control.command('getAttribute', selector, {
-      value: 'aria-pressed',
-    })) !== 'true'
-  ) {
-    await control.command('clickWhenEnabled', selector, {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-  }
-  await control.command('waitFor', `${selector}[aria-pressed="true"]`, {
+  assert.equal(
+    Number(await control.command('getElementCount', `${trigger}[aria-haspopup]`)),
+    0,
+    'A single project creation method must be a direct action'
+  )
+  await control.command('click', trigger)
+  await control.command('waitFor', inProjectCreateDialog(), {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${testId}-menu"]`)),
+    0,
+    'A single project creation method must not open an intermediate menu'
+  )
+}
+
+export async function selectCollaborationDomain(control, contentSelector, domain) {
+  assert.ok(domain === 'local' || domain === 'cloud', `Unknown collaboration domain: ${domain}`)
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="collaboration-platform-root"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${contentSelector} [data-testid="collaboration-domain-local"]`
+      )
+    ),
+    0,
+    'The unified collaboration board still exposed a local selector'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${contentSelector} [data-testid="collaboration-domain-cloud"]`
+      )
+    ),
+    0,
+    'The unified collaboration board still exposed a cloud selector'
+  )
+}
+
+export async function expandCollaborationWorkspace(
+  control,
+  toggleSelector,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
+  const expanded = await control.command('getAttribute', toggleSelector, {
+    value: 'aria-expanded',
+  })
+  assert.ok(
+    expanded === 'true' || expanded === 'false',
+    'A workspace toggle must expose its expanded state'
+  )
+  if (expanded === 'false') await control.command('click', toggleSelector)
+  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, {
+    visible: true,
+    timeoutMs,
+  })
+}
+
+export async function selectCollaborationIssueAgent(
+  control,
+  triggerSelector,
+  agentId,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  await control.command('click', triggerSelector)
+  const option = `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
+  await control.command('waitFor', option, { visible: true, timeoutMs })
+  await control.command('click', option)
+  await control.command('waitFor', `${triggerSelector}[data-value="agent:${agentId}"]`, {
+    visible: true,
+    timeoutMs,
   })
 }
 
@@ -78,6 +162,305 @@ export async function waitForTestIdByText(
     `Unable to find test id ${prefix} containing ${JSON.stringify(expectedText)}: ${lastTestIds.join(
       ', '
     )}`
+  )
+}
+
+export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
+  await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
+    timeoutMs,
+  })
+  await control.command('select', selector, { value })
+}
+
+export async function selectAgentEnvironment(
+  control,
+  testId,
+  value,
+  timeoutMs,
+  verifyDefaultFilter = false,
+  beforeSelect = () => {}
+) {
+  const trigger = `[data-testid="${testId}"]`
+  await control.command('clickWhenEnabled', trigger, { timeoutMs })
+  const search = `[data-testid="${testId}-search"]`
+  await control.command('waitFor', search, { visible: true, timeoutMs })
+  if (verifyDefaultFilter) {
+    assert.equal(
+      await control.command('getAttribute', `[data-testid="${testId}-menu"] [role="option"]`, {
+        value: 'data-testid',
+      }),
+      `${testId}-option-policy:project_pool`,
+      'Automatic selection must be the first environment option'
+    )
+    assert.equal(
+      await control.command(
+        'getAttribute',
+        `[data-testid="${testId}-menu"] [role="listbox"] > div:nth-child(2) > [role="option"]`,
+        { value: 'data-testid' }
+      ),
+      `${testId}-option-policy:user_select`,
+      'Runtime selection must be the second environment option'
+    )
+    assert.equal(
+      Number(
+        await control.command('getElementCount', `[data-testid="${testId}-show-offline"]:checked`)
+      ),
+      0,
+      'Execution environments must hide offline devices by default'
+    )
+  }
+  const option = `[data-testid="${testId}-option-${value || 'empty'}"]`
+  if (
+    !value.startsWith('policy:') &&
+    Number(await control.command('getElementCount', option)) === 0
+  ) {
+    await control.command('click', `[data-testid="${testId}-show-offline"]`)
+  }
+  await control.command('waitFor', option, { visible: true, timeoutMs })
+  const label = await control.command('getText', option)
+  await control.command('fill', search, { value: label })
+  await beforeSelect()
+  await control.command('clickWhenEnabled', option, { timeoutMs })
+  await control.command('waitFor', `${trigger}[data-value=${JSON.stringify(value)}]`, { timeoutMs })
+}
+
+export async function selectCollaborationProjectView(control, contentSelector, view) {
+  const compact = `${contentSelector} [data-testid="collaboration-project-view-select"]`
+  if (Number(await control.command('getElementCount', compact)) > 0) {
+    await control.command('select', compact, { value: view })
+  } else {
+    await control.command(
+      'clickWhenEnabled',
+      `${contentSelector} [data-testid="collaboration-tab-${view}"]`,
+      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+  }
+}
+
+/** Native fixtures require an explicit environment; automatic routing is cloud-only. */
+export async function selectProjectRunnerModel(control, timeoutMs) {
+  const prefix = 'cloud-project-chat-agent'
+  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', timeoutMs)
+  const environment = `[data-testid="${prefix}-environment"]`
+  const model = `[data-testid="${prefix}-model"]`
+  const identity = JSON.stringify(['codex', MODEL_PROVIDER_ID, DEFAULT_MODEL_ID])
+  await control.command('waitFor', `${environment}[data-value="policy:project_pool"]`, {
+    timeoutMs,
+  })
+  await control.command('clickWhenEnabled', environment, { timeoutMs })
+  const firstDevice = `[data-testid="${prefix}-environment-menu"] [role="option"]:not([data-testid$="policy:project_pool"]):not([data-testid$="policy:user_select"])`
+  await control.command('waitFor', firstDevice, { visible: true, timeoutMs })
+  const optionId = await control.command('getAttribute', firstDevice, { value: 'data-testid' })
+  const environmentId = optionId.slice(`${prefix}-environment-option-`.length)
+  assert.ok(environmentId, 'The isolated execution environment must be available')
+  await control.command('clickWhenEnabled', firstDevice, { timeoutMs })
+  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
+  await selectWhenOptionAvailable(control, model, identity, timeoutMs)
+  await selectAgentEnvironment(
+    control,
+    `${prefix}-environment`,
+    'policy:project_pool',
+    timeoutMs,
+    true
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${model} option[value='${identity}']:not(:disabled)`
+      )
+    ),
+    0,
+    'Automatic environment routing must not expose native models'
+  )
+  await selectAgentEnvironment(control, `${prefix}-environment`, environmentId, timeoutMs)
+  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
+  await control.command('select', model, { value: 'user_select' })
+  await control.command('waitFor', `${model} option[value="user_select"]:checked`, { timeoutMs })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', `${model} option[value="user_select"]:checked`)
+    ),
+    1,
+    'The model selector must support choosing a model at run time'
+  )
+  await control.command('select', model, { value: identity })
+  await control.command('waitFor', `[data-testid="${prefix}-model-sources"]`, { timeoutMs })
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${prefix}-model-policy"]`)),
+    0,
+    'Agent creation must use one model selector without a separate policy field'
+  )
+  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'basic', timeoutMs)
+}
+
+export async function selectAgentFormTab(control, dialogId, tab, timeoutMs) {
+  const selector = `[data-testid="${dialogId}-tab-${tab}"]`
+  await control.command('clickWhenEnabled', selector, { timeoutMs })
+  await control.command('waitFor', `${selector}[aria-selected="true"]`, { timeoutMs })
+}
+
+/** Use a stable cloud resource identity and exercise both creation tabs. */
+export async function selectCloudAgentModel(
+  control,
+  request,
+  modelName,
+  timeoutMs,
+  environmentId = null
+) {
+  const dialog = 'wework-agent-resource-creator'
+  await control.command('waitFor', `[data-testid="${dialog}-tab-basic"][aria-selected="true"]`, {
+    timeoutMs,
+  })
+  const selector = '[data-testid="wework-agent-model"]'
+  const modelOptions = `${selector} option:not([value=""]):not([value="user_select"]):not(:disabled)`
+  await control.command('waitFor', `${modelOptions}:checked`, { timeoutMs })
+  assert.equal(
+    await control.command('getAttribute', `${modelOptions}:checked`, { value: 'value' }),
+    await control.command('getAttribute', modelOptions, { value: 'value' }),
+    'The first listed cloud model must be selected on the basic tab'
+  )
+  await control.command('waitFor', '[data-testid="wework-agent-resource-create"]:not(:disabled)', {
+    timeoutMs,
+  })
+  await selectAgentFormTab(control, dialog, 'runtime', timeoutMs)
+  await selectAgentEnvironment(
+    control,
+    'wework-agent-environment',
+    environmentId === null ? 'policy:project_pool' : String(environmentId),
+    timeoutMs,
+    true
+  )
+  const models = await request(
+    '/api/models/unified?include_config=false&scope=all&model_category_type=llm&client_origin=wework'
+  )
+  const model = models.data.find(item => item.name === modelName && item.type === 'public')
+  assert.ok(model, `The cloud model ${modelName} must be available to the creating user`)
+  const identity = JSON.stringify([
+    'codex',
+    'cloud',
+    model.type,
+    model.namespace,
+    model.resourceUserId,
+    model.name,
+  ])
+  await selectWhenOptionAvailable(control, selector, identity, timeoutMs)
+  await selectAgentFormTab(control, dialog, 'basic', timeoutMs)
+  const summary = await control.command('getText', `[data-testid="${dialog}-runtime-summary"]`)
+  assert.ok(
+    summary.includes(model.displayName || model.name),
+    'The basic tab must show the selected runtime model'
+  )
+}
+
+export async function openProjectAgentCreator(
+  control,
+  addSelector,
+  timeoutMs,
+  editorTestId = 'cloud-project-chat-agent-editor'
+) {
+  await control.command('clickWhenEnabled', addSelector, { timeoutMs })
+  const createMode = '[data-testid="project-agent-mode-create"]'
+  await control.command('waitFor', createMode, { visible: true, timeoutMs })
+  await control.command('click', createMode)
+  await control.command('waitFor', `[data-testid="${editorTestId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
+}
+
+export async function configureFirstProjectExecutionEnvironment(
+  control,
+  contentSelector,
+  timeoutMs,
+  deviceId = null
+) {
+  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-manage"]`, {
+    visible: true,
+    timeoutMs,
+  })
+  await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
+  await control.command(
+    'click',
+    `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
+  )
+  if (deviceId) {
+    const pickerToggle = `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`
+    const candidate = `${contentSelector} [data-testid="collaboration-project-execution-environment-candidate-${deviceId}"]`
+    await control.command('click', pickerToggle)
+    await control.command('waitFor', candidate, { visible: true, timeoutMs })
+    await control.command('click', pickerToggle)
+    await control.command('clickThenMacrotask', pickerToggle, {
+      target: `${contentSelector} [data-testid="collaboration-project-execution-environment-picker"]`,
+    })
+    assert.equal(
+      Number(await control.command('getElementCount', candidate)),
+      1,
+      'Reopening the device picker discarded the loaded candidate'
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${contentSelector} [data-testid="collaboration-project-execution-environment-picker-loading"]`
+        )
+      ),
+      0,
+      'Reopening the device picker replaced candidates with a loading placeholder'
+    )
+    await control.command('clickWhenEnabled', candidate, { timeoutMs })
+    await control.command(
+      'waitFor',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-${deviceId}"]`,
+      { visible: true, timeoutMs }
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${contentSelector} [data-testid="collaboration-project-execution-environments-error"]`
+        )
+      ),
+      0,
+      'The selected device was not authorized for the project'
+    )
+  }
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-environments"]`,
+    { text: '在线', timeoutMs }
+  )
+  await control.command(
+    'click',
+    `${contentSelector} [data-testid="collaboration-project-settings-project"]`
+  )
+  // Reopening must expose cached runners and an enabled picker before refresh completes.
+  await control.command(
+    'clickThenMacrotask',
+    `${contentSelector} [data-testid="collaboration-project-settings-environments"]`,
+    { target: `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]` }
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${contentSelector} [data-testid="collaboration-project-execution-environment-loading"]`
+      )
+    ),
+    0,
+    'Reopening execution environments replaced the cached devices with a loading placeholder'
+  )
+  assert.match(
+    await control.command(
+      'getText',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-environments"]`
+    ),
+    /在线/,
+    'Reopening execution environments lost the configured device'
+  )
+  await control.command(
+    'click',
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`
   )
 }
 
@@ -118,9 +501,8 @@ async function waitForNativeCollaborationPlatform(
   return weworkPlatformSelector
 }
 
-async function enterLocalCollaborationWorkspace(control, contentSelector) {
+export async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
-  await selectCollaborationDomain(control, contentSelector, 'local')
   const localWorkspaceTree = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     contentSelector
@@ -163,6 +545,11 @@ export async function createLocalCollaborationProject(control, contentSelector, 
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="cloud-project-header-title"]`,
+    { text: projectName, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-board"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -176,6 +563,10 @@ export async function completeLocalCollaborationFolderImport(control, projectNam
     projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
   )
   await mkdir(workspacePath, { recursive: true })
+  // The evidence directory lives under the Wegent checkout. Give the imported
+  // folder its own repository boundary so product discovery does not mistake
+  // the parent checkout for the project's configured source repository.
+  await runChecked('git', ['init', workspacePath])
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -241,6 +632,8 @@ async function waitForControlValue(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   const startedAt = Date.now()
+  // A click can resolve before React mounts the control being polled.
+  await control.command('waitFor', selector, { timeoutMs })
   let lastValue = ''
   while (Date.now() - startedAt < timeoutMs) {
     lastValue = await control.command('getValue', selector)
@@ -359,6 +752,17 @@ const HARNESS_MILESTONE_SCREENSHOTS = new Set([
 ])
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {
+  const conversationDiagnostics = await control.command(
+    'getConversationDiagnosticsSnapshot',
+    'body'
+  )
+  if (conversationDiagnostics !== 'null') {
+    await writeFile(
+      join(resultDir, `${name}.conversation-diagnostics.json`),
+      `${conversationDiagnostics}\n`,
+      'utf8'
+    )
+  }
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
   if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
     return null
@@ -588,6 +992,12 @@ async function verifyWorkspaceIssueCreation(control) {
     'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
   const twoLineIssueDescription = '折叠描述第一行\n折叠描述第二行'
   await createLocalCollaborationProject(control, boardContentSelector, projectName)
+  await configureFirstProjectExecutionEnvironment(
+    control,
+    boardContentSelector,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await selectCollaborationProjectView(control, boardContentSelector, 'board')
 
   const createIssueSelector = `${boardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${boardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
@@ -704,6 +1114,7 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  await control.command('click', issueDetailDescription)
   await waitForAttribute(
     control,
     issueDetailDescription,
@@ -1052,24 +1463,16 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
   assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
   const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
   const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
-  await control.command(
-    'click',
-    `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`,
-    {
-      visible: true,
-    }
-  )
+  const openTaskSelector = `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`
+  const selector =
+    Number(await control.command('getElementCount', openTaskSelector)) > 0
+      ? openTaskSelector
+      : `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
+  await control.command('scrollIntoView', selector)
+  await control.command('click', selector, { visible: true })
   await control.command(
     'waitFor',
-    `[data-testid="cloud-todo-card-progress-popup-${boardItemId}"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command(
-    'click',
-    `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`,
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
     {
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1100,6 +1503,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
   await control.command(
     'clickWhenEnabled',
@@ -1177,10 +1581,6 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-toggle-tasks"]`
-  )
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1244,8 +1644,22 @@ async function verifyExistingTaskBoardAssociation(
     'The fixed collaboration tab did not open the collaboration platform',
     { fixed: true }
   )
-  const targetProjectName = 'Existing Task Target Board'
+  const targetProjectName = `Existing Task Target Board ${randomUUID().slice(0, 8)}`
   await createLocalCollaborationProject(control, activeBoardContentSelector, targetProjectName)
+  await configureFirstProjectExecutionEnvironment(
+    control,
+    activeBoardContentSelector,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await selectCollaborationProjectView(control, activeBoardContentSelector, 'board')
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   const existingTargetTitle = 'WEWORK_EXISTING_BOARD_CARD'
   const createIssueSelector = `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${activeBoardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
@@ -1289,19 +1703,52 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'markElementWithText',
-    '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
-    {
-      text: targetProjectName,
-      value: 'existing-task-target-board',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  const pickerSearch = '[data-testid="project-space-picker-search"]'
+  await control.command('fill', pickerSearch, { value: 'NO_SUCH_PROJECT_PRJBA8FC1_42' })
+  await control.command('waitFor', '[data-testid="project-space-picker-empty"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        '[data-testid="work-item-context-menu"] [role="option"]'
+      )
+    ),
+    0,
+    'Searching for an unknown project must not leave unrelated options selectable'
   )
-  await control.command(
-    'click',
-    '[data-testid="work-item-context-menu"] [data-e2e-anchor-id="existing-task-target-board"]'
+  await control.command('waitFor', '[data-testid="clear-project-space-context-button"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="project-space-picker-clear-search"]')
+  await control.command('fill', pickerSearch, { value: targetProjectName })
+  await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const targetOption = '[data-testid="work-item-context-menu"] [role="option"]'
+  assert.equal(
+    Number(await control.command('getElementCount', targetOption)),
+    1,
+    'Searching for the unique test project must produce exactly one selectable result'
   )
+  await control.command('press', pickerSearch, { key: 'Escape' })
+  await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('fill', pickerSearch, { value: targetProjectName })
+  await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', pickerSearch, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="task-board-association-dialog"]', {
     text: targetProjectName,
     visible: true,
@@ -1341,9 +1788,8 @@ async function verifyExistingTaskBoardAssociation(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const movedReviewColumnSelector = `${movedBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
-  await control.command('scrollIntoView', movedReviewColumnSelector)
-  await control.command('waitFor', movedReviewColumnSelector, {
+  const movedBoardSelector = `${movedBoardContentSelector} [data-testid="collaboration-board"]`
+  await control.command('waitFor', movedBoardSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1408,6 +1854,8 @@ async function verifyExistingTaskBoardAssociation(
   if (captureScreenshots) {
     await captureVerificationScreenshot(control, 'workspace-10-existing-card-linked.png')
   }
+  await verifyNewTaskBoardAssociation(control, targetProjectName, existingTargetTitle)
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
 }
 
 function workspaceTabIds(snapshot, kind) {
@@ -1469,7 +1917,7 @@ async function waitForAttribute(control, selector, name, expected, message) {
   throw new Error(`${message}: expected ${name}=${expected}, received ${received}`)
 }
 
-async function verifyWorkspaceTabIsolation(control) {
+async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
   await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1842,6 +2290,18 @@ async function verifyWorkspaceTabIsolation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getAttribute', `[data-testid="workspace-tab-select-${thirdTaskId}"]`, {
+      value: 'data-tab-kind',
+    }),
+    'task',
+    'Plugin marketplace navigation must retain task tab ownership'
+  )
+  await control.command('click', `${thirdTaskContent} [data-testid="sites-button"]`)
+  await control.command('waitFor', '[data-testid="sites-workspace"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const afterOrdinaryNavigation = JSON.parse(
     await control.command('snapshot', '[data-testid="workspace-tab-strip-container"]')
   )
@@ -1895,10 +2355,54 @@ async function verifyWorkspaceTabIsolation(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-04-route-replacement.png')
 
-  await control.command('press', `[data-testid="workspace-tab-select-${secondTaskId}"]`, {
-    key: 'Shift+F10',
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${fourthTaskId}"]`)
+  await control.command('waitFor', '[data-testid="workspace-tab-pin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', '[data-testid="workspace-tab-pin"]')
+  const pinnedFourthTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${fourthTaskId}`),
+    'Pinning a workspace tab did not remove its close action',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${fourthTaskId}"]`
+  )
+  assert.equal(
+    pinnedFourthTaskSnapshot.testIds.includes(`workspace-tab-close-${fourthTaskId}`),
+    false,
+    'Pinning a workspace tab did not remove its close action'
+  )
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${fourthTaskId}"]`)
+  await control.command('waitFor', '[data-testid="workspace-tab-unpin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-tab-unpin"]')
+  await control.command('waitFor', `[data-testid="workspace-tab-close-${fourthTaskId}"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${secondTaskId}"]`)
+  await control.command('waitFor', '[data-testid="workspace-tab-pin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-tab-pin"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    'Pinning the task tab before detaching did not settle',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${secondTaskId}"]`
+  )
+  await control.command('contextMenu', `[data-testid="workspace-tab-select-${secondTaskId}"]`)
   await control.command('waitFor', '[data-testid="workspace-tab-context-menu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="workspace-tab-unpin"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1962,9 +2466,98 @@ async function verifyWorkspaceTabIsolation(control) {
   assert.equal(
     sourceTabs.some(tab => tab.id === secondTaskId),
     false,
-    'The transferred task tab remained open in the source window'
+    'The transferred fixed task tab remained open in the source window'
+  )
+
+  const detachedWindowLabel = detachedReady.windowLabel
+  const readyCountBeforeRestart = control.readyCount
+  control.activateWindow('main')
+  await restartDesktopApp()
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeRestart + 1),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The fixed workspace window did not reconnect after restarting Wework'
+  )
+  const restoredDetachedControl = {
+    command: (...args) => control.commandForWindow(detachedWindowLabel, ...args),
+  }
+  await restoredDetachedControl.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-${secondTaskId}"]`,
+    {
+      visible: true,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  const restoredDetachedSnapshot = await waitForSnapshot(
+    restoredDetachedControl,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    'The restored detached tab did not regain its fixed state',
+    DEFAULT_STEP_TIMEOUT_MS,
+    `[data-testid="workspace-tab-${secondTaskId}"]`
+  )
+  assert.deepEqual(
+    allWorkspaceTabIds(restoredDetachedSnapshot),
+    [`workspace-tab-${secondTaskId}`],
+    'Restarting Wework did not restore the fixed tab in its detached window'
+  )
+  assert.equal(
+    restoredDetachedSnapshot.testIds.includes(`workspace-tab-close-${secondTaskId}`),
+    false,
+    'The restored detached tab lost its fixed state'
+  )
+  const restoredLocation = new URL(restoredDetachedSnapshot.location)
+  assert.equal(
+    restoredLocation.pathname,
+    '/wework/app/',
+    'The restored workspace window bypassed the Wework app route'
+  )
+  assert.equal(
+    restoredLocation.searchParams.get('workspaceTab'),
+    secondTaskId,
+    'The restored workspace window lost its tab identity'
+  )
+  await restoredDetachedControl.command('waitFor', detachedTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await restoredDetachedControl.command('fill', detachedTaskComposer, {
+    value: '重启后的窗口可以继续输入',
+  })
+  assert.equal(
+    await restoredDetachedControl.command('getValue', detachedTaskComposer),
+    '重启后的窗口可以继续输入',
+    'The restored workspace window composer is not editable'
+  )
+  await captureVerificationScreenshot(
+    restoredDetachedControl,
+    'workspace-tabs-isolation-06-fixed-window-restored.png',
+    `[data-testid="workspace-tab-content-${secondTaskId}"]`
+  )
+  await restoredDetachedControl.command(
+    'contextMenu',
+    `[data-testid="workspace-tab-select-${secondTaskId}"]`
+  )
+  await restoredDetachedControl.command('waitFor', '[data-testid="workspace-tab-unpin"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await restoredDetachedControl.command('click', '[data-testid="workspace-tab-unpin"]')
+  await restoredDetachedControl.command(
+    'waitFor',
+    `[data-testid="workspace-tab-close-${secondTaskId}"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
   )
   control.activateWindow('main')
+  await verifyWorkspaceTabReturn(
+    control,
+    restoredDetachedControl,
+    secondTaskId,
+    waitForPersistedComposerInput
+  )
 }
 
 export {

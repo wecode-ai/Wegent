@@ -4,6 +4,7 @@ import type {
   TurnFileChangesSummary,
 } from './runtime'
 import type {
+  WorkbenchMessage,
   WorkbenchProcessingBlock,
   WorkbenchToolBlock as ToolBlock,
 } from './workbench-message-reducer'
@@ -12,6 +13,7 @@ type ProcessingBlock = WorkbenchProcessingBlock<TurnFileChangesSummary>
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 export const CODEX_IMPLEMENT_PLAN_QUESTION = '执行此计划?'
 export const CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL = '是的，执行此计划'
+export const ASYNC_REQUEST_USER_INPUT_DELIVERY = 'async'
 const IMPLEMENT_PLAN_TEXT_MARKERS = ['实施此计划', '执行此计划']
 
 export function hasImplementationPlanText(text: string | null | undefined): boolean {
@@ -93,6 +95,177 @@ export function isImplementationPlanConfirmationResponse(
 export function isRequestUserInputBlock(block: ProcessingBlock): block is RequestUserInputBlock {
   if (block.type !== 'tool') return false
   return isRequestUserInputPayload(block.renderPayload)
+}
+
+/**
+ * Codex's non-blocking `request_user_input_async` question. The tool returns
+ * immediately, so the answer arrives as the next user message instead of a
+ * runtime response.
+ */
+export function isAsyncRequestUserInputPayload(
+  payload: RequestUserInputPayload | null | undefined
+): boolean {
+  return payload?.delivery === ASYNC_REQUEST_USER_INPUT_DELIVERY
+}
+
+/**
+ * Async questions are answered by the next user message, so their response is
+ * derived from the conversation rather than from a runtime answer. Without this,
+ * a question the user answered in the composer re-opens as a stale prompt.
+ */
+export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[]
+): WorkbenchMessage<TAttachment, TFileChanges>[] {
+  const replyByIndex = asyncReplyByMessageIndex(messages)
+  let changed = false
+  const resolved = messages.map((message, index) => {
+    const reply = replyByIndex[index]
+    if (!reply) return message
+    const blocks = message.blocks?.map(block => resolveAsyncBlock(block, reply))
+    if (!blocks || blocks.every((block, blockIndex) => block === message.blocks![blockIndex])) {
+      return message
+    }
+    changed = true
+    return { ...message, blocks }
+  })
+  return changed ? resolved : messages
+}
+
+export interface AsyncRequestUserInputReply {
+  question: string
+  answer: string
+}
+
+/**
+ * What each non-blocking answer said, keyed by the reply message id.
+ *
+ * An async question is answered by the next user message (that delivery is what
+ * keeps the model moving), so the transcript recovers the question/answer pairs
+ * from the conversation instead of from a runtime response. That stays true once
+ * the question has been answered: sending it only echoes the answer back onto the
+ * block, so the next user message is still the source of truth. A reply that
+ * cannot be attributed to its questions is left out, and the message renders as
+ * typed.
+ */
+export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[]
+): Map<string, AsyncRequestUserInputReply[]> {
+  const replies = new Map<string, AsyncRequestUserInputReply[]>()
+  messages.forEach((message, index) => {
+    const questions = asyncQuestionPrompts(message)
+    if (questions.length === 0) return
+    const reply = messages.slice(index + 1).find(isUserReply)
+    if (!reply) return
+    const rows = pairQuestionsWithReply(questions, reply.content)
+    if (rows.length > 0) replies.set(reply.id, rows)
+  })
+  return replies
+}
+
+function asyncQuestionPrompts<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): string[] {
+  return (message.blocks ?? []).flatMap(block => {
+    if (block.type !== 'tool') return []
+    const payload = block.renderPayload
+    if (!isRequestUserInputPayload(payload) || !isAsyncRequestUserInputPayload(payload)) {
+      return []
+    }
+    return (payload.questions ?? []).map(
+      (question, index) =>
+        question.question?.trim() || question.id?.trim() || `question_${index + 1}`
+    )
+  })
+}
+
+/**
+ * Answers are composed one per line in question order, so a reply with as many
+ * lines as questions maps line to question. A single question answers with its
+ * whole reply; anything else is left unattributed.
+ */
+function pairQuestionsWithReply(
+  questions: string[],
+  reply: string
+): AsyncRequestUserInputReply[] {
+  if (questions.length === 1) {
+    const answer = reply.trim()
+    return answer ? [{ question: questions[0], answer }] : []
+  }
+  const lines = reply
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+  if (lines.length !== questions.length) return []
+  return questions.map((question, index) => ({ question, answer: lines[index] }))
+}
+
+function resolveAsyncBlock<TFileChanges>(
+  block: WorkbenchProcessingBlock<TFileChanges>,
+  reply: string
+): WorkbenchProcessingBlock<TFileChanges> {
+  if (block.type !== 'tool') return block
+  const payload = block.renderPayload
+  if (!isRequestUserInputPayload(payload)) return block
+  if (!isAsyncRequestUserInputPayload(payload) || hasRequestUserInputResponse(payload)) {
+    return block
+  }
+  return {
+    ...block,
+    status: 'done',
+    renderPayload: {
+      ...payload,
+      response: asyncRequestUserInputResponse(payload, reply),
+    },
+  }
+}
+
+function asyncReplyByMessageIndex(messages: WorkbenchMessage[]): (string | null)[] {
+  const replies: (string | null)[] = new Array(messages.length).fill(null)
+  let reply: string | null = null
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    replies[index] = reply
+    if (isUserReply(messages[index])) reply = messages[index].content
+  }
+  return replies
+}
+
+/** The user message that answers a preceding question, whenever the composer sent it. */
+function isUserReply(message: WorkbenchMessage): boolean {
+  return message.role === 'user' && Boolean(message.content.trim())
+}
+
+/** A single free-form reply answers every question the async card asked. */
+function asyncRequestUserInputResponse(
+  payload: RequestUserInputPayload,
+  reply: string
+): RequestUserInputResponse {
+  return {
+    requestId: payload.requestId ?? payload.request_id,
+    itemId: payload.itemId ?? payload.item_id,
+    answers: Object.fromEntries(
+      (payload.questions ?? []).map((question, index) => [
+        question.id?.trim() || `question_${index + 1}`,
+        { answers: [reply] },
+      ])
+    ),
+  }
+}
+
+/** Finds the question a runtime answer belongs to so its delivery mode can win. */
+export function findRequestUserInputPayload<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[],
+  key: string | null
+): RequestUserInputPayload | null {
+  if (!key) return null
+  for (const message of messages) {
+    for (const block of message.blocks ?? []) {
+      if (block.type !== 'tool') continue
+      const payload = block.renderPayload
+      if (!isRequestUserInputPayload(payload)) continue
+      if (requestUserInputPayloadKey(payload) === key) return payload
+    }
+  }
+  return null
 }
 
 export function isPendingRequestUserInputBlock(

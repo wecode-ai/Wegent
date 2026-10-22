@@ -42,6 +42,7 @@ import { parseModelSelectValue, resolveSelectedModel } from './model-select-util
 import type { CodingExecutorRuntime, SimpleExecutorMode } from './simple-team-edit-utils'
 
 interface SimpleTeamEditFormProps {
+  collaborationModeSelector: ReactNode
   name: string
   setName: (value: string) => void
   isEditing?: boolean
@@ -145,6 +146,7 @@ function AgentFormField({
 }
 
 export default function SimpleTeamEditForm({
+  collaborationModeSelector,
   name,
   setName,
   isEditing = false,
@@ -613,6 +615,7 @@ export default function SimpleTeamEditForm({
                 className="space-y-4 border-t border-border px-4 py-4"
                 data-testid="simple-section-advanced-content"
               >
+                {collaborationModeSelector}
                 <AgentFormField label={t('settings:team.simple.agent_description_label')}>
                   <Input
                     id="teamDescription"
