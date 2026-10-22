@@ -28,6 +28,8 @@ PlantUML requests SVG from `https://www.plantuml.com/plantuml/svg` by default. D
 
 ## Markdown Preview
 
+Markdown file links in conversations and documents retain their original destinations instead of being rewritten to `wework.local` placeholder URLs. The renderer sends local paths, `file://`, and `folder://` links directly to Wework file or directory handlers, and application protocols to existing link handlers. Local images still load through the file service. Link handling happens after Markdown parsing: expressions such as `[=:]([0-9]+)` inside fenced or inline code must remain unchanged when displayed or copied. Table copying also preserves original link destinations. HTML sanitization continues to block unsafe link protocols such as `javascript:`, `data:`, and `vbscript:`.
+
 `.md` and `.markdown` files open as rendered documents by default and provide a Source/Preview switch. Source mode continues to support line selection and local comments, but it must not render Pierre's file header. The file path appears only in the file-panel toolbar so scrolling cannot produce a duplicate sticky header or flicker.
 
 Both the Markdown preview and source view must own a vertical scrolling region. The soft scrollbar uses a transparent track and a sufficiently contrasting gray thumb so the current scroll position remains visible.
