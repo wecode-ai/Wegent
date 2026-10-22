@@ -1,0 +1,46 @@
+name: Set up real object storage for E2E
+description: Build and cache the pinned MinIO binary for the runner platform.
+inputs:
+  save-cache:
+    description: Allow cache writes from the main branch.
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Restore real object storage
+      id: minio
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/wework-minio/bin
+        key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
+
+    - name: Set up Go for real object storage
+      if: steps.minio.outputs.cache-hit != 'true'
+      uses: actions/setup-go@v6
+      with:
+        go-version: "1.25.9"
+        cache: false
+
+    - name: Build real object storage
+      if: steps.minio.outputs.cache-hit != 'true'
+      shell: bash
+      run: GOBIN="$RUNNER_TEMP/wework-minio/bin" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+
+    - name: Save real object storage
+      if: inputs.save-cache == 'true' && steps.minio.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/wework-minio/bin
+        key: ${{ steps.minio.outputs.cache-primary-key }}
+
+    - name: Enable real object storage
+      shell: bash
+      run: |
+        binary="$RUNNER_TEMP/wework-minio/bin/minio"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          binary="$binary.exe"
+        fi
+        test -x "$binary"
+        "$binary" --version
+        echo "WEWORK_E2E_MINIO_BIN=$binary" >> "$GITHUB_ENV"

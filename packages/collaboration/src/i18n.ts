@@ -7,6 +7,7 @@ import { queueMessages } from "./conversation/queueMessages";
 import { projectWorkMessages } from "./controls/projectWorkMessages";
 import { conversationMessages } from "./conversation/messages";
 import { boardCardMessages } from "./issue-card/messages";
+import { boardSortMessages } from "./project-board/messages";
 import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
@@ -289,6 +290,29 @@ const sharedMessages: Record<
     "todo.agent_private_share_required": "原私有绑定需要明确共享后启用",
     "todo.add_project_agent_description":
       "添加后会共享到父空间并向项目成员开放使用。原定义和私人凭据仍按原权限管理。",
+    "todo.agent_picker_search": "搜索智能体",
+    "todo.add_project_agent": "添加智能体",
+    "todo.create_agent": "新建智能体",
+    "todo.add_to_project": "加入项目",
+    "todo.add_to_workspace": "加入空间",
+    "todo.agent_picker_list": "选择一个智能体",
+    "todo.agent_picker_loading": "正在加载智能体…",
+    "todo.agent_picker_load_failed": "无法加载智能体",
+    "todo.agent_picker_shared": "空间共享",
+    "todo.agent_picker_personal": "我的智能体",
+    "todo.agent_picker_added": "已添加",
+    "todo.agent_picker_no_match": "没有匹配的智能体",
+    "todo.agent_picker_empty": "还没有可添加的智能体",
+    "todo.agent_picker_try_search": "试试其他名称，或清除搜索。",
+    "todo.agent_picker_create_hint": "新建一个智能体，让它协助处理任务。",
+    "todo.agent_picker_share_hint": "请让空间管理员共享智能体后再添加。",
+    "todo.agent_picker_clear_search": "清除搜索",
+    "todo.agent_picker_selected": "已选择：{{name}}",
+    "todo.agent_picker_select_hint": "选择智能体后即可添加",
+    "todo.agent_picker_adding": "添加中…",
+    "todo.agent_picker_description": "选择一个智能体，加入后即可分配项目任务。",
+    "todo.agent_picker_workspace_description": "选择一个智能体，供空间内项目复用。",
+    "todo.agent_picker_workspace_share": "添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
     "common.actions": "操作",
     "standIn.start_failed": "任务已创建，替身未能启动：",
     "standIn.retry": "重试处理",
@@ -307,6 +331,7 @@ const sharedMessages: Record<
     "common.delete": "删除",
     "common.remove": "移除",
     "common.retry": "重试",
+    "common.loading": "正在加载…",
     "common.save": "保存",
     "todo.codex_environment_hint":
       "任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。",
@@ -475,6 +500,7 @@ const sharedMessages: Record<
     "todo.delete_tag_confirm": "删除标签“{{tag}}”{{suffix}}？",
     "todo.delete_tag_usage_suffix": "，并从 {{count}} 个任务上移除",
     "todo.load_project_failed": "加载项目失败",
+    "todo.load_tag_catalog_failed": "加载标签目录失败",
     "todo.update_visibility_failed": "更新项目权限失败",
     "todo.save_card_display_failed": "保存卡片显示设置失败",
     "todo.save_statuses_failed": "保存状态设置失败",
@@ -761,6 +787,29 @@ const sharedMessages: Record<
       "This private binding requires explicit sharing before enabling",
     "todo.add_project_agent_description":
       "Adding an Agent shares it with the parent space for project use. Definitions and private credentials retain their own permissions.",
+    "todo.agent_picker_search": "Search agents",
+    "todo.add_project_agent": "Add agent",
+    "todo.create_agent": "Create agent",
+    "todo.add_to_project": "Add to project",
+    "todo.add_to_workspace": "Add to space",
+    "todo.agent_picker_list": "Choose an agent",
+    "todo.agent_picker_loading": "Loading agents…",
+    "todo.agent_picker_load_failed": "Unable to load agents",
+    "todo.agent_picker_shared": "Shared with space",
+    "todo.agent_picker_personal": "My agents",
+    "todo.agent_picker_added": "Already added",
+    "todo.agent_picker_no_match": "No matching agents",
+    "todo.agent_picker_empty": "No agents available to add",
+    "todo.agent_picker_try_search": "Try another name or clear your search.",
+    "todo.agent_picker_create_hint": "Create an agent to help with tasks.",
+    "todo.agent_picker_share_hint": "Ask a space administrator to share an agent first.",
+    "todo.agent_picker_clear_search": "Clear search",
+    "todo.agent_picker_selected": "Selected: {{name}}",
+    "todo.agent_picker_select_hint": "Select an agent to continue",
+    "todo.agent_picker_adding": "Adding…",
+    "todo.agent_picker_description": "Choose an agent to assign project tasks to.",
+    "todo.agent_picker_workspace_description": "Choose an agent for projects in this space to reuse.",
+    "todo.agent_picker_workspace_share": "Projects in this space can reuse this agent. Definitions and private credentials retain their own permissions.",
     "common.actions": "Actions",
     "standIn.start_failed": "Issue created. Stand-in could not start:",
     "standIn.retry": "Retry",
@@ -779,6 +828,7 @@ const sharedMessages: Record<
     "common.delete": "Delete",
     "common.remove": "Remove",
     "common.retry": "Retry",
+    "common.loading": "Loading…",
     "common.save": "Save",
     "todo.codex_environment_hint":
       "Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.",
@@ -955,6 +1005,7 @@ const sharedMessages: Record<
     "todo.delete_tag_confirm": "Delete tag “{{tag}}”{{suffix}}?",
     "todo.delete_tag_usage_suffix": " and remove it from {{count}} issues",
     "todo.load_project_failed": "Failed to load project",
+    "todo.load_tag_catalog_failed": "Failed to load tag catalog",
     "todo.update_visibility_failed": "Failed to update project visibility",
     "todo.save_card_display_failed": "Failed to save card display settings",
     "todo.save_statuses_failed": "Failed to save status settings",
@@ -1244,6 +1295,7 @@ export function createCollaborationTranslator(
       composerMessages[locale][key] ??
       modelMessages[locale][key] ??
       boardCardMessages[locale][key] ??
+      boardSortMessages[locale][key] ??
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??

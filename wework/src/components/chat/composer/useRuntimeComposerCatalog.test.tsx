@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { RuntimeComposerCatalogSnapshot } from '@wegent/chat-core/runtime-composer-snapshot'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { useTaskComposerCatalog } from './useTaskComposerCatalog'
+import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
 
 const translate = (key: string) => key
 function snapshot(taskId: string): RuntimeComposerCatalogSnapshot {
@@ -44,11 +44,32 @@ function services(readCatalog = vi.fn().mockResolvedValue(snapshot('one'))) {
     },
   } as unknown as WorkbenchServices
 }
-describe('side task composer catalog', () => {
+describe('runtime composer catalog', () => {
+  it('isolates workspace catalogs across device and directory changes before task creation', async () => {
+    const api = services()
+    const { result, rerender } = renderHook(
+      ({ deviceId, workspacePath }) =>
+        useRuntimeComposerCatalog({ deviceId, scope: 'workspace', workspacePath }, api, translate),
+      { initialProps: { deviceId: 'remote', workspacePath: '/one' } }
+    )
+    const first = result.current
+    await result.current.listSkills!()
+    expect(api.composerCatalogApi!.readCatalog).toHaveBeenLastCalledWith(
+      { deviceId: 'remote', scope: 'workspace', workspacePath: '/one' },
+      true
+    )
+    rerender({ deviceId: 'other', workspacePath: '/two' })
+    expect(result.current.appsStore).not.toBe(first.appsStore)
+    await result.current.listApps!()
+    expect(api.composerCatalogApi!.readCatalog).toHaveBeenLastCalledWith(
+      { deviceId: 'other', scope: 'workspace', workspacePath: '/two' },
+      true
+    )
+  })
   it('coalesces picker and slash reads and resolves icons from the bound device', async () => {
     const api = services()
     const { result } = renderHook(() =>
-      useTaskComposerCatalog({ deviceId: 'remote', taskId: 'one' }, api, translate)
+      useRuntimeComposerCatalog({ deviceId: 'remote', taskId: 'one' }, api, translate)
     )
     const [apps, skills] = await Promise.all([
       result.current.listApps!(),
@@ -83,7 +104,7 @@ describe('side task composer catalog', () => {
       .mockResolvedValue(snapshot('two'))
     const api = services(read)
     const { result, rerender } = renderHook(
-      ({ taskId }) => useTaskComposerCatalog({ deviceId: 'remote', taskId }, api, translate),
+      ({ taskId }) => useRuntimeComposerCatalog({ deviceId: 'remote', taskId }, api, translate),
       { initialProps: { taskId: 'one' } }
     )
     const old = result.current

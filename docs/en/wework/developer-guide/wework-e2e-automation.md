@@ -6,6 +6,12 @@ sidebar_position: 34
 
 Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
+Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
+
+The first model-routing task and real Harness CLI launch use the workbench startup budget. Streaming scroll waits for the model request before applying the original ten-second UI assertion. After changing projects, wait for the execution mode control to become available. Scroll moved board cards into view before checking result visibility, and use the responsive view helper for cloud Stand-in navigation. Failed workbench snapshots include resource connection, request, and response timings with paths only, excluding query parameters.
+
+Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
+
 ## Running Tests
 
 Install the Playwright browser before the first run:
@@ -119,6 +125,8 @@ the regression exercise desktop persistence across origins instead of an
 ordinary read within the same renderer process.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
+
+The `collaboration-runtime-reconciliation` Core checkpoint runs independently and creates its own isolated cloud project, Issue, agent, and real Executor. A transparent WebSocket proxy holds actual completion events to cover snapshot-first, final-event-first, and terminal transactions contending on a real MySQL row lock. Each order checks the complete final text in the database, the Issue UI, and after reload. While a continuation's model response is held, it replays duplicate, reordered, unsequenced, and empty old completion events. Every replay waits for the real backend acknowledgement before asserting that the new turn, workflow, and execution capacity remain unchanged. The proxy only schedules transport; every component except the model service is real. Cleanup releases the model, transaction locks, and proxy connections.
 
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,

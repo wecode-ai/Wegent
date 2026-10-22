@@ -398,6 +398,7 @@ async function startHarness({
   model,
   prompt,
   timeoutMs,
+  startupTimeoutMs,
   capturePage,
   runtimeMenuScreenshot,
   modelMenuScreenshot,
@@ -462,7 +463,7 @@ async function startHarness({
     { timeoutMs }
   )
   if (presentation === 'terminal') {
-    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
+    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs: startupTimeoutMs })
   } else {
     await control.command(
       'waitFor',
@@ -619,7 +620,12 @@ async function verifyHarnessWorkbenchChrome({
   await control.command('click', rightPanelToggleSelector)
 }
 
-export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  workspacePath,
+}) {
   const executables = await resolveHarnessExecutables()
   const harnessModelRequests = []
   const capturePage = (control, name) => captureScreenshot(control, name, 'body')
@@ -702,6 +708,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await configureHarnesses(control, executables, uiTimeoutMs, capturePage)
       await startHarness({
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         control,
         harnessId: 'opencode',
         model: 'Desktop E2E Vision',
@@ -762,6 +769,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await startHarness({
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         control,
         harnessId: 'kimi_code',
         model: 'Desktop E2E Vision',
@@ -807,6 +815,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await startHarness({
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         control,
         harnessId: 'claude_code',
         model: 'Desktop E2E DeepSeek Pro Vision Main',

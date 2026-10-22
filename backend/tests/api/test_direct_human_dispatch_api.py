@@ -43,6 +43,7 @@ def direct_human_project(test_db: Session, test_user: User) -> CloudProject:
 def test_direct_human_assignment_notification_opens_original_issue(
     test_client: TestClient,
     test_token: str,
+    test_user: User,
     test_db: Session,
     direct_human_project: CloudProject,
 ) -> None:
@@ -92,6 +93,7 @@ def test_direct_human_assignment_notification_opens_original_issue(
         .one()
     )
     payload = notification.payload
+    assert payload["actorName"] == test_user.user_name
     assert payload["action"] == "open_issue"
     assert payload["itemId"] == created.json()["id"]
     assert payload["taskTitle"] == "Prepare release notes"

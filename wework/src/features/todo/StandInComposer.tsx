@@ -6,6 +6,8 @@ import { useProjectWorktreeAvailabilityProbe } from '@/components/layout/useProj
 import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import { ProjectWorkBar, ProjectWorkSection } from '@/components/chat/composer/ProjectWorkBar'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
+import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { listProjectBranches } from '@/api/environment'
@@ -42,6 +44,17 @@ export function StandInComposer({
   services?: WorkbenchServices
 }) {
   const { t } = useTranslation('common')
+  const composerCatalog = useRuntimeComposerCatalog(
+    draft.executionDeviceId
+      ? {
+          deviceId: draft.executionDeviceId,
+          scope: 'workspace',
+          workspacePath: draft.workspace?.workspacePath ?? null,
+        }
+      : null,
+    services,
+    t
+  )
   const models = useStandInModels(services, draft, selectedAgent)
   useEffect(() => {
     const model = models.defaultIdentity
@@ -134,6 +147,7 @@ export function StandInComposer({
     : t('standIn.inherit_environment')
   const valid =
     !submitDisabled &&
+    !models.loading &&
     !models.unavailable &&
     !(draft.workspace && !selected) &&
     !(draft.workspace?.executionMode === 'git_worktree' && !availability.available)
@@ -181,47 +195,44 @@ export function StandInComposer({
           />
         </div>
       </div>
-      <BufferedChatInput
-        value={draft.prompt}
-        onChange={prompt => onChange(current => ({ ...current, prompt }))}
-        onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
-        onSubmit={prompt => onSave(prompt ?? draft.prompt)}
-        disabled={disabled}
-        submitDisabled={
-          submitDisabled ||
-          models.unavailable ||
-          Boolean(draft.workspace && !selected) ||
-          (draft.workspace?.executionMode === 'git_worktree' && !availability.available)
-        }
-        clearOnSubmit={false}
-        allowEmptySubmit
-        placeholder={t(
-          draft.goalMode ? 'standIn.goal_placeholder' : 'standIn.dynamic_placeholder',
-          {
-            environment: draft.workspace ? environment : t('standIn.default_workspace'),
+      <ComposerCatalogContext.Provider value={composerCatalog}>
+        <BufferedChatInput
+          value={draft.prompt}
+          onChange={prompt => onChange(current => ({ ...current, prompt }))}
+          onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
+          onSubmit={prompt => onSave(prompt ?? draft.prompt)}
+          disabled={disabled}
+          submitDisabled={!valid}
+          clearOnSubmit={false}
+          allowEmptySubmit
+          placeholder={t(
+            draft.goalMode ? 'standIn.goal_placeholder' : 'standIn.dynamic_placeholder',
+            {
+              environment: draft.workspace ? environment : t('standIn.default_workspace'),
+            }
+          )}
+          variant="desktop"
+          presentation="configuration"
+          inputTestId="stand-in-prompt"
+          submitButtonTestId="stand-in-save"
+          submitLabel={t('standIn.save')}
+          showProjectWorkBar={false}
+          showWorkspaceMenu={false}
+          showExecutionTools={false}
+          onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
+          goalDraftActive={Boolean(draft.goalMode)}
+          onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
+          toolbarLeadingContext={
+            <>
+              {models.error && (
+                <span role="status" className="text-xs text-error">
+                  {models.error}
+                </span>
+              )}
+            </>
           }
-        )}
-        variant="desktop"
-        presentation="configuration"
-        inputTestId="stand-in-prompt"
-        submitButtonTestId="stand-in-save"
-        submitLabel={t('standIn.save')}
-        showProjectWorkBar={false}
-        showWorkspaceMenu={false}
-        showExecutionTools={false}
-        onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
-        goalDraftActive={Boolean(draft.goalMode)}
-        onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
-        toolbarLeadingContext={
-          <>
-            {models.error && (
-              <span role="status" className="text-xs text-error">
-                {models.error}
-              </span>
-            )}
-          </>
-        }
-      />
+        />
+      </ComposerCatalogContext.Provider>
     </div>
   )
 }
