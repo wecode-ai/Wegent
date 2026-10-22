@@ -440,3 +440,26 @@ it("refreshes an externally changed Agent directory without disabling ordinary c
   ]);
   expect(get).toHaveBeenCalledTimes(2);
 });
+
+it("revalidates workspace grants without reusing an older in-flight catalog", async () => {
+  const { transport, get } = createTransport();
+  let resolveOld!: (value: unknown) => void;
+  get
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+    )
+    .mockResolvedValueOnce({ items: [] });
+  const api = createSharedWorkspaceHttpApi(transport);
+  const oldRead = api.workspaces.listAgents("space");
+  await Promise.resolve();
+
+  await expect(
+    api.workspaces.listAgents("space", { forceRefresh: true }),
+  ).resolves.toEqual([]);
+  resolveOld({ items: [{ id: 42, team_id: 42, name: "Revoked" }] });
+  await oldRead;
+  await expect(api.workspaces.listAgents("space")).resolves.toEqual([]);
+  expect(get).toHaveBeenCalledTimes(2);
+});

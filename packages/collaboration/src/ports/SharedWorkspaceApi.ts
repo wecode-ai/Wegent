@@ -585,7 +585,10 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
-  listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>;
+  listAgents(
+    workspaceId: string,
+    options?: { forceRefresh?: boolean },
+  ): Promise<CollaborationOwnedAgent[]>;
   addAgent(
     workspaceId: string,
     input: WorkspaceAgentCreateInput,
