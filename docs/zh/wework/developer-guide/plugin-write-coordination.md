@@ -49,6 +49,8 @@ Python 与已迁移的 Rust 插件写入口使用相同协议：
 `user_id`、进程内 `session_id` 和 native `operation` 对齐时序。释放日志包含
 `held_ms`，可区分事务持续持锁与故障租约造成的竞争；日志不记录 Redis 所有权
 token 或插件凭据。争锁失败仍按原有预算返回，不自动重试或延长超时。
+桌面 E2E 的 runner 和 CI 清理均保留 `backend-rs-logs`，以便核对共享租约的
+Rust 写入口请求，避免上传诊断前丢失网关日志。
 
 ## 业务版本与策略首建
 
