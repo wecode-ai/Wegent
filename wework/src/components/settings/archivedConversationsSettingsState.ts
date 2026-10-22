@@ -15,8 +15,11 @@ const archivedBulkDeleteProgressListeners = new Set<BulkDeleteProgressListener>(
 const archivedBulkDeleteDeletedListeners = new Set<BulkDeleteDeletedListener>()
 
 export function beginArchivedCleanup(keys: string[]) {
+  const previousError = getArchivedCleanupError()
   keys.forEach(key => archivedCleanupFailedKeys.delete(key))
-  archivedCleanupListeners.forEach(listener => listener(getArchivedCleanupError()))
+  if (previousError !== getArchivedCleanupError()) {
+    archivedCleanupListeners.forEach(listener => listener(getArchivedCleanupError()))
+  }
 }
 
 export function hasArchivedCleanupFailedKey(key: string) {

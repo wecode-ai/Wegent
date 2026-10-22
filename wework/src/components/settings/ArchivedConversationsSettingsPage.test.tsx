@@ -120,6 +120,26 @@ describe('ArchivedConversationsSettingsPage', () => {
     expect(screen.getByTestId('archived-operation-error')).toHaveTextContent('Git metadata missing')
   })
 
+  test('shows a current deletion error alongside an earlier task cleanup failure', async () => {
+    reportArchivedCleanupFailure('another-task', 'Earlier cleanup failure')
+    deleteArchivedConversationsBulk.mockRejectedValueOnce(new Error('Current deletion failed'))
+    render(<ArchivedConversationsSettingsPage />)
+    await userEvent.click(await screen.findByTestId('archived-bulk-delete-button'))
+    await userEvent.click(screen.getByTestId('archived-bulk-delete-confirm-dialog-confirm-button'))
+    await waitFor(() => {
+      expect(screen.getByTestId('archived-operation-error')).toHaveTextContent(
+        'Earlier cleanup failure'
+      )
+      expect(screen.getByTestId('archived-operation-error')).toHaveTextContent(
+        'Current deletion failed'
+      )
+    })
+    await act(async () => notifyWorkbenchCloudArchivesChanged())
+    expect(screen.getByTestId('archived-operation-error')).toHaveTextContent(
+      'Current deletion failed'
+    )
+  })
+
   test.each([true, false])(
     'clears the suggestion cache only when single deletion is accepted: %s',
     async accepted => {

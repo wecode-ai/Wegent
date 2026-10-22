@@ -349,7 +349,6 @@ export function ArchivedConversationsSettingsPage({
     try {
       const archivedItems = await fetchArchivedConversations()
       setItems(archivedItems.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
-      setOperationError(null)
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : ''
       setError(
@@ -521,6 +520,7 @@ export function ArchivedConversationsSettingsPage({
   const confirmDelete = async () => {
     if (!pendingDelete) return
     if (pendingDelete.type !== 'single' && pendingDelete.items.length === 0) return
+    setOperationError(null)
     beginArchivedCleanup(
       (pendingDelete.type === 'single' ? [pendingDelete.item] : pendingDelete.items).map(
         itemAddressKey
@@ -778,7 +778,8 @@ export function ArchivedConversationsSettingsPage({
           role="alert"
           className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-600"
         >
-          {cleanupError || operationError}
+          {cleanupError && <div>{cleanupError}</div>}
+          {operationError && <div>{operationError}</div>}
         </div>
       )}
 

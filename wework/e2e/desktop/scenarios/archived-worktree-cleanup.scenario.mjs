@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createSse, streamingTextEvents } from '../modules/response-protocol.mjs'
-import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
+import {
+  findRuntimeWorkTask,
+  waitForCompletedRuntimeTaskThread,
+} from '../modules/runtime-task-evidence.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
@@ -41,10 +44,28 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         timeoutMs: modelResponseTimeoutMs,
       })
       const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-      const task = debug.workbench.currentRuntimeTask
-      const path = task.workspacePath
+      const selected = debug.workbench.currentRuntimeTask
+      const threadId = await waitForCompletedRuntimeTaskThread(
+        control,
+        selected.taskId,
+        uiTimeoutMs
+      )
+      const runtimeWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+      const ownedTask = findRuntimeWorkTask(runtimeWork, selected.taskId)
+      assert.ok(ownedTask, 'The owning executor must retain the completed task')
+      const path = ownedTask.workspacePath
+      assert.equal(
+        typeof path,
+        'string',
+        'The owning executor must expose the prepared worktree path'
+      )
+      const task = {
+        deviceId: selected.deviceId,
+        taskId: selected.taskId,
+        workspacePath: path,
+        threadId,
+      }
       assert.notEqual(path, workspacePath)
-      await waitForCompletedRuntimeTaskThread(control, task.taskId, uiTimeoutMs)
       assert.equal((await rpc('runtime.tasks.archive', task)).accepted, true)
       const markerPath = join(path, '.git')
       const marker = await readFile(markerPath, 'utf8')

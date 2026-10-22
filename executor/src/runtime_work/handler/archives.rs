@@ -527,6 +527,7 @@ impl RuntimeWorkRpcHandler {
                         );
                     }
                 }
+                Err(error) if codex_thread_is_already_deleted(&error, thread_id) => {}
                 Err(error) => {
                     errors.push(error.clone());
                     log_executor_event(
@@ -671,6 +672,11 @@ impl RuntimeWorkRpcHandler {
         let results = results.await;
         Ok(cleanup_summary_response(results, true))
     }
+}
+
+fn codex_thread_is_already_deleted(error: &str, thread_id: &str) -> bool {
+    codex_error_is_missing_rollout(error, thread_id)
+        || error.contains(&format!("thread not found: {thread_id}"))
 }
 
 fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinError) -> Value {
