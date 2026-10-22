@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject
@@ -139,35 +141,42 @@ def ensure_resource_grant(
     added_by_user_id: int,
     role: BaseRole,
 ) -> ResourceMember:
-    # Authorization writes must find inactive grants too: the resource/entity
-    # identity is unique independently of its current approval status.
-    existing = (
+    identity = {
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "entity_type": WORKSPACE_ENTITY_TYPE,
+        "entity_id": str(workspace_id),
+    }
+    values = {
+        **identity,
+        "role": role.value,
+        "status": MemberStatus.APPROVED.value,
+        "invited_by_user_id": added_by_user_id,
+        "requested_at": datetime.utcnow(),
+    }
+    db.flush()
+    # Ensure the unique row exists before locking it. Locking a missing identity
+    # would gap-lock unrelated grants on MySQL; existing audit metadata stays intact.
+    dialect = db.get_bind().dialect.name
+    if dialect == "mysql":
+        statement = mysql_insert(ResourceMember).values(**values)
+        statement = statement.on_duplicate_key_update(id=ResourceMember.id)
+    elif dialect == "sqlite":
+        statement = sqlite_insert(ResourceMember).values(**values)
+        statement = statement.on_conflict_do_nothing(index_elements=list(identity))
+    else:
+        raise NotImplementedError(f"Unsupported resource grant dialect: {dialect}")
+    db.execute(statement)
+    grant = (
         db.query(ResourceMember)
-        .filter_by(
-            resource_type=resource_type,
-            resource_id=resource_id,
-            entity_type=WORKSPACE_ENTITY_TYPE,
-            entity_id=str(workspace_id),
-        )
+        .filter_by(**identity)
+        .populate_existing()
         .with_for_update()
-        .first()
+        .one()
     )
-    if existing is not None:
-        existing.role = role.value
-        existing.status = MemberStatus.APPROVED.value
-        existing.invited_by_user_id = added_by_user_id
-        db.flush()
-        return existing
-    grant = ResourceMember.create(
-        resource_type=resource_type,
-        resource_id=resource_id,
-        entity_type=WORKSPACE_ENTITY_TYPE,
-        entity_id=str(workspace_id),
-        role=role.value,
-        status=MemberStatus.APPROVED.value,
-        invited_by_user_id=added_by_user_id,
-    )
-    db.add(grant)
+    grant.role = role.value
+    grant.status = MemberStatus.APPROVED.value
+    grant.invited_by_user_id = added_by_user_id
     db.flush()
     return grant
 
