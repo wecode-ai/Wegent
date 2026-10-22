@@ -175,7 +175,7 @@ describe('project snapshot refresh through the Wework HTTP adapter', () => {
         expect(fetchMock).toHaveBeenNthCalledWith(
           2,
           'http://backend/api/v1/cloud-projects/project-1/board-snapshot',
-          expect.objectContaining({ method: 'GET' })
+          expect.objectContaining({ method: 'GET', cache: 'no-store' })
         )
         if (order === 'old first') {
           oldResponse.resolve(snapshotResponse(unassignedIssue))

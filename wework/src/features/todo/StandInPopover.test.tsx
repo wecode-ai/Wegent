@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -8,13 +8,16 @@ import type {
   WorkspaceStandInSettings,
 } from '@wegent/collaboration'
 import { StandInPopover } from './StandInPopover'
+import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
-function fixture() {
+function fixture(initial: Partial<WorkspaceStandInSettings> = {}) {
   let settings: WorkspaceStandInSettings = {
     enabled: false,
     prompt: '',
     executionDeviceId: '',
     version: 0,
+    ...initial,
   }
   const get = vi.fn(async () => settings)
   const save = vi.fn(async (_projectId: string, input: WorkspaceStandInSettings) => {
@@ -48,6 +51,115 @@ function fixture() {
 }
 
 describe('StandInPopover', () => {
+  it('shows an Agent created outside the cached client when opened', async () => {
+    const { props } = fixture()
+    let records: Array<{ id: string; name: string; runtime: string; status: string }> = []
+    const request = vi.fn(async () => records)
+    const localAgents = createLocalProjectChatAgentApi(request, 1)
+    props.api.agents.list = (projectId, options) => localAgents.list(projectId, options)
+    await props.api.agents.list(props.project.id)
+    records = [{ id: 'external', name: 'External Agent', runtime: 'codex', status: 'active' }]
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    expect(request).toHaveBeenCalledOnce()
+    await user.click(screen.getByTestId('stand-in-open'))
+    expect(await screen.findByRole('option', { name: 'External Agent' })).toHaveValue('external')
+    expect(request).toHaveBeenCalledTimes(2)
+    const toggle = await screen.findByTestId('stand-in-auto')
+    await user.click(toggle)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for configuration validation before enabling a saved stand-in', async () => {
+    const model = { runtime: 'codex' as const, provider: 'local', model_id: 'default' }
+    const { props, save } = fixture({ executionDeviceId: 'current', version: 2, model })
+    let finishCatalog!: (catalog: { models: (typeof model)[] }) => void
+    const catalog = new Promise<{ models: (typeof model)[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} services={services} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    await act(async () => finishCatalog({ models: [model] }))
+    await waitFor(() => expect(screen.getByTestId('stand-in-auto')).toBeEnabled())
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
+  })
+
+  it('saves the loaded default model before enabling a reopened manual configuration', async () => {
+    const { props, save } = fixture()
+    let finishCatalog!: (catalog: { models: Record<string, unknown>[] }) => void
+    const catalog = new Promise<{ models: Record<string, unknown>[] }>(resolve => {
+      finishCatalog = resolve
+    })
+    const services = {
+      standInApi: { catalog: vi.fn(() => catalog) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} services={services} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.type(await screen.findByTestId('stand-in-prompt'), 'Manual settings')
+    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    await act(async () =>
+      finishCatalog({
+        models: [{ runtime: 'codex', provider: 'local', model_id: 'default', is_default: true }],
+      })
+    )
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument())
+    expect(save).toHaveBeenCalledWith(
+      'project',
+      expect.objectContaining({ model: expect.objectContaining({ model_id: 'default' }) })
+    )
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    await waitFor(() =>
+      expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    )
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
+  })
+
+  it('locks the switch during persistence and accepts server metadata without inventing edits', async () => {
+    const { props, save } = fixture({ executionDeviceId: 'current', version: 2 })
+    let finishSave!: (settings: WorkspaceStandInSettings) => void
+    save.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishSave = resolve
+        })
+    )
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(screen.getByTestId('stand-in-auto')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(save).toHaveBeenCalledTimes(1)
+    await act(async () =>
+      finishSave({
+        ...save.mock.calls[0][1],
+        enabled: true,
+        tags: [],
+        version: 3,
+        ...{ enabledAfter: 'server-timestamp' },
+      })
+    )
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
+  })
   it('keeps the stand-in popover open while searching its local project menu', async () => {
     const { props } = fixture()
     const user = userEvent.setup()
@@ -80,17 +192,21 @@ describe('StandInPopover', () => {
     const user = userEvent.setup()
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
-    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('stand-in-save')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('stand-in-cancel')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('stand-in-prompt')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-save')).toHaveTextContent('保存设置')
+    expect(screen.getByTestId('stand-in-cancel')).toBeInTheDocument()
     expect(await screen.findByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
     await user.click(screen.getByTestId('stand-in-auto'))
     await waitFor(() => expect(screen.getByTestId('stand-in-device')).toHaveValue('current'))
     expect(
       screen.getByRole('option', { name: /MacBook.*当前设备|MacBook.*Current device/ })
     ).toBeInTheDocument()
-    expect(screen.getByTestId('stand-in-open').querySelectorAll('circle')).toHaveLength(2)
-    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('stand-in-open').querySelector('svg')).toHaveAttribute(
+      'data-state',
+      'disabled'
+    )
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('stand-in-save')).toHaveTextContent('保存并开启自动处理')
     await user.type(screen.getByTestId('stand-in-prompt'), 'Check the evidence')
     expect(save).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
@@ -109,15 +225,13 @@ describe('StandInPopover', () => {
     expect(screen.getByTestId('stand-in-open').querySelectorAll('circle')).toHaveLength(2)
   })
 
-  it('saves manual-only edits after enabling and disabling an initially disabled profile', async () => {
+  it('saves manual-only settings while automatic handling remains off', async () => {
     const { props, save } = fixture()
     const user = userEvent.setup()
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
-    await user.click(await screen.findByTestId('stand-in-auto'))
+    await screen.findByTestId('stand-in-prompt')
     await user.type(screen.getByTestId('stand-in-prompt'), 'Manual review')
-    await user.click(screen.getByTestId('stand-in-auto'))
-    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -125,6 +239,107 @@ describe('StandInPopover', () => {
         expect.objectContaining({ enabled: false, prompt: 'Manual review' })
       )
     )
+  })
+
+  it('cancels a pending first activation without saving or hiding configuration', async () => {
+    const { props, save } = fixture()
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    expect(screen.getByTestId('stand-in-enable-notice')).toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(screen.queryByTestId('stand-in-enable-notice')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-prompt')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-save')).toHaveTextContent('保存设置')
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('persists an existing configuration toggle immediately and keeps the editor open', async () => {
+    const { props, save } = fixture({
+      enabled: false,
+      prompt: 'Saved',
+      executionDeviceId: 'current',
+      version: 2,
+    })
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() =>
+      expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    )
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      'project',
+      expect.objectContaining({ enabled: true, prompt: 'Saved', version: 2 })
+    )
+    expect(screen.getByTestId('stand-in-settings')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('自动处理已开启')
+    await user.click(screen.getByTestId('stand-in-cancel'))
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('stand-in-enabled')).toBeInTheDocument()
+  })
+
+  it('turns off automatic handling without saving edits, then saves them at the new version', async () => {
+    const { props, save } = fixture({
+      enabled: true,
+      prompt: 'Saved',
+      executionDeviceId: 'current',
+      version: 2,
+    })
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.type(screen.getByTestId('stand-in-prompt'), '{End} draft')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await waitFor(() =>
+      expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
+    )
+    expect(save).toHaveBeenLastCalledWith(
+      'project',
+      expect.objectContaining({ enabled: false, prompt: 'Saved' })
+    )
+    expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent('Saved draft')
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenLastCalledWith(
+      'project',
+      expect.objectContaining({ enabled: false, prompt: 'Saved draft', version: 3 })
+    )
+  })
+
+  it('requires explicit save and enable when there are pending edits', async () => {
+    const { props, save } = fixture({ enabled: false, executionDeviceId: 'current', version: 2 })
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.type(screen.getByTestId('stand-in-prompt'), 'New instructions')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(save).not.toHaveBeenCalled()
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('stand-in-enable-notice')).toHaveTextContent('有未保存的设置')
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(
+      'project',
+      expect.objectContaining({ enabled: true, prompt: 'New instructions' })
+    )
+  })
+
+  it('keeps the confirmed state and draft after an immediate toggle fails', async () => {
+    const { props, save } = fixture({ enabled: true, executionDeviceId: 'current', version: 2 })
+    save.mockRejectedValueOnce(new Error('Toggle failed'))
+    const user = userEvent.setup()
+    render(<StandInPopover {...props} />)
+    await user.click(screen.getByTestId('stand-in-open'))
+    await screen.findByTestId('stand-in-prompt')
+    await user.type(screen.getByTestId('stand-in-prompt'), 'Keep draft')
+    await user.click(screen.getByTestId('stand-in-auto'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Toggle failed')
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('stand-in-prompt')).toHaveTextContent('Keep draft')
+    expect(screen.getByTestId('stand-in-auto')).toBeEnabled()
   })
 
   it('lets users choose a project agent and saves its reference with supplementary instructions', async () => {

@@ -803,7 +803,8 @@ export function createDeliveryApi(client: HttpClient) {
       return client.get(`/v1/cloud-projects/${projectId}/loop-item-pages?${query.toString()}`)
     },
     getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
-      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)
+      // Mutation generations must not wait on the browser cache lock for an older snapshot.
+      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`, { cache: 'no-store' })
     },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
@@ -942,6 +943,7 @@ export function createDeliveryApi(client: HttpClient) {
       > & {
         version: number
         automation_rule_id?: string | null
+        position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
@@ -955,6 +957,7 @@ export function createDeliveryApi(client: HttpClient) {
         assigneeId: string
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
+        position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {
       return client.post(
@@ -1001,7 +1004,7 @@ export function createDeliveryApi(client: HttpClient) {
       projectId: CloudProjectIdInput,
       data: {
         parent_id: string | null
-        status: string
+        status: string | null
         item_ids: string[]
       }
     ): Promise<{ items: CloudLoopItem[] }> {

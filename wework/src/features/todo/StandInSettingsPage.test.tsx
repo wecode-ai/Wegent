@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
+import type {
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceStandInSettings,
+} from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
 import { StandInSettingsPage } from './StandInSettingsPage'
@@ -14,16 +18,24 @@ vi.mock('./StandInPopover', () => ({
   }: {
     project: CollaborationProject
     initialDeviceId: string
-    onSaved(): void
+    onSaved(settings: WorkspaceStandInSettings, action?: 'settings' | 'automatic'): void
   }) => (
-    <button
-      data-testid="shared-stand-in-editor"
-      data-project={project.id}
-      data-device={initialDeviceId}
-      onClick={onSaved}
-    >
-      Save
-    </button>
+    <>
+      <button
+        data-testid="shared-stand-in-editor"
+        data-project={project.id}
+        data-device={initialDeviceId}
+        onClick={() => onSaved({} as WorkspaceStandInSettings, 'settings')}
+      >
+        Save
+      </button>
+      <button
+        data-testid="shared-stand-in-toggle"
+        onClick={() => onSaved({} as WorkspaceStandInSettings, 'automatic')}
+      >
+        Toggle automatic handling
+      </button>
+    </>
   ),
 }))
 
@@ -57,6 +69,16 @@ describe('Stand-in list page', () => {
     await userEvent.click(screen.getByTestId('stand-in-list-configure'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByTestId('shared-stand-in-editor')).toHaveAttribute('data-project', 'project')
+  })
+
+  it('refreshes the list without closing the editor after an automatic handling toggle', async () => {
+    const { props, list } = fixture()
+    render(<StandInSettingsPage {...props} />)
+    await screen.findByTestId('stand-in-list-empty')
+    await userEvent.click(screen.getByTestId('stand-in-list-configure'))
+    await userEvent.click(screen.getByTestId('shared-stand-in-toggle'))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('lists project, device, workspace and automatic state, and edits that exact configuration', async () => {

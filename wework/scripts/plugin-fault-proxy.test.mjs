@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
-import test from 'node:test'
-import { PluginFaultProxy } from '../e2e/desktop/modules/plugin-fault-proxy.mjs'
+import { test } from 'vitest'
+import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-proxy.mjs'
 import { until } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
 async function fixture(t) {
@@ -21,8 +21,8 @@ async function fixture(t) {
     socket.once('close', () => sockets.delete(socket))
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  const proxy = await new PluginFaultProxy(`http://127.0.0.1:${server.address().port}`).start()
-  t.after(async () => {
+  const proxy = await new TransportFaultProxy(`http://127.0.0.1:${server.address().port}`).start()
+  t.onTestFinished(async () => {
     await proxy.stop()
     for (const socket of sockets) socket.destroy()
     await new Promise(resolve => server.close(resolve))
@@ -99,6 +99,40 @@ test(
 )
 
 test(
+  'releases the first real response after a later response without changing either body',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = entry => (entry.path === '/first' ? 'hold-response' : null)
+    let completed = false
+    const first = fetch(`${proxy.url}/first`).then(async response => {
+      completed = true
+      return response.text()
+    })
+    await until(
+      () => proxy.requests[0]?.committedResponseHeld,
+      Boolean,
+      'First response was not held',
+      2000
+    )
+    assert.equal(await (await fetch(`${proxy.url}/second`)).text(), 'real-upstream-body')
+    assert.equal(completed, false)
+    await proxy.requests[0].release()
+    assert.equal(await first, 'real-upstream-body')
+    assert.equal(received.length, 2)
+  }
+)
+
+test('drops a real response after upstream completion', { timeout: 5000 }, async t => {
+  const { proxy, received } = await fixture(t)
+  proxy.rule = () => 'drop-response'
+  await assert.rejects(fetch(`${proxy.url}/snapshot`))
+  assert.equal(proxy.requests[0].status, 200)
+  assert.equal(proxy.requests[0].dropped, true)
+  assert.equal(received.length, 1)
+})
+
+test(
   'device transport pause holds real upstream bytes and resumes them unchanged',
   { timeout: 5000 },
   async t => {
@@ -111,7 +145,7 @@ test(
       )
     })
     const client = connect(new URL(proxy.url).port, '127.0.0.1')
-    t.after(() => client.destroy())
+    t.onTestFinished(() => client.destroy())
     await once(client, 'connect')
     const handshake = once(client, 'data')
     client.write(
@@ -131,3 +165,43 @@ test(
     assert.equal(Buffer.concat(chunks).toString(), 'real-capability-sync')
   }
 )
+
+for (const fault of ['drop-response', 'hold-response']) {
+  test(`native ${fault} assertions reject early and unscoped scans`, { timeout: 5000 }, async t => {
+    const { assertNativeCatalogRequests, nativeCatalogFault, hasScopedNativeFault } =
+      await import('../e2e/desktop/modules/agent-catalog-regressions.mjs')
+    const { proxy } = await fixture(t)
+    const path = '/api/v1/resources/execution-environments'
+    proxy.rule = entry => nativeCatalogFault(entry, fault)
+    // Inject the early full-catalog request that previously made this E2E pass.
+    await (await fetch(`${proxy.url}${path}`)).text()
+    assert.equal(proxy.requests[0].fault, null)
+    assert.equal(hasScopedNativeFault(proxy.requests, fault), false)
+    assert.throws(() => assertNativeCatalogRequests(proxy.requests, true), /unscoped/)
+    assert.throws(() => assertNativeCatalogRequests(proxy.requests), /unscoped/)
+
+    const preflight = await fetch(`${proxy.url}${path}?project_id=project`, { method: 'OPTIONS' })
+    assert.equal(await preflight.text(), 'real-upstream-body')
+    assert.equal(proxy.requests.at(-1).fault, null)
+    assert.equal(hasScopedNativeFault(proxy.requests, fault), false)
+
+    const start = proxy.requests.length
+    const controller = new AbortController()
+    const pending = assert.rejects(
+      fetch(`${proxy.url}${path}?project_id=project`, { signal: controller.signal })
+    )
+    await until(
+      () => proxy.requests.slice(start),
+      entries => hasScopedNativeFault(entries, fault),
+      'The scoped native response did not hit the injected fault',
+      2000
+    )
+    const scoped = proxy.requests.slice(start)
+    assert.throws(() => assertNativeCatalogRequests(scoped, true), /before selecting a device/)
+    assert.doesNotThrow(() => assertNativeCatalogRequests(scoped))
+    controller.abort()
+    await pending
+    assert.equal(hasScopedNativeFault([{ ...scoped[0], unscoped: true }], fault), false)
+    assert.equal(hasScopedNativeFault([{ ...scoped[0], method: 'OPTIONS' }], fault), false)
+  })
+}

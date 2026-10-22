@@ -260,10 +260,12 @@ export function StandInSettingsPage({
               initialProfileId={editing.profileId}
               onSavingChange={setSaving}
               onCancel={closeEditor}
-              onSaved={() => {
-                setSaving(false)
+              onSaved={(_settings, action) => {
                 setRevision(value => value + 1)
-                setEditing(null)
+                if (action !== 'automatic') {
+                  setSaving(false)
+                  setEditing(null)
+                }
               }}
             />
           </section>

@@ -7,6 +7,7 @@ import {
   reloadMainWindow,
   selectCollaborationDomain,
   configureFirstProjectExecutionEnvironment,
+  selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -36,6 +37,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
+  captureScreenshot,
 }) {
   let backendUrl
   let authToken
@@ -194,8 +196,34 @@ export function createDesktopScenario({
           },
         })
         const historical = await createIssue('启用云端替身前已分配')
-        await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        // The real inbox must resolve the stored assigner, without additional inbox lookups.
+        const beforeStandIn = await request('/v1/wework-notifications?category=collaboration')
+        const historicalNotice = beforeStandIn.items.find(
+          row => row.payload.itemId === historical.id
+        )
+        assert.ok(historicalNotice, 'The human assignment notification must exist')
+        assert.equal(historicalNotice.payload.actorName, user.user_name)
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command(
+          'click',
+          '[data-testid="wework-notifications-category-collaboration"]'
+        )
+        await control.command('click', '[data-testid="wework-notifications-refresh"]')
+        await control.command(
+          'waitFor',
+          `[data-testid="wework-notification-${historicalNotice.id}"]`,
+          { text: user.user_name }
+        )
+        await captureScreenshot(
+          control,
+          'assignment-notification-layout.png',
+          '[data-testid="wework-notifications-popover"]'
+        )
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await selectCollaborationProjectView(control, CONTENT, 'board')
+        await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         const currentDevice = await control.command('getValue', '[data-testid="stand-in-device"]')
@@ -230,7 +258,9 @@ export function createDesktopScenario({
           false,
           'Cloud configuration leaked into the desktop Executor'
         )
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         assert.equal(
           await control.command('getValue', '[data-testid="stand-in-device"]'),
@@ -277,6 +307,32 @@ export function createDesktopScenario({
         )
         assert.equal(requests, 1)
         assert.equal(agentRequests, 1, 'The remote agent prompt did not reach its model')
+
+        // Stand-in progress belongs to the original human assignment notification.
+        const inbox = await request('/v1/wework-notifications?category=collaboration')
+        const assignmentNotification = inbox.items.find(
+          row => row.kind === 'issue_dispatch_assignment' && row.payload.itemId === issue.id
+        )
+        assert.ok(assignmentNotification, 'The cloud assignment must retain its notification')
+        await control.command('click', '[data-testid="wework-notifications-button"]')
+        await control.command(
+          'click',
+          '[data-testid="wework-notifications-category-collaboration"]'
+        )
+        const processing = `[data-testid="notification-processing-${assignmentNotification.id}"]`
+        await control.command('waitFor', processing)
+        await control.command(
+          'waitFor',
+          `[data-testid="notification-stand-in-status-${assignmentNotification.id}"]`,
+          { text: '处理完毕' }
+        )
+        assert.equal(await control.command('getElementCount', processing), '1')
+        await captureScreenshot(
+          control,
+          'stand-in-notifications-layout.png',
+          '[data-testid="wework-notifications-popover"]'
+        )
+        await control.command('click', '[data-testid="wework-notifications-button"]')
 
         // Another device must respect an existing ordinary task binding.
         await requestExecutor(
