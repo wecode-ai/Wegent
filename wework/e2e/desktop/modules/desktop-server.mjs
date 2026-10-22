@@ -2140,6 +2140,11 @@ class DesktopE2EServer {
       return
     }
 
+    if (latestModelInputText(body).includes('Predict one natural next USER message')) {
+      this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
+      return
+    }
+
     if (this.scenario === 'model_protocol_matrix') {
       this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
       return
