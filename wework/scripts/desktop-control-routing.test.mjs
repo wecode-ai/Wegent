@@ -65,7 +65,45 @@ test('delivers the runner wait budget to the renderer and preserves explicit bud
     await post(control, 'started', { id: command.id, clientId: 'main-1' })
     await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true, value: 'ready' })
     assert.equal(await result, 'ready')
+    const diagnostic = control.commandHistory.find(entry => entry.id === command.id)
+    for (const field of ['queuedAt', 'deliveredAt', 'startedAt', 'resultReceivedAt']) {
+      assert.ok(Number.isFinite(Date.parse(diagnostic[field])), `Missing ${field}`)
+    }
+    assert.ok(Date.parse(diagnostic.queuedAt) <= Date.parse(diagnostic.deliveredAt))
+    assert.ok(Date.parse(diagnostic.deliveredAt) <= Date.parse(diagnostic.startedAt))
+    assert.ok(Date.parse(diagnostic.startedAt) <= Date.parse(diagnostic.resultReceivedAt))
+    assert.equal(diagnostic.actionSucceeded, true)
   }
+})
+
+test('records failed and late control results without accepting an expired command', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const result = control.command('waitFor', '[data-testid="terminal"]')
+  const rejected = assert.rejects(result, /Terminal did not mount/)
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+  await post(control, 'results', {
+    id: command.id,
+    clientId: 'main-1',
+    ok: false,
+    error: 'Terminal did not mount',
+  })
+  await rejected
+  const diagnostic = control.commandHistory.find(entry => entry.id === command.id)
+  assert.equal(diagnostic.actionSucceeded, false)
+  assert.ok(Number.isFinite(Date.parse(diagnostic.failedAt)))
+
+  const late = await fetch(`${control.controlUrl}/results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: command.id, clientId: 'main-1', ok: true, value: 'late' }),
+  })
+  assert.equal(late.status, 404)
+  assert.ok(Number.isFinite(Date.parse(diagnostic.lateResultAt)))
+  assert.equal(diagnostic.actionSucceeded, false)
+  assert.equal(control.commandResults.has(command.id), false)
 })
 
 test('keeps main-window commands on main after the popout registers', async t => {

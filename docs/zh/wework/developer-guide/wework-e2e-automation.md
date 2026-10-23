@@ -582,7 +582,9 @@ pnpm --filter wework ai:verify paste-paths \
 
 公共控制器在内置动作未处理命令时，通过 `@extensions/desktop-control` 委派给产品扩展。没有产品扩展时，未知动作会明确失败；公共自动化层不识别具体产品协议。
 
-控制器使用短轮询：没有待执行指令时服务端返回 `204`，前端短暂等待后再次请求。这避免了 WebView 刷新、任务切换或流结束时遗留的长轮询连接吞掉后续指令。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，用于定位控制通道问题。
+控制通道将命令绑定到窗口当前的 client；前端确认执行结果后才开始下一次长轮询，避免待收取命令的请求阻塞结果回执。WebView 重载后的 ready 事件只表示控制通道重连，不表示应用外壳已挂载；通知入口使用 `clickWhenEnabled` 等待按钮和分类可用，仍保留共享的 10 秒 UI 步骤预算。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。
+
+失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，包括 `queuedAt`、`deliveredAt`、`startedAt`、`resultReceivedAt` 和 `failedAt`。对照这些时间区分命令排队、开始确认及结果返回阶段的延迟；最后一段同时包含 UI 执行和结果传输，不能仅凭超时判断 UI 元素不存在。已结束命令的迟到回执仍返回 `404`，只额外记录 `lateResultAt` 和不含结果正文的控制台时间线，不会把失败改成通过。
 
 桌面控制器通过 Electron `webContents.capturePage()` 获取原生 renderer 截图。该能力只在 `VITE_WEWORK_E2E=true` 时开放；选择器截图按元素边界裁剪原生图像，因此诊断会保留真实 Electron 渲染结果。
 
