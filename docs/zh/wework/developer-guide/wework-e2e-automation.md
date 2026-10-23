@@ -744,3 +744,5 @@ Windows 重启门禁按 PID、进程名和创建时间核对进程实例，而�
 Windows 套接字缓冲区错误发生时，桌面 runner 立即保存一次端口、进程、内存及 TCP 事件快照（`windows-network-exhaustion-at-error.json`），同时保留原来的失败时快照。应用启动超时后的快照可能已经错过 TCP 端口回收前的现场，不能据此排除错误瞬间的端口分配失败；诊断不重试请求，也不替换原始错误。
 
 原生编辑器事件回调只在 React 布局提交阶段发布。模型就绪状态的并发渲染若挂起，尚未提交的回调不得替换当前可见输入框的发送处理器。回归同时覆盖直接原生回调和真实共享提交门禁：按钮仍可用时，Enter 必须使用已提交的模型就绪状态；放弃挂起更新后仍能继续发送。
+
+Windows 隔离桌面 E2E 启动时禁用 Chromium 的 `TcpPortRandomizationWin`，使高频 loopback 连接使用系统常规端口分配。当前 Electron 44.7.0 / Chromium 152.0.7977.130 默认启用该特性；上游 [572515601](https://issuetracker.google.com/issues/572515601) 已确认在 Windows Server 2025 等环境中，即使连接数很低，随机端口分配也会产生 WSAENOBUFS。仓库日志同时记录原生 `ERR_NO_BUFFER_SPACE` 与 TCP 4231。启动参数合并保留场景已有的其他禁用特性，重复特性只保留一次；原有启动、模型 HTTP 错误和资源断言继续执行。
