@@ -447,7 +447,7 @@ fn plugin_payload(packages: &CountedPackages) -> Value {
 }
 
 #[tokio::test]
-async fn verified_cached_plugin_skips_download_and_preserves_native_cache_and_metadata() {
+async fn verified_cached_plugin_skips_download_and_preserves_metadata() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = counted("v1");
@@ -458,13 +458,6 @@ async fn verified_cached_plugin_skips_download_and_preserves_native_cache_and_me
         true
     );
     let entry = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-    let claude = PathBuf::from(entry["runtime"]["claude_link"].as_str().unwrap());
-    let codex = PathBuf::from(entry["runtime"]["codex_link"].as_str().unwrap());
-    for runtime in [&claude, &codex] {
-        fs::create_dir_all(runtime.join(".native-cache")).unwrap();
-        fs::write(runtime.join(".native-cache/session.json"), "mutable cache").unwrap();
-    }
-    let installed = fs::read(store.plugins_dir.join("installed_plugins.json")).unwrap();
     let mut signed_url = payload;
     signed_url["plugins"][0]["download_path"] = json!("/package?new-signature");
     assert_eq!(
@@ -472,20 +465,26 @@ async fn verified_cached_plugin_skips_download_and_preserves_native_cache_and_me
         true
     );
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 1);
+    let mut rewritten = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
+    // Rewrites refresh the timestamp even when nothing else changes.
+    rewritten.as_object_mut().unwrap().remove("updated_at");
+    let mut expected = entry;
+    expected.as_object_mut().unwrap().remove("updated_at");
+    assert_eq!(rewritten, expected);
+    // installed_plugins.json is rewritten on every sync; only timestamps change.
+    let mut installed = read_installed_plugins(&store.plugins_dir).unwrap();
+    let record = installed["plugins"]["demo@wegent"][0]
+        .as_object_mut()
+        .unwrap();
+    record.remove("installedAt");
+    record.remove("lastUpdated");
     assert_eq!(
-        store.manifest.load().unwrap()["plugins"]["demo@wegent"],
-        entry
+        record["checksum"],
+        json!(crate::services::workbench::archive_hash(
+            &packages.package.plugin
+        ))
     );
-    assert_eq!(
-        fs::read(store.plugins_dir.join("installed_plugins.json")).unwrap(),
-        installed
-    );
-    for runtime in [&claude, &codex] {
-        assert_eq!(
-            fs::read_to_string(runtime.join(".native-cache/session.json")).unwrap(),
-            "mutable cache"
-        );
-    }
+    assert_eq!(record["version"], json!("1.0"));
 }
 
 #[tokio::test]
@@ -517,7 +516,7 @@ async fn runtime_drift_repairs_owned_and_generated_files_without_downloading() {
 }
 
 #[tokio::test]
-async fn metadata_changes_preserve_healthy_runtime_directories() {
+async fn metadata_changes_apply_without_redownloading() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = counted("v1");
@@ -525,12 +524,6 @@ async fn metadata_changes_preserve_healthy_runtime_directories() {
     payload["plugins"][0]["cloud_plugin_id"] = json!(42);
     let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
     handler.apply_sync(payload.clone()).await.unwrap();
-    let entry = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-    let runtimes = ["claude_link", "codex_link"]
-        .map(|field| PathBuf::from(entry["runtime"][field].as_str().unwrap()));
-    for runtime in &runtimes {
-        fs::write(runtime.join("native-session"), "keep").unwrap();
-    }
     payload["plugins"][0]["enabled"] = json!(false);
     payload["plugins"][0]["component_states"] = json!({"skills/demo": false});
     payload["plugins"][0]
@@ -541,12 +534,6 @@ async fn metadata_changes_preserve_healthy_runtime_directories() {
     assert!(store.manifest.load().unwrap()["plugins"]["demo@wegent"]
         .get("cloud_plugin_id")
         .is_none());
-    for runtime in &runtimes {
-        assert_eq!(
-            fs::read_to_string(runtime.join("native-session")).unwrap(),
-            "keep"
-        );
-    }
     let installed = read_installed_plugins(&store.plugins_dir).unwrap();
     assert_eq!(
         installed["plugins"]["demo@wegent"][0]["componentStates"],
@@ -562,16 +549,13 @@ async fn metadata_changes_preserve_healthy_runtime_directories() {
 }
 
 #[tokio::test]
-async fn external_configuration_drift_is_repaired_without_replacing_runtime() {
+async fn external_configuration_drift_is_repaired_without_downloading() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = counted("v1");
     let payload = plugin_payload(&packages);
     let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
     handler.apply_sync(payload.clone()).await.unwrap();
-    let entry = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-    let runtime = PathBuf::from(entry["runtime"]["codex_link"].as_str().unwrap());
-    fs::write(runtime.join("native-session"), "keep").unwrap();
     let settings_path = store.plugins_dir.parent().unwrap().join("settings.json");
     let mut settings = read_json_or_default(&settings_path, || json!({})).unwrap();
     settings["enabledPlugins"]["demo@wegent"] = json!(false);
@@ -579,10 +563,6 @@ async fn external_configuration_drift_is_repaired_without_replacing_runtime() {
     assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
     let repaired = read_json_or_default(&settings_path, || json!({})).unwrap();
     assert_eq!(repaired["enabledPlugins"]["demo@wegent"], true);
-    assert_eq!(
-        fs::read_to_string(runtime.join("native-session")).unwrap(),
-        "keep"
-    );
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 1);
 }
 
@@ -594,9 +574,6 @@ async fn marketplace_identity_and_codex_product_drift_are_repaired_from_cache() 
     let payload = plugin_payload(&packages);
     let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
     handler.apply_sync(payload.clone()).await.unwrap();
-    let entry = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
-    let runtime = PathBuf::from(entry["runtime"]["codex_link"].as_str().unwrap());
-    fs::write(runtime.join("native-session"), "keep").unwrap();
     let claude_market = store.claude_marketplace_dir("wegent");
     let codex_market = store.codex_marketplace_dir("wegent");
     for path in [
@@ -625,10 +602,6 @@ async fn marketplace_identity_and_codex_product_drift_are_repaired_from_cache() 
         read_json_or_default(&path, || json!({})).unwrap()["plugins"][0]["policy"]["products"],
         json!(["CODEX"])
     );
-    assert_eq!(
-        fs::read_to_string(runtime.join("native-session")).unwrap(),
-        "keep"
-    );
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 1);
 }
 
@@ -644,7 +617,6 @@ async fn corrupt_cached_package_downloads_once_and_recovers_without_losing_runti
     let source = PathBuf::from(entry["store_path"].as_str().unwrap());
     let runtime = PathBuf::from(entry["runtime"]["claude_link"].as_str().unwrap());
     fs::write(source.join("payload.txt"), "corrupt cache").unwrap();
-    fs::write(runtime.join("native-session"), "keep").unwrap();
     let wrong =
         CapabilitySyncHandler::with_package_provider("", store.clone(), counted("wrong bytes"));
     assert_eq!(
@@ -667,10 +639,6 @@ async fn corrupt_cached_package_downloads_once_and_recovers_without_losing_runti
     assert_eq!(
         fs::read_to_string(source.join("payload.txt")).unwrap(),
         "v1"
-    );
-    assert_eq!(
-        fs::read_to_string(runtime.join("native-session")).unwrap(),
-        "keep"
     );
     assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 2);
@@ -727,7 +695,7 @@ async fn missing_trusted_checksum_does_not_reuse_cache_before_download() {
 }
 
 #[tokio::test]
-async fn cached_runtime_noop_still_persists_ordering_fence() {
+async fn cached_package_noop_still_persists_ordering_fence() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = counted("v1");

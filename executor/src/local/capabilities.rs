@@ -930,6 +930,8 @@ impl GlobalCapabilityStore {
                 .join("config.toml"),
         ];
         let mut moved_paths = vec![
+            runtime_link.clone(),
+            codex_link.clone(),
             claude_marketplace_dir
                 .join("plugins")
                 .join(self.marketplace_plugin_name(spec, true)),
@@ -937,15 +939,6 @@ impl GlobalCapabilityStore {
                 .join("plugins")
                 .join(self.marketplace_plugin_name(spec, false)),
         ];
-        if !self.shared_packages
-            || !shared_packages::runtime_copy_matches(store_path, &runtime_link)?
-        {
-            moved_paths.push(runtime_link.clone());
-        }
-        if !self.shared_packages || !shared_packages::runtime_copy_matches(store_path, &codex_link)?
-        {
-            moved_paths.push(codex_link.clone());
-        }
         if !self.shared_packages {
             if let Some(path) = &previous_runtime_link {
                 moved_paths.push(path.clone());
@@ -960,12 +953,8 @@ impl GlobalCapabilityStore {
         let mut transaction = LocalPluginStateTransaction::begin(file_paths, moved_paths)?;
         let result = (|| {
             self.install_claude_plugin_runtime_metadata(spec, store_path)?;
-            if !self.shared_packages
-                || !shared_packages::runtime_copy_matches(store_path, &codex_link)?
-            {
-                copy_dir_atomic(store_path, &codex_link)?;
-                ensure_dual_plugin_manifests(&codex_link)?;
-            }
+            copy_dir_atomic(store_path, &codex_link)?;
+            ensure_dual_plugin_manifests(&codex_link)?;
             if let Some(previous_runtime_link) = previous_runtime_link {
                 if !self.shared_packages && previous_runtime_link != runtime_link {
                     self.remove_claude_plugin_runtime_path(&previous_runtime_link)?;
@@ -1016,12 +1005,8 @@ impl GlobalCapabilityStore {
         store_path: &Path,
     ) -> Result<(), CapabilitySyncError> {
         let runtime_path = self.plugin_runtime_link(spec);
-        if !self.shared_packages
-            || !shared_packages::runtime_copy_matches(store_path, &runtime_path)?
-        {
-            copy_dir_atomic(store_path, &runtime_path)?;
-            ensure_dual_plugin_manifests(&runtime_path)?;
-        }
+        copy_dir_atomic(store_path, &runtime_path)?;
+        ensure_dual_plugin_manifests(&runtime_path)?;
         ensure_plugin_hook_permissions(&runtime_path)?;
         self.install_marketplace_metadata(spec, &runtime_path)?;
         upsert_installed_plugin(&self.plugins_dir, spec, &runtime_path)?;

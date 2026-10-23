@@ -10,11 +10,6 @@ use crate::services::workbench::{
     workbench_root, PackageKind,
 };
 
-#[path = "shared_plugin_runtime.rs"]
-mod runtime;
-
-pub(super) use runtime::runtime_copy_matches;
-
 pub(super) struct ActivationRevision;
 
 pub(super) struct PublicationLock(fs::File);
@@ -499,20 +494,14 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             }
         }
         let runtime_started = Instant::now();
-        let runtime_reused =
-            runtime::plugin_state_matches(&self.store, &installed_spec, &store_path, manifest)
-                .map_err(PluginSyncFailure::runtime_metadata)?;
-        if !runtime_reused {
-            self.store
-                .install_plugin_runtime_metadata(&installed_spec, &store_path, manifest)
-                .map_err(PluginSyncFailure::runtime_metadata)?;
-        }
+        self.store
+            .install_plugin_runtime_metadata(&installed_spec, &store_path, manifest)
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         crate::logging::log_executor_event(
             "plugin_materialized",
             &[
                 ("plugin", spec.key.clone()),
                 ("cache_hit", cache_hit.to_string()),
-                ("runtime_reused", runtime_reused.to_string()),
                 ("verify_ms", verify_ms.to_string()),
                 ("download_ms", download_ms.to_string()),
                 ("download_bytes", download_bytes.to_string()),

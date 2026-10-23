@@ -40,7 +40,7 @@ Devices on the same account negotiate independently. Installation initiated from
 
 A trusted SHA256 triggers local shared-package verification before download. Changed checksums, missing packages or damaged content require download and validation. Downloads without a trusted checksum remain necessary.
 
-Healthy owned files, generated manifests, native configuration, enablement and component state skip runtime copying and configuration rewriting. Missing or damaged runtime files are repaired from a verified local package. Additional mutable native cache files do not invalidate owned files.
+Runtime directories behave as on main: every sync rewrites the runtime copy and configuration from the verified local package, with no state-comparison skip; missing or damaged runtime files are repaired by that rewrite. Targeted sync only ships changed plugins, so unchanged plugins never have their runtime directories touched.
 
 Damaged shared packages use package locking, validated staging, quarantine and rollback. Failed publication preserves the existing runtime. Missing or damaged ownership records, mismatched identities and occupied symlinks are rejected rather than overwritten; ownership-record damage still needs manual repair.
 
