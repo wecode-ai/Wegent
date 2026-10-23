@@ -270,6 +270,7 @@ impl RuntimeWorkRpcHandler {
         link.title = title;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        emit_runtime_work_changed(&self.event_tx, &self.device_id, &link.local_task_id);
         let mut response = task_action_success(&link);
         response["codexRename"] = json!({"stateUpdated": true});
         Ok(response)
