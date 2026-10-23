@@ -318,7 +318,7 @@ impl RuntimeWorkRpcHandler {
             .collect::<Vec<_>>() }))
     }
 
-    pub(super) fn start_stand_in_scheduler(&self) {
+    pub(super) fn start_local_stand_in_scheduler(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -328,15 +328,15 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                if let Err(error) = handler.poll_stand_ins().await {
+                if let Err(error) = handler.poll_local_stand_ins().await {
                     log_executor_event("stand-in polling failed", &[("error", error.message)]);
                 }
             }
         });
     }
 
-    async fn poll_stand_ins(&self) -> Result<(), AppIpcError> {
-        let settings = self.personal_stand_in_projects().await?;
+    async fn poll_local_stand_ins(&self) -> Result<(), AppIpcError> {
+        let settings = self.local_stand_in_projects()?;
         let mut projects = std::collections::HashMap::<(String, String, i64), Vec<Value>>::new();
         for config in settings {
             if config["executionDeviceId"] != self.device_id || config["enabled"] != true {
@@ -356,11 +356,7 @@ impl RuntimeWorkRpcHandler {
         }
         for configs in projects.values() {
             let config = &configs[0];
-            let result = if config["projectStore"] == "local" {
-                self.poll_local_stand_in(configs).await
-            } else {
-                self.poll_cloud_stand_in(configs).await
-            };
+            let result = self.poll_local_stand_in(configs).await;
             if let Err(error) = result {
                 log_executor_event(
                     "stand-in project failed",
@@ -439,100 +435,17 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn poll_cloud_stand_in(&self, configs: &[Value]) -> Result<(), AppIpcError> {
-        let config = &configs[0];
-        let user = self
-            .stand_in_http(reqwest::Method::GET, "/users/me", None)
-            .await?;
-        if config["userId"] != user["id"] {
-            return Ok(());
-        }
-        let Some(project_id) = config["projectId"].as_str() else {
-            return Ok(());
-        };
-        let list = self
-            .stand_in_http(
-                reqwest::Method::GET,
-                &format!("/v1/cloud-projects/{project_id}/loop-items"),
-                None,
-            )
-            .await?;
-        for issue in list["items"].as_array().into_iter().flatten() {
-            if issue["assignee_user_id"] != user["id"]
-                || issue["completed_at"].is_string()
-                || matches!(
-                    issue["status"].as_str(),
-                    Some("completed" | "cancelled" | "in_review")
-                )
-            {
-                continue;
-            }
-            let Some(human) = issue["human_task_binding"]["humanAssignmentId"].as_str() else {
-                continue;
-            };
-            if self.local_task_link(&format!("stand-in-{human}")).is_some() {
-                continue;
-            }
-            let issue_id = issue["id"].as_str().unwrap_or_default();
-            let assignments = self
-                .stand_in_http(
-                    reqwest::Method::GET,
-                    &format!("/v1/loop-items/{issue_id}/assignments"),
-                    None,
-                )
-                .await?;
-            let Some(assignment) =
-                assignments["items"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|row| {
-                        row["id"] == issue["human_task_binding"]["assignmentId"]
-                            && row["status"] == "active"
-                    })
-            else {
-                continue;
-            };
-            let eligible: Vec<Value> = configs
-                .iter()
-                .filter(|config| assignment_after_enable(assignment, config))
-                .cloned()
-                .collect();
-            if eligible.is_empty() {
-                continue;
-            }
-            let existing = self
-                .stand_in_http(
-                    reqwest::Method::GET,
-                    &format!("/v1/loop-items/{issue_id}/tasks"),
-                    None,
-                )
-                .await?;
-            if existing
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|row| row["human_assignment_id"] == human)
-            {
-                continue;
-            }
-            let Some(config) = self.select_polled_personal_role(&eligible, issue).await else {
-                continue;
-            };
-            if let Err(error) = self.start_cloud_stand_in(&config, issue).await {
-                log_executor_event(
-                    "stand-in assignment failed",
-                    &[
-                        ("issue_id", issue["id"].to_string()),
-                        ("error", error.message),
-                    ],
-                );
-            }
-        }
-        Ok(())
+    async fn start_cloud_stand_in(&self, config: &Value, issue: &Value) -> Result<(), AppIpcError> {
+        self.start_cloud_stand_in_with_roles(std::slice::from_ref(config), issue)
+            .await
     }
 
-    async fn start_cloud_stand_in(&self, config: &Value, issue: &Value) -> Result<(), AppIpcError> {
+    pub(super) async fn start_cloud_stand_in_with_roles(
+        &self,
+        configs: &[Value],
+        issue: &Value,
+    ) -> Result<(), AppIpcError> {
+        let config = &configs[0];
         let gate = self.task_send_gate(&format!(
             "stand-in-issue:{}:{}",
             config["projectId"].as_str().unwrap_or_default(),
@@ -562,6 +475,13 @@ impl RuntimeWorkRpcHandler {
         let Some(human_id) = binding["humanAssignmentId"].as_str() else {
             return Ok(());
         };
+        if config["manual"] != true
+            && self
+                .local_task_link(&format!("stand-in-{human_id}"))
+                .is_some()
+        {
+            return Ok(());
+        }
         let assignments = self
             .stand_in_http(
                 reqwest::Method::GET,
@@ -569,16 +489,22 @@ impl RuntimeWorkRpcHandler {
                 None,
             )
             .await?;
-        if !assignments["items"]
+        let Some(assignment) = assignments["items"]
             .as_array()
             .into_iter()
             .flatten()
-            .any(|row| {
-                row["id"] == assignment_id
-                    && row["status"] == "active"
-                    && (config["manual"] == true || assignment_after_enable(row, config))
+            .find(|row| row["id"] == assignment_id && row["status"] == "active")
+        else {
+            return Ok(());
+        };
+        let eligible: Vec<Value> = configs
+            .iter()
+            .filter(|config| {
+                config["manual"] == true || assignment_after_enable(assignment, config)
             })
-        {
+            .cloned()
+            .collect();
+        if eligible.is_empty() {
             return Ok(());
         }
         let existing = self
@@ -607,6 +533,15 @@ impl RuntimeWorkRpcHandler {
             }
             return Ok(());
         }
+        let selected = if config["manual"] == true {
+            config.clone()
+        } else {
+            let Some(selected) = self.select_personal_role(&eligible, issue).await? else {
+                return Ok(());
+            };
+            selected
+        };
+        let config = &selected;
         let payload = self.prepare_stand_in_task(config, issue, binding).await?;
         self.create_stand_in_task(config, issue, binding, payload)
             .await
