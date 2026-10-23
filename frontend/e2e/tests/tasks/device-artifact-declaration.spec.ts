@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
@@ -10,6 +11,8 @@ import {
   clearToolScenario,
   waitForTaskTerminal,
   getTask,
+  getScenarioModelBodies,
+  modelRequestText,
 } from '../../utils/provider-native-test-support'
 import {
   artifactApiUrl,
@@ -68,7 +71,7 @@ async function download(page: Page, context: Artifact, expected: string): Promis
 }
 
 for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly ArtifactShell[]) {
-  test(`${shell}: real generation, declaration, done card and pinned-source download`, async ({
+  test(`${shell}: legacy Ghost delivers files without a prompt migration`, async ({
     page,
     request,
   }, testInfo) => {
@@ -82,7 +85,11 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
     const { id: userId } = (await user.json()) as { id: number }
     const marker = crypto.randomUUID().replaceAll('-', '')
     const modelName = `artifact-${shell.toLowerCase()}-${marker}`
-    const prompt = `ARTIFACT_${marker}: generate the requested Markdown file and declare every final deliverable.`
+    const prompt = `ARTIFACT_${marker}: generate the requested Markdown file.`
+    const legacyPrompt = await readFile(
+      resolve(__dirname, '../../../../backend/tests/fixtures/wework_legacy_file_delivery.txt'),
+      'utf8'
+    )
     const content = `# 冬天\n\n雪落在窗前，热茶温暖了双手。${marker}\n`
     const resources: string[] = []
     const devices: ArtifactDevice[] = []
@@ -120,7 +127,7 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
         shell_name: shell,
         agent_config: { bind_model: modelName, bind_model_type: 'user' },
         namespace: 'default',
-        system_prompt: 'Create and declare the requested files using the available tools.',
+        system_prompt: legacyPrompt,
       })
       resources.unshift(`/api/bots/${bot.id}`)
       const team = await create<{ id: number }>('/api/teams', {
@@ -184,6 +191,15 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
       expect(
         completed.subtasks.some(subtask => subtask.bots?.some(bot => bot.shell_type === shell))
       ).toBe(true)
+      const modelBodies = await getScenarioModelBodies(request, prompt)
+      expect(modelBodies.length).toBeGreaterThan(0)
+      const modelText = modelRequestText(modelBodies)
+      expect(modelText).toContain('computer://path/to/file')
+      expect(modelText).toContain('artifact declare --path')
+      expect(modelText).toContain('The command sends metadata only')
+      const storedBot = await request.get(`${artifactApiUrl}/api/bots/${bot.id}`, { headers })
+      expect(storedBot.status()).toBe(200)
+      expect((await storedBot.json()).system_prompt).toBe(legacyPrompt)
       for (const context of contexts)
         await expect(
           page.getByTestId(`remote-workspace-artifact-download-${context.id}`)

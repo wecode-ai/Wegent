@@ -46,7 +46,7 @@ $WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
 
 Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
 
-内置 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；已有数据库需执行 `alembic upgrade head`，由迁移 `a9c4e7b2d610` 精准替换已识别的旧规则，保留资源 ID 和其他配置。已自定义的交付区段不会自动覆盖，需要管理员核对后更新。
+新版默认 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移已撤回，`a9c4e7b2d610` 仅保留空操作版本节点，不读写业务数据；已执行该历史 revision 的配置也不会被自动回滚。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
 
 Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
 

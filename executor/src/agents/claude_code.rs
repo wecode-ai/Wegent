@@ -1096,6 +1096,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_ghost_keeps_stored_rules_and_appends_runtime_declaration_rules() {
+        let legacy = "Create files in mnt/outputs and share computer://path/to/file links.";
+        let request = ExecutionRequest {
+            system_prompt: legacy.to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let command = build_claude_command(&request, "claude");
+        let index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--append-system-prompt")
+            .expect("append system prompt flag");
+        let instructions = &command.args()[index + 1];
+
+        assert_eq!(request.system_prompt, legacy);
+        assert!(instructions.starts_with(legacy));
+        assert!(instructions.ends_with(crate::artifact_cli::AGENT_INSTRUCTIONS));
+        assert!(instructions.contains("artifact declare --path"));
+    }
+
+    #[test]
     fn execution_prompt_skips_artifact_command_when_tools_are_disabled() {
         let mut request = ExecutionRequest {
             system_prompt: "Generate text only".to_owned(),

@@ -2,70 +2,43 @@
 sidebar_position: 39
 ---
 
-# Device artifact prompt migration: human approval and rollback
+# Device artifact rules: withdrawn data migration and retained revision history
 
-`a9c4e7b2d610` is a data-only migration. It replaces recognized legacy delivery instructions in the public built-in Ghost with artifact declaration instructions. It does not upload file contents or execute DDL. **A merged PR, passing CI, or a successful local migration is not production approval.**
+The automatic prompt update for the public `Ghost/default/wegent-wework` is withdrawn. Artifact delivery does not require rewriting production Ghost configuration or restoring administrator settings through a migration.
 
-## Production approval gate
+## Retained delivery instructions
 
-Do not run a production `alembic upgrade head` containing this revision, or execute it indirectly through startup migrations, before human review. The deployment owner must disable `DB_AUTO_MIGRATE` for that deployment until preflight, backup and approval are complete. An authorized writer then executes the approved migration. A test report or a general request to fix review feedback cannot replace production approval.
+- Default YAML keeps the updated declaration instructions and only creates missing resources.
+- Claude Code (with tools enabled) and Codex inject declaration instructions at execution time. Existing Ghost prompts may remain unchanged.
+- Files remain on the execution device. Declarations persist metadata; completed messages display artifact cards that download from the original source.
+- Do not run the former prompt preflight or replacement scripts. The obsolete preflight script is removed.
 
-The migration selects only rows matching every condition:
+## Why retain a no-op revision
 
-| Field | Condition |
+An earlier PR version published `a9c4e7b2d610`. Local or test databases may already have executed it or been stamped to it during fresh initialization. Deleting that revision would cause `Can't locate revision identified by 'a9c4e7b2d610'` in those environments.
+
+Keep the revision ID and predecessor `f3a7c9e1b2d4`, but make both `upgrade()` and `downgrade()` no-ops. Neither obtains a connection, reads or writes application tables, nor executes DDL. Crossing the node only updates Alembic's version tracking. The original automatic data migration is not retained.
+
+| Existing state | Behavior after this update |
 | --- | --- |
-| `user_id` | `0` |
-| `kind` | `Ghost` |
-| `namespace` | `default` |
-| `name` | `wegent-wework` |
-| `is_active` | True |
-| `json.spec.systemPrompt` | Both known legacy blocks occur exactly once |
+| Still on the predecessor | Crossing the no-op node advances version tracking without changing the legacy Ghost. |
+| Already recorded at `a9c4e7b2d610` | History remains resolvable; no stamp, reset, or version-record deletion is required. |
+| Prompt changed by an earlier migration | The current prompt is preserved, not automatically reversed or restored. |
+| Administrator-customized Ghost | Configuration remains unchanged. |
 
-It never overwrites a fixed database ID. Customized, incomplete or repeated blocks remain unchanged. IDs, skills, MCP servers, labels and other configuration are preserved. Never replace the entire Ghost to increase the match count.
+## Inspection and rollback boundaries
 
-## Read-only preflight and approval evidence
-
-Supply the target read-only `DATABASE_URL` through environment configuration, not command-line passwords, logs or Git files. From the repository root:
+The environment owner can inspect revisions using an approved connection. Never put credentials in commands or logs:
 
 ```bash
 cd backend
-uv run scripts/preflight_wework_file_delivery.py
+uv run alembic current
+uv run alembic heads
+uv run alembic history -r f3a7c9e1b2d4:a9c4e7b2d610
 ```
 
-The script only issues `SELECT`. It does not start the app, run migrations, or print prompts or connection strings. It reports candidate IDs, active states, classifications, SHA-256 fingerprints and an inventory fingerprint:
+These commands inspect revision state; they do not replace prompts. This code fix does not connect to or modify production and does not require a production upgrade, downgrade, or stamp.
 
-- `legacy_exact`: an active row is an upgrade candidate.
-- `migrated_exact`: marked blocks recognized by this revision's downgrade.
-- `current_seed`: fresh-install rules without a migration marker; downgrade leaves them intact.
-- `custom_or_unrecognized`: requires human inspection and is not automatically updated.
+Before reverting to older code that lacks this revision, plan version compatibility separately. Do not delete `alembic_version` or blindly stamp head. The retained no-op downgrade only changes version tracking; **it does not undo prompts changed by earlier PR code**. Restoring business configuration requires separate approval and comparison with a controlled backup.
 
-Approval evidence must identify the environment, current Alembic revision, all candidate IDs/fingerprints, expected update count, operator, change window, backup location and rollback criteria. Zero matches do not prove legacy settings are corrected. Investigate duplicate active identities before proceeding. **The operator and reviewer must confirm actual production results, not unit-test fixtures.**
-
-## Upgrade and concurrent configuration changes
-
-1. Pause edits to this public Ghost during the change window. Back up the target rows and current revision to approved storage. Backups can contain business prompts and must never enter Git.
-2. Repeat the read-only inventory and compare it with approved IDs, fingerprints and counts. Stop and obtain renewed review for any difference.
-3. Use an authorized writer to execute this exact revision without unrelated unapproved migrations:
-
-   ```bash
-   uv run alembic upgrade a9c4e7b2d610
-   ```
-
-4. The update rechecks identity, active state and the **entire original JSON**. Any concurrent edit, rename, ownership change, deactivation or JSON update makes the conditional update affect zero rows. The migration raises an error and rolls back its transaction. Do not remove that comparison or repeatedly retry to overwrite an edit.
-5. Verify the revision and inventory, confirm only expected legacy rules became `migrated_exact`, and compare non-target settings against the backup. Use an independent task to verify generation, declaration, completion event, card rendering and download.
-
-Customized rules require a separately approved configuration change.
-
-## Rollback
-
-The predecessor is `f3a7c9e1b2d4`. Only after rollback approval, while the environment is still on `a9c4e7b2d610` and no later revision must be retained:
-
-```bash
-uv run scripts/preflight_wework_file_delivery.py
-uv run alembic downgrade f3a7c9e1b2d4
-uv run scripts/preflight_wework_file_delivery.py
-```
-
-Downgrade restores only marked blocks whose two replacement sections remain unchanged. Fresh-install instructions and subsequently customized sections remain untouched; concurrent changes fail the same comparison. Customized sections may remain after downgrade, so an Alembic revision alone does not prove prompt restoration. Compare the controlled backup and obtain separate approval for manual recovery instead of force-overwriting configuration.
-
-This procedure deletes no task files, artifact contexts, tasks or devices. It performs no DDL and changes no collaboration permission invariants.
+Isolated database regressions cover upgrades and downgrades from the predecessor and already-recorded revision, preserving legacy, migrated, customized, and fresh configuration. Web E2E uses a legacy Ghost prompt with Claude Code and Codex to verify runtime instructions, real declarations, immediate cards, and downloads without modifying public built-in resources.

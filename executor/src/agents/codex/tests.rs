@@ -3866,6 +3866,30 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
+fn legacy_ghost_keeps_stored_rules_in_all_thread_launches_with_runtime_declaration() {
+    let legacy = "Create files in mnt/outputs and share computer://path/to/file links.";
+    let request = ExecutionRequest {
+        system_prompt: legacy.to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("runtime declaration instructions must reach the real SDK");
+        assert!(instructions.starts_with(legacy));
+        assert!(instructions.ends_with(crate::artifact_cli::AGENT_INSTRUCTIONS));
+        assert!(instructions.contains("artifact declare --path"));
+    }
+    assert_eq!(request.system_prompt, legacy);
+}
+
+#[test]
 fn thread_launch_params_always_include_space_routing() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();

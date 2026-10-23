@@ -1424,7 +1424,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest e2e_tests/ --no-cov -v
 
-      - name: Verify artifact prompt migration against real MySQL
+      - name: Verify retired artifact revision against real MySQL
         working-directory: ./backend
         env:
           WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test

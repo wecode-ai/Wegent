@@ -24,8 +24,8 @@ def test_cp01_no_new_database_columns_or_pending_migration(test_db):
         LoopNode.__table__.columns.keys()
     )
     scripts = ScriptDirectory.from_config(Config("alembic.ini"))
-    # The approved Ghost prompt correction is data-only and does not migrate
-    # collaboration storage. Keep the permission recovery baseline pinned.
+    # The withdrawn prompt revision is a no-op retained for already-recorded
+    # revision IDs. Keep the permission recovery baseline pinned.
     assert scripts.get_heads() == ["a9c4e7b2d610"]
     assert scripts.get_revision("a9c4e7b2d610").down_revision == "f3a7c9e1b2d4"
 
