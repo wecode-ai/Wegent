@@ -1,6 +1,6 @@
 import { appendAcceptedRuntimeConversationUser } from "./runtime-turn-updates";
 import { projectRuntimePaneTranscript } from "./runtime-transcript-page";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   RuntimeConversationItem,
   RuntimeConversationTurn,
@@ -27,7 +27,68 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("freezes the observed interval without reconstructing a millisecond endpoint from rounded native timestamps", () => {
+    vi.spyOn(Date, "now").mockReturnValue(58_200);
+    try {
+      const settled = reduceRuntimeConversationTurns(
+        [
+          {
+            id: "turn",
+            status: "streaming",
+            startedAt: 40_200,
+            items: [],
+          },
+        ],
+        {
+          type: "assistant_done",
+          subtaskId: "turn",
+          startedAt: 40_000,
+          durationMs: 17_600,
+        },
+      );
+      expect(settled[0]).toMatchObject({
+        startedAt: 40_200,
+        durationMs: 18_000,
+        completedAt: new Date(58_200).toISOString(),
+      });
+      vi.mocked(Date.now).mockReturnValue(90_000);
+      expect(
+        reduceRuntimeConversationTurns(settled, {
+          type: "assistant_done",
+          subtaskId: "turn",
+        })[0],
+      ).toMatchObject({
+        durationMs: 18_000,
+        completedAt: new Date(58_200).toISOString(),
+      });
+      vi.mocked(Date.now).mockReturnValue(58_200);
+      expect(
+        mergeRuntimeConversationTurns(
+          [
+            {
+              id: "turn",
+              status: "streaming",
+              startedAt: 40_200,
+              items: [],
+            },
+          ],
+          [
+            {
+              id: "turn",
+              status: "done",
+              startedAt: 40_000,
+              durationMs: 17_600,
+              items: [],
+            },
+          ],
+        )[0],
+      ).toMatchObject({ durationMs: 18_000 });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
   it("settles duration against the same start already displayed while the turn was running", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(60_000);
     const running: RuntimeConversationTurn = {
       id: "turn",
       status: "streaming",
@@ -50,6 +111,7 @@ describe("native conversation ordering contract", () => {
     expect(mergeRuntimeConversationTurns([running], [native])[0]).toMatchObject(
       { startedAt: 40_000, durationMs: 20_000 },
     );
+    clock.mockRestore();
   });
 
   it("retains observed child reasoning when a native parent snapshot omits it", () => {

@@ -34,7 +34,7 @@ Child-thread views are read-only projections: they neither adopt the child as th
 
 Each live action is published once on arrival. Completing or aborting hydration only notifies subscribers of the snapshot change; replaying actions would repeat their side effects.
 
-Turn timing retains its observed start. A terminal duration is converted through its source start into an end time before being expressed against that same observed start; durations from different origins cannot be mixed directly.
+Live timing measures the locally observed lifecycle interval. It retains the displayed start and freezes the end and duration using the same local wall clock when a terminal event or recovery snapshot first confirms completion. Duplicate completion notifications and subsequent native snapshots preserve that frozen interval. History first observed after completion retains its native duration. Codex supplies start/end timestamps in seconds and duration in milliseconds: adding that duration to a rounded start cannot reconstruct a precise endpoint, and running and completed labels must use the same timing source.
 
 Paging and conversation-cache lifecycle own loaded native history. The provisional-output block limit cannot silently discard confirmed history. Goals project execution state; explicit transport gaps and recovery events belong to the synchronization layer.
 

@@ -2,7 +2,7 @@ import {
   processingBlocks,
   assistantTextContent,
   preserveProcessingBlockTiming,
-  runtimeTurnDurationMs,
+  completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
@@ -42,6 +42,19 @@ export function mergeRuntimeConversationTurn(
   const preserveStreamingThinking =
     snapshot.status === "streaming" &&
     assistantTextContent(local.items) === assistantTextContent(snapshot.items);
+  const timing = isTerminalTurnStatus(local.status)
+    ? {
+        startedAt: local.startedAt ?? snapshot.startedAt,
+        durationMs: local.durationMs ?? snapshot.durationMs,
+        completedAt: local.completedAt ?? snapshot.completedAt,
+      }
+    : isTerminalTurnStatus(snapshot.status) && local.startedAt !== undefined
+      ? completeRuntimeTurnTiming(local, snapshot)
+      : {
+          startedAt: local.startedAt ?? snapshot.startedAt,
+          durationMs: snapshot.durationMs,
+          completedAt: snapshot.completedAt,
+        };
   return {
     ...local,
     ...snapshot,
@@ -70,29 +83,7 @@ export function mergeRuntimeConversationTurn(
       preserveLocalTerminal || preserveLocalFailure
         ? local.status
         : snapshot.status,
-    // Preserve higher-precision live timestamps when reading native history.
-    startedAt: local.startedAt ?? snapshot.startedAt,
-    durationMs:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.durationMs
-        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.durationMs ??
-            runtimeTurnDurationMs(
-              local.startedAt,
-              snapshot.startedAt,
-              snapshot.durationMs,
-            ))
-          : runtimeTurnDurationMs(
-              local.startedAt,
-              snapshot.startedAt,
-              snapshot.durationMs,
-            ),
-    completedAt:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.completedAt
-        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.completedAt ?? snapshot.completedAt)
-          : snapshot.completedAt,
+    ...timing,
     error:
       preserveLocalTerminal || preserveLocalFailure
         ? local.error

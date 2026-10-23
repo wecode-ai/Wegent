@@ -51,17 +51,28 @@ export function turnStatus(
   return turn.status;
 }
 
-/** Express an incoming elapsed duration against the start already observed by this view. */
-export function runtimeTurnDurationMs(
-  observedStart: number | undefined,
-  sourceStart: number | undefined,
-  durationMs: number | undefined,
-): number | undefined {
+/** Live completion closes the same wall-clock interval used by the running label. */
+export function completeRuntimeTurnTiming(
+  turn: RuntimeConversationTurn,
+  source: { startedAt?: number; durationMs?: number },
+): Pick<RuntimeConversationTurn, "startedAt" | "completedAt" | "durationMs"> {
   if (
-    durationMs === undefined ||
-    observedStart === undefined ||
-    sourceStart === undefined
-  )
-    return durationMs;
-  return Math.max(0, sourceStart + durationMs - observedStart);
+    ["done", "failed", "cancelled"].includes(turn.status) &&
+    turn.completedAt !== undefined
+  ) {
+    return {
+      startedAt: turn.startedAt ?? source.startedAt,
+      completedAt: turn.completedAt,
+      durationMs: turn.durationMs ?? source.durationMs,
+    };
+  }
+  const completedAt = Date.now();
+  return {
+    startedAt: turn.startedAt ?? source.startedAt,
+    completedAt: new Date(completedAt).toISOString(),
+    durationMs:
+      turn.startedAt === undefined
+        ? source.durationMs
+        : Math.max(0, completedAt - turn.startedAt),
+  };
 }

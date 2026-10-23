@@ -1,6 +1,6 @@
 import {
   processingBlocks,
-  runtimeTurnDurationMs,
+  completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { commandExecutionPayload } from "./command-execution";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
@@ -281,13 +281,7 @@ export function reduceRuntimeConversationTurns(
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
           status: "done",
           streamingThinkingContent: undefined,
-          startedAt: turn.startedAt ?? action.startedAt,
-          durationMs: runtimeTurnDurationMs(
-            turn.startedAt,
-            action.startedAt,
-            action.durationMs,
-          ),
-          completedAt: new Date().toISOString(),
+          ...completeRuntimeTurnTiming(turn, action),
           fileChanges: action.fileChanges ?? turn.fileChanges,
           error: undefined,
           errorType: undefined,
@@ -300,13 +294,7 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "cancelled",
           streamingThinkingContent: undefined,
-          startedAt: turn.startedAt ?? action.startedAt,
-          durationMs: runtimeTurnDurationMs(
-            turn.startedAt,
-            action.startedAt,
-            action.durationMs,
-          ),
-          completedAt: new Date().toISOString(),
+          ...completeRuntimeTurnTiming(turn, action),
           stoppedNotice: true,
         };
       });
@@ -317,13 +305,7 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "failed",
           streamingThinkingContent: undefined,
-          startedAt: turn.startedAt ?? action.startedAt,
-          durationMs: runtimeTurnDurationMs(
-            turn.startedAt,
-            action.startedAt,
-            action.durationMs,
-          ),
-          completedAt: new Date().toISOString(),
+          ...completeRuntimeTurnTiming(turn, action),
           error: action.error,
           errorType: action.errorType,
         };
