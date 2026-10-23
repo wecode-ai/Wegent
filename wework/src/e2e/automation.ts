@@ -3327,13 +3327,37 @@ async function postDesktopControlStarted(
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
-  const response = await fetch(`${url}/started`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ id: command.id, clientId }),
-  })
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  let response: Response
+  try {
+    response = await fetch(`${url}/started`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify({ id: command.id, clientId }),
+    })
+  } finally {
+    window.clearInterval(probe)
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+  }
   if (!response.ok) {
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
+  }
+  if (Date.now() - startedAt > 1000) {
+    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
+      commandId: command.id,
+      action: command.action,
+      startedAt,
+      elapsedMs: Date.now() - startedAt,
+      maxEventLoopLagMs,
+      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+      visibility: document.visibilityState,
+    })
   }
 }
 
