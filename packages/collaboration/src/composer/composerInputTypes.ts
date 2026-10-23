@@ -6,6 +6,7 @@ export interface ComposerSubmitOptions {
 export type ComposerFollowUpBehavior = 'queue' | 'guide'
 
 export interface ComposerInputHandle {
+  captureInsertion?(): { insertText(text: string): boolean } | null
   readonly element: HTMLElement | null
   focus(): void
   getValue(): string

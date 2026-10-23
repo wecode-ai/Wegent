@@ -144,6 +144,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const readyBeforeReload = control.readyCount
       await control.command('reloadApp', 'body')
       await control.awaitReadyAfter(readyBeforeReload)
+      await control.command('waitFor', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
