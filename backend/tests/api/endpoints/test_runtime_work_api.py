@@ -1150,7 +1150,7 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
     assert address.local_task_id == "codex-1"
 
 
-@pytest.mark.parametrize("endpoint", ["responses", "chat/completions", "messages"])
+@pytest.mark.parametrize("endpoint", ["chat/completions", "messages", "v1/messages"])
 def test_llm_responses_proxy_endpoint_streams_from_provider(
     test_client,
     test_token,
@@ -1189,7 +1189,7 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     assert call_args.args[2].id > 0
 
 
-@pytest.mark.parametrize("endpoint", ["responses", "chat/completions", "messages"])
+@pytest.mark.parametrize("endpoint", ["chat/completions", "messages", "v1/messages"])
 def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     test_client, endpoint
 ):
@@ -1200,12 +1200,3 @@ def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     )
 
     assert response.status_code == 401
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("llm_responses",)) as client:
-        yield client

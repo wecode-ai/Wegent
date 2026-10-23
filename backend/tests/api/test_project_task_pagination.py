@@ -27,7 +27,7 @@ from app.models.resource_member import ResourceMember
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services import project_service
-from tests.retained_python_handlers import component_client
+from tests.service_results import service_result
 
 
 @pytest.fixture
@@ -44,9 +44,8 @@ def client(test_db: Session, test_user: User) -> Generator[TestClient, None, Non
     app.include_router(router, prefix="/api/projects")
     app.dependency_overrides[get_db] = lambda: test_db
     app.dependency_overrides[get_current_user] = lambda: test_user
-    with TestClient(app) as production:
-        with component_client(production, ("projects",)) as client:
-            yield client
+    with TestClient(app) as client:
+        yield client
 
 
 def _task(db: Session, project: Project, **overrides: object) -> TaskResource:
@@ -271,7 +270,13 @@ def test_existing_project_lists_keep_updated_at_task_order(
     expected_ids = [task.id for task in tasks]
     params = {"client_origin": client_origin}
 
-    projects_response = client.get("/api/projects", params=params)
+    projects_response = service_result(
+        project_service.list_projects,
+        db=test_db,
+        user_id=project.user_id,
+        include_tasks=True,
+        client_origin=client_origin,
+    )
     project_response = client.get(f"/api/projects/{project.id}", params=params)
 
     assert projects_response.status_code == project_response.status_code == 200

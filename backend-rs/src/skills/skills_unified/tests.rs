@@ -167,6 +167,39 @@ fn availability_reflects_default_bindings() {
 }
 
 #[test]
+fn same_named_personal_and_group_skill_responses_keep_source_identity() {
+    let personal = kind_row(11, 7, "same-name", "default", json!({"spec": {}}));
+    let group = kind_row(12, 8, "same-name", "engineering", json!({"spec": {}}));
+    let personal = user_skill_item(&personal, false, &HashSet::new());
+    let group = user_skill_item(&group, true, &HashSet::new());
+    assert_eq!(personal["id"], json!(11));
+    assert_eq!(group["id"], json!(12));
+    assert_eq!(personal["name"], group["name"]);
+    assert_eq!(personal["namespace"], json!("default"));
+    assert_eq!(group["namespace"], json!("engineering"));
+    assert_eq!(personal["is_group_shared"], json!(false));
+    assert_eq!(group["is_group_shared"], json!(true));
+}
+
+#[test]
+fn hidden_and_published_skill_metadata_survives_catalog_rendering() {
+    let kind = kind_row(
+        11,
+        7,
+        "published",
+        "default",
+        json!({"spec": {
+            "visible": false, "displayName": "Hidden public skill",
+            "capability": {"publishStatus": "published"}
+        }}),
+    );
+    let item = user_skill_item(&kind, true, &HashSet::new());
+    assert_eq!(item["visible"], json!(false));
+    assert_eq!(item["displayName"], json!("Hidden public skill"));
+    assert_eq!(item["publication_status"], json!("published"));
+}
+
+#[test]
 fn highest_role_prefers_most_privileged() {
     let roles = vec!["Reporter".to_string(), "Maintainer".to_string()];
     assert_eq!(highest_role(&roles).as_deref(), Some("Maintainer"));
