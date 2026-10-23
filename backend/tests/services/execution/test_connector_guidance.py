@@ -4,6 +4,8 @@
 
 """Tests for in-conversation connector authorization guidance."""
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -93,6 +95,32 @@ def test_connected_apps_get_link_rules_without_an_authorization_prompt(
 
     section = connector_guidance.build_connector_guidance_section(
         test_db, test_user, mention="connected-app app"
+    )
+
+    assert "connector-oauth" not in section
+    assert section == connector_guidance.CONNECTOR_LINK_RULES
+
+
+def test_expired_grant_with_a_refresh_token_is_not_flagged_for_authorization(
+    test_db: Session, test_admin_user: User, test_user: User
+) -> None:
+    """The runtime renews it, so the turn must not ask the user to authorize."""
+    _create_app(test_db, test_admin_user, slug="refreshable-app")
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="refreshable-app",
+        user_id=test_user.id,
+        access_token="stale",
+        refresh_token="refresh-me",
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(seconds=1),
+    )
+
+    section = connector_guidance.build_connector_guidance_section(
+        test_db, test_user, mention="refreshable-app work"
     )
 
     assert "connector-oauth" not in section

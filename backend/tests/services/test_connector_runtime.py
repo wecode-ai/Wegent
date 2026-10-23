@@ -4,6 +4,7 @@
 
 import builtins
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -211,6 +212,51 @@ async def test_lazy_apps_are_hidden_from_the_unscoped_surface(
         test_db, test_user, app_slug="lazy"
     )
     assert [tool.name for tool in scoped] == ["lazy__search"]
+
+
+@pytest.mark.asyncio
+async def test_expired_grant_stays_connected_while_it_can_be_refreshed(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+) -> None:
+    """A refreshable grant keeps its tools instead of asking to re-authorize."""
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="refreshable",
+        name="Refreshable",
+        auth_type="oauth2",
+    )
+    _create_app(test_db, test_admin_user, slug="dead", name="Dead", auth_type="oauth2")
+    expired = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="refreshable",
+        user_id=test_user.id,
+        access_token="stale",
+        refresh_token="refresh-me",
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=expired,
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="dead",
+        user_id=test_user.id,
+        access_token="stale",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=expired,
+    )
+
+    apps, connections = ConnectorRuntimeService._connected_apps(test_db, test_user)
+
+    assert [app.slug for app in apps] == ["refreshable"]
+    assert connector_connection_service.is_usable(connections["dead"]) is False
 
 
 @pytest.mark.asyncio

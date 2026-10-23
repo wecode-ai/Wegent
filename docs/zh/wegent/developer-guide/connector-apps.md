@@ -56,6 +56,8 @@ Connector 当前支持以下 App 认证方式：
 
 管理员可配置加密固定请求头，例如内部 API Key 或服务令牌，而无需每个用户单独连接。固定请求头不会通过管理 API 回显；管理 API 只返回是否已配置以及请求头名称。OAuth 2.0 授权使用 `/api/connector-apps/{slug}/oauth/sessions` 和 `/api/connector-apps/oauth/callback`；用户凭据只加密存储在 `ConnectorConnection`，不会通过任何 API 返回。
 
+过期但仍有 refresh token 的授权仍视为可用：运行时在下次访问上游前自动续期，对话引导不会误报"需要授权"；只有当 token 端点明确拒绝该 refresh token 时才会清除它，此时连接回到"需要授权"并由对话给出授权链接。
+
 ## 部署配置
 
 生产部署必须保护项目通用敏感数据加密配置 `GIT_TOKEN_AES_KEY` 和 `GIT_TOKEN_AES_IV`。Connector Apps 使用现有 `encrypt_sensitive_data` 机制把固定请求头加密后写入 `Kind.json.spec.providerHeadersEncrypted`。密钥必须由密钥管理系统注入，不能提交到仓库；轮换密钥前需要制定现有加密字段的迁移方案。

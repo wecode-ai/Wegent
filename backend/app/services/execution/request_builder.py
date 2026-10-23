@@ -2076,9 +2076,8 @@ class TaskRequestBuilder:
                         slug=str(service["connector_slug"]),
                         user_id=user_id,
                     )
-                    connector_connected = (
-                        connector_connection_service.response(connection).status
-                        == "connected"
+                    connector_connected = connector_connection_service.is_usable(
+                        connection
                     )
                 # Once the connector app is authorized it owns the tool surface;
                 # keeping both paths would expose every tool twice.

@@ -350,10 +350,9 @@ class ConnectorAppService:
         for app in visible_apps:
             if app.auth_type == "none":
                 available.append(app)
-            elif (
-                connector_connection_service.response(connections.get(app.slug)).status
-                == "connected"
-            ):
+            elif connector_connection_service.is_usable(connections.get(app.slug)):
+                # An expired grant with a refresh token is still usable; the
+                # runtime renews it on the next upstream call.
                 available.append(app)
             else:
                 pending.append(app)

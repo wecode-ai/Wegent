@@ -56,6 +56,8 @@ Connector currently supports these app authentication modes:
 
 Administrators can configure encrypted fixed headers, such as an internal API key or service token, without requiring every user to connect separately. Fixed provider headers are never returned by the administrator API. It only reports whether headers exist and the configured header names. OAuth 2.0 authorization uses `/api/connector-apps/{slug}/oauth/sessions` and `/api/connector-apps/oauth/callback`; user credentials are encrypted only in `ConnectorConnection` and never returned by any API.
 
+An expired grant that still holds a refresh token counts as usable: the runtime renews it before the next upstream call and the conversation guidance does not claim authorization is missing. The refresh token is dropped only when the token endpoint rejects it, which returns the app to "needs authorization" with a fresh link.
+
 ## Deployment configuration
 
 Production deployments must protect the shared sensitive-data encryption settings `GIT_TOKEN_AES_KEY` and `GIT_TOKEN_AES_IV`. Connector Apps use the existing `encrypt_sensitive_data` mechanism to store fixed headers in `Kind.json.spec.providerHeadersEncrypted`. Inject keys through a secret manager and never commit them. Plan a migration for existing encrypted fields before rotating keys.

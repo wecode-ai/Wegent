@@ -193,6 +193,37 @@ class ConnectorConnectionService:
         return ConnectorConnectionService._row_to_connection(connection.row)
 
     @staticmethod
+    def clear_refresh_token(
+        db: Session,
+        connection: ConnectorConnection,
+    ) -> ConnectorConnection:
+        """Stop offering a grant the token endpoint already rejected."""
+        payload = dict(connection.row.json or {})
+        spec = dict(payload.get("spec") or {})
+        spec["refreshTokenEncrypted"] = None
+        payload["spec"] = spec
+        connection.row.json = payload
+        db.commit()
+        db.refresh(connection.row)
+        return ConnectorConnectionService._row_to_connection(connection.row)
+
+    @staticmethod
+    def is_usable(connection: ConnectorConnection | None) -> bool:
+        """Whether the caller can use this connection right now.
+
+        An expired grant still works while a refresh token can renew it: the
+        runtime refreshes it on the next upstream call. A rejected grant loses
+        its refresh token, so it stops looking usable and guidance asks for
+        authorization again.
+        """
+        if connection is None:
+            return False
+        status = ConnectorConnectionService.response(connection).status
+        if status == "connected":
+            return True
+        return status == "expired" and bool(connection.refresh_token())
+
+    @staticmethod
     def save_tool_summaries(
         db: Session,
         connection: ConnectorConnection,

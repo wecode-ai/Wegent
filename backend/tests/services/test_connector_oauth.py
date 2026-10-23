@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -209,6 +210,63 @@ async def test_expiring_github_token_can_be_refreshed(
     assert refreshed is not None
     assert refreshed.access_token() == "refreshed-token"
     assert refreshed.refresh_token() == "next-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_rejected_refresh_drops_the_refresh_token(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected grant must stop looking refreshable and ask for authorization."""
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="github",
+        user_id=test_user.id,
+        access_token="expired-token",
+        refresh_token="revoked-refresh-token",
+        token_type="bearer",
+        granted_scopes=["repo"],
+        external_account_name="octocat",
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(seconds=1),
+    )
+    request = httpx.Request("POST", "https://github.com/login/oauth/access_token")
+
+    class Response:
+        def raise_for_status(self) -> None:
+            raise httpx.HTTPStatusError(
+                "400 Bad Request",
+                request=request,
+                response=httpx.Response(400, request=request),
+            )
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
+    monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
+    monkeypatch.setattr(
+        "app.services.connector_oauth.httpx.AsyncClient",
+        lambda **_kwargs: Client(),
+    )
+
+    refreshed = await ConnectorOAuthService.refresh_connection(test_db, connection)
+    stored = connector_connection_service.get(
+        test_db, slug="github", user_id=test_user.id
+    )
+
+    assert refreshed is None
+    assert stored is not None
+    assert stored.refresh_token() is None
+    assert connector_connection_service.is_usable(stored) is False
 
 
 @pytest.mark.asyncio

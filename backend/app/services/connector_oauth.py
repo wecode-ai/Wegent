@@ -455,7 +455,19 @@ class ConnectorOAuthService:
                     else None
                 ),
             )
-        except (httpx.HTTPError, ValueError):
+        except httpx.HTTPStatusError as error:
+            # The endpoint answered, so a rejected grant is final.
+            if error.response.status_code < 500:
+                connector_connection_service.clear_refresh_token(db, connection)
+            connector_connection_service.set_status(db, connection, "expired")
+            return None
+        except ValueError:
+            # The payload carried an OAuth error such as `invalid_grant`.
+            connector_connection_service.clear_refresh_token(db, connection)
+            connector_connection_service.set_status(db, connection, "expired")
+            return None
+        except httpx.HTTPError:
+            # Transport failures are transient; keep the refresh token for a retry.
             connector_connection_service.set_status(db, connection, "expired")
             return None
 

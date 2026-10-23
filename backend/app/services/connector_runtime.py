@@ -473,7 +473,8 @@ class ConnectorRuntimeService:
                 connected.append(app)
                 continue
             connection = connections.get(app.slug)
-            if connector_connection_service.response(connection).status == "connected":
+            if connector_connection_service.is_usable(connection):
+                # `_server_config` refreshes an expired grant before use.
                 connected.append(app)
         return connected, connections
 
