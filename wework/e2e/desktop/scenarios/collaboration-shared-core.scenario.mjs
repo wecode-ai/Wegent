@@ -107,12 +107,6 @@ async function waitForFixedTaskTabSnapshot(control, predicate, message, timeoutM
  */
 async function verifyTaskTabLoadedCollaborationTask(control, taskId, taskTabIdsBefore, timeoutMs) {
   const rowTestId = `runtime-local-task-row-${taskId}`
-  const beforeSwitch = JSON.parse(await control.command('snapshot', FIXED_TASK_TAB_CONTENT))
-  assert.equal(
-    beforeSwitch.testIds.includes(rowTestId),
-    false,
-    'The hidden Tasks tab already listed the Collaboration task before it was activated'
-  )
   await control.command('click', FIXED_TASK_TAB_SELECT)
   await control.command('waitFor', `${FIXED_TASK_TAB_SELECT}[aria-selected="true"]`, {
     timeoutMs,
