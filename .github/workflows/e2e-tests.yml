@@ -609,8 +609,6 @@ jobs:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           DOCKER_BUILDKIT: "0"
         run: |
-          apt-get update
-          apt-get install --yes --no-install-recommends docker.io
           uv sync --project executor_manager --frozen
           docker build --pull=false \
             --build-arg BASE_IMAGE="$PLATFORM_E2E_IMAGE" \
@@ -631,8 +629,7 @@ jobs:
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
         run: |
-          source .venv/bin/activate
-          alembic upgrade head
+          uv run --no-sync alembic upgrade head
 
       - name: Verify DingTalk sync MySQL transaction rollback
         if: matrix.shardIndex == 1
@@ -879,6 +876,7 @@ jobs:
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_MILVUS_URL: http://milvus:19530
+          E2E_KNOWLEDGE_RUNTIME_LOG: ../knowledge_runtime/ci.log
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_BOOTSTRAP_ADMIN_USER: admin
           PYTHONPATH: ..:.
@@ -1276,8 +1274,7 @@ jobs:
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
         run: |
-          source .venv/bin/activate
-          alembic upgrade head
+          uv run --no-sync alembic upgrade head
 
       - name: Resolve Docker bridge host
         run: |

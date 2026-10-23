@@ -204,7 +204,6 @@
     "project_chat_task_thread": "任务 Thread",
     "project_chat_processing_ellipsis": "正在处理…",
     "project_chat_completed": "已完成",
-    "project_chat_ai_received": "机器人已接收",
     "project_chat_processing": "正在处理",
     "project_chat_agents_title": "机器人",
     "project_chat_agents_description": "机器人可以被指派为任务负责人，自动执行并提交结果供人工验收。",
@@ -4160,6 +4159,8 @@
     "start_follow_up": "开启新任务"
   },
   "todo": {
+    "issue_badges_title": "关联信息",
+    "issue_pr_loading": "正在查询状态…",
     "load_tag_catalog_failed": "加载标签目录失败",
     "my_work_human_filter": "人工任务",
     "project_manager": "项目管理者",
@@ -5189,7 +5190,7 @@
   },
   "notifications": {
     "stand_in_retry": "重试",
-    "stand_in_identity": "我的替身",
+    "stand_in_handling": "替身处理",
     "stand_in_delegate": "交给替身",
     "stand_in_assignment": "分配给你",
     "stand_in_running": "处理中",
@@ -5248,9 +5249,8 @@
     "select_device": "选择设备",
     "device_unavailable": "已选设备不可用，请重新选择",
     "offline": "离线",
-    "no_permission": "需要项目开发者权限才能设置替身或开启自动处理。",
     "cancel": "取消",
-    "save": "保存设置",
+    "save": "保存",
     "saving": "保存中…",
     "loading": "加载中…",
     "reload": "重新加载",
@@ -5263,7 +5263,7 @@
     "default_agent": "通用助手（默认）",
     "agent_unavailable": "已选智能体暂不可用",
     "agent_load_failed": "暂时无法加载智能体，请重新打开设置重试。",
-    "inherit_environment": "沿用项目环境",
+    "inherit_environment": "设备默认工作区",
     "new_worktree": "新建工作树",
     "current_workspace": "当前目录",
     "dynamic_placeholder": "在{{environment}}处理任务，补充处理要求（选填）",
@@ -5275,11 +5275,10 @@
     "default_profile": "默认替身",
     "copy_from": "复用其他项目配置",
     "choose_existing": "选择已有配置…",
-    "copy_agent_required": "配置已复制；原智能体不在当前项目中，请重新选择智能体后保存。",
-    "copied": "配置已复制，保存后仅影响当前项目。",
-    "default_workspace": "项目默认工作目录",
+    "copied": "已填入配置，保存后应用到当前项目。",
+    "default_workspace": "设备默认工作区",
     "goal_placeholder": "将任务作为目标持续推进，可补充验收条件（选填）",
-    "auto_description": "仅接手开启后新分配的任务；关闭后，正在执行的任务继续。",
+    "auto_description": "保存后生效，仅处理之后新分配的任务。关闭后，正在执行的任务仍会继续。",
     "list_description": "按项目管理替身的执行方式和自动接单。",
     "configure": "配置替身",
     "actions": "操作",
@@ -5288,11 +5287,13 @@
     "list_empty": "还没有替身配置，选择一个项目开始配置。",
     "action_label": "AI替身",
     "auto_label": "自动处理分配给我的任务",
-    "settings": "替身设置",
-    "save_and_enable": "保存并开启自动处理",
-    "configure_before_enable": "完成替身设置并保存后，即可开启自动处理。",
-    "save_before_enable": "有未保存的设置，请保存后开启自动处理。",
-    "automatic_enabled": "自动处理已开启",
-    "automatic_disabled": "自动处理已关闭"
+    "settings": "替身设置"
+  },
+  "workbench_error": {
+    "startup_title": "Wework 启动失败",
+    "startup_description": "前端初始化失败，请刷新页面重试。如果问题持续，请打开调试面板查看日志。",
+    "crash_title": "Wework 页面出现错误",
+    "crash_description": "页面遇到异常，暂时无法显示。请刷新页面重试；尚未保存的内容可能会丢失。如果问题持续，请打开调试面板查看日志。",
+    "reload": "刷新页面"
   }
 }

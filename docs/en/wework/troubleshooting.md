@@ -4,6 +4,16 @@ sidebar_position: 10
 
 # Troubleshooting
 
+## Page errors or a blank screen
+
+When a frontend component fails to render, Wework displays “Something went wrong in Wework”.
+Select **Refresh page** to reload the interface; unsaved changes may be lost.
+The startup error page also offers a refresh action when frontend initialization fails.
+
+If the error persists after refreshing, open the debug panel to view the logs and report
+the steps that reproduce the problem. If the renderer process or the entire application
+exits and does not recover, reopen Wework.
+
 ## Models and tasks
 
 - Check Codex sign-in or the local model URL under **Settings → Models**.

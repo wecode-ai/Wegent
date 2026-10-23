@@ -19,7 +19,7 @@ const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
 
-export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -92,6 +92,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })
+      const notificationRow = selector(`wework-notification-${id}`)
+      await control.command('waitFor', notificationRow, { text: '替身处理' })
+      const rowText = await control.command('getText', notificationRow)
+      assert.ok(rowText.includes('在通知内继续处理替身任务'))
+      assert.ok(!rowText.includes('我的替身'), 'Handling must preserve the original title')
+      assert.equal(
+        await control.command('getElementCount', selector(`wework-notification-${id}-body`)),
+        '0',
+        'An assignment without an actor must keep the ordinary single-title layout'
+      )
       await control.command('click', selector(`notification-stand-in-reply-open-${id}`))
       await control.command('fill', selector(`notification-stand-in-reply-${id}`), {
         value: FOLLOW_UP,
@@ -101,6 +111,22 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         text: '已按补充要求完成检查。',
         timeoutMs: modelResponseTimeoutMs,
       })
+      await control.command('waitFor', `${notificationRow}[data-unread="true"]`)
+      const alerts = JSON.parse(await control.command('getSystemNotifications', 'body'))
+      const completionAlert = alerts
+        .filter(alert => alert.address?.taskId === binding.task_id)
+        .at(-1)
+      assert.ok(completionAlert, 'Completion must deliver its system notification')
+      assert.equal(
+        completionAlert.url,
+        `wework://boards/local/${project.id}/issues/${issue.id}`,
+        'Completion alerts must have the same Issue destination as the inbox entry'
+      )
+      await captureScreenshot(
+        control,
+        'stand-in-completed-notification.png',
+        '[data-testid="wework-notifications-popover"]'
+      )
       assert.equal(
         await control.command('getElementCount', '[data-testid="wework-notifications-popover"]'),
         '1',
@@ -158,10 +184,25 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
           visible: false,
         })
-        await control.command('waitFor', `${CONTENT} [data-testid="message-assistant"]`, {
-          text: '已按补充要求完成检查。',
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
+        assert.equal(
+          await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+          '在通知内继续处理替身任务',
+          'Every notification hit target must open the original Issue'
+        )
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
+          text: issue.id,
         })
+        await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
       }
+      await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
+        text: issue.id,
+      })
+      assert.equal(
+        await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
+        '在通知内继续处理替身任务'
+      )
     },
   }
 }

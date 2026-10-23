@@ -143,6 +143,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
       mysql:
         image: mysql:8.0
         env:
@@ -163,11 +172,12 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: uv sync --dev
-      - name: Verify real InnoDB enrollment and transfer races
+      - name: Verify real Redis and InnoDB plugin write races
         working-directory: backend
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
-        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py -n 0
+          PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
 
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend

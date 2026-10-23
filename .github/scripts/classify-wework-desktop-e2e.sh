@@ -21,6 +21,7 @@ core_segments=(
   stand-in-cloud
   stand-in-notifications
 
+  stand-in-personal-task
   stand-in-permissions
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
@@ -78,6 +79,7 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  renderer-crash-recovery
   native-window-chrome
   renderer-storage
   application-menu
@@ -85,6 +87,7 @@ core_segments=(
   conversation-state
   send-key-preference
   reply-predictions
+  archived-worktree-cleanup
   reply-prediction-auth
   model-settings
   codex-native-catalog
@@ -101,6 +104,7 @@ core_segments=(
   streaming-message-order
   streaming-subagents
   background-terminals
+  collaboration-issue-badges
   change-request-status
   git-commit-generation
   claude-runtime
@@ -167,6 +171,9 @@ cloud_segments=(
   plugin-uninstall-unknown-result
   plugin-uninstall-restart-recovery
   plugin-uninstall-reinstall-race
+  plugin-write-coordination
+  plugin-registration-coordination
+  plugin-account-auth-coordination
   plugin-composer-long-list
   plugin-workspace-publication
   plugin-toggle-persistence
@@ -194,6 +201,7 @@ cloud_shards=(
   plugin-composer-long-list
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
   plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
+  plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination
 )
 # Group checkpoints by observed parallel CI duration while reusing the same
 # prebuilt application. Rendering runs apart from terminal/transcript workloads.
@@ -201,26 +209,28 @@ cloud_shards=(
 core_shards=(
   harness-app-development,harness-app-lifecycle,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,reply-prediction-auth,model-settings,codex-native-catalog
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-crash-recovery,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-personal-task,stand-in-permissions
   rendering-extensions,streaming-content,streaming-tools,streaming-timers
   streaming-scroll,streaming-message-order,streaming-subagents
   # Preserve the fixed interaction latency budget without CPU contention from other apps.
   split-workbench
+  # Drawer frame assertions also require a runner without competing Electron apps.
+  collaboration-shared-core
 )
 
 validate_core_shards() {
@@ -354,6 +364,7 @@ select_account_auth_checkpoints() {
   select_target "cloud:plugin-account-auth-dws"
   select_target "cloud:plugin-account-auth-conversation"
   select_target "cloud:plugin-account-auth-github"
+  select_target "cloud:plugin-account-auth-coordination"
 }
 
 select_uninstall_checkpoints() {
@@ -361,6 +372,9 @@ select_uninstall_checkpoints() {
   select_target "cloud:plugin-uninstall-unknown-result"
   select_target "cloud:plugin-uninstall-restart-recovery"
   select_target "cloud:plugin-uninstall-reinstall-race"
+  select_target "cloud:plugin-write-coordination"
+  select_target "cloud:plugin-registration-coordination"
+  select_target "cloud:plugin-account-auth-coordination"
 }
 
 select_rendering_checkpoints() {
@@ -388,6 +402,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
   select_target "core:stand-in-cloud"
+  select_target "core:stand-in-personal-task"
   select_target "core:stand-in-permissions"
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
@@ -464,7 +479,8 @@ classify_wework_path() {
       select_target "cloud:cloud-device-lifecycle"
       return
       ;;
-    wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
+    wework/e2e/desktop/modules/plugin-auth-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
       wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
@@ -808,6 +824,10 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in-personal-task.scenario.mjs)
+      select_target "core:stand-in-personal-task"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
@@ -817,6 +837,7 @@ classify_wework_path() {
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-cloud"
+      select_target "core:stand-in-personal-task"
       select_target "core:stand-in-permissions"
       return
       ;;
@@ -1204,6 +1225,13 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs | \
+      wework/src/features/todo/IssueBadges* | \
+      wework/src/features/change-requests/*)
+      select_target "core:collaboration-issue-badges"
+      return
+      ;;
+
     # Git hosting preferences and explicit device synchronization share one
     # independently bootstrapped desktop checkpoint.
     wework/src/api/devices* | \
@@ -1273,6 +1301,17 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/core/distributed_lock.py | \
+      backend/app/services/plugin_write_*.py | \
+      backend/app/services/plugin_kind_revision.py | \
+      backend/app/services/plugin_policy_revision.py)
+      select_account_auth_checkpoints
+      select_uninstall_checkpoints
+      select_target "cloud:plugin-auto-update"
+      ;;
+  esac
+
+  case "$path" in
     backend/app/api/endpoints/cloud_projects.py | \
       backend/app/api/endpoints/workspaces.py | \
       backend/app/schemas/cloud_project.py | backend/app/schemas/workspace.py | \
@@ -1313,8 +1352,11 @@ classify_path() {
   case "$path" in
     backend/app/api/endpoints/installed_plugins.py | \
       backend/app/api/ws/device_namespace.py | \
+      backend/app/services/device/plugin_reconciliation.py | \
       backend/app/services/device/plugin_removal_sync.py | \
       backend/app/services/plugin_device_installation_service.py | \
+      backend/app/services/plugin_device_sync.py | \
+      backend/app/services/plugin_installation_operations.py | \
       backend/app/services/plugin_marketplace_service.py | \
       wework/src/api/pluginUninstall* | wework/src/api/plugins.ts | \
       wework/src/features/plugins/pluginInventory* | \
@@ -1342,6 +1384,11 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-registration-coordination.mjs | \
+      wework/e2e/desktop/support/registration-capabilities.py | \
+      wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-write-lease.mjs | \
+      wework/e2e/desktop/support/plugin-write-lease.py | \
       wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/transport-fault-proxy*)
       select_uninstall_checkpoints

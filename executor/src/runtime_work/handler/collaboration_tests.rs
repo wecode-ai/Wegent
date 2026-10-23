@@ -275,6 +275,34 @@ async fn terminal_report_classifies_http_rejections_and_recoverable_failures() {
     }
 }
 
+#[test]
+fn terminal_reports_ignore_inherited_shell_proxies() {
+    let test = concat!(
+        "runtime_work::handler::collaboration::tests::",
+        "terminal_report_classifies_http_rejections_and_recoverable_failures"
+    );
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child.args(["--exact", test, "--nocapture"]);
+    for key in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        child.env(key, "http://127.0.0.1:1");
+    }
+    child.env("NO_PROXY", "").env("no_proxy", "");
+    let output = child.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test]
 async fn agent_only_round_keeps_results_until_its_manager_can_start() {
     let root = tempfile::tempdir().unwrap();

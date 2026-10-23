@@ -129,6 +129,9 @@ class SubtaskContextBrief(BaseModel):
     site: Optional[str] = None
     source_url: Optional[str] = None
     cover_url: Optional[str] = None
+    # Conversation reference fields (from type_data)
+    task_id: Optional[int] = None
+    task_updated_at: Optional[str] = None
 
     class Config:
         from_attributes = True

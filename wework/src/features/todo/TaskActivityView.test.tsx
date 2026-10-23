@@ -837,7 +837,7 @@ describe('TaskActivityView', () => {
         runtimeTaskId: 'runtime-task-1',
       })
     )
-    expect(await screen.findByText('机器人已接收')).toBeInTheDocument()
+    expect(screen.queryByText('机器人已接收')).not.toBeInTheDocument()
   })
 
   it('sends a structured project member mention from the parent comment composer', async () => {

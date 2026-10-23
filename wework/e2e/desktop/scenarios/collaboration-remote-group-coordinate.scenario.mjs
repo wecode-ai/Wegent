@@ -4,6 +4,7 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   mcpToolRequestEvents,
   readRequestBody,
   responseCompleted,
@@ -541,6 +542,7 @@ export async function createDesktopScenario({
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const requestText = JSON.stringify(body)
       const responseId = `remote-group-coordinate-${Date.now()}-${childRequests}`
       const kind = codexRequestKind(body)

@@ -44,6 +44,12 @@ describe('stand-in notification read and delivery state', () => {
     expect(hook.result.current.items).toHaveLength(1)
     expect(hook.result.current.unreadCount).toBe(1)
     expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith({
+      title: 'Review',
+      body: 'notifications.stand_in_completed',
+      address: runtimeItem.address,
+      url: assignment.url,
+    })
     act(() => hook.result.current.markRead(hook.result.current.items))
     expect(hook.result.current.unreadCount).toBe(0)
     hook.unmount()

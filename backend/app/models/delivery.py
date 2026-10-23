@@ -259,6 +259,16 @@ class LoopItem(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "task"}
 
     @property
+    def badges(self) -> list[dict[str, object]]:
+        metadata = self.metadata_json
+        values = metadata.get("badges") if isinstance(metadata, dict) else None
+        return (
+            [dict(value) for value in values if isinstance(value, dict)]
+            if isinstance(values, list)
+            else []
+        )
+
+    @property
     def tags(self) -> list[str]:
         """Item tags stored inside the metadata JSON column."""
         metadata = self.metadata_json

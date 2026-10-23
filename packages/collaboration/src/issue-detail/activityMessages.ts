@@ -63,7 +63,6 @@ export const activityMessages: Record<
     "activity.task_activity_empty_without_ai":
       "评论会记录在这里。指派给机器人后任务会自动进入队列执行，无需评论。",
     "activity.task_activity_chronological": "从旧到新",
-    "activity.project_chat_ai_received": "机器人已接收",
     "activity.project_chat_completed": "已完成",
     "activity.project_chat_processing": "正在处理",
     "activity.project_chat_processing_ellipsis": "正在处理…",
@@ -186,7 +185,6 @@ export const activityMessages: Record<
     "activity.task_activity_empty_without_ai":
       "Comments are recorded here. Assigning a robot queues the task automatically; no comment is needed.",
     "activity.task_activity_chronological": "Oldest first",
-    "activity.project_chat_ai_received": "Robot received",
     "activity.project_chat_completed": "Completed",
     "activity.project_chat_processing": "Working",
     "activity.project_chat_processing_ellipsis": "Working…",
