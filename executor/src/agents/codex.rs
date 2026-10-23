@@ -137,8 +137,12 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
+mod config_diagnostics;
+#[cfg(test)]
+mod config_lifecycle_tests;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
+mod pending_requests;
 mod reply_prediction;
 mod text_generation;
 use text_generation::configure_text_generation;
@@ -153,6 +157,7 @@ mod plugin_skills;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 
+use config_diagnostics::{CodexConfigDiagnosticTarget, CodexConfigObservation};
 use debug_stdout::CodexStdout;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
@@ -163,6 +168,7 @@ pub(crate) use home::{
     executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
+use pending_requests::{PendingCodexRequests, PreparedCodexRequest};
 use plugin_skills::PluginSkillResolver;
 mod github_cli;
 mod local_connector_auth;
@@ -350,12 +356,12 @@ impl CodexAppServerClient {
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self.prepare_request().await?;
+        let (request, handle, response_rx) = self.prepare_request(method, timeout_seconds).await?;
         Self::send_request_and_wait(
             method,
             params,
             timeout_seconds,
-            request_id,
+            request,
             handle,
             response_rx,
         )
@@ -369,14 +375,14 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
     ) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let (request_id, handle, response_rx) = self
-            .prepare_request_with_process(true, Some(launch_config))
+        let (request, handle, response_rx) = self
+            .prepare_request_with_process(true, Some(launch_config), method, timeout_seconds)
             .await?;
         Self::send_request_and_wait(
             method,
             params,
             timeout_seconds,
-            request_id,
+            request,
             handle,
             response_rx,
         )
@@ -387,26 +393,38 @@ impl CodexAppServerClient {
         method: &str,
         params: Value,
         timeout_seconds: u64,
-        request_id: u64,
+        request: PreparedCodexRequest,
         handle: CodexAppServerHandle,
         response_rx: oneshot::Receiver<Result<Value, String>>,
     ) -> Result<Value, String> {
+        let request_id = request.id;
         let message = json!({
             "method": method,
             "id": request_id,
             "params": params,
         });
+        let observation = handle
+            .config_diagnostics
+            .as_ref()
+            .and_then(|target| CodexConfigObservation::request(target, method, request_id));
         if let Err(error) = handle.write_message(message).await {
             handle.remove_pending(request_id).await;
+            if let Some(observation) = observation {
+                observation.finish("send_error");
+            }
             return Err(error);
         }
 
-        with_rpc_timeout(method, timeout_seconds, async {
+        let result = with_rpc_deadline(method, timeout_seconds, request.deadline, async {
             response_rx
                 .await
                 .map_err(|_| "codex app-server response channel closed".to_owned())?
         })
-        .await
+        .await;
+        if let Some(observation) = observation {
+            observation.finish(if result.is_ok() { "ok" } else { "error" });
+        }
+        result
     }
 
     pub async fn ensure_started(&self) -> Result<Option<Duration>, String> {
@@ -475,7 +493,11 @@ impl CodexAppServerClient {
         method: &str,
         params: Value,
     ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
-        let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let (request, handle, response_rx) = self
+            .prepare_existing_request(method, timeout_seconds)
+            .await?;
+        let request_id = request.id;
         let message = json!({
             "method": method,
             "id": request_id,
@@ -505,7 +527,7 @@ impl CodexAppServerClient {
         let mut state = self.state.lock().await;
         let active_turn_count = state.active_threads.values().sum::<usize>();
         let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
+            Some(process) => process.pending.len().await,
             None => 0,
         };
         if active_turn_count > 0 || pending_request_count > 0 {
@@ -535,7 +557,7 @@ impl CodexAppServerClient {
         let mut state = self.state.lock().await;
         let active_turn_count = state.active_threads.values().sum::<usize>();
         let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
+            Some(process) => process.pending.len().await,
             None => 0,
         };
         if active_turn_count > 0 || pending_request_count > 0 {
@@ -604,44 +626,55 @@ impl CodexAppServerClient {
 
     async fn prepare_request(
         &self,
+        method: &str,
+        timeout_seconds: u64,
     ) -> Result<
         (
-            u64,
+            PreparedCodexRequest,
             CodexAppServerHandle,
             oneshot::Receiver<Result<Value, String>>,
         ),
         String,
     > {
-        self.prepare_request_with_process(true, None).await
+        self.prepare_request_with_process(true, None, method, timeout_seconds)
+            .await
     }
 
     async fn prepare_existing_request(
         &self,
+        method: &str,
+        timeout_seconds: u64,
     ) -> Result<
         (
-            u64,
+            PreparedCodexRequest,
             CodexAppServerHandle,
             oneshot::Receiver<Result<Value, String>>,
         ),
         String,
     > {
-        self.prepare_request_with_process(false, None).await
+        self.prepare_request_with_process(false, None, method, timeout_seconds)
+            .await
     }
 
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
         launch_config: Option<&CodexLaunchConfig>,
+        method: &str,
+        timeout_seconds: u64,
     ) -> Result<
         (
-            u64,
+            PreparedCodexRequest,
             CodexAppServerHandle,
             oneshot::Receiver<Result<Value, String>>,
         ),
         String,
     > {
-        ensure_codex_mcp_endpoints().await?;
         let mut state = self.state.lock().await;
+        if state.executor_shutdown_requested {
+            return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
+        }
+        ensure_codex_mcp_endpoints().await?;
         if state
             .process
             .as_mut()
@@ -657,7 +690,7 @@ impl CodexAppServerClient {
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, launch_environment);
         let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
+            Some(process) => process.pending.len().await,
             None => 0,
         };
         if state.process.is_some()
@@ -696,8 +729,17 @@ impl CodexAppServerClient {
             .expect("persistent Codex app-server should be initialized")
             .handle();
         let (tx, rx) = oneshot::channel();
-        handle.pending.lock().await.insert(request_id, tx);
-        Ok((request_id, handle, rx))
+        let request = handle
+            .pending
+            .insert(
+                request_id,
+                method,
+                Instant::now() + Duration::from_secs(timeout_seconds),
+                timeout_seconds,
+                tx,
+            )
+            .await;
+        Ok((request, handle, rx))
     }
 
     pub async fn fork_thread_at(
@@ -983,8 +1025,11 @@ impl CodexAppServerClient {
     async fn ensure_process_with_startup(
         &self,
     ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
-        ensure_codex_mcp_endpoints().await?;
         let mut state = self.state.lock().await;
+        if state.executor_shutdown_requested {
+            return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
+        }
+        ensure_codex_mcp_endpoints().await?;
         if state
             .process
             .as_mut()
@@ -997,7 +1042,7 @@ impl CodexAppServerClient {
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &BTreeMap::new());
         let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
+            Some(process) => process.pending.len().await,
             None => 0,
         };
         if state.process.is_some()
@@ -1040,6 +1085,9 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
     ) -> Result<CodexAppServerHandle, String> {
         let mut state = self.state.lock().await;
+        if state.executor_shutdown_requested {
+            return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
+        }
         if state
             .process
             .as_mut()
@@ -1051,7 +1099,7 @@ impl CodexAppServerClient {
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &launch_config.env);
         let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
+            Some(process) => process.pending.len().await,
             None => 0,
         };
         if state.process.is_some()
@@ -1233,15 +1281,40 @@ async fn stop_codex_app_server_process(
     state: &mut CodexAppServerSharedState,
     pending_error: Option<&str>,
 ) -> bool {
-    state.process_environment.clear();
-    let Some(mut process) = state.process.take() else {
+    let Some(process) = state.process.as_mut() else {
         return false;
     };
-    if let Some(error) = pending_error {
-        fail_all_pending(&process.pending, error.to_owned()).await;
+    let observation = process
+        .config_diagnostics
+        .as_ref()
+        .map(CodexConfigObservation::stop);
+    // Keep ownership in state while draining: cancellation must not drop and kill the child.
+    tokio::select! {
+        _ = process.pending.drain_configuration() => {},
+        exited = process.child.wait() => {
+            if exited.is_ok() {
+                process.pending.fail_all("codex app-server exited while draining configuration".to_owned()).await;
+            } else {
+                process.pending.drain_configuration().await;
+            }
+        },
     }
+    state.process_environment.clear();
+    let mut process = state
+        .process
+        .take()
+        .expect("drained process must remain registered");
+    let error = pending_error.unwrap_or(if state.executor_shutdown_requested {
+        CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    } else {
+        "codex app-server stopped"
+    });
+    process.pending.fail_all(error.to_owned()).await;
     process.reader_task.abort();
     terminate_codex_app_server_child(&mut process.child).await;
+    if let Some(observation) = observation {
+        observation.finish("terminated");
+    }
     true
 }
 
@@ -1261,8 +1334,6 @@ impl Default for CodexAppServerSharedState {
         }
     }
 }
-
-type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
 #[derive(Clone)]
 struct CodexNotificationHub {
@@ -1320,8 +1391,9 @@ impl CodexNotificationHub {
 
 struct CodexAppServerProcess {
     child: Child,
+    config_diagnostics: Option<CodexConfigDiagnosticTarget>,
     stdin: Arc<Mutex<ChildStdin>>,
-    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    pending: Arc<PendingCodexRequests>,
     notifications: CodexNotificationHub,
     reader_task: tokio::task::JoinHandle<()>,
 }
@@ -1329,6 +1401,7 @@ struct CodexAppServerProcess {
 impl CodexAppServerProcess {
     fn handle(&self) -> CodexAppServerHandle {
         CodexAppServerHandle {
+            config_diagnostics: self.config_diagnostics.clone(),
             stdin: Arc::clone(&self.stdin),
             pending: Arc::clone(&self.pending),
             notifications: self.notifications.clone(),
@@ -1349,8 +1422,9 @@ impl Drop for CodexAppServerProcess {
 
 #[derive(Clone)]
 struct CodexAppServerHandle {
+    config_diagnostics: Option<CodexConfigDiagnosticTarget>,
     stdin: Arc<Mutex<ChildStdin>>,
-    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    pending: Arc<PendingCodexRequests>,
     notifications: CodexNotificationHub,
 }
 
@@ -1360,6 +1434,11 @@ impl CodexAppServerHandle {
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
         let mut stdin = self.stdin.lock().await;
+        if message.get("method").is_some() {
+            if let Some(request_id) = response_id(&message) {
+                self.pending.mark_sending(request_id).await?;
+            }
+        }
         stdin
             .write_all(&line)
             .await
@@ -1371,7 +1450,7 @@ impl CodexAppServerHandle {
     }
 
     async fn remove_pending(&self, request_id: u64) {
-        self.pending.lock().await.remove(&request_id);
+        self.pending.send_failed(request_id).await;
     }
 }
 
@@ -1381,7 +1460,9 @@ async fn start_persistent_codex_app_server(
     request_launch_config: &CodexLaunchConfig,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
+    let config_home = codex_home_for_launch_config(&launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
+    let config_diagnostics = Some(CodexConfigDiagnosticTarget::new(config_home, child.id()));
     let process_id = child.id().map(|id| id.to_string()).unwrap_or_default();
     log_executor_event(
         "codex shared app-server process starting",
@@ -1420,7 +1501,7 @@ async fn start_persistent_codex_app_server(
                 "codex shared app-server process initialized",
                 &[("process_id", process_id)],
             );
-            let pending = Arc::new(Mutex::new(HashMap::new()));
+            let pending = Arc::new(PendingCodexRequests::default());
             let notifications = CodexNotificationHub::new();
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
@@ -1430,6 +1511,7 @@ async fn start_persistent_codex_app_server(
             Ok((
                 CodexAppServerProcess {
                     child,
+                    config_diagnostics,
                     stdin: Arc::new(Mutex::new(stdin)),
                     pending,
                     notifications,
@@ -1522,12 +1604,12 @@ fn windows_codex_router_auth_script() -> String {
 
 async fn read_persistent_codex_app_server_stdout(
     mut stdout: CodexStdout,
-    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    pending: Arc<PendingCodexRequests>,
     notifications: CodexNotificationHub,
 ) {
     loop {
         let mut line = String::new();
-        let message = match stdout.read_line(&mut line).await {
+        let mut message = match stdout.read_line(&mut line).await {
             Ok(0) => {
                 notify_shared_process_closed(
                     &notifications,
@@ -1571,8 +1653,10 @@ async fn read_persistent_codex_app_server_stdout(
 
         if is_json_rpc_response(&message) {
             if let Some(request_id) = response_id(&message) {
-                if let Some(sender) = pending.lock().await.remove(&request_id) {
-                    let _ = sender.send(response_result(message));
+                if pending
+                    .complete(request_id, || response_result(message.take()))
+                    .await
+                {
                     continue;
                 }
             }
@@ -1643,14 +1727,8 @@ fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &
     }));
 }
 
-async fn fail_all_pending(
-    pending: &Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    message: String,
-) {
-    let pending = std::mem::take(&mut *pending.lock().await);
-    for (_, sender) in pending {
-        let _ = sender.send(Err(message.clone()));
-    }
+async fn fail_all_pending(pending: &Arc<PendingCodexRequests>, message: String) {
+    pending.fail_waiters(message).await;
 }
 
 fn is_json_rpc_response(message: &Value) -> bool {
@@ -3305,11 +3383,7 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
-    let codex_home = launch_config
-        .env
-        .get(CODEX_HOME_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(wework_codex_home);
+    let codex_home = codex_home_for_launch_config(launch_config);
     if launch_config.env.contains_key(CODEX_HOME_ENV) {
         fs::create_dir_all(&codex_home)
             .map_err(|error| format!("create agent Codex Home: {error}"))?;
@@ -3319,6 +3393,14 @@ fn spawn_codex_app_server(
     codex_app_server_command(&resolved_binary, &codex_home, launch_config)
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+fn codex_home_for_launch_config(launch_config: &CodexLaunchConfig) -> PathBuf {
+    launch_config
+        .env
+        .get(CODEX_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(wework_codex_home)
 }
 
 fn codex_app_server_command(
@@ -3487,7 +3569,22 @@ async fn with_rpc_timeout<T>(
     timeout_seconds: u64,
     future: impl Future<Output = Result<T, String>>,
 ) -> Result<T, String> {
-    match timeout(Duration::from_secs(timeout_seconds), future).await {
+    with_rpc_deadline(
+        operation,
+        timeout_seconds,
+        Instant::now() + Duration::from_secs(timeout_seconds),
+        future,
+    )
+    .await
+}
+
+async fn with_rpc_deadline<T>(
+    operation: &str,
+    timeout_seconds: u64,
+    deadline: Instant,
+    future: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    match timeout_at(deadline, future).await {
         Ok(result) => result,
         Err(_) => Err(format!(
             "codex app-server {operation} timed out after {timeout_seconds}s"

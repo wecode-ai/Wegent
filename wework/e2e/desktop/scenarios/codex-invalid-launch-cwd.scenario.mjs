@@ -261,12 +261,19 @@ export function createDesktopScenario({
     }
     configStates.push(state)
     console.log(`[desktop-e2e] invalid-cwd config state: ${JSON.stringify(state)}`)
+    return state
   }
 
   return {
     async prepareApp({ codexHome }) {
       configPath = join(codexHome, 'config.toml')
-      await captureConfigState('before-launch')
+      const initialConfig = await captureConfigState('before-launch')
+      assert.equal(initialConfig.expectedModelPresent, true, 'The initial Codex model is missing')
+      assert.equal(
+        initialConfig.expectedBaseUrlPresent,
+        true,
+        'The initial Codex model server URL is missing'
+      )
     },
     attachServer(server) {
       server.on('upgrade', (request, socket, head) => {
@@ -350,10 +357,24 @@ export function createDesktopScenario({
           file: layer.name.file,
           disabled: Boolean(layer.disabledReason),
           modelPresent: typeof layer.config?.model === 'string',
-          openaiBaseUrlPresent: typeof layer.config?.openai_base_url === 'string',
+          expectedBaseUrlPresent: layer.config?.openai_base_url === `${modelServerUrl}/v1`,
         })),
       }
       console.log(`[desktop-e2e] invalid-cwd loaded config: ${JSON.stringify(loadedConfigState)}`)
+      assert.equal(
+        loadedConfigState.expectedModelPresent,
+        true,
+        'Restarting the executor lost the configured Codex model'
+      )
+      const userConfigLayer = loadedConfigState.layers?.find(
+        layer => layer.type === 'user' && layer.file === configPath
+      )
+      assert.equal(
+        userConfigLayer?.expectedBaseUrlPresent,
+        true,
+        'Restarting the executor lost the configured Codex model server URL'
+      )
+      assert.equal(userConfigLayer?.disabled, false, 'The restarted Codex user config is disabled')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
