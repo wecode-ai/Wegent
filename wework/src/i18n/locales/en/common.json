@@ -2751,6 +2751,7 @@
     "plugins_local_auth_logout_cleanup_failed": "Account access was revoked, but local credentials could not be cleared. Click Log out again to retry cleanup.",
     "plugins_local_auth_poll_failed": "Failed to check authorization status",
     "plugins_local_auth_health_failed": "Could not confirm the plugin login status. Check the connection and try again; this does not mean you need to sign in again.",
+    "plugins_local_auth_plugin_missing": "The \"{{plugin}}\" plugin is not installed in this app, so authorization cannot start. Install it from Plugins and try again.",
     "plugins_local_auth_resume_prompt": "Plugin authorization is complete. Continue the task from the step blocked by authorization without repeating completed actions.",
     "plugins_local_browser_install_title": "Authorize {{name}}",
     "plugins_local_browser_login_title": "Authorize {{name}}",

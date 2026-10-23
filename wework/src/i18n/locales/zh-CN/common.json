@@ -2749,6 +2749,7 @@
     "plugins_local_auth_logout_cleanup_failed": "账户授权已撤销，但本机登录凭据清理失败。请再次点击退出登录重试清理。",
     "plugins_local_auth_poll_failed": "检查授权状态失败",
     "plugins_local_auth_health_failed": "无法确认插件登录状态，请检查连接后重试；这不代表需要重新登录。",
+    "plugins_local_auth_plugin_missing": "当前应用未安装「{{plugin}}」插件，无法发起授权。请先在「插件」页安装该插件后再试。",
     "plugins_local_auth_resume_prompt": "插件授权已完成。请从刚才因授权中断的位置继续任务，不要重复已经完成的操作。",
     "plugins_local_browser_install_title": "授权 {{name}}",
     "plugins_local_browser_login_title": "授权 {{name}}",

@@ -30,8 +30,19 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function errorCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return null
+  const code = (error as { code: unknown }).code
+  return typeof code === 'string' ? code : null
+}
+
 export function isLocalConnectorPluginUnavailableError(error: unknown): boolean {
-  return /(?:^|\b)plugin_not_installed(?:\b|:)/i.test(errorText(error))
+  // Executor transport errors keep the code on the error object while the
+  // message only carries the human-readable reason.
+  return (
+    errorCode(error) === 'plugin_not_installed' ||
+    /(?:^|\b)plugin_not_installed(?:\b|:)/i.test(errorText(error))
+  )
 }
 
 function waitForDelay(delayMs: number): Promise<void> {

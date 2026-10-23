@@ -178,6 +178,24 @@ describe('authorization after plugin use', () => {
     }
   )
 
+  test('asks to install the plugin when it is missing from this app', async () => {
+    const missing = new Error("Installed plugin 'weibo-api-wiki' was not found on this device")
+    Object.assign(missing, { code: 'plugin_not_installed' })
+    mocks.health.mockRejectedValue(missing)
+    const onError = vi.fn()
+    const { result } = renderHook(() =>
+      useLocalConnectorAuthRecovery({ messages: [authMessage], onResumeSend: vi.fn(), onError })
+    )
+
+    await waitFor(() => expect(onError).toHaveBeenCalledOnce())
+    expect(onError).toHaveBeenCalledWith(
+      i18n.t('common:workbench.plugins_local_auth_plugin_missing', {
+        plugin: target.pluginKey,
+      })
+    )
+    expect(result.current.pending).toBeNull()
+  })
+
   test('only the active pane probes an unhandled failure', async () => {
     const { result, rerender } = renderHook(
       ({ active }) =>

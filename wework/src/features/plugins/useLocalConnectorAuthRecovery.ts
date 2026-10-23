@@ -7,6 +7,7 @@ import {
   latestConnectorAuthMessage,
   resolveConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
+import { isLocalConnectorPluginUnavailableError } from '@/features/plugins/waitForLocalConnectorAuthAvailability'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { WORKBENCH_NEW_CHAT_STARTED_EVENT } from '@/lib/workbenchComposerFocus'
 
@@ -39,6 +40,7 @@ export function useLocalConnectorAuthRecovery(options: {
   const messageStatus = candidate?.message.status
   const pluginKey = hint?.pluginKey
   const connectorSlug = hint?.connectorSlug
+  const displayName = hint?.displayName
   const cloudAuth = Boolean(hint && !pluginKey)
 
   useEffect(() => {
@@ -153,10 +155,16 @@ export function useLocalConnectorAuthRecovery(options: {
         pendingMessageIdRef.current = messageId
         pendingRef.current = next
         setPending(next)
-      } catch {
+      } catch (error) {
         if (!isCurrent()) return
         handledMessageIdsRef.current.add(messageId)
-        optionsRef.current.onError?.(t('workbench.plugins_local_auth_health_failed'))
+        optionsRef.current.onError?.(
+          isLocalConnectorPluginUnavailableError(error)
+            ? t('workbench.plugins_local_auth_plugin_missing', {
+                plugin: displayName ?? pluginKey,
+              })
+            : t('workbench.plugins_local_auth_health_failed')
+        )
       } finally {
         if (inFlightRef.current === probe) inFlightRef.current = null
       }
@@ -164,7 +172,17 @@ export function useLocalConnectorAuthRecovery(options: {
     return () => {
       cancelled = true
     }
-  }, [active, pending, messageId, messageStatus, pluginKey, connectorSlug, cloudAuth, t])
+  }, [
+    active,
+    pending,
+    messageId,
+    messageStatus,
+    pluginKey,
+    connectorSlug,
+    displayName,
+    cloudAuth,
+    t,
+  ])
 
   const completePending = useCallback(async () => {
     const current = pendingRef.current
