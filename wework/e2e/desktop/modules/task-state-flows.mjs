@@ -1071,7 +1071,8 @@ async function verifyRunningFollowUpFork({
   }
 
   await ensureTaskRowVisible(control, sourceTaskRowTestId)
-  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
+  // Completing the held turn can reorder the preview between the snapshot and click.
+  await control.command('clickWhenEnabled', `[data-testid="${sourceTaskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: RUNNING_FORK_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
