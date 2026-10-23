@@ -76,7 +76,6 @@ async def test_dispatch_passes_silent_control_without_leaking_marker(monkeypatch
             "bind_private": True,
             "bind_group": True,
             "group_conversation_id": "conversation-1",
-            "group_mention_user_ids": ["999"],
         },
     )
     monkeypatch.setattr(
@@ -132,7 +131,6 @@ async def test_dispatch_passes_per_message_mentions(monkeypatch):
             "bind_private": True,
             "bind_group": True,
             "group_conversation_id": "conversation-1",
-            "group_mention_user_ids": ["999"],
         },
     )
     monkeypatch.setattr(
@@ -197,7 +195,7 @@ async def test_silent_control_skips_only_group_card(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_per_message_mentions_override_static_group_mentions(monkeypatch):
+async def test_per_message_mentions_reach_group_card(monkeypatch):
     calls = []
 
     class _FakeSender:
@@ -233,7 +231,6 @@ async def test_per_message_mentions_override_static_group_mentions(monkeypatch):
         send_private=False,
         send_group=True,
         group_conversation_id="conversation-1",
-        group_mention_user_ids=["999"],
         directive_mention_user_ids=["41068", "220750"],
     )
 

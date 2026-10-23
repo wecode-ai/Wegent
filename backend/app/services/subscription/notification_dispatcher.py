@@ -28,8 +28,6 @@ from app.schemas.subscription import (
     NotificationLevel,
     NotificationWebhook,
     NotificationWebhookType,
-    SubscriptionFollowConfig,
-    normalize_dingtalk_mention_user_ids,
 )
 from app.services.subscription.notification_directives import (
     NotificationDirectives,
@@ -418,14 +416,10 @@ class SubscriptionNotificationDispatcher:
                 send_private = True
                 send_group = False
                 group_conversation_id = None
-                group_mention_user_ids: List[str] = []
                 if binding_config:
                     send_private = bool(binding_config.get("bind_private", True))
                     send_group = bool(binding_config.get("bind_group", False))
                     group_conversation_id = binding_config.get("group_conversation_id")
-                    group_mention_user_ids = normalize_dingtalk_mention_user_ids(
-                        binding_config.get("group_mention_user_ids") or []
-                    )
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -439,7 +433,6 @@ class SubscriptionNotificationDispatcher:
                         send_private=send_private,
                         send_group=send_group,
                         group_conversation_id=group_conversation_id,
-                        group_mention_user_ids=group_mention_user_ids,
                         group_silent=directives.silent,
                         directive_mention_user_ids=list(directives.mention_staff_ids),
                     )
@@ -480,7 +473,6 @@ class SubscriptionNotificationDispatcher:
         send_private: bool = True,
         send_group: bool = False,
         group_conversation_id: Optional[str] = None,
-        group_mention_user_ids: Optional[List[str]] = None,
         group_silent: bool = False,
         directive_mention_user_ids: Optional[List[str]] = None,
     ) -> None:
@@ -496,7 +488,6 @@ class SubscriptionNotificationDispatcher:
             subscription_id: Subscription ID
             execution_id: Background execution ID
             subscription_display_name: Display name of the subscription
-            group_mention_user_ids: DingTalk user IDs to mention in group cards
             group_silent: Whether the message requested no group delivery
             directive_mention_user_ids: Per-message DingTalk user IDs to mention
         """
@@ -581,9 +572,7 @@ class SubscriptionNotificationDispatcher:
 
                 if send_group and group_conversation_id and not group_silent:
                     group_open_space_id = f"dtv1.card//IM_GROUP.{group_conversation_id}"
-                    effective_mention_user_ids = normalize_dingtalk_mention_user_ids(
-                        directive_mention_user_ids or group_mention_user_ids or []
-                    )
+                    effective_mention_user_ids = directive_mention_user_ids or []
                     group_mentions = effective_mention_user_ids
                     if effective_mention_user_ids:
                         try:
