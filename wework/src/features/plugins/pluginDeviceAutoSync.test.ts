@@ -4,6 +4,7 @@ import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
   collectPluginDeviceStatusReports,
+  getPluginDeviceSyncRevision,
   hasAttemptedPluginDeviceAutoSync,
   hasAttemptedPluginDeviceStatusReport,
   hasInFlightPluginDeviceSync,
@@ -13,6 +14,7 @@ import {
   markPluginDeviceAutoSyncAttempted,
   markPluginDeviceAutoSyncSettled,
   markPluginDeviceStatusReportAttempted,
+  subscribePluginDeviceSync,
   withOptimisticDevicePending,
 } from './pluginDeviceAutoSync'
 
@@ -61,13 +63,40 @@ describe('pluginDeviceAutoSync', () => {
     expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
   })
 
+  test('notifies readers when a sync settles even if acquire and release are batched', () => {
+    const initialRevision = getPluginDeviceSyncRevision('device-a')
+    const otherRevision = getPluginDeviceSyncRevision('device-b')
+    const states: boolean[] = []
+    const unsubscribe = subscribePluginDeviceSync(() => {
+      states.push(hasInFlightPluginDeviceSync('device-a'))
+    })
+    try {
+      const finish = beginPluginDeviceSync('device-a')!
+      expect(beginPluginDeviceSync('device-a')).toBeNull()
+      finish()
+      finish()
+
+      expect(states).toEqual([true, false])
+      expect(getPluginDeviceSyncRevision('device-a')).toBe(initialRevision + 2)
+      expect(getPluginDeviceSyncRevision('device-b')).toBe(otherRevision)
+    } finally {
+      unsubscribe()
+    }
+
+    const finish = beginPluginDeviceSync('device-a')!
+    finish()
+    expect(states).toEqual([true, false])
+  })
+
   test('does not let an old completion release a newer lease after reset', () => {
     const finishOld = beginPluginDeviceSync('device-a')!
     clearPluginDeviceAutoSyncAttempts()
     const finishNew = beginPluginDeviceSync('device-a')!
+    const newRevision = getPluginDeviceSyncRevision('device-a')
 
     finishOld()
 
+    expect(getPluginDeviceSyncRevision('device-a')).toBe(newRevision)
     expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
     expect(beginPluginDeviceSync('device-a')).toBeNull()
     finishNew()

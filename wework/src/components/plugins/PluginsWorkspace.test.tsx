@@ -9,7 +9,10 @@ import {
 } from '@/api/local/codexPlugins'
 import * as codexPlugins from '@/api/local/codexPlugins'
 import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
-import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  clearPluginDeviceAutoSyncAttempts,
+  hasInFlightPluginDeviceSync,
+} from '@/features/plugins/pluginDeviceAutoSync'
 import {
   resetLocalExecutorCloudConnectionStatus,
   setLocalExecutorCloudConnectionStatus,
@@ -4728,8 +4731,9 @@ describe('PluginsWorkspace', () => {
       .spyOn(codexPlugins, 'createLocalCodexPluginApi')
       .mockReturnValue(currentApi)
 
+    let view: ReturnType<typeof render> | undefined
     try {
-      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
       expect(await screen.findByText('Documents')).toBeInTheDocument()
       expect(readCurrentCatalog).not.toHaveBeenCalled()
@@ -4746,9 +4750,17 @@ describe('PluginsWorkspace', () => {
       })
 
       await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+      expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
       expect(readCurrentCatalog).not.toHaveBeenCalled()
 
-      releaseSyncGate?.()
+      // Disconnecting clears the UI's pending hint, but the package request is
+      // still running and must retain priority over local catalog reconciliation.
+      act(() => {
+        setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+      })
+      expect(readCurrentCatalog).not.toHaveBeenCalled()
+
+      await act(async () => releaseSyncGate?.())
       await waitFor(() =>
         expect(readCurrentCatalog).toHaveBeenCalledWith({
           mergeAllMarketplaces: true,
@@ -4756,7 +4768,11 @@ describe('PluginsWorkspace', () => {
           refresh: true,
         })
       )
+      expect(hasInFlightPluginDeviceSync('current-device')).toBe(false)
     } finally {
+      view?.unmount()
+      releaseSyncGate?.()
+      readCurrentCatalog.mockRestore()
       createApi.mockRestore()
     }
   })
