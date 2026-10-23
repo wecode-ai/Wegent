@@ -257,7 +257,9 @@ async def test_terminal_cleanup_preserves_completion(failure) -> None:
                         )
                         if not body.tail_started.is_set():
                             await task
-                            pytest.fail("Dispatch ended before terminal cleanup started")
+                            pytest.fail(
+                                "Dispatch ended before terminal cleanup started"
+                            )
                     finally:
                         tail_started.cancel()
                         await asyncio.gather(tail_started, return_exceptions=True)
