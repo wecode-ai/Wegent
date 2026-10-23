@@ -136,6 +136,43 @@ async fn complete_snapshot_cannot_remove_a_newer_delta() {
 }
 
 #[tokio::test]
+async fn pruned_tombstones_stay_fenced_by_the_complete_generation() {
+    let (_root, handler) = fixture();
+    handler
+        .apply_sync(delta(1, vec![plugin("alpha", 1)], vec![]))
+        .await
+        .unwrap();
+    handler
+        .apply_sync(delta(3, vec![], vec![plugin("alpha", 1)]))
+        .await
+        .unwrap();
+    handler
+        .apply_sync(delta(4, vec![plugin("beta", 2)], vec![]))
+        .await
+        .unwrap();
+    // A newer complete snapshot lets strictly older intents and tombstones go.
+    handler
+        .apply_sync(complete(10, vec![plugin("beta", 2)]))
+        .await
+        .unwrap();
+    let manifest = handler.store.manifest.load().unwrap();
+    let state = &manifest["plugin_sync"];
+    assert!(state["removals"].get("1").is_none());
+    assert!(state["entries"].get("alpha@wework").is_none());
+    // The complete snapshot re-records live plugins at its own generation.
+    assert_eq!(state["entries"]["beta@wework"]["generation"], 10);
+    // The complete fence still supersedes delayed deltas for pruned records.
+    let delayed = handler
+        .apply_sync(delta(3, vec![plugin("alpha", 1)], vec![]))
+        .await
+        .unwrap();
+    assert_eq!(delayed["plugins"][0]["status"], "superseded");
+    assert!(handler.store.manifest.load().unwrap()["plugins"]
+        .get("alpha@wework")
+        .is_none());
+}
+
+#[tokio::test]
 async fn removal_tombstone_survives_restart_and_reinstall() {
     let (_root, handler) = fixture();
     handler

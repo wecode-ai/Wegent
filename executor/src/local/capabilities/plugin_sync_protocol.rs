@@ -351,8 +351,22 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         }
         if request.complete && request.generation > complete_generation(&manifest) {
             // Acceptance fences delayed deltas even when materialization fails.
-            protocol_state(&mut manifest)
-                .insert("complete_generation".to_owned(), json!(request.generation));
+            let state = protocol_state(&mut manifest);
+            state.insert("complete_generation".to_owned(), json!(request.generation));
+            // The complete fence supersedes strictly older intents and tombstones.
+            // Keep entries at the fence: an equal-generation removal must still
+            // block a delayed install of the same generation.
+            for collection in ["entries", "removals"] {
+                if let Some(records) = state.get_mut(collection).and_then(Value::as_object_mut) {
+                    records.retain(|_, record| {
+                        record
+                            .get("generation")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            >= request.generation
+                    });
+                }
+            }
             self.store
                 .manifest
                 .save_with_revision_bump(manifest.clone())?;

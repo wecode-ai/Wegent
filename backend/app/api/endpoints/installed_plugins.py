@@ -435,15 +435,7 @@ async def update_marketplace_plugin_access(
                 plugin_device_installation_service.record_uninstall_response,
                 user_id=recipient_user_id,
                 installed_kind_id=installed_id,
-                response=result.model_copy(
-                    update={
-                        "results": [
-                            item
-                            for item in result.results
-                            if item.desired_plugin_snapshot is None
-                        ]
-                    }
-                ),
+                response=result,
             )
         except Exception:
             db.rollback()
@@ -508,15 +500,7 @@ async def delete_marketplace_plugin(
                 plugin_device_installation_service.record_uninstall_response,
                 user_id=installation_user_id,
                 installed_kind_id=installed_id,
-                response=result.model_copy(
-                    update={
-                        "results": [
-                            item
-                            for item in result.results
-                            if item.desired_plugin_snapshot is None
-                        ]
-                    }
-                ),
+                response=result,
             )
         except Exception:
             db.rollback()
