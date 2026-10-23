@@ -6,6 +6,7 @@ import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/Work
 import { StandInOverviewPage } from './StandInOverviewPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { StandInPopover } from './StandInPopover'
+import { standInReturnLocation } from './standInReturnLocation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 // eslint-disable-next-line react-refresh/only-export-components
@@ -1401,7 +1402,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       }))
     setPersonalSettingsTarget(null)
     pendingNavigationProjectIdRef.current = String(project.id)
-    setLocation(returnLocation)
+    if (!returnLocation.workspaceId) resolvedWorkspaceProjectRef.current = null
+    setLocation(standInReturnLocation(project, returnLocation))
     props.onActiveProjectChange?.({
       ...project,
       location: project.project_store === 'local' ? 'local' : 'cloud',
