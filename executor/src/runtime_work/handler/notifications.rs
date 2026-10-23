@@ -429,24 +429,9 @@ impl RuntimeWorkRpcHandler {
         let event_mapper = route.event_mapper.clone();
         let route_active = route.active;
         let route_nested = route.nested;
-        if let Some(sequence) = message
+        let notification_sequence = message
             .get(crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD)
-            .and_then(Value::as_u64)
-        {
-            routing
-                .global_notification_progress
-                .entry(local_task_id.clone())
-                .and_modify(|progress| *progress = (*progress).max(sequence))
-                .or_insert(sequence);
-            if !self.is_active_local_task(&local_task_id) {
-                if let Some(claims) = routing.command_notification_claims.get_mut(&local_task_id) {
-                    claims.retain(|claimed| *claimed >= sequence);
-                    if claims.is_empty() {
-                        routing.command_notification_claims.remove(&local_task_id);
-                    }
-                }
-            }
-        }
+            .and_then(Value::as_u64);
         if route_nested && codex_stream_debug_enabled() {
             let notification = codex_notification(&message);
             log_executor_event(
@@ -558,7 +543,7 @@ impl RuntimeWorkRpcHandler {
         }
         drop(routing);
 
-        let command_delivery = if !skip_active_notification && command_notification {
+        let mut command_delivery = if !skip_active_notification && command_notification {
             self.claim_codex_command_notification(&local_task_id, &message, true)
         } else {
             None
@@ -591,8 +576,51 @@ impl RuntimeWorkRpcHandler {
                     message,
                 );
         }
+        if let Some(sequence) = notification_sequence {
+            let active = self.is_active_local_task(&local_task_id);
+            if let Some(routing) = command_delivery.as_mut() {
+                Self::record_codex_global_notification_progress(
+                    routing,
+                    &local_task_id,
+                    sequence,
+                    active,
+                );
+            } else {
+                let mut routing = self
+                    .thread_event_routing
+                    .lock()
+                    .expect("thread event routing lock should not be poisoned");
+                Self::record_codex_global_notification_progress(
+                    &mut routing,
+                    &local_task_id,
+                    sequence,
+                    active,
+                );
+            }
+        }
         drop(command_delivery);
         self.replay_codex_notifications(pending_replays);
+    }
+
+    fn record_codex_global_notification_progress(
+        routing: &mut RuntimeThreadEventRouting,
+        local_task_id: &str,
+        sequence: u64,
+        active: bool,
+    ) {
+        routing
+            .global_notification_progress
+            .entry(local_task_id.to_owned())
+            .and_modify(|progress| *progress = (*progress).max(sequence))
+            .or_insert(sequence);
+        if !active {
+            if let Some(claims) = routing.command_notification_claims.get_mut(local_task_id) {
+                claims.retain(|claimed| *claimed >= sequence);
+                if claims.is_empty() {
+                    routing.command_notification_claims.remove(local_task_id);
+                }
+            }
+        }
     }
 
     pub(super) fn claim_codex_command_notification(

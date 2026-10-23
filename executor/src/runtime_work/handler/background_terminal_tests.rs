@@ -300,6 +300,86 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
     let _ = fs::remove_dir_all(root);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn background_terminal_concurrent_receivers_preserve_native_output_order() {
+    let (mut handler, root) =
+        isolated_runtime_work_handler("background-terminal-concurrent-delivery");
+    let (event_tx, mut event_rx) = broadcast::channel(256);
+    handler.event_tx = Some(event_tx);
+    let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, "task-1");
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        subtask_id: "turn-1".into(),
+        ..ExecutionRequest::default()
+    };
+    handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), true);
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    let completion = json!({"method": "turn/completed", "params": {
+        "threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "items": [{
+            "id": "command-1", "type": "commandExecution", "command": "pnpm dev",
+            "status": "inProgress", "aggregatedOutput": "ready\n"
+        }]}
+    }});
+    handler.persist_completed_codex_turn_from_notification("task-1", &completion);
+    handler.route_codex_notification(completion);
+    let messages = (1..=100).map(|sequence| json!({
+        "_wegentNotificationSequence": sequence,
+        "method": "item/commandExecution/outputDelta",
+        "params": {"threadId":"thread-1", "turnId":"turn-1", "itemId":"command-1", "delta":format!("tick-{sequence}\n")}
+    })).collect::<Vec<_>>();
+    let global_handler = handler.clone();
+    let global_messages = messages.clone();
+    let global = tokio::task::spawn_blocking(move || {
+        for message in global_messages {
+            global_handler.route_codex_notification(message);
+            std::thread::yield_now();
+        }
+    });
+    let execution_handler = handler.clone();
+    let execution = tokio::spawn(async move {
+        let mut mapper = CodexNotificationEventMapper::default();
+        for message in messages {
+            execution_handler
+                .map_execution_codex_notification(
+                    "task-1",
+                    execution_id,
+                    &request,
+                    execution_handler.active_codex_turn("task-1"),
+                    &mut mapper,
+                    message,
+                )
+                .await;
+            tokio::task::yield_now().await;
+        }
+    });
+    global.await.unwrap();
+    execution.await.unwrap();
+    let mut output = String::new();
+    let mut count = 0;
+    while let Ok(event) = event_rx.try_recv() {
+        output.push_str(
+            event["payload"]["data"]["updates"]["tool_output_delta"]
+                .as_str()
+                .unwrap(),
+        );
+        count += 1;
+    }
+    let expected = (1..=100)
+        .map(|index| format!("tick-{index}\n"))
+        .collect::<String>();
+    assert_eq!(count, 100);
+    assert_eq!(output, expected);
+    let persisted = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert_eq!(
+        persisted[0]["blocks"][0]["tool_output"],
+        format!("ready\n{expected}")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn background_terminal_old_turn_output_is_recorded_once_during_a_new_turn() {
     let (mut handler, root) = isolated_runtime_work_handler("background-terminal-new-turn");
