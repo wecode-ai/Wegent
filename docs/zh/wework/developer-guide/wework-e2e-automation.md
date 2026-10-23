@@ -158,10 +158,39 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 `split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
 避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
 松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
-各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分片按 CI 实测耗时平衡并设定
-上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
+各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。Core 使用 10 个分片（Windows
+复用相同矩阵），Cloud 使用 8 个分片。合并短分片可复用容器初始化、代码检出、
+构建产物下载和运行时准备，不增加每台 runner 内的 checkpoint 并发数。性能基准的
+2 个 Core 分片以及账号认证和长插件列表的 3 个 Cloud 分片仍独立运行。
+并发上限必须不低于完整矩阵的分片数，避免配置强制分批；分类器回归测试同时检查
+分片预算和此约束。共享 runner 池仍可能引入外部排队。
+Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() && !cancelled()`：
+测试失败时仍汇总结果，workflow 被新提交取消后停止排队，避免旧汇总阻塞新提交。
+清理和诊断上传步骤继续使用原有的取消处理方式。
+
+成功 CI 记录 `39920301020` 和 `39920742402` 的逐步骤耗时用于拆分环境开销。
+前者 42 个分片的非测试步骤合计约 60 机器分钟，占分片执行量约 31%；后者的
+环境开销更高。最终 18 个分片减少了 24 次环境准备。
+
+按 `39930854745` 的各 checkpoint 耗时重新分配任务，采用长任务优先和累计工作量
+平衡，并保留 CLI、Electron 准备的合并复用。`workspace-tabs` 在该轮因切换看板后
+未等待创建按钮就绪而提前失败，分组计算采用 `39920301020` 中成功的 116 秒，
+不把失败耗时当作完整场景耗时；该点击使用现有 `clickWhenEnabled` 等待，保留默认
+10 秒超时和业务断言。112 个普通 Core checkpoint 总计 10246 秒，分到 8 个分片，
+每片 14 个任务、同时运行最多 4 个，估算为 323～332 秒；增加到 9 片仅把最长估算
+缩至 320 秒。37 个普通 Cloud checkpoint 总计 5769 秒，分到 5 片估算为 291～339 秒；
+增加到 6 片仅把最长估算缩至 321 秒。其余 2 个 Core 和 3 个 Cloud 分片保持隔离。
+上述调度估算不含每片环境准备及运行时资源波动，不能视为实测收益。
+后台终端历史验证依据首个可见 xterm 行的 `aria-posinset`，逐次原生 PageUp 后等待
+行号严格减小，直到历史顶部。每次操作仍使用默认 10 秒超时，再完整断言第 1～12 条
+输出，并通过原生 PageDown 返回。不能用一个 10 秒总期限限制多次翻页：并发 CI 中，
+控制链路延迟可能使循环在历史仍存在时提前停止。该情形由慢控制链路、滚动停滞及
+历史缺失的聚焦回归覆盖。
+分片按 CI 实测耗时平衡；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
 长场景按独立行为拆成 checkpoint，而不是只调整分片：
+同步 main 后新增的 `stand-in-project-enable` 尚无历史样本，与第 3 片的分身配置流程
+合并复用准备；该片现有 15 个任务，其余普通 Core 分片为 14 个。上述估算不含此新增场景。
 
 - `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
 - `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
@@ -209,10 +238,8 @@ cache warmup，防止主分支只在 lockfile 变化时刷新缓存。桌面 E2E
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
-macOS Inspector 路径同样使用 debug Executor profile，并关闭 dev profile 的
-debuginfo。只有真正执行内存 checkpoint（`ci:memory`、`ci:all` 或非 PR
-运行）时才构建 release Executor：优化后的代码生成会影响内存测量，但在仅运行
-Inspector 时不会增加覆盖。macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
+macOS Inspector 与内存 E2E 的共享构建使用 release Executor，保证内存测量使用
+优化后的代码。macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
 并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。其大段流式 Markdown 响应使用
 定向的 30 秒完成预算，普通内存测试交互仍保持共享的 10 秒超时。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
@@ -672,10 +699,9 @@ Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵
 
 普通 Draft PR 不运行浏览器或桌面 E2E。merge queue 会在提交进入 `main` 之前运行
 完整浏览器以及 Linux、Windows 桌面 Core 套件；`main` 不再重复运行已经通过的
-合并队列检查。macOS 内存门禁默认只在定时任务和手动任务中运行；需要在 PR 中验证
-内存边界时，添加 `ci:memory` 标签。
-添加该标签只触发内存门禁，不会重复运行浏览器或 Linux、Windows 桌面 E2E。
-workflow 每天 UTC 04:00 运行一次完整回归。添加 `ci:all` 标签则会运行浏览器、
+合并队列检查。macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+普通 PR、定时任务和手动任务均不运行内存 E2E。
+workflow 每天 UTC 04:00 运行一次回归（不含内存 E2E）。添加 `ci:all` 标签则会运行浏览器、
 Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通常不会触发
 Wework E2E。
 

@@ -1081,7 +1081,7 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
-    if: always()
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
 
     steps:
@@ -1428,7 +1428,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))
         env:
           CI: true
         run: |
