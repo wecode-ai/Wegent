@@ -947,6 +947,11 @@ export function useWorkbenchDataRefresh({
 
   const updateLocalRuntimeTaskSupervisor = useCallback(
     (address: RuntimeTaskAddress, supervisor: RuntimeSupervisorState | null) => {
+      debugRuntimeSidebarState('supervisor-event', {
+        ...address,
+        status: supervisor?.status,
+        lastEvaluatedAt: supervisor?.lastEvaluatedAt,
+      })
       localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
         supervisor,
       })
@@ -980,6 +985,11 @@ export function useWorkbenchDataRefresh({
 
   const updateLocalRuntimeTaskSnapshot = useCallback(
     (address: RuntimeTaskAddress, task: RuntimeTaskSummary) => {
+      debugRuntimeSidebarState('supervisor-snapshot', {
+        ...address,
+        status: task.supervisor?.status,
+        lastEvaluatedAt: task.supervisor?.lastEvaluatedAt,
+      })
       localRuntimeWorkRef.current = updateRuntimeWorkTask(
         localRuntimeWorkRef.current,
         address,

@@ -628,6 +628,12 @@ impl RuntimeWorkRpcHandler {
         let Some(link) = self.local_task_link(local_task_id) else {
             return;
         };
+        if let Some(supervisor) = &link.supervisor {
+            eprintln!(
+                "[runtime-supervisor] task={local_task_id} status={} last_evaluated_at={:?}",
+                supervisor.status, supervisor.last_evaluated_at
+            );
+        }
         let mut request = ExecutionRequest {
             task_id: local_task_id.to_owned(),
             subtask_id: format!("supervisor-state-{}", now_ms()),
