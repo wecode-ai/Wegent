@@ -232,6 +232,10 @@ import {
   REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
   REQUEST_USER_INPUT_ASYNC_PROMPT,
   REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_FREE_TEXT_PROMPT,
+  REQUEST_USER_INPUT_FREE_TEXT_QUESTION,
+  REQUEST_USER_INPUT_FREE_TEXT_ANSWER,
+  REQUEST_USER_INPUT_FREE_TEXT_COMPLETE,
   REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
   REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
   REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
@@ -3920,6 +3924,31 @@ class DesktopE2EServer {
 
     if (this.scenario === 'request_user_input_async') {
       this.recordScenarioRequest('request_user_input_async', modelRequest)
+      if (JSON.stringify(body).includes(REQUEST_USER_INPUT_FREE_TEXT_PROMPT)) {
+        const callId = 'wework-e2e-request-user-input-free-text'
+        const toolOutput = toolOutputText(body, callId)
+        if (toolOutput !== null) {
+          assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
+          const answered = inputUserMessageTexts(body).some(text =>
+            text.includes(REQUEST_USER_INPUT_FREE_TEXT_ANSWER)
+          )
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(answered ? REQUEST_USER_INPUT_FREE_TEXT_COMPLETE : '等待回答'),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const tool = selectTool(body, 'request_user_input_async', {
+          questions: [{ title: REQUEST_USER_INPUT_FREE_TEXT_QUESTION }],
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(callId, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       const serializedBody = JSON.stringify(body)
       // Two variants share this scenario: a question answered after the turn
       // settles, and one answered while the model is still working.
