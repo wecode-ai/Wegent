@@ -3989,6 +3989,47 @@ describe('Wework collaboration workspace API', () => {
     expect(ensureDefault).toHaveBeenCalledOnce()
   })
 
+  it.each(['current-device-agent', 'manual-agent'])(
+    'returns consistent edit and deletion controls for local Agent %s',
+    async name => {
+      const record = {
+        id: 'LA-created',
+        name,
+        displayName: 'Manually added Agent',
+        runtime: 'codex',
+        status: 'active',
+        version: 1,
+      }
+      const localProjectChatAgentApi = {
+        list: vi.fn().mockResolvedValue([record]),
+        create: vi.fn().mockResolvedValue(record),
+        update: vi.fn().mockResolvedValue(record),
+      }
+      const details = {
+        ...createLocalDetailServices(),
+        localProjectChatAgentApi,
+      } as unknown as ProjectSpaceDetailServices
+      const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, details)!
+      const [listed] = await api.agents.list('local-project')
+
+      expect(listed).toMatchObject({
+        agent_id: name,
+        name: record.displayName,
+        can_edit: true,
+        deletable: name !== 'current-device-agent',
+      })
+      await expect(api.agents.create('local-project', { name, runtime: 'codex' })).resolves.toEqual(
+        listed
+      )
+      await expect(
+        api.agents.update('local-project', record.id, {
+          version: 1,
+          displayName: record.displayName,
+        })
+      ).resolves.toEqual(listed)
+    }
+  )
+
   it('does not allow deleting the default local Agent', async () => {
     const archive = vi.fn()
     const update = vi.fn()
