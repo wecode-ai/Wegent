@@ -531,8 +531,8 @@ export async function createDesktopScenario({
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await openIssue(control, testCase)
-    const nextCard = `${CONTENT} [data-testid="cloud-task-activity-card-${testCase.nextActivityId}"]`
-    await control.command('waitFor', nextCard, { text: testCase.continueText })
+    const nextActivity = `${CONTENT} [data-testid="cloud-task-activity-message-${testCase.nextActivityId}"]`
+    await control.command('waitFor', nextActivity, { text: testCase.continueText })
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
   }
 
