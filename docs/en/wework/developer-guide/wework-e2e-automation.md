@@ -478,7 +478,9 @@ Task-board bulk actions confirm that the blank conversation is active before eac
 the editor node alone is insufficient. Goal restart fixtures observe one running task and
 one queued task before releasing the model response occupying the single execution slot.
 Work-list refreshes preserve the device owning an opened workspace so an earlier response
-cannot replace a newly selected cloud workspace. Diagnostics record project-selection
+cannot replace a newly selected cloud workspace.
+Workbench and conversation diagnostics share a 100ms publication scheduler. Continuous state updates must not cancel a pending publication, and each publication reads the latest state. Disabling diagnostics or unmounting cancels pending work so an inactive pane cannot overwrite the current snapshot. A failed conversation-title isolation assertion retains its assistant-count baseline and the title, lifecycle, and message summary from each poll.
+Diagnostics record project-selection
 reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
 process IDs and initialization exit states, and failed Windows process-tree termination states.
 Configuration normalization and replacement record file size and the presence of model and built-in OpenAI URL fields; replacements also record their call site, without configuration contents.

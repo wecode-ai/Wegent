@@ -15,6 +15,7 @@ import {
   type SetStateAction,
 } from 'react'
 import i18n from '@/i18n'
+import { useDebugSnapshot } from '@/hooks/useDebugSnapshot'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
@@ -22,7 +23,6 @@ import {
   summarizeRuntimePaneMemory,
   summarizeMessages,
   updateRuntimePaneDebugSnapshot,
-  DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessageBuffer'
@@ -2987,73 +2987,36 @@ export function useWorkbenchPaneSession({
     transcriptLoading,
   ])
 
-  useEffect(() => {
-    if (!debugSnapshotEnabled) return
-
-    let timeout: number | null = null
-    const schedule = () => {
-      if (timeout !== null) return
-      timeout = window.setTimeout(() => {
-        timeout = null
-        updateRuntimePaneDebugSnapshot(
-          {
-            currentRuntimeTask,
-            status: paneStatus,
-            messageSummary: summarizeMessages(messages),
-            messageStyleComparison: compareMessageStyles(messages),
-            memory: summarizeRuntimePaneMemory({
-              messages,
-              currentRuntimeTask,
-              loadedRanges: loadedTranscriptRanges,
-            }),
-            queuedMessages,
-            guidanceMessages,
-            codeCommentContextCount: codeCommentContexts.length,
-            inputLength: input.length,
-            transcript: {
-              loading: transcriptLoading,
-              hasMoreBefore: transcriptHasMoreBefore,
-              loadingMoreBefore: transcriptLoadingMoreBefore,
-              turnNavigationCount: turnNavigation.length,
-              loadedRanges: loadedTranscriptRanges,
-            },
-            subagentStatuses,
-            goal,
-            goalDraftActive,
-          },
-          { enabled: debugSnapshotEnabled }
-        )
-      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
-    }
-    schedule()
-    return () => {
-      if (timeout !== null) {
-        clearTimeout(timeout)
-      }
-    }
-  }, [
-    codeCommentContexts.length,
-    currentRuntimeTask,
-    debugSnapshotEnabled,
-    goal,
-    taskPlan,
-    goalDraftActive,
-    guidanceMessages,
-    input.length,
-    loadedTranscriptRanges,
-    messages,
-    paneStatus,
-    queuedMessages,
-    queuedMessagesPaused,
-    subagentStatuses,
-    transcriptHasMoreBefore,
-    transcriptFullContent,
-    transcriptLoading,
-    transcriptError,
-    reloadRuntimeTranscript,
-    transcriptLoadingMoreBefore,
-    turnNavigation.length,
-  ])
+  useDebugSnapshot(debugSnapshotEnabled, () => {
+    updateRuntimePaneDebugSnapshot(
+      {
+        currentRuntimeTask,
+        status: paneStatus,
+        messageSummary: summarizeMessages(messages),
+        messageStyleComparison: compareMessageStyles(messages),
+        memory: summarizeRuntimePaneMemory({
+          messages,
+          currentRuntimeTask,
+          loadedRanges: loadedTranscriptRanges,
+        }),
+        queuedMessages,
+        guidanceMessages,
+        codeCommentContextCount: codeCommentContexts.length,
+        inputLength: input.length,
+        transcript: {
+          loading: transcriptLoading,
+          hasMoreBefore: transcriptHasMoreBefore,
+          loadingMoreBefore: transcriptLoadingMoreBefore,
+          turnNavigationCount: turnNavigation.length,
+          loadedRanges: loadedTranscriptRanges,
+        },
+        subagentStatuses,
+        goal,
+        goalDraftActive,
+      },
+      { enabled: debugSnapshotEnabled }
+    )
+  })
 
   return {
     scopeKey: inputScopeKey,
