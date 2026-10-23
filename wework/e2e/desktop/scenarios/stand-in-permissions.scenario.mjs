@@ -102,7 +102,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         '/v1/workspaces',
         'POST',
         {
-          name: `替身继承权限 ${process.pid}`,
+          name: `分身继承权限 ${process.pid}`,
         },
         201
       )
@@ -111,7 +111,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         `/v1/workspaces/${workspace.id}/projects`,
         'POST',
         {
-          name: `替身继承权限项目 ${process.pid}`,
+          name: `分身继承权限项目 ${process.pid}`,
         },
         201
       )

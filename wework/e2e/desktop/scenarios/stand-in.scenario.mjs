@@ -17,7 +17,7 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身交互-${process.pid}`
+const PROJECT = `分身交互-${process.pid}`
 const MARKER = `STAND_IN_ASSIGNED_${process.pid}`
 const AGENT_PROMPT = `STAND_IN_AGENT_INSTRUCTIONS_${process.pid}`
 // The ordinary desktop fixture authenticates /api/users/me as this account.
@@ -133,7 +133,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-role-name"]'),
-        `${PROJECT} 替身`
+        `${PROJECT} 分身`
       )
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
@@ -227,7 +227,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       assert.equal(
         await control.command(
           'getElementCount',
-          '[data-testid="stand-in-open"] svg[data-state="enabled"] circle'
+          '[data-testid="stand-in-open"] svg[data-state="enabled"] > use, [data-testid="stand-in-open"] svg[data-state="enabled"] .stand-in-icon-shadow > use'
         ),
         '2'
       )
@@ -293,7 +293,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         {
           project_id: project.id,
           agent: {
-            name: '替身专用助手',
+            name: '分身专用助手',
             runtime: 'codex',
             system_prompt: AGENT_PROMPT,
             execution_policy: { mode: 'fixed', environment_id: saved.executionDeviceId },
@@ -343,7 +343,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-agent"]'), '')
       await control.command('waitFor', '[data-testid="stand-in-agent"] option', {
-        text: '替身专用助手',
+        text: '分身专用助手',
       })
       await control.command('select', '[data-testid="stand-in-agent"]', {
         value: JSON.stringify(['local', project.id, agent.id]),
@@ -459,7 +459,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
               projectStore: 'local',
               settings: {
                 id,
-                name: `${id} 替身`,
+                name: `${id} 分身`,
                 tags: [id],
                 agentId: agent.id,
                 enabled: true,
@@ -491,7 +491,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '同时匹配两个替身', tags: ['review', 'docs'], assignee_user_id: USER_ID },
+          todo: { title: '同时匹配两个分身', tags: ['review', 'docs'], assignee_user_id: USER_ID },
         },
         uiTimeoutMs
       )
@@ -757,7 +757,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
-      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用替身' })
+      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用分身' })
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: '仅为此项目处理分配给我的任务',
       })
@@ -769,7 +769,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         { userId: USER_ID },
         uiTimeoutMs
       )
-      const newRole = created.roles.find(row => row.name === '项目专用替身')
+      const newRole = created.roles.find(row => row.name === '项目专用分身')
       assert.ok(newRole, 'A project-created stand-in must belong to the personal document')
       assert.equal(created.userId, USER_ID)
       assert.equal(newRole.enabled, false)
