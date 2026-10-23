@@ -82,8 +82,13 @@ export function createStreamingToolChecks({
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: LONG_CODE_STREAM_MARKER,
       stableMs: 250,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: modelResponseTimeoutMs,
     })
+    await control.command('waitFor', LONG_CODE_SCROLL_SELECTOR, {
+      stableMs: 500,
+      timeoutMs: modelResponseTimeoutMs,
+    })
+    const streamingSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     await control.command('markElementWithText', `${LONG_CODE_SCROLL_SELECTOR} code`, {
       text: LONG_CODE_STREAM_MARKER,
       value: LONG_CODE_E2E_ID,
@@ -117,9 +122,22 @@ export function createStreamingToolChecks({
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: LONG_CODE_MARKER,
       stableMs: 500,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: modelResponseTimeoutMs,
     })
-    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    await waitForRuntimePaneReadyToSend(control, modelResponseTimeoutMs)
+    const completedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    await writeFile(
+      join(resultDir, 'streaming-text-long-code-identity.json'),
+      JSON.stringify(
+        {
+          streaming: streamingSnapshot.pane?.messageSummary,
+          completed: completedSnapshot.pane?.messageSummary,
+        },
+        null,
+        2
+      ) + '\n',
+      'utf8'
+    )
     assert.equal(
       Number(await control.command('getElementCount', LONG_CODE_MARKED_SELECTOR)),
       1,
@@ -598,7 +616,7 @@ export function createStreamingToolChecks({
         new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error('The tool-output follow-up request was not received')),
-            uiTimeoutMs
+            modelResponseTimeoutMs
           )
         ),
       ])
@@ -609,7 +627,7 @@ export function createStreamingToolChecks({
     }
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: TOOL_PREAMBLE,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(
       Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
@@ -629,14 +647,14 @@ export function createStreamingToolChecks({
     await capture(control, 'streaming-text-00-unphased-process-before-tool.png')
     await control.command('waitFor', TOOL_THINKING_INDICATOR_SELECTOR, {
       text: `正在思考 · ${REASONING_PREVIEW}`,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: modelResponseTimeoutMs,
     })
     await capture(control, 'streaming-text-01-live-reasoning-summary.png')
     releaseToolCompletion()
     await toolFinalTextStarted
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: TOOL_COMPLETION,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: modelResponseTimeoutMs,
     })
     assert.equal(
       Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
@@ -646,7 +664,7 @@ export function createStreamingToolChecks({
     releaseToolFinalCompletion()
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: TOOL_COMPLETION,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: modelResponseTimeoutMs,
     })
     const liveFinalTextSnapshot = JSON.parse(
       await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)

@@ -8,7 +8,6 @@ import type {
 import {
   createProjectTaskTrackingSingleFlight,
   DEFAULT_WORK_ITEM_PROJECT_ID,
-  enqueueTaskTrackingMutation,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudLoopItemExecution,
@@ -621,6 +620,7 @@ export function createLocalProjectChatAgentApi(
       projectId: string,
       options?: { forceRefresh?: boolean }
     ): Promise<LocalProjectChatAgent[]> {
+      if (options?.forceRefresh) cache.invalidate(`agents:${projectId}`)
       return cache.get(
         `agents:${projectId}`,
         async () => {
@@ -855,7 +855,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: true,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
-    content_revision: 1,
+    content_revision: record.version,
+    badges: Array.isArray(record.metadata.badges)
+      ? (record.metadata.badges as NonNullable<CloudLoopItem['badges']>)
+      : [],
     activity_read_sequence:
       typeof record.metadata.activity_read_sequence === 'number'
         ? record.metadata.activity_read_sequence
@@ -865,6 +868,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         ? record.metadata.has_additional_context
         : true,
     is_unread: record.metadata.is_unread === true,
+    assignment_history: Array.isArray(record.metadata.assignment_history)
+      ? (record.metadata.assignment_history as CloudLoopItem['assignment_history'])
+      : [],
     status_history: Array.isArray(record.metadata.status_history)
       ? (record.metadata.status_history as CloudLoopItem['status_history'])
       : [],
@@ -1554,24 +1560,6 @@ export function createLocalDeliveryApi(
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
-      })
-    },
-    async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
-      return enqueueTaskTrackingMutation(task, async () => {
-        let binding: LocalTaskBindingRecord
-        try {
-          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-            device_id: task.deviceId,
-            task_id: task.taskId,
-          })
-        } catch {
-          return null
-        }
-        if (!binding.loop_item_id) return null
-        const item = await api.getLoopItem(binding.loop_item_id)
-        return item.title === title
-          ? item
-          : api.updateLoopItem(item.id, { version: item.version, title })
       })
     },
     async unbindCloudContext(task: RuntimeTaskAddress) {

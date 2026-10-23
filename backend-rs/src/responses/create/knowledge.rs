@@ -47,12 +47,7 @@ use brz_redis::Redis;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
-use super::knowledge_prompt::SelectedKnowledgeRef;
-use super::resolution::{KIND_COLUMNS, KindRow, resolve_task_ref_team};
-use super::selected_knowledge::{
-    build_wegent_refs_for_ids, index_refs_by_integer_id, parse_knowledge_base_scopes,
-};
-use super::team_access::team_shared_for_use;
+use super::resolution::{KIND_COLUMNS, KindRow};
 use crate::permissions::{
     EntityResolvers, ResolutionPurpose, accessible_namespace_ids, effective_roles_in_groups,
     iter_user_groups_with_roles, organization_names, user_groups,
@@ -420,11 +415,7 @@ async fn collect_external_entity_member_roles<R: Redis>(
                      AND resource_members.entity_type = ? \
                      AND resource_members.status IN {APPROVED_STATUSES}"
                 ),
-                {
-                    let mut args: Vec<String> = resource_ids.iter().map(i64::to_string).collect();
-                    args.push(entity_type.to_string());
-                    args
-                },
+                external_member_args(entity_type, &resource_ids),
             )
             .await?;
         let entity_ids: Vec<String> = rows.iter().map(|row| row.entity_id.clone()).collect();
@@ -459,6 +450,15 @@ struct ExternalMemberRow {
     resource_id: i64,
     entity_id: String,
     role: Option<String>,
+}
+
+/// The external-member read's bound values: the integer `resource_id`s in the
+/// caller's order, then the string `entity_type`. `resource_id` is a bigint
+/// column, so stringified ids never match the recorded read.
+fn external_member_args(entity_type: &str, resource_ids: &[i64]) -> Vec<BindingArg> {
+    let mut args: Vec<BindingArg> = resource_ids.iter().copied().map(BindingArg::Int).collect();
+    args.push(BindingArg::Str(entity_type.to_owned()));
+    args
 }
 
 /// `_iter_team_member_default_knowledge_base_ids`: the team members' Bots'
@@ -634,151 +634,6 @@ fn kind_by_group_names_statement(kind: &str, namespace_count: usize, name_count:
     )
 }
 
-/// `_resolve_task_default_knowledge_bases`: the task's current team (the
-/// `teamRef` resolution, owner-scoped when the ref carries `user_id`) gated by
-/// the share check, then the team-member default ids filtered by the ACL, then
-/// the `knowledge_base_id` pin when one is selected.
-///
-/// Returns `(Some(team), ids)` on success; `None` for the team when the task
-/// is missing, the team is missing, or the share check denies use.
-pub async fn resolve_task_default_knowledge_bases<R: Redis>(
-    acl: &AclContextSource<'_, R>,
-    task_json: &Value,
-    viewer_user_id: i64,
-    knowledge_base_id: Option<i64>,
-) -> MysqlResult<Option<(Option<KindRow>, Vec<i64>)>> {
-    let mysql = acl.mysql;
-    let Some(team_ref) = task_json.get("spec").and_then(|spec| spec.get("teamRef")) else {
-        return Ok(Some((None, Vec::new())));
-    };
-    let team = resolve_task_ref_team(
-        mysql,
-        team_ref.get("user_id").and_then(Value::as_i64),
-        team_ref
-            .get("namespace")
-            .and_then(Value::as_str)
-            .unwrap_or(""),
-        team_ref.get("name").and_then(Value::as_str).unwrap_or(""),
-        viewer_user_id,
-    )
-    .await?;
-    let Some(team) = team else {
-        return Ok(Some((None, Vec::new())));
-    };
-    // `TeamShareService._get_resource(for_use=True)`: a Team owned by the
-    // caller — or the public `user_id = 0` Team — is usable without any share
-    // read, so the member/entity checks and the group-role fallback run only
-    // for a Team someone else owns.
-    if !team_shared_for_use(acl, &team, viewer_user_id).await? {
-        return Ok(Some((None, Vec::new())));
-    }
-
-    let candidate_ids = team_member_default_knowledge_base_ids(mysql, &team).await?;
-    let candidates = deduplicate(&candidate_ids);
-    let candidates = match knowledge_base_id {
-        Some(selected) if !candidates.contains(&selected) => {
-            return Ok(Some((Some(team), Vec::new())));
-        }
-        Some(selected) => vec![selected],
-        None => candidates,
-    };
-
-    let allowed = get_acl_accessible_knowledge_base_ids(acl, team.user_id, &candidates).await?;
-    Ok(Some((
-        Some(team),
-        candidates
-            .into_iter()
-            .filter(|id| allowed.contains(id))
-            .collect(),
-    )))
-}
-
-/// `resolve_task_default_knowledge_base_ids`: the accessible default ids.
-pub async fn resolve_task_default_knowledge_base_ids<R: Redis>(
-    acl: &AclContextSource<'_, R>,
-    task_json: &Value,
-    viewer_user_id: i64,
-) -> MysqlResult<Vec<i64>> {
-    match resolve_task_default_knowledge_bases(acl, task_json, viewer_user_id, None).await? {
-        Some((_, ids)) => Ok(ids),
-        None => Ok(Vec::new()),
-    }
-}
-
-/// `build_inherited_selected_knowledge_refs` (`chat/selected_knowledge.py`):
-/// the task's persisted `knowledgeBaseRefs`/`knowledgeBaseScopes` ids plus the
-/// agent defaults, resolved into `wegent` refs and merged over the task's
-/// external refs.
-pub async fn build_inherited_selected_knowledge_refs<R: Redis>(
-    acl: &AclContextSource<'_, R>,
-    task_json: &Value,
-    viewer_user_id: i64,
-    external_refs: &[Value],
-) -> MysqlResult<Vec<SelectedKnowledgeRef>> {
-    let mysql = acl.mysql;
-    let spec = task_json.get("spec").cloned().unwrap_or(Value::Null);
-    let mut persisted: Vec<i64> = index_refs_by_integer_id(
-        &spec
-            .get("knowledgeBaseRefs")
-            .cloned()
-            .unwrap_or(Value::Null),
-    )
-    .keys()
-    .copied()
-    .collect();
-    persisted.extend(
-        index_refs_by_integer_id(
-            &spec
-                .get("knowledgeBaseScopes")
-                .cloned()
-                .unwrap_or(Value::Null),
-        )
-        .keys()
-        .copied(),
-    );
-    let default_ids =
-        resolve_task_default_knowledge_base_ids(acl, task_json, viewer_user_id).await?;
-    let selected_ids = deduplicate(&[persisted, default_ids].concat());
-
-    let wegent = build_wegent_refs_for_ids(
-        mysql,
-        task_json,
-        &selected_ids,
-        &parse_knowledge_base_scopes(&Value::Null),
-        false,
-    )
-    .await?;
-    let mut refs = wegent;
-    refs.extend(external_refs_from_values(external_refs));
-    Ok(super::selected_knowledge::resolve_selected_knowledge_context(&refs, &[]).refs)
-}
-
-/// `_build_external_refs_from_values`: the external refs of the task's
-/// `externalKnowledgeRefs`, each with its provider and id. The recorded create
-/// case carries an empty list, so this only passes through well-formed entries.
-fn external_refs_from_values(values: &[Value]) -> Vec<SelectedKnowledgeRef> {
-    values
-        .iter()
-        .filter_map(|value| {
-            let provider = value.get("provider")?.as_str()?.trim().to_string();
-            let knowledge_base_id = value.get("knowledge_base_id")?.as_str()?.trim().to_string();
-            if provider.is_empty() || knowledge_base_id.is_empty() {
-                return None;
-            }
-            Some(SelectedKnowledgeRef {
-                provider,
-                knowledge_base_id,
-                knowledge_base_name: value
-                    .get("knowledge_base_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ..Default::default()
-            })
-        })
-        .collect()
-}
-
 /// `get_acl_accessible_knowledge_base_ids`: the ACL-visible candidates. The
 /// recorded `queued` cases call this with `candidate_ids = [239607]` (the
 /// Ghost's `defaultKnowledgeBaseRefs`), so the `user_id != 0` visibility query
@@ -822,6 +677,28 @@ pub async fn get_acl_accessible_knowledge_base_ids<R: Redis>(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `resource_members.resource_id` is a bigint column: the recorded read
+    /// renders integer literals, so the target binds integers (a stringified
+    /// id never matches).
+    #[test]
+    fn external_member_args_bind_resource_ids_as_integers() {
+        assert_eq!(
+            external_member_args("org_department", &[92]),
+            vec![
+                BindingArg::Int(92),
+                BindingArg::Str("org_department".to_string()),
+            ]
+        );
+        assert_eq!(
+            external_member_args("org_department", &[703, 660]),
+            vec![
+                BindingArg::Int(703),
+                BindingArg::Int(660),
+                BindingArg::Str("org_department".to_string()),
+            ]
+        );
+    }
 
     #[test]
     fn collects_agent_default_ids_in_order() {

@@ -53,6 +53,12 @@ import {
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
   artifactContext?: ArtifactNodeContext
+  /** Previous tasks referenced as background context for this message. */
+  conversationRefs?: Array<{
+    task_id: number
+    name: string
+    task_updated_at?: string
+  }>
 }
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
@@ -464,7 +470,22 @@ export function useChatStreamHandlers({
     ): PreparedChatSend => {
       const isArtifactQuestion = Boolean(sendOptions?.artifactContext)
       const snapshotAttachments = isArtifactQuestion ? [] : [...attachments]
-      const snapshotContexts = isArtifactQuestion ? [] : [...selectedContextsRef.current]
+      const baseContexts = isArtifactQuestion ? [] : [...selectedContextsRef.current]
+      const snapshotContexts = [...baseContexts]
+      sendOptions?.conversationRefs?.forEach(ref => {
+        const exists = snapshotContexts.some(
+          ctx => ctx.type === 'conversation' && ctx.task_id === ref.task_id
+        )
+        if (!exists) {
+          snapshotContexts.push({
+            id: `conversation:${ref.task_id}`,
+            name: ref.name,
+            type: 'conversation',
+            task_id: ref.task_id,
+            task_updated_at: ref.task_updated_at,
+          })
+        }
+      })
       const snapshotAdditionalSkills =
         !isArtifactQuestion && additionalSkills ? [...additionalSkills] : undefined
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
@@ -476,7 +497,7 @@ export function useChatStreamHandlers({
       }
 
       const contextItems: Array<{
-        type: 'knowledge_base' | 'selected_documents' | 'external_knowledge'
+        type: 'knowledge_base' | 'selected_documents' | 'external_knowledge' | 'conversation'
         data: Record<string, unknown>
       }> = snapshotContexts
         .filter(ctx => ctx.type === 'knowledge_base')
@@ -493,6 +514,18 @@ export function useChatStreamHandlers({
             scope_restricted: ctx.scope_restricted,
           },
         }))
+
+      snapshotContexts
+        .filter(ctx => ctx.type === 'conversation')
+        .forEach(ctx => {
+          contextItems.push({
+            type: 'conversation',
+            data: {
+              task_id: ctx.task_id,
+              name: ctx.name,
+            },
+          })
+        })
 
       if (taskType === 'knowledge' && knowledgeBaseId && !sendOptions?.artifactContext) {
         const workspaceKnowledgeContext = {
@@ -567,7 +600,7 @@ export function useChatStreamHandlers({
 
       const pendingContexts: Array<{
         id: number
-        context_type: 'attachment' | 'knowledge_base' | 'external_knowledge'
+        context_type: 'attachment' | 'knowledge_base' | 'external_knowledge' | 'conversation'
         name: string
         status: 'pending' | 'ready'
         file_extension?: string
@@ -588,6 +621,8 @@ export function useChatStreamHandlers({
         external_node_id?: string
         external_document_id?: string
         external_parent_id?: string
+        task_id?: number
+        task_updated_at?: string
         video_count?: number
         site?: string | null
         source_url?: string
@@ -640,6 +675,16 @@ export function useChatStreamHandlers({
             folder_names: kbContext.folder_names,
             include_subfolders: kbContext.include_subfolders,
             scope_restricted: kbContext.scope_restricted,
+          })
+        }
+        if (ctx.type === 'conversation') {
+          pendingContexts.push({
+            id: -(1_000_000 + ctx.task_id),
+            context_type: 'conversation',
+            name: ctx.name,
+            status: 'ready',
+            task_id: ctx.task_id,
+            task_updated_at: ctx.task_updated_at,
           })
         }
       }
@@ -1329,7 +1374,7 @@ export function useChatStreamHandlers({
 
         // Build context items for backend from existing contexts (knowledge bases)
         const contextItems: Array<{
-          type: 'knowledge_base' | 'selected_documents' | 'external_knowledge'
+          type: 'knowledge_base' | 'selected_documents' | 'external_knowledge' | 'conversation'
           data: Record<string, unknown>
         }> = []
 
@@ -1364,6 +1409,14 @@ export function useChatStreamHandlers({
                   parent_id: ctx.external_parent_id,
                 },
               })
+            } else if (ctx.context_type === 'conversation' && ctx.task_id) {
+              contextItems.push({
+                type: 'conversation',
+                data: {
+                  task_id: ctx.task_id,
+                  name: ctx.name,
+                },
+              })
             }
           }
         }
@@ -1371,7 +1424,7 @@ export function useChatStreamHandlers({
         // Build pending contexts for immediate display from existing contexts
         const pendingContexts: Array<{
           id: number
-          context_type: 'attachment' | 'knowledge_base' | 'external_knowledge'
+          context_type: 'attachment' | 'knowledge_base' | 'external_knowledge' | 'conversation'
           name: string
           status: 'pending' | 'ready'
           file_extension?: string
@@ -1392,6 +1445,8 @@ export function useChatStreamHandlers({
           external_node_id?: string | null
           external_document_id?: string | null
           external_parent_id?: string | null
+          task_id?: number | null
+          task_updated_at?: string | null
           video_count?: number | null
           site?: string | null
           source_url?: string | null
@@ -1420,6 +1475,8 @@ export function useChatStreamHandlers({
             external_node_id: ctx.external_node_id ?? undefined,
             external_document_id: ctx.external_document_id ?? undefined,
             external_parent_id: ctx.external_parent_id ?? undefined,
+            task_id: ctx.task_id ?? undefined,
+            task_updated_at: ctx.task_updated_at ?? undefined,
             video_count: ctx.video_count ?? undefined,
             site: ctx.site ?? undefined,
             source_url: ctx.source_url ?? undefined,

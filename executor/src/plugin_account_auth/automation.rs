@@ -72,6 +72,16 @@ impl Reconciler {
         if intents.len() > 256 {
             return Err(AuthError("plugin_auth_invalid_response"));
         }
+        if super::e2e_reconcile_marker().is_some() {
+            crate::logging::log_executor_event(
+                "plugin auth automatic cycle",
+                &[
+                    ("installed_count", selected.len().to_string()),
+                    ("intent_count", intents.len().to_string()),
+                    ("cooldown_count", self.retries.len().to_string()),
+                ],
+            );
+        }
         let mut pending = tokio::task::JoinSet::new();
         for intent in intents {
             let key = (intent.installed_plugin_id, intent.connector_slug);
@@ -82,23 +92,41 @@ impl Reconciler {
             let home = home.to_owned();
             pending.spawn(async move {
                 let result = migrate(transport, &home, &intent.id).await;
-                (key, result.is_ok())
+                crate::logging::log_executor_event(
+                    "plugin auth automatic enrollment finished",
+                    &[
+                        ("installed_plugin_id", key.0.to_string()),
+                        ("connector_slug", key.1.clone()),
+                        ("ok", result.is_ok().to_string()),
+                        (
+                            "code",
+                            result.as_ref().err().map_or("", |error| error.0).to_owned(),
+                        ),
+                    ],
+                );
+                (key, result.map(|_| ()))
             });
             if pending.len() >= 4 {
-                if let Some(Ok((key, succeeded))) = pending.join_next().await {
-                    self.record(key, succeeded);
+                if let Some(Ok((key, result))) = pending.join_next().await {
+                    self.record(key, result);
                 }
             }
         }
         while let Some(result) = pending.join_next().await {
-            if let Ok((key, succeeded)) = result {
-                self.record(key, succeeded);
+            if let Ok((key, result)) = result {
+                self.record(key, result);
             }
         }
         Ok(())
     }
 
-    fn record(&mut self, key: (u64, String), _succeeded: bool) {
+    fn record(&mut self, key: (u64, String), result: Result<(), AuthError>) {
+        // Logout/login can replace an intent while a previous cycle is in flight.
+        // An obsolete intent says nothing about the new login's native credentials.
+        if result == Err(AuthError("plugin_auth_migration_expired")) {
+            self.retries.remove(&key);
+            return;
+        }
         // Missing/locked credentials remain local. Retry after login without
         // repeatedly prompting the OS on every scheduler tick.
         self.retries
@@ -152,6 +180,85 @@ fn installed_ids_at(path: &Path) -> Result<Vec<u64>, AuthError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local::backend::{EventHandler, LocalBackendConfig};
+    use std::{
+        collections::VecDeque,
+        future::Future,
+        pin::Pin,
+        sync::{Arc, Mutex},
+    };
+
+    type TransportFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+    #[derive(Clone)]
+    struct Transport(Arc<Mutex<VecDeque<(&'static str, Value)>>>);
+
+    impl LocalBackendTransport for Transport {
+        fn connect<'a>(&'a self, _: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
+            panic!("reconciliation uses an established transport")
+        }
+        fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
+            panic!("reconciliation must not disconnect")
+        }
+        fn call<'a>(&'a self, event: &'a str, _: Value, _: Duration) -> TransportFuture<'a, Value> {
+            let (expected, response) = self.0.lock().unwrap().pop_front().expect("unexpected call");
+            assert_eq!(event, expected);
+            Box::pin(async move { Ok(response) })
+        }
+        fn emit<'a>(&'a self, _: &'a str, _: Value) -> TransportFuture<'a, ()> {
+            panic!("reconciliation uses request/reply")
+        }
+        fn on(&self, _: &str, _: EventHandler) {
+            panic!("no subscription")
+        }
+        fn on_close(&self, _: crate::local::backend::ConnectionClosedHandler) {
+            panic!("no subscription")
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_intent_does_not_suppress_the_next_login() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(home.path().join("capabilities")).unwrap();
+        fs::write(
+            home.path().join("capabilities/manifest-v2.json"),
+            json!({"plugins": {
+                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let intents = |id: &str| {
+            json!({"success": true, "migrations": [{
+                "id": id.repeat(64), "installed_plugin_id": 42, "connector_slug": "mail"
+            }]})
+        };
+        let calls = Arc::new(Mutex::new(VecDeque::from([
+            ("plugin.auth.automatic", intents("a")),
+            (
+                "plugin.auth.prepare",
+                json!({"success": false, "error": "plugin_auth_migration_expired"}),
+            ),
+            ("plugin.auth.automatic", intents("b")),
+            (
+                "plugin.auth.prepare",
+                json!({"success": false, "error": "plugin_auth_owner_unavailable"}),
+            ),
+            ("plugin.auth.automatic", intents("b")),
+        ])));
+        let transport = Transport(calls.clone());
+        let mut reconciler = Reconciler {
+            retry_signal: None,
+            ..Reconciler::default()
+        };
+        for _ in 0..3 {
+            reconciler
+                .reconcile(transport.clone(), home.path())
+                .await
+                .unwrap();
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn discovery_reads_explicit_relocated_manifest_without_legacy_home() {

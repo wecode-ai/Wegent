@@ -9,6 +9,7 @@ mod issue_provider;
 pub mod mcp;
 pub(crate) mod mcp_http;
 mod model;
+pub use store::personal_stand_in;
 mod router;
 pub(crate) mod runner_routing;
 mod store;
@@ -24,7 +25,6 @@ pub use model::{
     TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
-pub(crate) use store::execution_workspace::apply_project_workspace;
 pub use store::{LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\

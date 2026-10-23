@@ -95,6 +95,13 @@ impl<R: Redis> EntityResolvers<R> {
     pub fn contains(&self, entity_type: &str) -> bool {
         self.resolvers.contains_key(entity_type)
     }
+    /// Every registered entity type, including the built-in `namespace`
+    /// resolver. `get_all_entity_types` iterates the whole registry
+    /// (`app/services/group_member_helper.py:580`), so a caller reproducing
+    /// that loop must not use [`Self::external_types`].
+    pub fn types(&self) -> impl Iterator<Item = &str> {
+        self.resolvers.keys().map(String::as_str)
+    }
     pub fn external_types(&self) -> impl Iterator<Item = &str> {
         self.resolvers
             .keys()

@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn registered_route_keeps_python_ownership() {
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
         const PATH: &str = "/api/resource-library/agents/:agent_id/bindings";
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const GET: u16 = 1 << 1;
@@ -426,7 +426,7 @@ mod tests {
         }
         assert!(methods & GET != 0, "GET {PATH} must be registered");
         assert!(methods & PUT != 0, "PUT {PATH} must be registered");
-        // Both methods keep Python ownership until their cutover is verified.
+        // Both methods keep Python ownership until their cutovers are verified.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&path).expect("the route file loads");
         let table = crate::RouteTable::compile(config).expect("the route table compiles");

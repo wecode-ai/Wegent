@@ -4,6 +4,10 @@ sidebar_position: 34
 
 # E2E Automation
 
+Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks. Task restoration assertions retain the fixture's original display name.
+
+Desktop checkpoint cleanup retains `backend-rs-logs/` so CI can upload Rust gateway startup logs. Settings follows the current global route while retaining the original tab's application route, allowing Back to restore the application.
+
 Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
 Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
@@ -105,6 +109,8 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real provider account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a text response plus a send → `apply_patch` → tool result → completion lifecycle, while real Codex executes the tool in the isolated workspace.
 
+Reply predictions and their image-description requests are dispatched independently of the foreground scenario. A previous conversation's background image request can arrive after the protocol matrix starts. The model fixture identifies it first, retains the image-description protocol checks and response, and leaves matrix state unchanged. `desktop-reply-prediction-fixture.test.mjs` covers this cross-scenario path; foreground endpoint and model ID assertions remain intact.
+
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
@@ -166,15 +172,59 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide
-suite-level parallelism across runners. Shards are balanced from observed CI
-durations and capped to bound the complete suite's critical path; a new or
+Core and Cloud matrix jobs also provide suite-level parallelism across runners.
+Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+Combining short shards reuses container initialization, checkout, artifact
+downloads, and runtime preparation without increasing checkpoint concurrency
+within a runner. The two Core benchmark shards and three Cloud account-auth and
+long-plugin-list shards remain separate. The concurrency limit must accommodate
+the complete matrix in one scheduling wave; classifier regression tests enforce
+both the shard budget and this constraint. Shared runner capacity can still
+introduce external queueing.
+Lint, unit-test, platform E2E, and desktop E2E summary jobs use
+`always() && !cancelled()`: failures still produce a summary, while cancellation
+stops superseded summaries from waiting for runners and blocking newer runs.
+Cleanup and diagnostic upload steps retain their existing cancellation handling.
+
+Step timings from successful runs `39920301020` and `39920742402` separate test
+work from setup overhead. In the first sample, non-test steps across 42 shards
+consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
+was higher in the second sample. The final 18 shards remove 24 setup cycles.
+
+Checkpoint timings from `39930854745` drive the final allocation: longest tasks
+start first and cumulative work is balanced, while CLI and Electron preparation
+remain shared. That run's `workspace-tabs` failed early because Issue creation
+did not wait for readiness after navigating to the board. Its successful
+116-second duration from `39920301020` supplies the estimate instead of its
+incomplete failure duration. The click uses the existing `clickWhenEnabled`
+with the default ten-second timeout and preserves all business assertions.
+The 112 ordinary Core checkpoints total 10,246 seconds, distributed into eight
+shards of 14 tasks with four concurrent workers each. Predicted durations are
+323–332 seconds; a ninth shard only reduces the maximum to 320 seconds.
+The 37 ordinary Cloud checkpoints total 5,769 seconds, distributed into five
+shards with predicted durations of 291–339 seconds; a sixth shard only reduces
+the maximum to 321 seconds. Two Core and three Cloud shards remain isolated.
+These scheduling estimates exclude per-shard setup and runtime resource
+variation and are not measured savings.
+Background-terminal history verification reads the first visible xterm row's
+`aria-posinset`, then waits for each native PageUp to strictly decrease that row
+until reaching the start of history. Each operation retains the default
+ten-second timeout, all twelve initial output lines are asserted, and native
+PageDown restores the viewport. A single ten-second deadline cannot bound many
+page operations: control latency under concurrent CI can exhaust it while
+history remains intact. Focused regressions cover a slow control channel, stalled
+scrolling, and missing history.
+Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
+The newly merged `stand-in-project-enable` checkpoint has no historical sample.
+It shares preparation with the stand-in configuration flows in Core shard 3,
+which now contains 15 tasks; other ordinary Core shards contain 14. The estimates
+above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
-- `plugin-uninstall-resilience` expands into lost response, unknown result, restart recovery, and reinstall race checkpoints.
+- `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
 - `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
 - `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
 
@@ -233,11 +283,8 @@ spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The macOS Inspector path also uses the debug
-Executor profile and disables dev-profile debuginfo. It builds a release
-Executor only when the memory checkpoint actually runs (`ci:memory`, `ci:all`,
-or a non-pull-request run), because optimized code generation is relevant to
-memory measurements but does not add Inspector coverage. The macOS memory job keys its pnpm store from both
+type gate remain unchanged. The shared macOS Inspector and memory E2E build uses
+a release Executor so memory measurements use optimized code. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
 cannot consume the critical-path budget. Its large streaming Markdown response
 uses a targeted 30-second completion budget while ordinary memory interactions
@@ -457,6 +504,13 @@ Core DSH binds port `0` directly and lets the OS assign its listening port.
 Electron reads the actual DSH address before probing the host, Executor, Terminal,
 and application endpoints. It does not discover a port by opening and closing a
 temporary listener, avoiding collisions during concurrent startup.
+
+Linux cloud-test services, including backends and databases, publish ports before
+startup. The shared allocator reads `/proc/sys/net/ipv4/ip_local_port_range` and
+selects bindable, unprivileged ports outside that kernel dynamic range. The port
+registry keeps parallel checkpoints separate, while excluding the dynamic range
+prevents Core DSH and other port `0` listeners from claiming ports during service
+initialization.
 
 Before upload, GitHub Actions repeats the cleanup and excludes
 `managed-components` at any depth from the Artifact path so a teardown failure
@@ -685,6 +739,8 @@ New E2E tests should prefer this helper and `data-testid` locators instead of un
 
 ## CI Guidance
 
+The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
+
 Local list bootstrap reads and manual refreshes share one revision. A superseded bootstrap read must exit before both publishing its list and starting cloud synchronization, preventing stale startup work from restarting synchronization and clearing a selected local project. The original task-discovery E2E keeps its execution-mode and local execution assertions unchanged.
 
 Cloud Issue change notifications must invalidate an in-flight older board snapshot and start a read after the notification. Use the shared controller’s `loadProjectSnapshot(projectId, { invalidate: true })` to reuse its mutation-generation protection. This prevents a reassignment notification from sharing an older read triggered by unassignment. Ordinary duplicate reads remain coalesced. Frontend CI runs the controller concurrency regression; the original human Issue E2E retains its 10-second UI wait.
@@ -753,12 +809,10 @@ not equivalent coverage.
 Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
 complete browser plus Linux and Windows Desktop Core suites before a commit
 enters `main`; `main` does not repeat checks that already passed for the merge
-group. The macOS memory gate runs by default only on scheduled and manual runs.
-Add the `ci:memory` label when a PR must validate the memory boundary. Applying that
-label starts only the memory gate and does not repeat browser, Linux desktop, or
-Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
+group. The macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`.
+Regular PRs, scheduled runs, and manual runs do not execute memory E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
-normally select Wework E2E. The workflow also runs a complete regression every
+normally select Wework E2E. The workflow also runs a regression excluding memory E2E every
 day at 04:00 UTC. Keeping `ci:all` on a PR also runs all Windows Core shards
 on subsequent pushes. Windows builds, shards, and the summary share one
 scheduling condition; skipped required jobs fail the gate. The macOS memory

@@ -8,6 +8,7 @@ import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const REPORT = 'PR review regression: this report must be visible in the Issue activity.'
 const PR_LINK = 'https://github.com/wecode-ai/Wegent/pull/3933'
+const RECIPIENT_NAME = 'mcp-comment-reviewer'
 
 /** Exercise the real MCP, persistence, Socket.IO and Issue activity UI together. */
 export async function createDesktopScenario({
@@ -25,6 +26,8 @@ export async function createDesktopScenario({
   let authToken
   let project
   let issue
+  let recipient
+  let recipientToken
   let requestId = 0
 
   async function request(path, options = {}) {
@@ -69,6 +72,21 @@ export async function createDesktopScenario({
     })
   }
 
+  async function assertMentionNotification(comment) {
+    const inbox = await request('/api/v1/wework-notifications', {
+      headers: { Authorization: `Bearer ${recipientToken}` },
+    })
+    const notifications = inbox.items.filter(item => item.payload?.commentId === comment.id)
+    assert.equal(notifications.length, 1, 'MCP mention must create exactly one inbox notification')
+    assert.equal(notifications[0].kind, 'mention')
+    assert.equal(notifications[0].payload.projectId, String(project.id))
+    assert.equal(notifications[0].payload.itemId, issue.id)
+    assert.equal(
+      notifications[0].url,
+      `wework://boards/${project.id}/issues/${issue.id}/comments/${comment.id}`
+    )
+  }
+
   return {
     requiresCloudEnvironment: true,
     backendEnv: storage.backendEnv,
@@ -81,6 +99,24 @@ export async function createDesktopScenario({
       const workspace = await request('/api/v1/workspaces', {
         method: 'POST',
         body: JSON.stringify({ name: `Issue MCP comments ${process.pid}` }),
+      })
+      recipient = await request('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_name: RECIPIENT_NAME,
+          password: 'mcp-mention-e2e-password',
+          role: 'user',
+          auth_source: 'password',
+        }),
+      })
+      const login = await request('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ user_name: RECIPIENT_NAME, password: 'mcp-mention-e2e-password' }),
+      })
+      recipientToken = login.access_token
+      await request(`/api/v1/workspaces/${workspace.id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id: recipient.id, role: 'Viewer' }),
       })
       project = await request(`/api/v1/workspaces/${workspace.id}/projects`, {
         method: 'POST',
@@ -108,8 +144,15 @@ export async function createDesktopScenario({
       await openIssue(control)
 
       // Tool success and an ID alone do not prove the Issue can display the report.
-      const written = await callTool('add_board_item_comment', { body: REPORT })
+      const mention = { type: 'user', id: String(recipient.id), label: RECIPIENT_NAME }
+      const reportBody = `@${RECIPIENT_NAME} ${REPORT}`
+      const written = await callTool('add_board_item_comment', {
+        body: reportBody,
+        mentions: [mention, mention],
+      })
       assert.ok(written.id, `MCP did not return a persisted comment ID: ${JSON.stringify(written)}`)
+      assert.deepEqual(written.mentions, [mention, mention])
+      await assertMentionNotification(written)
       console.log(`[e2e] MCP add_board_item_comment succeeded: comment_id=${written.id}`)
       const reportSelector = `${CONTENT} [data-testid="cloud-task-activity-message-${written.id}"]`
       await control.command('waitFor', reportSelector, { text: REPORT })
@@ -118,23 +161,45 @@ export async function createDesktopScenario({
       await openIssue(control)
       await control.command('waitFor', reportSelector, { text: REPORT })
       assert.equal(Number(await control.command('getElementCount', reportSelector)), 1)
+      await assertMentionNotification(written)
 
       // The native Executor uses this REST write path for the same MCP tool.
       const native = await request(
         `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`,
         {
           method: 'POST',
-          body: JSON.stringify({ body: PR_LINK }),
+          body: JSON.stringify({ body: `@${RECIPIENT_NAME} ${PR_LINK}`, mentions: [mention] }),
         }
       )
+      await assertMentionNotification(native)
       await control.command(
         'waitFor',
         `${CONTENT} [data-testid="cloud-task-activity-message-${native.id}"]`,
         { text: PR_LINK }
       )
       const comments = await callTool('list_board_item_comments', {})
-      assert.ok(comments.some(comment => comment.id === written.id && comment.body === REPORT))
-      assert.ok(comments.some(comment => comment.id === native.id && comment.body === PR_LINK))
+      assert.ok(
+        comments.some(
+          comment =>
+            comment.id === written.id &&
+            comment.body === reportBody &&
+            comment.mentions.some(value => value.id === String(recipient.id))
+        )
+      )
+      assert.ok(
+        comments.some(comment => comment.id === native.id && comment.body.includes(PR_LINK))
+      )
+      const plain = await callTool('add_board_item_comment', {
+        body: `@${RECIPIENT_NAME} plain text`,
+      })
+      const inbox = await request('/api/v1/wework-notifications', {
+        headers: { Authorization: `Bearer ${recipientToken}` },
+      })
+      assert.equal(
+        inbox.items.filter(item => item.payload?.commentId === plain.id).length,
+        0,
+        'Unstructured @name text must not create a mention notification'
+      )
 
       const other = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
         method: 'POST',

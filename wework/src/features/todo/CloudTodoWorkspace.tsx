@@ -1,3 +1,4 @@
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -57,6 +58,7 @@ import {
   CollaborationSettings,
   CollaborationProjectViewShell,
   createProjectAiTeamSections,
+  mergeIssueReadConfirmation,
   ProjectAutomaticProcessing,
   ProjectBoardSettingsDialog,
   ProjectCollaborationGroups,
@@ -610,13 +612,11 @@ export function CloudTodoWorkspace({
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
     taskStatusExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
-  const changeRequestMonitor = useMemo(
-    () =>
-      changeRequestStatusEnabled && services.deviceApi
-        ? getChangeRequestMonitor(services.deviceApi)
-        : null,
-    [changeRequestStatusEnabled, services.deviceApi]
-  )
+  const issueChangeRequestMonitor =
+    services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+      ? getChangeRequestMonitor(services.deviceApi)
+      : null
+  const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
   const cloudWorkspaceApi = services.sharedWorkspaceApi
   const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
   const runtimeTaskExecutionStatusByAddress = useMemo(
@@ -4960,6 +4960,14 @@ export function CloudTodoWorkspace({
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}
+                            renderBadges={badges => (
+                              <IssueChangeRequestBadges
+                                badges={badges}
+                                monitor={issueChangeRequestMonitor}
+                                compact
+                                testId={`cloud-todo-card-badges-${item.id}`}
+                              />
+                            )}
                             onContinueChangeRequestRepair={
                               workbench ? continueChangeRequestRepair : undefined
                             }
@@ -5336,6 +5344,26 @@ export function CloudTodoWorkspace({
                       ...task,
                       work_item_id: selectedItem.id,
                     })
+                  }}
+                  onRead={updated => {
+                    const confirmed =
+                      selectedItemProject?.location === 'cloud'
+                        ? (cloudWorkspace.commands.confirmIssueRead(
+                            updated as CollaborationIssue
+                          ) as CloudLoopItem)
+                        : updated
+                    const mergeRead = (item: LocatedLoopItem): LocatedLoopItem =>
+                      item.id === updated.id
+                        ? {
+                            ...mergeIssueReadConfirmation(item, confirmed),
+                            project_store: item.project_store,
+                          }
+                        : item
+                    if (selectedItemProject?.location === 'local') {
+                      setItems(current => current.map(mergeRead))
+                      setDetailItems(current => current.map(mergeRead))
+                    }
+                    setSelectedItem(current => (current ? mergeRead(current) : current))
                   }}
                   onUpdated={updated => {
                     const locatedUpdated = {

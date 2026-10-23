@@ -114,10 +114,10 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
-import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumePluginTrial,
   dismissTrialGuide,
@@ -238,6 +238,7 @@ export function WorkbenchProvider({
   syncCoreDshModels = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
+  workspaceTabRevealRevision = 0,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -295,7 +296,6 @@ export function WorkbenchProvider({
     [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-  const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const runtimeTaskSettleSyncActiveRef = useRef(true)
@@ -2043,14 +2043,29 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const appliedRevealRevisionRef = useRef(workspaceTabRevealRevision)
+  useEffect(() => {
+    if (workspaceTabRevealRevision === appliedRevealRevisionRef.current) return
+    appliedRevealRevisionRef.current = workspaceTabRevealRevision
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
+    })
+  }, [stableRefreshWorkLists, workspaceTabRevealRevision])
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({
-        onRuntimeWorkChanged: () => {
+        onRuntimeWorkChanged: payload => {
+          if (payload.archiveCleanup?.errors.length) {
+            const { workspacePath, errors } = payload.archiveCleanup
+            reportArchivedCleanupFailure(
+              `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
+              t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
+            )
+          }
           void stableRefreshWorkLists()
         },
       }),
-    [resolvedServices.chatStream, stableRefreshWorkLists]
+    [resolvedServices.chatStream, stableRefreshWorkLists, t]
   )
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
@@ -2160,29 +2175,6 @@ export function WorkbenchProvider({
         })
       })
   })
-  const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
-    const normalizedTitle = title.trim()
-    if (!normalizedTitle) return
-    const trackingApi = projectTaskTrackingApi(resolvedServices, address)
-    if (!trackingApi) return
-    const key = `${address.deviceId}:${address.taskId}`
-    if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
-    trackingTitleSignaturesRef.current.set(key, normalizedTitle)
-    void trackingApi
-      .updateTaskTrackingTitle(address, normalizedTitle)
-      .then(result => {
-        if (result === null) {
-          trackingTitleSignaturesRef.current.delete(key)
-        }
-      })
-      .catch(error => {
-        trackingTitleSignaturesRef.current.delete(key)
-        console.warn('[Wework] Failed to synchronize project task title', {
-          address,
-          error,
-        })
-      })
-  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -2235,7 +2227,6 @@ export function WorkbenchProvider({
               address,
               title: payload.title,
             })
-            syncRuntimeTaskTitle(address, payload.title)
           },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
@@ -2267,7 +2258,6 @@ export function WorkbenchProvider({
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,
-      syncRuntimeTaskTitle,
       syncRuntimeTaskLifecycle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,

@@ -2,15 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from concurrent.futures import Future
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.services import loop_item_events
-
-
-class _ScheduledFuture:
-    def add_done_callback(self, callback: Any) -> None:
-        del callback
 
 
 class _OpenLoop:
@@ -74,13 +73,14 @@ def test_publish_loop_item_changed_snapshots_item_before_async_emit(
     db.query.return_value.filter.return_value.all.return_value = []
     item = _Item()
     scheduled: list[Any] = []
+    future: Future[None] = Future()
     socket = _Socket()
 
     monkeypatch.setattr(loop_item_events, "get_socketio_loop", lambda: _OpenLoop())
     monkeypatch.setattr(
         asyncio,
         "run_coroutine_threadsafe",
-        lambda coroutine, loop: scheduled.append(coroutine) or _ScheduledFuture(),
+        lambda coroutine, loop: scheduled.append(coroutine) or future,
     )
     monkeypatch.setattr("app.core.socketio.get_sio", lambda: socket)
 
@@ -95,6 +95,7 @@ def test_publish_loop_item_changed_snapshots_item_before_async_emit(
     item.detached = True
 
     asyncio.run(scheduled[0])
+    future.set_result(None)
 
     assert socket.emissions == [
         {
@@ -109,3 +110,88 @@ def test_publish_loop_item_changed_snapshots_item_before_async_emit(
             "namespace": "/wework-runtime",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("loop", "creator_id", "cause"),
+    [
+        (None, 7, "loop_unavailable"),
+        (SimpleNamespace(is_closed=lambda: True), 7, "loop_closed"),
+        (_OpenLoop(), 0, "no_recipients"),
+    ],
+)
+def test_publish_loop_item_changed_explains_skipped_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    loop: Any,
+    creator_id: int,
+    cause: str,
+) -> None:
+    caplog.set_level("INFO", logger=loop_item_events.__name__)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    schedule = MagicMock()
+    monkeypatch.setattr(loop_item_events, "get_socketio_loop", lambda: loop)
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", schedule)
+
+    loop_item_events.publish_loop_item_changed(
+        db,
+        item=SimpleNamespace(
+            cloud_project_id="project-1",
+            id="issue-1",
+            version=3,
+            created_by_user_id=creator_id,
+        ),
+        reason="user_update",
+        actor_user_id=creator_id,
+    )
+
+    schedule.assert_not_called()
+    assert any(f"cause={cause}" in message for message in caplog.messages)
+
+
+def test_publish_loop_item_changed_logs_failed_delivery_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger=loop_item_events.__name__)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    future: Future[None] = Future()
+
+    def schedule(coroutine: Any, loop: Any) -> Future[None]:
+        coroutine.close()
+        return future
+
+    monkeypatch.setattr(loop_item_events, "get_socketio_loop", lambda: _OpenLoop())
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", schedule)
+    loop_item_events.publish_loop_item_changed(
+        db, item=_Item(), reason="user_update", actor_user_id=7
+    )
+
+    future.set_exception(RuntimeError("socket unavailable"))
+
+    assert "emit_failed" in caplog.messages[-1]
+    assert isinstance(caplog.records[-1].exc_info[1], RuntimeError)
+
+
+def test_publish_loop_item_changed_logs_failed_schedule_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+
+    def schedule(coroutine: Any, loop: Any) -> None:
+        coroutine.close()
+        raise RuntimeError("loop unavailable")
+
+    monkeypatch.setattr(loop_item_events, "get_socketio_loop", lambda: _OpenLoop())
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", schedule)
+
+    loop_item_events.publish_loop_item_changed(
+        db, item=_Item(), reason="user_update", actor_user_id=7
+    )
+
+    assert "schedule_failed" in caplog.messages[-1]
+    assert isinstance(caplog.records[-1].exc_info[1], RuntimeError)

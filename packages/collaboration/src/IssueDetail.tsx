@@ -35,6 +35,7 @@ import {
 } from "./issue-detail/dateTime";
 import { getCollaborationIssueActionPermissions } from "./permissions";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
+import type { ProjectExecutionEnvironmentReadinessKind } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueExecutionDetails } from "./issue-detail/IssueExecutionDetails";
 import { IssueConversationDrawers } from "./issue-detail/IssueConversationDrawers";
 import type {
@@ -63,6 +64,7 @@ interface IssueDetailProps {
     | "assignments"
     | "members"
     | "agents"
+    | "workspaces"
     | "collaborators"
     | "taskBindings"
     | "deliveries"
@@ -83,6 +85,7 @@ interface IssueDetailProps {
   /** Present only when the host enables this Issue lifecycle action. */
   onDelete?(): void;
   onChange(issue: CollaborationIssue): void;
+  onRead(issue: CollaborationIssue): void;
   onCommentsChange(comments: CollaborationComment[]): void;
   onAssignmentsChange?(assignments: CollaborationAssignment[]): void;
   onCreateTask?(): void;
@@ -97,6 +100,7 @@ interface IssueCreateProps {
   messages: Messages;
   translate?: CollaborationTranslate;
   environmentNotice?: ReactNode;
+  environmentReadiness?: ProjectExecutionEnvironmentReadinessKind;
   onClose(): void;
   onCreated(issue: CollaborationIssue): void | Promise<void>;
   onError(): void;
@@ -176,6 +180,7 @@ export function IssueCreate({
   messages,
   translate,
   environmentNotice,
+  environmentReadiness,
   onClose,
   onCreated,
   onError,
@@ -187,7 +192,10 @@ export function IssueCreate({
       messages === collaborationMessages.en ? "en" : "zh-CN",
     );
   return (
-    <div data-testid={collaborationTestIds.createIssueDialog}>
+    <div
+      data-testid={collaborationTestIds.createIssueDialog}
+      data-execution-environment-readiness={environmentReadiness}
+    >
       <SharedIssueDetailEditor
         port={port}
         mode="create"
@@ -240,6 +248,7 @@ function BrowserIssueDetail({
   onClose,
   onDelete,
   onChange,
+  onRead,
   onCommentsChange,
   onCreateTask,
   onConflict,
@@ -331,12 +340,14 @@ function BrowserIssueDetail({
                 const access = await api.attachments.access(attachmentId);
                 window.open(access.url, "_blank", "noopener,noreferrer");
               },
-              renderActivity: ({ tasks }) => (
+              renderActivity: ({ tasks, commentAssignment }) => (
                 <IssueActivityPanel
+                  commentAssignment={commentAssignment}
                   api={api}
                   issue={issue}
                   project={project}
                   onTaskUpdated={onChange}
+                  onTaskRead={onRead}
                   members={members}
                   agents={agents}
                   assignments={assignments}

@@ -1339,3 +1339,36 @@ def test_mounted_decorator_tool_servers_expose_request_context():
     }
     assert "wiki" not in mounted
     assert "wiki" not in MCP_CONTEXT_SERVER_NAMES
+
+
+@pytest.mark.parametrize(
+    ("spec_name", "expected_methods"),
+    [
+        ("subscription", {"DELETE", "OPTIONS"}),
+        ("interactive_form_question", {"GET", "HEAD", "DELETE", "OPTIONS"}),
+        ("system", {"GET", "HEAD", "POST", "DELETE", "OPTIONS"}),
+    ],
+)
+def test_migrated_mcp_methods_leave_other_python_routes_registered(
+    spec_name, expected_methods
+):
+    spec = next(spec for spec in MCP_APP_SPECS if spec.name == spec_name)
+    alias_app = _build_mcp_app(spec)
+    alias_transport = next(
+        route for route in alias_app.routes if route.path == spec.transport_path
+    )
+    assert alias_transport.methods == {"GET", "HEAD", "POST", "DELETE", "OPTIONS"}
+
+    api_spec = mcp_server_module._apply_mount_prefix(spec, "/api")
+    app = _build_mcp_app(api_spec)
+    transport = next(
+        route for route in app.routes if route.path == api_spec.transport_path
+    )
+
+    assert transport.methods == expected_methods
+    if "POST" not in expected_methods:
+        response = TestClient(app).post(api_spec.transport_path)
+        assert response.status_code == 405
+    assert any(
+        route.path == "/health" and "GET" in route.methods for route in app.routes
+    )

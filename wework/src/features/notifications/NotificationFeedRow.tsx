@@ -2,7 +2,6 @@ import { formatNotificationTime } from './notificationTime'
 import type { ReactNode } from 'react'
 import { AtSign, Bell, Bot, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { StandInIcon } from '@/features/todo/StandInIcon'
 
 const KIND_ICONS: Record<string, LucideIcon> = {
   mention: AtSign,
@@ -15,6 +14,7 @@ export interface NotificationFeedRowProps {
   processing?: ReactNode
   event?: ReactNode
   avatarLabel?: string
+  badge?: ReactNode
   testId: string
   kind?: string
   title: string
@@ -43,9 +43,10 @@ export function NotificationFeedRow({
   processing,
   event,
   avatarLabel,
+  badge,
 }: NotificationFeedRowProps) {
   const time = formatNotificationTime(timestamp)
-  const KindIcon = kind === 'stand_in' ? StandInIcon : (KIND_ICONS[kind ?? ''] ?? Bell)
+  const KindIcon = KIND_ICONS[kind ?? ''] ?? Bell
   const taskOnly = kind === 'issue_dispatch_assignment' && !avatarLabel
   const timeLabel = time ? (
     <time
@@ -56,7 +57,13 @@ export function NotificationFeedRow({
     </time>
   ) : null
   return (
-    <div className={cn('flex gap-3 border-b border-border px-4 py-3', unread && 'bg-muted/30')}>
+    <div
+      data-testid={`${testId}-container`}
+      className={cn(
+        'relative isolate flex gap-3 border-b border-border px-4 py-3 hover:bg-muted/40',
+        unread && 'bg-muted/30'
+      )}
+    >
       <span
         aria-hidden="true"
         className="relative mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-text-secondary"
@@ -72,7 +79,7 @@ export function NotificationFeedRow({
           data-testid={testId}
           data-unread={unread ? 'true' : undefined}
           disabled={busy}
-          className="block min-h-11 w-full rounded-md text-left hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-6"
+          className="block min-h-11 w-full text-left after:absolute after:inset-0 after:z-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-focus disabled:opacity-50 md:min-h-6"
           onClick={onClick}
         >
           <span className="flex items-baseline justify-between gap-3">
@@ -85,6 +92,7 @@ export function NotificationFeedRow({
               {unread && <span className="sr-only">{unreadLabel}：</span>}
               {title}
             </span>
+            {badge}
             {!event && !taskOnly && timeLabel}
           </span>
           {(event || (taskOnly && time)) && (
@@ -121,7 +129,11 @@ export function NotificationFeedRow({
             </span>
           )}
         </button>
-        {processing && <div className="mt-2">{processing}</div>}
+        {processing && (
+          <div className="pointer-events-none relative z-10 mt-2 [&_:is(button,input,textarea,select,a,label,[role=button],[role=checkbox],[role=radio])]:pointer-events-auto">
+            {processing}
+          </div>
+        )}
       </div>
     </div>
   )

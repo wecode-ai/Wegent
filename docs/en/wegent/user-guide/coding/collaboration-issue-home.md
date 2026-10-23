@@ -16,11 +16,27 @@ Local projects from Tasks appear automatically under Local workspace. Reloading 
 
 The Executor stores local ownership; the backend stores cloud ownership. A collaboration group owner is a project group reference, not a resource-library Agent's Team ID. Assigning it does not automatically execute the group's workflow.
 
+When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
+
+## Create a collaboration project
+
+New local and cloud collaboration projects include only the current user by default. Agents are added only when you select them through the collaborator picker. You can also create the project first and add Agents from its settings. Importing a local code project does not automatically add the current-device Agent.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
 
 The `collaboration-local-agent-dispatch` desktop regression checks that the owner state row contains exactly one save action, that it disappears after saving, and that the assigned agent actually starts work.
+
+## Assign directly from a discussion
+
+The **Assign to** selector sits immediately to the left of Send and defaults to **Keep current**. Search for the next member, write a comment, and select **Send and assign**. With no comment, select **Assign**; this creates no empty comment. Selecting a person takes effect only after submission.
+
+Selecting users through `@` automatically chooses the first eligible user mentioned in the draft. Agent mentions do not trigger a human handoff. A manual selection, including **Keep current**, takes precedence over subsequent mention edits. Automatic selection resumes after a successful submission.
+
+If the comment fails to send, its draft and selected assignee remain. If the comment succeeds but assignment fails, the selector and error remain so you can retry **Assign** without posting the saved comment again. This control preserves existing assignment permissions, notifications, and activity history.
+
+The `collaboration-issue-assignment-activity` desktop regression verifies first-mention selection, persisted comments and ownership, assignment without a comment, and assignment history. Focused component tests cover manual overrides, permissions, duplicate submission, and failure recovery.
 
 ## Work on an Issue assigned to me
 

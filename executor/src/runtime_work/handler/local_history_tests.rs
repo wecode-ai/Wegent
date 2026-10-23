@@ -1,5 +1,65 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn history_resume_restores_task_shell_identity_before_the_next_turn() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env: Vec<_> = [
+                "HOME", "CODEX_HOME", "WEGENT_CODEX_HOME", "WEGENT_EXECUTOR_HOME",
+                "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME",
+            ].into_iter().map(|key| {
+                let directory = root.path().join(key);
+                fs::create_dir_all(&directory).unwrap();
+                ScalarEnv::set(key, directory.to_str().unwrap())
+            }).collect();
+            let binary = root.path().join("codex-history.sh");
+            let log = root.path().join("requests.jsonl");
+            fs::write(&binary, format!(r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{}'
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1","turns":[]}},"data":[],"nextCursor":null}}}}\n' "$id"
+  case "$line" in *'"method":"test/stop"'*) exit 0;; esac
+done
+"#, log.display())).unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+            let handler = RuntimeWorkRpcHandler::new("device-1", binary.to_str().unwrap())
+                .with_backend_connection(Arc::new(Mutex::new(Some(ConnectionConfig {
+                    backend_url: "https://backend.example.com".into(),
+                    socket_url: "wss://backend.example.com".into(),
+                    auth_token: "current-user-token".into(),
+                    runtime_auth_token: "current-runtime-token".into(),
+                }))));
+            let link = RuntimeTaskLink::new_pending(
+                "restored-task".into(), root.path().join("project").display().to_string(),
+                "Restored task".into(),
+            );
+            handler.resume_codex_thread_for_action(&link, "thread-1").await.unwrap();
+            handler.codex_app_server.request("test/stop", json!({})).await.unwrap();
+            let calls: Vec<Value> = fs::read_to_string(log).unwrap().lines()
+                .map(|line| serde_json::from_str(line).unwrap()).collect();
+            let resume = calls.iter().find(|call| call["method"] == "thread/resume").unwrap();
+            let config = &resume["params"]["config"];
+            assert_eq!(config["shell_environment_policy.set.WEGENT_TASK_ID"], "restored-task");
+            assert_eq!(config["shell_environment_policy.set.WEGENT_TASK_WORKSPACE"], link.workspace_path);
+            assert_eq!(config["shell_environment_policy.set.WEGENT_EXECUTOR_BINARY"],
+                std::env::current_exe().unwrap().to_string_lossy().as_ref());
+            assert_eq!(config["shell_environment_policy.set.AUTH_TOKEN"], "current-user-token");
+            assert_eq!(config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"], "current-runtime-token");
+            assert_eq!(resume["params"]["excludeTurns"], true);
+            assert!(link.runtime_handle.get("executionRequest").is_none());
+        });
+}
+
 #[tokio::test]
 async fn transcript_transport_is_opt_in_and_keeps_legacy_responses() {
     use base64::Engine;

@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 
@@ -39,6 +39,7 @@ vi.mock('@/lib/cloud-authorization-window', () => ({
 
 import { CloudConnectorAuthCard, ConnectorAuthCard } from './ConnectorAuthCard'
 import { GITHUB_CLI_TARGET } from '@/api/local/githubCli'
+import type { LocalConnectorAuthResult } from '@/api/local/localConnectorAuth'
 
 const browserTarget = {
   pluginKey: 'gitlab-intra',
@@ -151,7 +152,13 @@ describe('ConnectorAuthCard browser oauth', () => {
       userCode: 'ABCD-1234',
       verificationUrl: 'https://github.com/login/device',
     })
-    authMocks.poll.mockResolvedValue({ status: 'ok', sessionId: 'gh-session' })
+    let finishPoll!: (value: LocalConnectorAuthResult) => void
+    authMocks.poll.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishPoll = resolve
+        })
+    )
     const onSuccess = vi.fn()
     render(
       <ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={onSuccess} onCancel={vi.fn()} />
@@ -170,7 +177,16 @@ describe('ConnectorAuthCard browser oauth', () => {
         target: 'system',
       })
     )
+    await waitFor(
+      () =>
+        expect(authMocks.poll).toHaveBeenCalledExactlyOnceWith(
+          { pluginKey: 'github', connectorSlug: 'wework-github-cli' },
+          'gh-session'
+        ),
+      { timeout: 2000 }
+    )
     expect(onSuccess).not.toHaveBeenCalled()
+    await act(async () => finishPoll({ status: 'ok', sessionId: 'gh-session' }))
     await waitFor(
       () =>
         expect(onSuccess).toHaveBeenCalledExactlyOnceWith({

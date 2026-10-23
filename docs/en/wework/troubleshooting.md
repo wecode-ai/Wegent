@@ -4,6 +4,16 @@ sidebar_position: 10
 
 # Troubleshooting
 
+## Page errors or a blank screen
+
+When a frontend component fails to render, Wework displays “Something went wrong in Wework”.
+Select **Refresh page** to reload the interface; unsaved changes may be lost.
+The startup error page also offers a refresh action when frontend initialization fails.
+
+If the error persists after refreshing, open the debug panel to view the logs and report
+the steps that reproduce the problem. If the renderer process or the entire application
+exits and does not recover, reopen Wework.
+
 ## Models and tasks
 
 - Check Codex sign-in or the local model URL under **Settings → Models**.
@@ -23,6 +33,11 @@ direct Codex tasks, Wework keeps the original conversation and model, waits 5,
 10, 20, 40, and 60 seconds, and automatically continues up to five times. You can
 stop the task during recovery. Recovery does not replay the original task or add
 a user message.
+
+If overload stops an active Goal, recovery resumes that Goal with its objective,
+budget, and accumulated usage intact, including automatic continuation after the
+current turn. Pausing, deleting, or editing the Goal during backoff cancels its
+pending recovery; Wework does not recreate the Goal or overwrite your changes.
 
 If recovery is exhausted, retry later or select **Switch model and retry**.
 Authentication, quota, and context-window errors are not automatically recovered

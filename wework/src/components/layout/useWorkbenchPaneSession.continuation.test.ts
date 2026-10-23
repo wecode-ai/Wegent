@@ -9,7 +9,11 @@ import {
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  getRuntimeConversationMessages,
+  reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import {
   getRuntimeConversationQueueController,
   resetRuntimeConversationQueueControllersForTests,
@@ -23,6 +27,7 @@ import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
   send: vi.fn(),
+  guide: vi.fn(),
   cancel: vi.fn(),
   setInput: vi.fn(),
   resetAttachments: vi.fn(),
@@ -58,6 +63,7 @@ let lifecycleStore: RuntimeTaskLifecycleStore
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockResolvedValue(true)
+  mocks.guide.mockResolvedValue({ sent: true, turnId: 'answer-turn' })
   mocks.cancel.mockResolvedValue(true)
   lifecycleStore = new RuntimeTaskLifecycleStore('pane-continuation-test')
   lifecycleStore.syncRuntimeTask(address, {
@@ -87,6 +93,7 @@ beforeEach(() => {
       setComposerErrorForScope: mocks.setError,
     },
     sendRuntimePaneMessage: mocks.send,
+    sendRuntimePaneGuidance: mocks.guide,
     cancelRuntimePaneTask: mocks.cancel,
     getRuntimeGoal: vi.fn().mockResolvedValue({ accepted: false }),
     loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [], turns: [] }),
@@ -122,6 +129,130 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
 }
 
 describe('pane continuation without composer submission', () => {
+  test.each([
+    { running: false, accepted: true },
+    { running: false, accepted: false },
+    { running: true, accepted: true },
+    { running: true, accepted: false },
+  ])(
+    'updates async question waiting state only after an accepted reply (running=$running, accepted=$accepted)',
+    async ({ running, accepted }) => {
+      const { result } = await renderSession()
+      mocks.send.mockResolvedValue(accepted)
+      mocks.guide.mockResolvedValue({ sent: accepted, turnId: 'answer-turn' })
+      act(() => {
+        reconcileRuntimeConversationSnapshot(address, [
+          {
+            id: 'question-turn',
+            status: running ? 'streaming' : 'done',
+            items: [
+              {
+                id: 'async-question',
+                type: 'block',
+                block: {
+                  id: 'async-question',
+                  type: 'tool',
+                  toolName: 'request_user_input',
+                  status: 'done',
+                  createdAt: 1,
+                  renderPayload: {
+                    kind: 'request_user_input',
+                    requestId: 'async-question',
+                    delivery: 'async',
+                    questions: [{ id: 'direction', question: 'Which direction?' }],
+                  },
+                },
+              },
+            ],
+          },
+        ])
+        if (running) lifecycleStore.turnStarted(address, 'question-turn')
+        lifecycleStore.userInputRequested(address, 'async')
+      })
+      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+      await act(async () => {
+        expect(
+          await result.current.sendRequestUserInputResponse({
+            requestId: 'async-question',
+            answers: { direction: { answers: ['Continue'] } },
+          })
+        ).toBe(accepted)
+      })
+
+      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
+      const sender = running ? mocks.guide : mocks.send
+      expect(sender).toHaveBeenCalledWith(
+        expect.objectContaining({ address, message: 'Continue' }),
+        ...(running ? [] : [expect.any(Object)])
+      )
+      expectDraftPreserved(result.current)
+    }
+  )
+
+  test.each([true, false])(
+    'retains a form while terminal history arrives before its response acknowledgment (accepted=%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      const response = { requestId: 2, answers: { audience: { answers: ['owner'] } } }
+      const terminal: RuntimeConversationTurn = {
+        id: 'elicitation-turn',
+        status: 'done',
+        items: [{ id: 'final', type: 'assistant_text', content: 'Complete' }],
+      }
+      act(() => {
+        reconcileRuntimeConversationSnapshot(address, [
+          {
+            ...terminal,
+            status: 'streaming',
+            items: [
+              {
+                id: 'request-user-input-2',
+                type: 'block',
+                block: {
+                  id: 'request-user-input-2',
+                  type: 'tool',
+                  toolName: 'request_user_input',
+                  status: 'pending',
+                  createdAt: 1,
+                  renderPayload: {
+                    kind: 'request_user_input',
+                    requestId: 2,
+                    questions: [{ id: 'audience', question: 'Access audience?' }],
+                  },
+                },
+              },
+            ],
+          },
+        ])
+      })
+      mocks.send.mockImplementation(async () => {
+        replaceRuntimeConversationSnapshot(address, [terminal])
+        return accepted
+      })
+
+      await act(async () => {
+        expect(await result.current.sendRequestUserInputResponse(response)).toBe(accepted)
+      })
+
+      const form = getRuntimeConversationMessages(address)
+        .flatMap(message => message.blocks ?? [])
+        .find(block => block.id === 'request-user-input-2')
+      expect(form).toBeDefined()
+      expect(form?.renderPayload).toMatchObject({
+        requestId: 2,
+        ...(accepted ? { response } : {}),
+      })
+      if (!accepted) expect(form?.renderPayload).not.toHaveProperty('response')
+      act(() => replaceRuntimeConversationSnapshot(address, [terminal]))
+      expect(
+        getRuntimeConversationMessages(address)
+          .flatMap(message => message.blocks ?? [])
+          .some(block => block.id === 'request-user-input-2')
+      ).toBe(accepted)
+    }
+  )
+
   test('continues the bound task with its model and leaves an unsent draft intact', async () => {
     const { result } = await renderSession()
 
@@ -286,6 +417,26 @@ describe('composer cancellation rollback', () => {
         expect(getRuntimeConversationQueuedMessages(address)).toEqual([queuedMessage])
         expect(mocks.send).not.toHaveBeenCalled()
       }
+    }
+  )
+})
+
+describe('accepted async question replies', () => {
+  test.each([true, false])(
+    'clears global waiting only after reply acceptance (%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      act(() => lifecycleStore.userInputRequested(address, 'async'))
+      mocks.send.mockResolvedValue(accepted)
+      await act(async () => {
+        expect(
+          await result.current.sendRequestUserInputResponse(
+            { requestId: 'async-question', answers: { direction: { answers: ['Complete'] } } },
+            { appendUserMessage: true }
+          )
+        ).toBe(accepted)
+      })
+      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
     }
   )
 })

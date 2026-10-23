@@ -2,11 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  VenetianMask,
   Bot,
   CircleCheck,
   Cloud,
@@ -32,6 +31,7 @@ import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensu
 import type { CollaborationTranslate } from "../i18n";
 
 import { CollaborationApp } from "../CollaborationApp";
+import { StandInIcon } from "../StandInIcon";
 import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
 import { ProjectCreationAction } from "./ProjectCreationAction";
@@ -110,7 +110,7 @@ const platformMessages = {
     projectActions: "项目操作",
     allSpaces: "所有空间",
     home: "新建 Issue",
-    standIn: "我的替身",
+    standIn: "我的分身",
     newConversation: "新建对话",
     teams: "协作小组",
     devices: "设备",
@@ -795,7 +795,7 @@ function CollaborationPlatformNavigation({
                   })
                 }
               >
-                <VenetianMask aria-hidden="true" />
+                <StandInIcon />
                 <span>{messages.standIn}</span>
               </button>
             )}
@@ -2826,6 +2826,7 @@ function IssueHomeLauncher({
       <div
         className="flex min-h-0 flex-1"
         data-testid="collaboration-issue-home"
+        data-execution-environment-readiness={environmentReadiness.kind}
       >
         {composer}
       </div>
@@ -2835,6 +2836,7 @@ function IssueHomeLauncher({
     <section
       className="collaboration-issue-home"
       data-testid="collaboration-issue-home"
+      data-execution-environment-readiness={environmentReadiness.kind}
     >
       <div className="collaboration-issue-home-heading">
         <h1 data-testid="collaboration-issue-home-title">
@@ -3247,6 +3249,11 @@ export function CollaborationPlatformApp({
     !host.location.projectId &&
     !host.location.workspaceId &&
     host.location.rootView === "devices";
+  const isStandInPage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    host.location.rootView === "stand-in" &&
+    Boolean(host.renderStandInPage);
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -3412,18 +3419,23 @@ export function CollaborationPlatformApp({
   useEffect(() => {
     if (!state.loading && !state.error) onReady?.();
   }, [onReady, state.error, state.loading]);
+  const navigationProjectsRef = useRef(state.navigationProjects);
+  useLayoutEffect(() => {
+    navigationProjectsRef.current = state.navigationProjects;
+  }, [state.navigationProjects]);
+  const hasFullWorkspaceAccess =
+    state.workspace?.id === host.location.workspaceId;
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {
     if (!host.location.workspaceId) return api;
     const workspaceId = host.location.workspaceId;
     const projectId = host.location.projectId;
-    const hasFullWorkspaceAccess = state.workspace?.id === workspaceId;
     return {
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
           if (projectId) {
-            const selectedProject = state.navigationProjects.find(
+            const selectedProject = navigationProjectsRef.current.find(
               (project) => project.id === projectId,
             );
             if (selectedProject) return [selectedProject];
@@ -3441,8 +3453,7 @@ export function CollaborationPlatformApp({
     api,
     host.location.projectId,
     host.location.workspaceId,
-    state.navigationProjects,
-    state.workspace,
+    hasFullWorkspaceAccess,
   ]);
   const workspaceAgentConfigurationApi = useMemo(
     () =>
@@ -3766,7 +3777,7 @@ export function CollaborationPlatformApp({
     });
   };
   let content: React.ReactNode;
-  if (state.loading && !isDevicePage) {
+  if (state.loading && !isDevicePage && !isStandInPage) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -3777,7 +3788,7 @@ export function CollaborationPlatformApp({
         }
       />
     );
-  } else if (state.error && !isDevicePage) {
+  } else if (state.error && !isDevicePage && !isStandInPage) {
     content = (
       <div className="collaboration-alert" role="alert">
         {state.error}
@@ -3864,7 +3875,17 @@ export function CollaborationPlatformApp({
     });
     content =
       rootView === "stand-in" && host.renderStandInPage ? (
-        host.renderStandInPage({ projects: domainProjects })
+        host.renderStandInPage({
+          projects: domainProjects,
+          onClose: () =>
+            host.navigate({
+              ...host.location,
+              rootView: "home",
+              workspaceId: null,
+              projectId: null,
+              issueId: null,
+            }),
+        })
       ) : rootView === "agents" ||
         rootView === "teams" ||
         rootView === "devices" ? (

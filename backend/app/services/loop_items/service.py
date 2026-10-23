@@ -66,6 +66,7 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
     delivery_storage,
 )
+from app.services.issue_badges import issue_badges
 from app.services.loop_item_executions.service import (
     execution_ai_state,
     execution_display_state,
@@ -92,6 +93,7 @@ from app.services.loop_items.access import (
     related_item_filter,
     visible_item_filter,
 )
+from app.services.loop_items.change_requests import update_change_request_source
 from app.services.loop_items.ordering import (
     persist_sibling_order,
     position_siblings,
@@ -258,6 +260,7 @@ class LoopItemService:
             team = db.get(Kind, item.assignee_team_id)
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        values["badges"] = issue_badges(metadata) if can_view_detail else []
         group = metadata.get("collaboration_group")
         if item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id:
             group = None
@@ -757,6 +760,9 @@ class LoopItemService:
                 trigger="create",
                 by_user_id=user_id,
             )
+        task_metadata = update_change_request_source(
+            task_metadata, "issue", f"{values.title}\n{values.description}"
+        )
         task_metadata = initialize_content_revision(task_metadata, user_id)
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
@@ -1055,11 +1061,25 @@ class LoopItemService:
             status="active",
         )
         db.add(comment)
+        db.flush()
+        metadata = update_change_request_source(
+            item.metadata_json, f"comment:{comment.id}", body
+        )
+        badges_changed = metadata != item.metadata_json
+        item.metadata_json = metadata
+        if badges_changed:
+            item.version += 1
         if commit:
             db.commit()
         else:
             db.flush()
         db.refresh(comment)
+        if commit and badges_changed:
+            from app.services.loop_item_events import publish_loop_item_changed
+
+            publish_loop_item_changed(
+                db, item=item, reason="badges", actor_user_id=user_id
+            )
         author = db.get(User, user_id)
         return {
             "id": comment.id,
@@ -1863,6 +1883,12 @@ class LoopItemService:
                 target_user_id=updates.get("assignee_user_id"),
                 previous_user_id=item.assignee_user_id,
                 notify=values.notify_assignee,
+            )
+        if "title" in updates or "description" in updates:
+            updates["metadata_json"] = update_change_request_source(
+                updates.get("metadata_json", item.metadata_json),
+                "issue",
+                f"{updates.get('title', item.title)}\n{updates.get('description', item.description)}",
             )
         updates = adapt_loop_node_values_for_dialect(
             updates,

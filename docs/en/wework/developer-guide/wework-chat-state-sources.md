@@ -14,6 +14,23 @@ This document records the state sources for the Wework chat path. The goal is to
 4. `useWorkbenchPaneSession` owns pane content such as messages and queued input, but reads all task and turn lifecycle facts from the Store.
 5. `runtimePaneStatus.ts` is a read-only projection from a lifecycle snapshot to existing pane presentation fields. It must not infer execution or turn state independently.
 
+Sidebar priority filtering also reads explicit `interactionStatus` through the
+lifecycle Store projection. A stale task-list snapshot must not override an
+accepted user reply in the view layer.
+
+## New Conversations and Manual Sidebar Order
+
+Standalone conversations and project tasks share one ordering rule: when a manual
+order exists, new conversations absent from that order appear before ordered tasks,
+while ordered tasks retain their user-defined relative order. The executor returns
+`sidebarOrder` only for tasks included in the manual order. Refreshing or reloading
+the list must not append new conversations to the bottom. Model selection,
+reasoning effort, and prompt references do not change this rule.
+
+When a conversation is first dragged before another conversation, the persisted
+order must include both the moved conversation and its target. Otherwise, the
+target is treated as unordered and the drag result is lost.
+
 ## Latest Turn Identity
 
 `turn.id` identifies the active turn and may be cleared after completion. `turn.latestId` retains the latest turn identity confirmed by runtime events, transcripts, or executor snapshots. Task-list refreshes, completion timestamp precision changes, and other metadata updates must not clear it. Reply predictions use `turn.latestId` as their request identity and wait until a real turn identity is available. Starting a new turn still invalidates the previous suggestion.
@@ -393,6 +410,25 @@ Canonical `turns` are the frontend transcript's only input, so restoring a
 message only in the compatibility `messages` array is insufficient.
 
 ### Assistant In-Turn Display Order and Typography
+
+The running transcript cache serves existing messages when reopening a task or
+restoring a page. When a cached message has `runtimeItems`, canonical `turns`
+must use those items directly, preserving native item IDs, types, and order,
+including an empty array. Rebuilding items from presentation `content` and
+`blocks` changes the text identity to an aggregate message ID and moves it
+before process messages, so later deltas with the native ID create a second
+text segment. Text extraction must also preserve raw whitespace: trailing spaces
+or newlines in a snapshot can separate the next delta and must not be trimmed
+like metadata. The `streaming-content` E2E restores the page after a paragraph
+break in a partial plain-text response and then resumes output, checking cached
+items, text uniqueness, and process placement before completion as well as the
+final state.
+
+While a Provider turn is running, assistant text without a phase must remain
+process text, even if the snapshot does not yet include a later tool. An explicit
+final phase can render as answer text immediately. Unphased trailing text can
+become the final answer only when the turn completes, so an in-flight transcript
+page cannot prematurely reclassify process text.
 
 Final text, process text, and tool blocks within one assistant turn must be
 projected in runtime item arrival order. The UI must not group them by type and

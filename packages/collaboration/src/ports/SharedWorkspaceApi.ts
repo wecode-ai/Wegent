@@ -585,7 +585,10 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
-  listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>;
+  listAgents(
+    workspaceId: string,
+    options?: { forceRefresh?: boolean },
+  ): Promise<CollaborationOwnedAgent[]>;
   addAgent(
     workspaceId: string,
     input: WorkspaceAgentCreateInput,
@@ -959,6 +962,7 @@ export interface SharedWorkspaceApi {
     save(
       projectId: string,
       settings: WorkspaceStandInSettings,
+      deviceId?: string,
     ): Promise<WorkspaceStandInSettings>;
   };
   /** Device-addressed execution transcripts and live runtime events. */
@@ -1023,10 +1027,6 @@ export interface WeworkWorkspaceRuntimePort {
     title: string,
     description: string,
   ): Promise<{ issue: CollaborationIssue }>;
-  updateTrackedTaskTitle(
-    task: WorkspaceRuntimeTaskAddress,
-    title: string,
-  ): Promise<CollaborationIssue | null>;
   reportExecutionLifecycle(
     projectId: string,
     executionId: number,

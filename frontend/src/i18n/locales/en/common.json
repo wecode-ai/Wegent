@@ -800,6 +800,8 @@
       "loading_description": "If you are not signed in, Wegent will redirect you to the login page.",
       "approved_title": "Wework authorized",
       "approved_description": "You can return to Wework. The local client will finish the cloud connection automatically.",
+      "close_countdown": "This page will close automatically in {{count}} seconds.",
+      "close_manually": "If this page is still open, close it manually and return to Wework.",
       "declined_title": "Authorization canceled",
       "declined_description": "Wework will not connect to this cloud account.",
       "title": "Authorize Wework to connect to Wegent",

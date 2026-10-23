@@ -217,6 +217,27 @@ def test_cp10_cp11_cp13_resource_use_requires_space_share_and_project_binding(
     assert share.status_code == 201, share.text
     with pytest.raises(HTTPException, match="not enabled"):
         collaboration_permission_service.require_project_team(test_db, pid, team.id)
+    member_binding = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/chat-agents",
+        headers=scope["member"],
+        json={**body, "share_with_workspace": True},
+    )
+    assert member_binding.status_code == 403
+    unbound_issue = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items",
+        headers=scope["member"],
+        json={"title": "Shared Agent still requires a project binding"},
+    ).json()
+    unbound_assignment = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items/{unbound_issue['id']}/assign",
+        headers=scope["member"],
+        json={
+            "version": unbound_issue["version"],
+            "assignee_type": "team",
+            "assignee_id": str(team.id),
+        },
+    )
+    assert unbound_assignment.status_code == 422
     enabled = test_client.post(
         f"/api/v1/cloud-projects/{pid}/chat-agents", headers=scope["owner"], json=body
     )
@@ -787,3 +808,32 @@ def test_cp05_runner_catalog_uses_valid_space_membership(
     test_db.commit()
     assert (runner.id in visible_environment_ids(test_db, scope["user"].id)) is visible
     assert runner.id in visible_environment_ids(test_db, runner.user_id)
+
+
+@pytest.mark.parametrize("role,expected", [("Developer", 201), ("Viewer", 403)])
+def test_cp11_cp12_cp15_personal_issue_task_needs_no_project_device_binding(
+    test_client, scope, role, expected
+):
+    invite(test_client, scope, role)
+    pid = scope["project"]["id"]
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items",
+        headers=scope["owner"],
+        json={"title": "Personal execution without project preparation"},
+    )
+    assert created.status_code == 201, created.text
+    response = test_client.post(
+        f"/api/v1/loop-items/{created.json()['id']}/tasks",
+        headers=scope["member"],
+        json={"deviceId": "personal-executor", "taskId": "personal-task"},
+    )
+    assert response.status_code == expected, response.text
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("project_members",)) as client:
+        yield client

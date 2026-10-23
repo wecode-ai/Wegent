@@ -29,6 +29,7 @@ use crate::task_detail_api::views::context_brief;
 
 /// `ContextType.KNOWLEDGE_BASE.value`: the context type the public view omits.
 const KNOWLEDGE_BASE: &str = "knowledge_base";
+const CONVERSATION: &str = "conversation";
 
 /// `PublicSharedTaskResponse` (`app/schemas/shared_task.py`).
 #[derive(Debug, serde::Serialize)]
@@ -372,10 +373,12 @@ async fn public_contexts_by_subtask(
         .map(i64::to_string)
         .collect::<Vec<_>>()
         .join(", ");
+    // A public share must not expose conversation references at all: the
+    // referenced task is private to the sharer, and its title alone leaks.
     let sql = format!(
         "SELECT {} \
          FROM subtask_contexts \nWHERE subtask_contexts.subtask_id IN ({ids}) \
-         AND subtask_contexts.context_type != '{KNOWLEDGE_BASE}'",
+         AND subtask_contexts.context_type NOT IN ('{KNOWLEDGE_BASE}', '{CONVERSATION}')",
         crate::task_store::subtask_context_columns(),
     );
     let rows: Vec<MysqlRow> = state.mysql.fetch_all(&sql, ()).await.map_err(internal)?;

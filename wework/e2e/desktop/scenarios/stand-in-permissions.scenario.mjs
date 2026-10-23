@@ -1,3 +1,4 @@
+import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -5,7 +6,7 @@ import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/works
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
   let cloudEnvironment
   let user
@@ -55,8 +56,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   }
 
   async function openProject(control) {
-    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
-    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     await expandCollaborationWorkspace(
       control,
       `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
@@ -100,7 +102,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         '/v1/workspaces',
         'POST',
         {
-          name: `替身继承权限 ${process.pid}`,
+          name: `分身继承权限 ${process.pid}`,
         },
         201
       )
@@ -109,7 +111,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         `/v1/workspaces/${workspace.id}/projects`,
         'POST',
         {
-          name: `替身继承权限项目 ${process.pid}`,
+          name: `分身继承权限项目 ${process.pid}`,
         },
         201
       )
@@ -153,7 +155,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await assertRole(role)
         await reloadMainWindow(control, 'Inherited Stand-in permissions did not refresh')
         await openProject(control)
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          connect: true,
+        })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', {
@@ -170,22 +174,39 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         })
       }
 
+      const executionProbe = await request(
+        cloud.authToken,
+        `/v1/cloud-projects/${project.id}/loop-items`,
+        'POST',
+        { title: 'Personal task execute permission', assignee_user_id: user.id },
+        201
+      )
       await setRole('Viewer')
       await assertRole('Viewer')
       const disabled = await rpc(control, 'runtime.stand_in.get', settingsParams())
+      const saved = await rpc(control, 'runtime.stand_in.save', {
+        ...settingsParams(),
+        settings: { ...disabled, enabled: true },
+      })
+      assert.equal(saved.enabled, true, 'Personal configuration saves do not execute an Issue')
       await assert.rejects(
-        rpc(control, 'runtime.stand_in.save', {
+        rpc(control, 'runtime.stand_in.run', {
           ...settingsParams(),
-          settings: { ...disabled, enabled: true },
+          issueId: executionProbe.id,
         }),
-        /Project execution permission is required/
+        /403/
       )
-      assert.equal((await rpc(control, 'runtime.stand_in.get', settingsParams())).enabled, false)
+      await rpc(control, 'runtime.stand_in.save', {
+        ...settingsParams(),
+        settings: { ...saved, enabled: false },
+      })
       await reloadMainWindow(control, 'Viewer permissions did not refresh')
       await openProject(control)
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
-      await control.command('waitFor', '[data-testid="stand-in-auto"][disabled]')
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+        requirements: false,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-auto"]:not([disabled])')
+      await control.command('click', '[data-testid="stand-in-close"]')
 
       // Restricted projects stop ordinary inheritance, and restoring it restores access.
       await setRole('Developer')

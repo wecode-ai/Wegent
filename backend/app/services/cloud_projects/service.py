@@ -19,13 +19,10 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import (
     CloudProjectBoardConfig,
     CloudProjectCreate,
-    CloudProjectMemberCreate,
-    CloudProjectMemberUpdate,
     CloudProjectUpdate,
     normalize_provider_config,
 )
@@ -33,7 +30,6 @@ from app.services.cloud_project_visibility import (
     AUTHENTICATED_ENTITY_ID,
     AUTHENTICATED_ENTITY_TYPE,
     accessible_cloud_projects,
-    explicit_project_member_ids,
     workspace_project_ids,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -51,7 +47,7 @@ from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
-    ensure_resource_grant,
+    WORKSPACE_ENTITY_TYPE,
     resource_grant,
     workspace_id_for_project,
 )
@@ -161,13 +157,17 @@ class CloudProjectService(CloudProjectMemberService):
         db.add(project)
         try:
             db.flush()
-            ensure_resource_grant(
-                db,
-                workspace_id=workspace.id,
-                resource_type=ResourceType.CLOUD_PROJECT.value,
-                resource_id=int(project.id),
-                added_by_user_id=user_id,
-                role=BaseRole.Owner,
+            # A new project has no grant to lock or reactivate.
+            db.add(
+                ResourceMember.create(
+                    resource_type=ResourceType.CLOUD_PROJECT.value,
+                    resource_id=int(project.id),
+                    entity_type=WORKSPACE_ENTITY_TYPE,
+                    entity_id=str(workspace.id),
+                    invited_by_user_id=user_id,
+                    role=BaseRole.Owner.value,
+                    status=MemberStatus.APPROVED.value,
+                )
             )
             workspace_service.ensure_human_member(
                 db,

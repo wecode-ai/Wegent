@@ -1,3 +1,8 @@
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import {
+  createMarkdownLinkChecks,
+  MARKDOWN_LINKS_PROMPT,
+} from '../modules/streaming-text-markdown-links.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   SUBAGENT_CHILD_STARTUP_TIMEOUT_MS,
@@ -8,6 +13,7 @@ import {
   latestModelInputText,
   orderFollowUpNumber,
   streamingEvents,
+  longCodeStreamingEvents,
   SUBAGENT_CHILD_COMMENTARY,
   selectShellTool,
   SUBAGENT_CHILD_TOOL_START,
@@ -39,7 +45,6 @@ import {
   GENERATED_IMAGE_COMPLETION,
   LONG_CODE_PROMPT,
   LONG_CODE_COMPLETION,
-  LONG_CODE_REASONING,
   LONG_CODE_STREAM_MARKER,
   ORDER_FOLLOW_UP_COUNT,
   ORDER_COMPLETION_PREFIX,
@@ -88,6 +93,7 @@ import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 import { createStreamingContentChecks } from '../modules/streaming-text-content.mjs'
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
 import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
+import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
 
 export function createDesktopScenario({
   checkpoint,
@@ -99,6 +105,8 @@ export function createDesktopScenario({
   recordScenarioRequest,
   workspacePath,
 }) {
+  const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
+  const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -314,8 +322,22 @@ export function createDesktopScenario({
       }
 
       const body = await readJson(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
+      if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
+      if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
+        recordScenarioRequest('markdown_original_links', body)
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(markdownLinks.completion),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       const followUpNumber = orderFollowUpNumber(body)
       if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
@@ -496,20 +518,14 @@ export function createDesktopScenario({
         return true
       }
       if (latestInput.includes(LONG_CODE_PROMPT)) {
-        const stream = streamingEvents(responseId, LONG_CODE_COMPLETION, 'final_answer')
+        const stream = longCodeStreamingEvents(responseId)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
         response.flushHeaders()
-        response.write(
-          sse([
-            ...stream.start.slice(0, 1),
-            ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4),
-            ...stream.start.slice(1),
-          ])
-        )
+        response.write(sse(stream.start))
         let offset = 0
         let streamedText = ''
         let streamHeld = false
@@ -518,7 +534,7 @@ export function createDesktopScenario({
         const streamedCode = LONG_CODE_COMPLETION.slice(0, codeEnd + '\n```'.length)
         const windowedTail = LONG_CODE_COMPLETION.slice(streamedCode.length)
         for (const chunk of streamedCode.match(/[\s\S]{1,48}/g) ?? []) {
-          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset)))
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset, stream.outputIndex)))
           response.flush?.()
           offset += [...chunk].length
           streamedText += chunk
@@ -528,7 +544,9 @@ export function createDesktopScenario({
           }
           await new Promise(resolve => setTimeout(resolve, 16))
         }
-        response.write(sse(textDeltaEvents(stream.itemId, windowedTail, offset)))
+        response.write(
+          sse(textDeltaEvents(stream.itemId, windowedTail, offset, stream.outputIndex))
+        )
         response.end(sse(stream.finish))
         return true
       }
@@ -852,8 +870,20 @@ export function createDesktopScenario({
       }
 
       const checks = new Map([
-        ['streaming-content', verifyContent],
-        ['streaming-tools', verifyTools],
+        [
+          'streaming-content',
+          async control => {
+            await verifyContent(control)
+            await transcriptIdentity.verify(control)
+          },
+        ],
+        [
+          'streaming-tools',
+          async control => {
+            await markdownLinks.verify(control)
+            await verifyTools(control)
+          },
+        ],
         ['streaming-timers', verifyTimers],
         ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],

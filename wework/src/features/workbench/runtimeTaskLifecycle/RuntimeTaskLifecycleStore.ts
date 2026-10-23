@@ -48,6 +48,7 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getCurrentTask',
   'getTask',
   'getTaskRevision',
+  'isPriorTurn',
   'selectTask',
 ])
 
@@ -103,6 +104,13 @@ export class RuntimeTaskLifecycleStore {
     if (!address) return 0
     const canonicalAddress = this.canonicalizeAddress(address)
     return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getRevision() ?? 0
+  }
+
+  isPriorTurn(address: RuntimeTaskAddress, turnId: string): boolean {
+    const canonicalAddress = this.canonicalizeAddress(address)
+    return (
+      this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.isPriorTurn(turnId) ?? false
+    )
   }
 
   selectTask(
@@ -194,6 +202,12 @@ export class RuntimeTaskLifecycleStore {
     if (completedAt == null) return
 
     const currentLifecycle = this.getTask(address)
+    if (
+      currentLifecycle?.turn.active &&
+      terminalTurn?.id &&
+      this.isPriorTurn(address, terminalTurn.id)
+    )
+      return
     const currentTask = currentLifecycle?.task
     if (!currentTask) {
       this.executorSettled(address)
@@ -214,6 +228,9 @@ export class RuntimeTaskLifecycleStore {
     const outcome = terminalTurnOutcome(terminalTurn?.status)
     this.syncRuntimeTask(address, {
       ...currentTask,
+      ...(terminalTurn?.id
+        ? { runtimeHandle: { ...currentTask.runtimeHandle, lastTurnId: terminalTurn.id } }
+        : {}),
       running: false,
       completedAt,
       interactionStatus: outcome === 'succeeded' ? currentLifecycle.interactionStatus : null,
@@ -315,10 +332,15 @@ export class RuntimeTaskLifecycleStore {
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
     })
+    const currentTurn = this.getTask(address)?.turn
+    const terminalTurn = transcript.turns.findLast(turn => isTerminalTurnStatus(turn.status))
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
-      options.preserveActiveTurn === true &&
-      (this.getTask(address)?.derived.isRunning ?? false)
+      ((options.preserveActiveTurn === true &&
+        (this.getTask(address)?.derived.isRunning ?? false)) ||
+        Boolean(
+          currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
+        ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
@@ -327,7 +349,16 @@ export class RuntimeTaskLifecycleStore {
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     if (hasStreamingTurn) {
-      if (ignoreStaleRunningTranscript) return
+      if (
+        ignoreStaleRunningTranscript ||
+        (currentTurn?.active &&
+          streamingTurn?.id &&
+          (this.isPriorTurn(address, streamingTurn.id) ||
+            (transcript.running === false &&
+              currentTurn.id &&
+              streamingTurn.id !== currentTurn.id)))
+      )
+        return
       this.executorStarted(address)
       this.dispatch(address, {
         type: 'turn_recovered',
@@ -394,6 +425,14 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    if (
+      canonicalEvent.type === 'executor_snapshot_received' &&
+      previous.turn.active &&
+      typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
+      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+      previous.task?.completedAt != null
+    )
+      return false
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (
@@ -560,6 +599,7 @@ export class RuntimeTaskLifecycleStore {
     const nextKey = getRuntimeTaskLifecycleKey(nextAddress)
     this.movePersistedTaskState(previousKey, nextKey)
     const nextMachine = this.ensureMachine(nextAddress)
+    nextMachine.mergeTurnHistory(previousMachine)
     const nextTask = nextMachine.getState().task
     const previousTask = previousState.task
     const preferPreviousTask = Boolean(

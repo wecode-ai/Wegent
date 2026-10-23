@@ -16,6 +16,8 @@ import {
   functionCall,
   json,
   latestModelInputText,
+  isReplyPredictionRequest,
+  isReplyPredictionVisionRequest,
   localModelSwitchCommand,
   localProtocolCase,
   localProtocolPatch,
@@ -2140,17 +2142,12 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'model_protocol_matrix') {
-      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+    if (isReplyPredictionRequest(body)) {
+      this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
       return
     }
 
-    if (this.scenario === 'provider_switch_retry') {
-      this.handleProviderSwitchRetryResponse(response, protocol, body, modelRequest)
-      return
-    }
-
-    if (this.scenario === 'vision_sidecar') {
+    if (this.scenario === 'vision_sidecar' || isReplyPredictionVisionRequest(body)) {
       const serialized = JSON.stringify(body)
       const modelCase = [LOCAL_VISION_SIDECAR_CASE, CLOUD_VISION_SIDECAR_CASE].find(
         candidate => body.model === candidate.sidecarModelId || body.model === candidate.mainModelId
@@ -2160,7 +2157,10 @@ class DesktopE2EServer {
         assert.equal(protocol, 'chat', 'The vision sidecar reached the wrong protocol endpoint')
         assert.equal(body.stream, false, 'The vision sidecar request must not stream')
         assert.ok(serialized.includes('image_url'), 'The vision sidecar did not receive the image')
-        this.visionSidecarRequests.push({ kind: 'vision', body })
+        this.visionSidecarRequests.push({
+          kind: isReplyPredictionVisionRequest(body) ? 'prediction-vision' : 'vision',
+          body,
+        })
         json(response, 200, {
           id: 'desktop-e2e-vision-description',
           object: 'chat.completion',
@@ -2204,6 +2204,16 @@ class DesktopE2EServer {
         ])
         return
       }
+    }
+
+    if (this.scenario === 'model_protocol_matrix') {
+      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      return
+    }
+
+    if (this.scenario === 'provider_switch_retry') {
+      this.handleProviderSwitchRetryResponse(response, protocol, body, modelRequest)
+      return
     }
 
     if (this.scenario === 'multimodal_vision') {
@@ -6164,4 +6174,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, inputUserMessageTexts }
+export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }
