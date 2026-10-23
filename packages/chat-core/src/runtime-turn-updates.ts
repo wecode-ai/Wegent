@@ -96,13 +96,10 @@ function hasRuntimeConversationUserIdentity(
   turn: RuntimeConversationTurn,
   id: string,
 ): boolean {
-  return (
-    turn.clientUserMessageId === id ||
-    turn.items.some(
-      (item) =>
-        item.type === "user_message" &&
-        (item.id === id || item.message.id === id),
-    )
+  return turn.items.some(
+    (item) =>
+      item.type === "user_message" &&
+      (item.id === id || item.message.id === id),
   );
 }
 
@@ -161,8 +158,10 @@ export function updateStartedTurn(
     });
   }
   const optimisticIndex = action.clientUserMessageId
-    ? turns.findIndex((turn) =>
-        hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
+    ? turns.findIndex(
+        (turn) =>
+          turn.clientUserMessageId === action.clientUserMessageId ||
+          hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
       )
     : findLastIndex(
         turns,

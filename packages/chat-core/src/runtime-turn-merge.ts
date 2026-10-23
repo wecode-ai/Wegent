@@ -265,14 +265,35 @@ export function mergeRuntimeConversationItems(
   const mergedLocalItems = canonicalLocalItems.map(
     (item) => snapshotById.get(item.id) ?? item,
   );
-  return orderRuntimeConversationItems(
-    insertMissingSnapshotItems(mergedLocalItems, mergedSnapshotItems),
+  const items = insertMissingSnapshotItems(
+    mergedLocalItems,
+    mergedSnapshotItems,
   );
+  const positions = new Map(
+    items.flatMap((item) =>
+      item.position === undefined ? [] : [[item.id, item.position] as const],
+    ),
+  );
+  const anchors = new Map<string, number>();
+  // Only original source sequences witness adjacency. Inserting a newly discovered native
+  // item into the union must not retroactively make it a neighbor observed by a live item.
+  for (const source of [canonicalLocalItems, snapshotItems]) {
+    let nextPosition = Infinity;
+    for (let index = source.length - 1; index >= 0; index--) {
+      const item = source[index];
+      const position = positions.get(item.id);
+      if (position !== undefined) nextPosition = position;
+      else if (nextPosition !== Infinity || !anchors.has(item.id))
+        anchors.set(item.id, nextPosition);
+    }
+  }
+  return orderRuntimeConversationItems(items, anchors);
 }
 
 /** Persisted positions are authoritative; items still in flight remain provisional. */
 export function orderRuntimeConversationItems(
   items: RuntimeConversationItem[],
+  observedAnchors?: ReadonlyMap<string, number>,
 ): RuntimeConversationItem[] {
   if (!items.some((item) => item.position !== undefined)) return items;
   let nextPosition = Infinity;
@@ -291,7 +312,9 @@ export function orderRuntimeConversationItems(
       !entry.item.message.runtimeGuidance &&
       entry.item.position === undefined
         ? -Infinity
-        : (entry.item.position ?? nextPosition);
+        : (entry.item.position ??
+          observedAnchors?.get(entry.item.id) ??
+          nextPosition);
   }
   return ordered
     .sort(

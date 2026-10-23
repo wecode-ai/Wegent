@@ -27,6 +27,87 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("keeps the legacy display adapter when a page carries assistant output without native turns", () => {
+    const page = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      turns: [],
+      runtimeTurns: [],
+      messages: [
+        { id: "legacy-user", role: "user", content: "Prompt" },
+        { id: "legacy-assistant", role: "assistant", content: "Answer" },
+      ],
+    });
+    expect(page.messages.map((message) => message.content)).toEqual([
+      "Prompt",
+      "Answer",
+    ]);
+    expect(page.turns).toEqual([]);
+  });
+
+  it("does not invent an observed boundary when a native user first arrives after live output", () => {
+    const live = turn([
+      {
+        id: "reply",
+        type: "assistant_text",
+        content: "Partial",
+        createdAt: "",
+      },
+    ]);
+    const native = turn([
+      {
+        id: "native-user",
+        position: 1,
+        type: "user_message",
+        message: {
+          id: "native-user",
+          role: "user",
+          content: "Prompt",
+          status: "done",
+          createdAt: "",
+        },
+      },
+    ]);
+    expect(ids(mergeRuntimeConversationTurns([live], [native]))).toEqual([
+      "native-user",
+      "reply",
+    ]);
+  });
+
+  it("materializes the accepted user when turn start supplied only its identity", () => {
+    const turns: RuntimeConversationTurn[] = [
+      {
+        id: "started",
+        clientUserMessageId: "client-user",
+        status: "streaming",
+        items: [],
+      },
+    ];
+    const accepted = appendAcceptedRuntimeConversationUser(
+      turns,
+      {
+        id: "client-user",
+        role: "user",
+        content: "Queued prompt",
+        status: "done",
+        createdAt: "",
+      },
+      "started",
+      new Set(),
+    );
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].items).toMatchObject([
+      {
+        type: "user_message",
+        message: {
+          id: "client-user",
+          turnId: "started",
+          content: "Queued prompt",
+        },
+      },
+    ]);
+  });
+
   it("recognizes a late send acknowledgement through the explicit native user alias", () => {
     const page = projectRuntimePaneTranscript({
       runtime: "codex",

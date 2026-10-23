@@ -813,12 +813,21 @@ export function useWorkbenchPaneSession({
         }
       })
       .finally(() => {
+        debugRuntimePaneMessageFlow('transcript-load-settled', {
+          key: loadKey,
+          cancelled,
+          activeKey: runtimeTaskLoadTargetRef.current?.key,
+        })
         if (!cancelled) {
           setTranscriptLoadingKey(current => (current === loadKey ? null : current))
         }
       })
 
     return () => {
+      debugRuntimePaneMessageFlow('transcript-load-cancelled', {
+        key: loadKey,
+        activeKey: runtimeTaskLoadTargetRef.current?.key,
+      })
       cancelled = true
       cancelNavigationLoad()
     }
@@ -2959,7 +2968,7 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
 }
 
 function debugRuntimePaneMessageFlow(event: string, details: Record<string, unknown>) {
-  if (!isRuntimeDebugEnabled()) return
+  if (!event.startsWith('transcript-load-') && !isRuntimeDebugEnabled()) return
   console.debug('[Wework] Runtime pane message flow', {
     event,
     ...details,

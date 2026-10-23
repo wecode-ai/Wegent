@@ -52,7 +52,10 @@ export function projectRuntimePaneTranscript(
   );
   // Legacy previews own a user presentation but have no provider turn identity.
   // Represent them in the same store without inventing a native turn.
-  if (turns.length === 0) {
+  if (
+    turns.length === 0 &&
+    messages.every((message) => message.role === "user")
+  ) {
     turns = seedRuntimeConversationTurns(messages, []).map((turn) => ({
       ...turn,
       status: "done",
