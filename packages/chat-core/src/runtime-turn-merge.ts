@@ -565,6 +565,16 @@ export function assistantTextRepresentationContent(
 
 export function mergeRuntimeConversationItem(
   local: RuntimeConversationItem | undefined,
+  snapshot: Extract<RuntimeConversationItem, { type: "block" }>,
+  preserveLocalTerminal: boolean,
+): Extract<RuntimeConversationItem, { type: "block" }>;
+export function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
+  snapshot: RuntimeConversationItem,
+  preserveLocalTerminal: boolean,
+): RuntimeConversationItem;
+export function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
   snapshot: RuntimeConversationItem,
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {

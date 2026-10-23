@@ -32,6 +32,8 @@ Live updates continue publishing during a history read. Their observed state is 
 
 Child-thread views are read-only projections: they neither adopt the child as the parent task thread nor update parent context usage. The cache applies updates immediately; React subscriptions coalesce view notifications per animation frame without holding another message state.
 
+History snapshots, live block creation and block updates share one block reconciliation entry. Late blocks cannot replace observed command output with a shorter prefix or remove observed children of the same subthread. Append-only deltas are materialized before that reconciliation.
+
 Each live action is published once on arrival. Completing or aborting hydration only notifies subscribers of the snapshot change; replaying actions would repeat their side effects.
 
 Live timing measures the locally observed lifecycle interval. It retains the displayed start and freezes the end and duration using the same local wall clock when a terminal event or recovery snapshot first confirms completion. Duplicate completion notifications and subsequent native snapshots preserve that frozen interval. History first observed after completion retains its native duration. Codex supplies start/end timestamps in seconds and duration in milliseconds: adding that duration to a rounded start cannot reconstruct a precise endpoint, and running and completed labels must use the same timing source.

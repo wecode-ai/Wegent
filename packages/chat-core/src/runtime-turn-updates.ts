@@ -2,8 +2,8 @@ import {
   RUNTIME_RECONNECTING_TOOL_NAME,
   MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS,
   processingBlocks,
-  preserveProcessingBlockTiming,
 } from "./runtime-turn-helpers";
+import { mergeRuntimeConversationItem } from "./runtime-turn-merge";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
 import type { TurnFileChangesSummary } from "./runtime";
@@ -455,16 +455,16 @@ export function upsertBlocks(
           )
         : -1;
     const index = exactIndex >= 0 ? exactIndex : contextCompactionIndex;
-    const canonicalItem: RuntimeConversationItem = {
-      id: block.id,
-      position: index >= 0 ? next[index]?.position : undefined,
-      type: "block",
-      block: limitWorkbenchProcessingBlock(
-        index >= 0 && next[index]?.type === "block"
-          ? preserveProcessingBlockTiming(next[index].block, block)
-          : block,
-      ),
-    };
+    const canonicalItem = mergeRuntimeConversationItem(
+      index >= 0 ? next[index] : undefined,
+      {
+        id: block.id,
+        position: index >= 0 ? next[index]?.position : undefined,
+        type: "block",
+        block: limitWorkbenchProcessingBlock(block),
+      },
+      false,
+    );
     next =
       index < 0
         ? insertRuntimeBlockBeforeLaterGuidance(next, canonicalItem)

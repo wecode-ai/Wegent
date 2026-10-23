@@ -12,6 +12,8 @@ import {
   selectMcpTool,
   selectMcpToolRequest,
   selectProgrammaticExec,
+  nativeToolCallEvents,
+  shellToolCallEvents,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
   longCodeStreamingEvents,
@@ -130,6 +132,64 @@ describe('programmatic exec', () => {
       },
     ],
   }
+
+  test('executes the same shell command and poll through negotiated programmatic tools', async () => {
+    const events = shellToolCallEvents(
+      request,
+      'business',
+      "sh '/plugin/business.sh'",
+      '/workspace'
+    )
+    const call = events[0].item
+    expect(call).toMatchObject({
+      type: 'custom_tool_call',
+      namespace: 'functions',
+      name: 'exec',
+      call_id: 'business',
+    })
+    const calls = []
+    const output = []
+    const tools = {
+      exec_command: async params => {
+        calls.push(params)
+        return 'Process running with session ID 123'
+      },
+      write_stdin: async params => {
+        calls.push(params)
+        return 'PLUGIN_RECOVERY_OK'
+      },
+    }
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+    await new AsyncFunction('tools', 'text', call.input)(tools, value => output.push(value))
+    const poll = nativeToolCallEvents(request, 'business-poll-1', 'write_stdin', {
+      session_id: 123,
+      chars: '',
+      yield_time_ms: 1000,
+    })[0].item
+    await new AsyncFunction('tools', 'text', poll.input)(tools, value => output.push(value))
+    expect(calls).toEqual([
+      { cmd: "sh '/plugin/business.sh'", workdir: '/workspace', yield_time_ms: 1000 },
+      { session_id: 123, chars: '', yield_time_ms: 1000 },
+    ])
+    expect(output).toEqual(['Process running with session ID 123', 'PLUGIN_RECOVERY_OK'])
+  })
+
+  test('retains direct native calls and rejects missing shell capabilities', () => {
+    const direct = shellToolCallEvents(
+      { tools: [functionTool('exec_command')] },
+      'business',
+      'pwd',
+      '/workspace'
+    )
+    expect(direct.at(-1).item).toMatchObject({
+      type: 'function_call',
+      name: 'exec_command',
+      call_id: 'business',
+    })
+    expect(() => shellToolCallEvents({ tools: [] }, 'business', 'pwd', '/workspace')).toThrow(
+      'did not advertise'
+    )
+  })
 
   test('recognizes and selects the Codex additional_tools exec tool', () => {
     expect(requestAdvertisesProgrammaticExec(request)).toBe(true)

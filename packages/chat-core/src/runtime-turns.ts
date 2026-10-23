@@ -14,6 +14,7 @@ import type {
 } from "./runtime-conversation";
 import {
   mergeRuntimeConversationTurn,
+  mergeRuntimeConversationItem,
   orderRuntimeConversationTurns,
   isTerminalProcessingBlockStatus,
 } from "./runtime-turn-merge";
@@ -359,10 +360,14 @@ export function reduceRuntimeConversationTurns(
         );
         const items = currentItems.map((item) =>
           item.type === "block" && item.id === action.blockId
-            ? {
-                ...item,
-                block: mergeProcessingBlockUpdate(item.block, action.updates),
-              }
+            ? mergeRuntimeConversationItem(
+                item,
+                {
+                  ...item,
+                  block: mergeProcessingBlockUpdate(item.block, action.updates),
+                },
+                false,
+              )
             : item,
         );
         return {

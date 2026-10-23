@@ -27,6 +27,44 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("reconciles late block snapshots through the same output-preserving merge as history", () => {
+    const block = {
+      id: "command",
+      subtaskId: "turn",
+      type: "tool" as const,
+      toolName: "exec_command",
+      status: "streaming" as const,
+      createdAt: 1,
+      renderPayload: { kind: "command_execution", status: "inProgress" },
+    };
+    let turns: RuntimeConversationTurn[] = [
+      {
+        id: "turn",
+        status: "done",
+        items: [
+          {
+            id: block.id,
+            type: "block",
+            block: { ...block, toolOutput: "tick8\ntick9\n" },
+          },
+        ],
+      },
+    ];
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: "block_created",
+      subtaskId: "turn",
+      block: { ...block, toolOutput: "tick8\n" },
+    });
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: "block_updated",
+      subtaskId: "turn",
+      blockId: block.id,
+      updates: { toolOutputDelta: "tick10\n" },
+    });
+    expect(turns[0].items[0]).toMatchObject({
+      block: { toolOutput: "tick8\ntick9\ntick10\n" },
+    });
+  });
   it("keeps the observed pending start when send acknowledgement assigns the native turn", () => {
     const pending: RuntimeConversationTurn = {
       id: null,
@@ -182,6 +220,21 @@ describe("native conversation ordering contract", () => {
       [turn([parent([command])])],
     );
     expect(merged[0].items[0]).toMatchObject({
+      block: { children: [reasoning, command] },
+    });
+    const incoming = parent([command]);
+    if (incoming.type !== "block") throw new Error("Expected a block");
+    let streamed = reduceRuntimeConversationTurns(
+      [turn([parent([reasoning, command])])],
+      { type: "block_created", subtaskId: "turn", block: incoming.block },
+    );
+    streamed = reduceRuntimeConversationTurns(streamed, {
+      type: "block_updated",
+      subtaskId: "turn",
+      blockId: "parent",
+      updates: { children: [command] },
+    });
+    expect(streamed[0].items[0]).toMatchObject({
       block: { children: [reasoning, command] },
     });
     const changedChild = mergeRuntimeConversationTurns(

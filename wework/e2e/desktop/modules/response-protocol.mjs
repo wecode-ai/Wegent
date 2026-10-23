@@ -763,6 +763,32 @@ function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
 
+function nativeToolCallEvents(request, callId, name, argumentsValue) {
+  if (requestAdvertisesProgrammaticExec(request)) {
+    const selection = selectProgrammaticExec(
+      request,
+      `text(await tools[${JSON.stringify(name)}](${JSON.stringify(argumentsValue)}))`
+    )
+    const event = customToolCall(callId, selection.name, selection.input)
+    event.item.namespace = 'functions'
+    return [event]
+  }
+  const selection = selectTool(request, name, argumentsValue)
+  return functionCall(callId, selection.name, selection.arguments)
+}
+
+function shellToolCallEvents(request, callId, command, workspacePath) {
+  if (requestAdvertisesProgrammaticExec(request)) {
+    return nativeToolCallEvents(request, callId, 'exec_command', {
+      cmd: command,
+      workdir: workspacePath,
+      yield_time_ms: 1000,
+    })
+  }
+  const selection = selectShellToolCommand(request, command, workspacePath)
+  return nativeToolCallEvents(request, callId, selection.name, selection.arguments)
+}
+
 function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs = 1000 } = {}) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
@@ -876,6 +902,8 @@ export {
   requestAdvertisesShellTool,
   requestAdvertisesViewImageTool,
   selectProgrammaticExec,
+  nativeToolCallEvents,
+  shellToolCallEvents,
   selectTool,
   selectOfficialPluginMcpTool,
   selectMcpTool,
