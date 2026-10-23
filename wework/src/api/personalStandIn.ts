@@ -1,4 +1,4 @@
-import type { WorkspaceStandInSettings, CollaborationProject } from '@wegent/collaboration'
+import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 
 export interface StandInProjectRef {
   id: string
@@ -62,26 +62,39 @@ export function roleIncludesProject(role: StandInRole, project: StandInProjectRe
   )
 }
 
-export function standInRoleName(
+export function standInRoleName(role: StandInRole, index: number, fallback: string): string {
+  return role.name?.trim() || `${fallback}${index ? ` ${index + 1}` : ''}`
+}
+
+export function disconnectStandInProject(
   role: StandInRole,
-  index: number,
-  projects: CollaborationProject[],
-  fallback: string
-): string {
-  if (role.name?.trim()) return role.name
-  const scope =
-    role.agentProject ??
-    (!role.collaboration.allProjects && role.collaboration.projects.length === 1
-      ? role.collaboration.projects[0]
-      : undefined)
-  const project =
-    scope &&
-    projects.find(
-      project =>
-        project.id === scope.id &&
-        (project.project_store === 'local' ? 'local' : 'cloud') === scope.store
-    )
-  return project ? project.name : `${fallback}${index ? ` ${index + 1}` : ''}`
+  project: StandInProjectRef
+): StandInRole {
+  const matches = (value: StandInProjectRef) =>
+    value.id === project.id && value.store === project.store
+  if (role.agentProject && !matches(role.agentProject)) return role
+  const source = role.collaboration
+  const projects = source.projects.filter(value => !matches(value))
+  const excludedProjects =
+    source.allProjects && !source.excludedProjects.some(matches)
+      ? [...source.excludedProjects, project]
+      : source.excludedProjects
+  const enabled = role.agentProject ? false : source.enabled
+  if (
+    projects.length === source.projects.length &&
+    excludedProjects === source.excludedProjects &&
+    enabled === source.enabled
+  )
+    return role
+  return {
+    ...role,
+    collaboration: {
+      ...source,
+      enabled,
+      projects,
+      excludedProjects,
+    },
+  }
 }
 
 type SettingsListener = (settings: PersonalStandInSettings) => void

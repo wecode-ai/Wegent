@@ -1355,8 +1355,9 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           (await standIn(projectId)).get(projectId, deviceId, id),
         save: async (
           projectId: string,
-          settings: import('@wegent/collaboration').WorkspaceStandInSettings
-        ) => (await standIn(projectId)).save(projectId, settings),
+          settings: import('@wegent/collaboration').WorkspaceStandInSettings,
+          deviceId?: string
+        ) => (await standIn(projectId)).save(projectId, settings, deviceId),
         run: async (projectId: string, issueId: string, deviceId: string, id?: string) =>
           (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
       },
@@ -1573,19 +1574,21 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 onOpenTask={props.onOpenRuntimeTask}
               />
             ),
-          renderProjectSidebarBadge: project =>
-            standInProjects.has(
+          renderProjectSidebarBadge: project => {
+            const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
-            ) ? (
+            )
+            return (
               <span
                 className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
-                title={t('standIn.project_enabled')}
-                aria-label={t('standIn.project_enabled')}
-                data-testid={`stand-in-project-${project.id}`}
+                title={t(enabled ? 'standIn.project_enabled' : 'standIn.auto_off')}
+                aria-label={t(enabled ? 'standIn.project_enabled' : 'standIn.auto_off')}
+                data-testid={enabled ? `stand-in-project-${project.id}` : undefined}
               >
-                <StandInIcon enabled />
+                <StandInIcon enabled={enabled} className="h-6 w-6" />
               </span>
-            ) : null,
+            )
+          },
           currentUser: {
             id: Number(props.user.id),
             name: collaborationUserName,

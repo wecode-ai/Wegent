@@ -152,6 +152,7 @@ impl JsonRpcConnection {
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
         let mut overload_recovery = super::overload_recovery::OverloadRecovery::default();
+        let mut recovering_goal = false;
         loop {
             let mut message = if waiting_for_initial_progress {
                 match timeout_at(startup_deadline, self.read_message()).await {
@@ -173,6 +174,9 @@ impl JsonRpcConnection {
                     &thread_id,
                     super::turn_start_response_id(&response),
                 );
+                if recovering_goal {
+                    super::sync_goal_status_from_response(state, &response);
+                }
                 saw_turn_response = true;
                 continue;
             }
@@ -201,6 +205,7 @@ impl JsonRpcConnection {
                 super::overload_recovery::RecoveryAction::Retry {
                     delay,
                     notification,
+                    goal,
                 } => {
                     if let Some(callback) = overload_turn_recovering.as_ref() {
                         let params = message_params(&message);
@@ -218,10 +223,47 @@ impl JsonRpcConnection {
                     tokio::time::sleep(delay).await;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    let (method, params) = if let Some(goal) = goal {
+                        let current = super::with_rpc_timeout(
+                            "overload Goal snapshot",
+                            super::codex_rpc_timeout_seconds(),
+                            self.request(
+                                "thread/goal/get",
+                                json!({"threadId": goal["threadId"]}),
+                                state,
+                            ),
+                        )
+                        .await?;
+                        recovering_goal = true;
+                        let Some(params) =
+                            super::overload_recovery::goal_resume_params(&goal, &current)?
+                        else {
+                            super::overload_recovery::sync_goal_snapshot(
+                                state,
+                                notifications.as_ref(),
+                                goal["threadId"]
+                                    .as_str()
+                                    .ok_or("Stopped goal has no thread ID")?,
+                                &current,
+                            );
+                            if !state.goal_is_active() {
+                                return Ok(ExecutionOutcome::Cancelled {
+                                    message: "Goal changed during model overload recovery"
+                                        .to_owned(),
+                                });
+                            }
+                            waiting_for_initial_progress = true;
+                            continue;
+                        };
+                        ("thread/goal/set", params)
+                    } else {
+                        recovering_goal = false;
+                        ("turn/start", overload_continuation_params.clone())
+                    };
                     turn_request_id = super::with_rpc_timeout(
-                        "overload continuation turn/start",
+                        "overload continuation",
                         super::codex_rpc_timeout_seconds(),
-                        self.send_request("turn/start", overload_continuation_params.clone()),
+                        self.send_request(method, params),
                     )
                     .await?;
                     waiting_for_initial_progress = true;
@@ -290,6 +332,12 @@ impl JsonRpcConnection {
                 continue;
             }
             if let Some(outcome) = state.handle_message(&message) {
+                if super::should_wait_for_goal_continuation(&outcome, state, recovering_goal) {
+                    waiting_for_initial_progress = true;
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    continue;
+                }
                 return Ok(outcome);
             }
             if !saw_turn_response {

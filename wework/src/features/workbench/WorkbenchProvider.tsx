@@ -238,6 +238,7 @@ export function WorkbenchProvider({
   syncCoreDshModels = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
+  workspaceTabRevealRevision = 0,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -2042,6 +2043,14 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const appliedRevealRevisionRef = useRef(workspaceTabRevealRevision)
+  useEffect(() => {
+    if (workspaceTabRevealRevision === appliedRevealRevisionRef.current) return
+    appliedRevealRevisionRef.current = workspaceTabRevealRevision
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
+    })
+  }, [stableRefreshWorkLists, workspaceTabRevealRevision])
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({

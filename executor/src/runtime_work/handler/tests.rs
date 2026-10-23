@@ -918,15 +918,11 @@ async fn automatic_prune_removes_old_archived_worktree_and_preserves_snapshot() 
 
 #[tokio::test]
 async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime() {
-    let root =
-        temp_runtime_work_index_path("restart-worktree-reconciliation").with_extension("directory");
+    let (handler, root) = isolated_runtime_work_handler("restart-worktree-reconciliation");
     let source = root.join("source");
     let managed_root = root.join("workspace").join("worktrees");
     let state_path = root.join("runtime-work").join("worktrees.json");
     initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
-    handler.worktrees = WorktreeManager::new(state_path.clone());
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -982,14 +978,11 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 
 #[tokio::test]
 async fn restart_reconciliation_leaves_active_history_unchanged() {
-    let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
+    let (mut handler, root) = isolated_runtime_work_handler("restart-active-worktree");
     let source = root.join("source");
     let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let index_path = root.join("runtime-work").join("index.json");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -1030,16 +1023,12 @@ async fn restart_reconciliation_leaves_active_history_unchanged() {
 
 #[tokio::test]
 async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
-    let root = temp_runtime_work_index_path("restart-queued-worktree").with_extension("directory");
+    let (mut handler, root) = isolated_runtime_work_handler("restart-queued-worktree");
     let source = root.join("source");
     let managed_root = root.join("workspace").join("worktrees");
     let index_path = root.join("runtime-work").join("index.json");
     let queue_path = root.join("runtime-work").join("turn-queue.json");
     initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
-    handler.turn_queue_path = Arc::new(queue_path.clone());
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -1110,12 +1099,10 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
 
 #[tokio::test]
 async fn failed_worktree_reconciliation_remains_retryable() {
-    let root =
-        temp_runtime_work_index_path("restart-reconciliation-retry").with_extension("directory");
+    let (mut handler, root) = isolated_runtime_work_handler("restart-reconciliation-retry");
     fs::create_dir_all(&root).unwrap();
     let blocked_parent = root.join("blocked");
     fs::write(&blocked_parent, "not a directory").unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.worktrees = WorktreeManager::new(blocked_parent.join("worktrees.json"));
 
     assert!(!handler.reconcile_worktrees_once().await);

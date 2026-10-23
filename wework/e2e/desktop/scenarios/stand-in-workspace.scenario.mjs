@@ -17,8 +17,8 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身工作区-${process.pid}`
-const SOURCE = `替身代码-${process.pid}`
+const PROJECT = `分身工作区-${process.pid}`
+const SOURCE = `分身代码-${process.pid}`
 const MARKER = `STAND_IN_WORKSPACE_${process.pid}`
 const USER_ID = 9001
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
@@ -282,7 +282,7 @@ export function createDesktopScenario({
         { userId: USER_ID },
         uiTimeoutMs
       )
-      await createLocalCollaborationProject(control, CONTENT, '替身复用-' + process.pid)
+      await createLocalCollaborationProject(control, CONTENT, '分身复用-' + process.pid)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       const afterProject = await requestExecutor(

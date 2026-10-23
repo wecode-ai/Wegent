@@ -546,10 +546,10 @@
 
 .collaboration-workspace-project > .collaboration-project-sidebar-badge {
   position: absolute;
-  left: 0;
+  left: -4px;
   display: flex;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   overflow: visible;
 }
 
