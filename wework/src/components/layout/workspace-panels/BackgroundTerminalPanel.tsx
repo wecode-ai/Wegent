@@ -80,7 +80,7 @@ export function BackgroundTerminalPanel({
     >
       <div
         ref={containerRef}
-        className="h-full min-h-0 w-full overflow-hidden py-3 pl-3 [contain:strict]"
+        className="h-full min-h-0 w-full overflow-hidden py-3 pl-3"
         role="region"
         aria-label={
           unwrapShellCommand(terminal?.command ?? '') || t('workbench.background_terminal')

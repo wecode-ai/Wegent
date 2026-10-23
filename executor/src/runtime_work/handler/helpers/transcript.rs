@@ -370,7 +370,6 @@ fn transcript_canonical_turns(
         }
         for key in [
             "status",
-            "runtimeStatus",
             "completedAt",
             "error",
             "errorType",
@@ -382,6 +381,10 @@ fn transcript_canonical_turns(
             if let Some(value) = message.get(key) {
                 turn.insert(key.to_owned(), value.clone());
             }
+        }
+        // Status aliases must describe the same message, not an earlier user item.
+        if let Some(status) = message.get("runtimeStatus").or_else(|| message.get("status")) {
+            turn.insert("runtimeStatus".to_owned(), status.clone());
         }
         let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) else {
             continue;

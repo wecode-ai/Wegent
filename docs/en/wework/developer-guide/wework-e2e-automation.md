@@ -833,7 +833,9 @@ Authenticated flows should create users and data through backend APIs before the
 
 ### Readiness for Local Project Scenarios
 
-Terminal containers use strict CSS containment to confine xterm's per-row accessibility width measurements to their allocated terminal bounds. Do not disable accessibility or extend native key budgets to conceal layout stalls. `background-terminals` retains native paging and history assertions, with CPU profiles available to inspect layout hotspots.
+xterm updates all accessible row contents before batching transform resets, width measurements, and transform writes. This avoids per-row forced layouts. The dependency patch covers source, CommonJS, and ESM; a regression uses real xterm to verify all row contents are updated before the first measurement. `background-terminals` retains native paging, history, and accessibility assertions, with CPU profiles available to inspect layout hotspots.
+
+Transcript conversion updates `runtimeStatus` together with the current message's `status`; a completed user message must not leave a stale status that overrides its streaming assistant. Smart app verification logs stage start, completion, and duration without environment variables or credentials. Locate stalled stages from these logs instead of extending E2E waits.
 
 Stand-in completion can arrive before the runtime unread flag. A new completion after observation starts must remain unread, and delivery must consult the current read ledger rather than consume it as restored history. Persist delivery records once per batch before sending alerts. Regressions cover late unread updates, no replay after reload, and a single delivery-ledger write for 1,000 records.
 

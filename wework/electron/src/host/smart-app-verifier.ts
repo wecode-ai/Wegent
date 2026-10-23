@@ -44,6 +44,7 @@ import type {
 } from './smart-app-verification-types.js'
 
 import { SmartAppVerificationError } from './smart-app-verification-types.js'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 export { SmartAppVerificationError } from './smart-app-verification-types.js'
 
 const REPORT_PATH = join('test-results', 'smart-app', 'verification.json')
@@ -324,7 +325,9 @@ export class SmartAppVerifier {
     const startedAt = this.dependencies.now().toISOString()
     let inputFingerprint: string
     try {
-      inputFingerprint = await this.dependencies.fingerprint(root, 'verification-input')
+      inputFingerprint = await traceSmartAppVerification('fingerprint/input', () =>
+        this.dependencies.fingerprint(root, 'verification-input')
+      )
     } catch (error) {
       return this.finishEnvironmentFailure(root, startedAt, error)
     }
@@ -337,7 +340,9 @@ export class SmartAppVerifier {
 
     const manifestStartedAt = this.dependencies.now().toISOString()
     try {
-      const validated = await this.dependencies.validatePackage(root)
+      const validated = await traceSmartAppVerification('manifest', () =>
+        this.dependencies.validatePackage(root)
+      )
       manifest = validated.manifest
       const packageScripts = await readPackageScripts(root)
       const source = await optionalFile(join(root, 'smart-app.verify.json'))
@@ -359,12 +364,14 @@ export class SmartAppVerifier {
     const scriptsStartedAt = this.dependencies.now().toISOString()
     let scripts: SmartAppProjectScriptsResult
     try {
-      scripts = await this.dependencies.runScripts({
-        projectRoot: root,
-        runtimeRoot: this.options.runtimeRoot,
-        environment: this.options.environment,
-        scripts: contract.scripts,
-      })
+      scripts = await traceSmartAppVerification('scripts', () =>
+        this.dependencies.runScripts({
+          projectRoot: root,
+          runtimeRoot: this.options.runtimeRoot,
+          environment: this.options.environment,
+          scripts: contract.scripts,
+        })
+      )
     } catch (error) {
       scripts = { scripts: [], issues: [environmentIssue('SA-ENV-SCRIPTS', error)] }
     }
@@ -386,7 +393,9 @@ export class SmartAppVerifier {
     const artifactsStartedAt = this.dependencies.now().toISOString()
     let artifacts: SmartAppArtifactValidationResult
     try {
-      deliverableFingerprint = await this.dependencies.fingerprint(root, 'deliverable')
+      deliverableFingerprint = await traceSmartAppVerification('fingerprint/deliverable', () =>
+        this.dependencies.fingerprint(root, 'deliverable')
+      )
       artifacts = await this.dependencies.validateArtifacts({
         projectRoot: root,
         manifest,
@@ -407,14 +416,16 @@ export class SmartAppVerifier {
     const runtimeStartedAt = this.dependencies.now().toISOString()
     let runtime: { issues: SmartAppVerificationIssue[] }
     try {
-      runtime = await this.dependencies.verifyRuntime({
-        projectRoot: root,
-        runtimeRoot: this.options.runtimeRoot,
-        logDirectory: join(root, 'test-results', 'smart-app', 'logs'),
-        environment: this.options.environment,
-        manifest,
-        contract,
-      })
+      runtime = await traceSmartAppVerification('runtime', () =>
+        this.dependencies.verifyRuntime({
+          projectRoot: root,
+          runtimeRoot: this.options.runtimeRoot,
+          logDirectory: join(root, 'test-results', 'smart-app', 'logs'),
+          environment: this.options.environment,
+          manifest,
+          contract,
+        })
+      )
     } catch (error) {
       runtime = { issues: [environmentIssue('SA-ENV-RUNTIME', error)] }
     }

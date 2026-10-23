@@ -22,6 +22,9 @@ mod task_lookup_tests;
 #[path = "task_rename_tests.rs"]
 mod task_rename_tests;
 
+#[path = "transcript_status_tests.rs"]
+mod transcript_status_tests;
+
 /// Restores one environment variable when a test finishes.
 struct ScalarEnv {
     key: &'static str,

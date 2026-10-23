@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 import {
   resolveWorkbenchProjectPnpmCommand,
   type WorkbenchProjectPnpmCommand,
@@ -101,11 +102,13 @@ export async function runSmartAppProjectScripts(
   const scripts: SmartAppProjectScriptResult[] = []
   for (const key of SCRIPT_ORDER) {
     const script = options.scripts[key]
-    const result = await run(command.command, [...command.argsPrefix, 'run', script], {
-      cwd: options.projectRoot,
-      env: environment,
-      shell: false,
-    })
+    const result = await traceSmartAppVerification(`scripts/${key}`, () =>
+      run(command.command, [...command.argsPrefix, 'run', script], {
+        cwd: options.projectRoot,
+        env: environment,
+        shell: false,
+      })
+    )
     const log = join(logsDirectory, `${key}.log`)
     await writeFile(log, scriptLog(command.command, script, result), { mode: 0o600 })
     const logPath = relative(options.projectRoot, log).split(sep).join('/')
