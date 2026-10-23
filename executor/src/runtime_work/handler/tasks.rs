@@ -1827,6 +1827,9 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id, "runtime": "codex",
             }));
         }
+        let response_key = active_turn.as_ref().and_then(|turn| {
+            self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
+        });
         // Send only to the channel captured before validation; a new turn must not receive this answer.
         if pending_request.sender.send(response).await.is_err() {
             return Ok(json!({
@@ -1837,10 +1840,14 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         }
-        if self.is_current_local_task_execution(local_task_id, pending_request.execution_id)
-            && !self.has_pending_mcp_elicitation(local_task_id)
-        {
-            self.set_interaction_status(local_task_id, None);
+        if self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
+            if let Some(turn) = active_turn {
+                self.settle_request_user_input_response(
+                    local_task_id,
+                    &turn.turn_id,
+                    response_key.as_deref(),
+                );
+            }
         }
         Ok(json!({
             "success": true,

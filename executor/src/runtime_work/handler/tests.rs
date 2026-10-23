@@ -6205,6 +6205,7 @@ async fn execution_mapper_persists_request_user_input_without_settling_execution
     let active_turn = handler
         .active_codex_turn(local_task_id)
         .expect("request user input turn should be active");
+    handler.begin_active_codex_transcript(local_task_id, "thread-waiting", "turn-waiting");
     let message = json!({
         "id": 42,
         "method": "item/tool/requestUserInput",

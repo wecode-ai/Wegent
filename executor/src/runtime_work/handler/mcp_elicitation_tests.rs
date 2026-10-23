@@ -14,6 +14,38 @@ fn request() -> Value {
     }})
 }
 
+fn ordinary_request(request_id: Value, turn_id: &str) -> Value {
+    json!({"id": request_id, "method": "item/tool/requestUserInput", "params": {
+        "threadId": "thread-1", "turnId": turn_id,
+        "questions": [{"id": "choice", "header": "Choice", "question": "Continue?",
+            "options": [{"label": "Yes", "description": "Continue the task"}]}]
+    }})
+}
+
+fn interaction_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
+    let (handler, root) = isolated_runtime_work_handler(label);
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    (handler, root)
+}
+
+fn assert_interaction_status(handler: &RuntimeWorkRpcHandler, expected: Option<&str>) {
+    assert_eq!(
+        handler
+            .local_task_link("task-1")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        expected
+    );
+}
+
 #[test]
 fn mcp_elicitation_recovers_pending_and_settled_without_duplicate_or_resurrection() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -58,8 +90,7 @@ fn mcp_elicitation_recovers_pending_and_settled_without_duplicate_or_resurrectio
 
 #[test]
 fn mcp_elicitation_keeps_other_pending_forms_after_one_settles() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    let (handler, root) = interaction_handler("elicitation-multiple-pending");
     let mut first = request();
     let mut second = request();
     second["id"] = json!(1);
@@ -68,11 +99,189 @@ fn mcp_elicitation_keeps_other_pending_forms_after_one_settles() {
     first["method"] = json!("wegent/mcpElicitation/settled");
     first["params"]["interactionStatus"] = json!("expired");
     handler.record_active_codex_transcript_item("task-1", "turn-1", &first);
-    assert!(handler.has_pending_mcp_elicitation("task-1"));
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
     second["method"] = json!("wegent/mcpElicitation/settled");
     second["params"]["interactionStatus"] = json!("answered");
     handler.record_active_codex_transcript_item("task-1", "turn-1", &second);
-    assert!(!handler.has_pending_mcp_elicitation("task-1"));
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn ordinary_user_input_answers_settle_only_the_matching_pending_request() {
+    let (handler, root) = interaction_handler("ordinary-multiple-pending");
+    for id in [0, 1] {
+        handler.record_active_codex_transcript_item(
+            "task-1",
+            "turn-1",
+            &ordinary_request(json!(id), "turn-1"),
+        );
+    }
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    assert_eq!(
+        handler.request_user_input_response_key("task-1", "turn-1", &json!({"answers": {}})),
+        None,
+        "an uncorrelated answer cannot choose between two pending requests"
+    );
+    handler.settle_request_user_input_response("task-1", "turn-1", None);
+    handler.settle_request_user_input_response("task-1", "turn-1", Some("unknown"));
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+
+    let first_key = handler.request_user_input_response_key(
+        "task-1",
+        "turn-1",
+        &json!({"request_id": "0", "answers": {}}),
+    );
+    assert_eq!(first_key.as_deref(), Some("0"));
+    handler.settle_request_user_input_response("task-1", "turn-1", first_key.as_deref());
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    let remaining_key =
+        handler.request_user_input_response_key("task-1", "turn-1", &json!({"answers": {}}));
+    assert_eq!(remaining_key.as_deref(), Some("1"));
+    handler.settle_request_user_input_response("task-1", "turn-1", remaining_key.as_deref());
+    assert_interaction_status(&handler, None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn answered_ordinary_requests_and_approvals_cannot_reopen_on_same_turn_replay() {
+    let (handler, root) = interaction_handler("ordinary-replay");
+    for method in [
+        "item/tool/requestUserInput",
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
+    ] {
+        handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+        let mut pending = ordinary_request(json!(0), "turn-1");
+        pending["method"] = json!(method);
+        handler.record_active_codex_transcript_item("task-1", "turn-1", &pending);
+        handler.refresh_pending_user_input_status("task-1");
+        assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+        handler.settle_request_user_input_response("task-1", "turn-1", Some("0"));
+        assert_interaction_status(&handler, None);
+        handler.record_active_codex_transcript_item("task-1", "turn-1", &pending);
+        handler.refresh_pending_user_input_status("task-1");
+        assert_interaction_status(&handler, None);
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn ordinary_answer_from_previous_turn_cannot_settle_reused_request_id() {
+    let (handler, root) = interaction_handler("ordinary-answer-turn-scope");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(0), "turn-1"),
+    );
+    let previous_key = handler.request_user_input_response_key(
+        "task-1",
+        "turn-1",
+        &json!({"requestId": 0, "answers": {}}),
+    );
+    assert_eq!(previous_key.as_deref(), Some("0"));
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-2");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-2",
+        &ordinary_request(json!(0), "turn-2"),
+    );
+    handler.refresh_pending_user_input_status("task-1");
+    handler.settle_request_user_input_response("task-1", "turn-1", previous_key.as_deref());
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    handler.settle_request_user_input_response("task-1", "turn-2", Some("0"));
+    assert_interaction_status(&handler, None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn ordinary_pending_requests_are_cleared_by_turn_changes_and_completion() {
+    let (handler, root) = interaction_handler("ordinary-terminal-cleanup");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(0), "turn-1"),
+    );
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-2");
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, None);
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-2",
+        &ordinary_request(json!(1), "turn-2"),
+    );
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-3",
+        &json!({"method": "item/agentMessage/delta", "params": {
+            "threadId": "thread-1", "turnId": "turn-3", "itemId": "message-3", "delta": "Continuing"
+        }}),
+    );
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, None);
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-3",
+        &ordinary_request(json!(2), "turn-3"),
+    );
+    handler.refresh_pending_user_input_status("task-1");
+    for turn_id in ["turn-2", "turn-3"] {
+        handler.persist_completed_codex_turn_from_notification(
+            "task-1",
+            &json!({"method": "turn/completed", "params": {
+                "threadId": "thread-1",
+                "turn": {"id": turn_id, "status": "completed", "items": []}
+            }}),
+        );
+        handler.refresh_pending_user_input_status("task-1");
+        assert_interaction_status(
+            &handler,
+            if turn_id == "turn-2" {
+                Some(INTERACTION_WAITING_FOR_USER_INPUT)
+            } else {
+                None
+            },
+        );
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn mixed_requests_wait_for_mcp_settlement_and_preserve_nonblocking_reply_status() {
+    let (handler, root) = interaction_handler("ordinary-mcp-settlement");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(1), "turn-1"),
+    );
+    let mut mcp = request();
+    mcp["params"]["expiresAtUnixMs"] = json!(now_ms() - 1);
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &mcp);
+    assert_eq!(
+        handler.request_user_input_response_key("task-1", "turn-1", &json!({"answers": {}})),
+        None,
+        "a pending MCP response makes an uncorrelated ordinary answer ambiguous"
+    );
+    handler.settle_request_user_input_response("task-1", "turn-1", Some("1"));
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    mcp["method"] = json!("wegent/mcpElicitation/settled");
+    mcp["params"]["interactionStatus"] = json!("expired");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &mcp);
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, None);
+
+    handler.set_interaction_status("task-1", Some(INTERACTION_AWAITING_USER_REPLY));
+    handler.refresh_pending_user_input_status("task-1");
+    assert_interaction_status(&handler, Some(INTERACTION_AWAITING_USER_REPLY));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

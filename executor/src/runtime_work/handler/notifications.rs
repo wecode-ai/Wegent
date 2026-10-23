@@ -4,21 +4,98 @@
 
 use super::command_items::{merge_codex_command_item, merge_codex_turn_items};
 use super::*;
+
+impl ActiveCodexTranscriptItems {
+    fn has_pending_mcp_elicitation(&self) -> bool {
+        self.items.iter().any(|item| {
+            item["type"] == "mcpElicitation"
+                && item["renderPayload"]["interactionStatus"] == "pending"
+        })
+    }
+
+    fn has_pending_user_input(&self) -> bool {
+        self.user_input_requests.values().any(|pending| *pending)
+            || self.has_pending_mcp_elicitation()
+    }
+}
+
+fn user_input_request_key(id: &Value) -> Option<String> {
+    match id {
+        Value::Number(id) => Some(id.to_string()),
+        Value::String(id) if !id.trim().is_empty() => Some(id.clone()),
+        _ => None,
+    }
+}
+
 impl RuntimeWorkRpcHandler {
-    pub(super) fn has_pending_mcp_elicitation(&self, local_task_id: &str) -> bool {
-        self.active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|items| {
-                items.get(local_task_id).map(|active| {
-                    active.items.iter().any(|item| {
-                        item["type"] == "mcpElicitation"
-                            && super::super::mcp_elicitation::block(item, false)["status"]
-                                == "pending"
-                    })
-                })
-            })
-            .unwrap_or(false)
+    pub(super) fn refresh_pending_user_input_status(&self, local_task_id: &str) {
+        let Ok(items) = self.active_codex_transcript_items.lock() else {
+            return;
+        };
+        if let Some(active) = items.get(local_task_id) {
+            self.set_pending_user_input_status(local_task_id, active);
+        }
+    }
+
+    // Called with the transcript lock held: a concurrent response must not clear a new request.
+    fn set_pending_user_input_status(
+        &self,
+        local_task_id: &str,
+        active: &ActiveCodexTranscriptItems,
+    ) {
+        if active.has_pending_user_input() {
+            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+        } else if self.local_task_link(local_task_id).is_some_and(|link| {
+            link.interaction_status.as_deref() == Some(INTERACTION_WAITING_FOR_USER_INPUT)
+        }) {
+            self.set_interaction_status(local_task_id, None);
+        }
+    }
+
+    pub(super) fn request_user_input_response_key(
+        &self,
+        local_task_id: &str,
+        turn_id: &str,
+        response: &Value,
+    ) -> Option<String> {
+        if let Some(id) = super::super::mcp_elicitation::response_id(response) {
+            return user_input_request_key(id);
+        }
+        let items = self.active_codex_transcript_items.lock().ok()?;
+        let active = items
+            .get(local_task_id)
+            .filter(|active| active.turn_id == turn_id)?;
+        if active.has_pending_mcp_elicitation() {
+            return None;
+        }
+        let mut pending = active
+            .user_input_requests
+            .iter()
+            .filter(|(_, pending)| **pending);
+        let (id, _) = pending.next()?;
+        pending.next().is_none().then(|| id.clone())
+    }
+
+    pub(super) fn settle_request_user_input_response(
+        &self,
+        local_task_id: &str,
+        turn_id: &str,
+        request_id: Option<&str>,
+    ) {
+        let Ok(mut items) = self.active_codex_transcript_items.lock() else {
+            return;
+        };
+        let Some(active) = items
+            .get_mut(local_task_id)
+            .filter(|active| active.turn_id == turn_id)
+        else {
+            return;
+        };
+        if let Some(pending) = request_id.and_then(|id| active.user_input_requests.get_mut(id)) {
+            *pending = false;
+        }
+        // MCP requests stay pending until their own answered/cancelled/expired notification.
+        self.set_pending_user_input_status(local_task_id, active);
     }
 
     /// Replayed requests cannot reopen a settled card or extend its original deadline.
@@ -73,6 +150,7 @@ impl RuntimeWorkRpcHandler {
                 thread_id: thread_id.to_owned(),
                 turn_id: turn_id.to_owned(),
                 items: Vec::new(),
+                user_input_requests: HashMap::new(),
             },
         );
     }
@@ -206,6 +284,7 @@ impl RuntimeWorkRpcHandler {
             if let Some(active) = active_items.get_mut(local_task_id) {
                 if active.turn_id == turn_id {
                     active.items.clear();
+                    active.user_input_requests.clear();
                 }
             }
         }
@@ -219,6 +298,23 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) {
         let notification = codex_notification(message);
+        if notification.method != "mcpServer/elicitation/request"
+            && codex_notification_requires_user_input(message)
+        {
+            let Some(request_id) = message.get("id").and_then(user_input_request_key) else {
+                return;
+            };
+            let Ok(mut items) = self.active_codex_transcript_items.lock() else {
+                return;
+            };
+            if let Some(active) = items
+                .get_mut(local_task_id)
+                .filter(|active| active.turn_id == turn_id)
+            {
+                active.user_input_requests.entry(request_id).or_insert(true);
+            }
+            return;
+        }
         let text_item_type = match notification.method.as_str() {
             "item/plan/delta" => Some("plan"),
             "item/agentMessage/delta" => Some("agentMessage"),
@@ -270,6 +366,7 @@ impl RuntimeWorkRpcHandler {
         if transcript.turn_id != turn_id {
             transcript.turn_id = turn_id.to_owned();
             transcript.items.clear();
+            transcript.user_input_requests.clear();
         }
         if let Some(existing) = transcript
             .items

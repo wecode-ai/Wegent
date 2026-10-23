@@ -2737,6 +2737,251 @@ async fn auto_approved_mcp_tool_does_not_clear_another_pending_user_question() {
     assert_no_mcp_approval_history(&handler, task_id).await;
 }
 
+#[tokio::test]
+async fn manual_mcp_accept_keeps_another_pending_user_question() {
+    assert_concurrent_user_input_status("accept", false).await;
+}
+
+#[tokio::test]
+async fn manual_mcp_cancel_keeps_another_pending_user_question() {
+    assert_concurrent_user_input_status("cancel", false).await;
+}
+
+#[tokio::test]
+async fn manual_mcp_timeout_keeps_another_pending_user_question() {
+    assert_concurrent_user_input_status("timeout", false).await;
+}
+
+#[tokio::test]
+async fn ordinary_answer_keeps_another_pending_manual_mcp_form() {
+    assert_concurrent_user_input_status("accept", true).await;
+}
+
+async fn assert_concurrent_user_input_status(action: &str, ordinary_first: bool) {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex_home = EnvGuard::set("CODEX_HOME", root.path().join("codex").to_str().unwrap());
+    let log_path = root.path().join("concurrent-manual-input.jsonl");
+    let ordinary_question = r#"{"id":98,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"ordinary-question","questions":[{"id":"goal","question":"Continue?","options":[{"label":"Yes","description":"Continue the task."}]}],"autoResolutionMs":null}}"#;
+    let mcp_question = r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"wegent-sites","mode":"form","message":"Choose access.","requestedSchema":{"type":"object","properties":{"audience":{"type":"string","enum":["all","owner"]}},"required":["audience"]}}}"#;
+    // Keep the turn running after both replies, so turn completion cannot hide a status bug.
+    let binary = write_fake_codex_interaction(
+        &log_path,
+        "fake-codex-concurrent-manual-input",
+        &format!("{ordinary_question}\n{mcp_question}"),
+        0,
+        0,
+    );
+    let (event_tx, mut events) = broadcast::channel(128);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        binary.display().to_string(),
+        event_tx,
+    );
+    let task_id = "local-task-concurrent-manual-input";
+    let created = handler.handle_runtime_rpc(json!({
+        "method": "runtime.tasks.create",
+        "payload": {
+            "taskId": task_id, "workspacePath": "/tmp/project", "message": "ask before continuing",
+            "executionRequest": codex_execution_request("ask before continuing", "/tmp/project", "gpt-5.5")
+        }
+    })).await.unwrap();
+    assert_eq!(created["accepted"], true);
+    let initial = recv_events_until(&mut events, |received| {
+        find_runtime_event(received, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == "flood-sentinel"
+        })
+        .is_some()
+    })
+    .await;
+    for request_id in [98, 99] {
+        assert!(
+            find_runtime_event(&initial, "response.block.created", |event| {
+                event["payload"]["data"]["block"]["render_payload"]["requestId"] == request_id
+            })
+            .is_some(),
+            "both questions must be pending"
+        );
+    }
+    assert!(
+        find_runtime_event(&initial, "runtime.work.changed", |event| {
+            event["payload"]["taskId"] == task_id
+        })
+        .is_some(),
+        "entering waiting state must notify subscribers"
+    );
+    assert_listed_and_persisted_interaction(&handler, root.path(), task_id, true).await;
+    drain_events(&mut events);
+
+    let ordinary_response = json!({
+        "requestId": 98, "interactionScope": "turn-input",
+        "answers": {"goal": {"answers": ["Yes"]}}
+    });
+    let mcp_response = json!({
+        "requestId": 99, "interactionScope": "turn-input",
+        "answers": if action == "cancel" { json!({}) } else { json!({"audience": {"answers": ["owner"]}}) }
+    });
+    if action == "timeout" {
+        tokio::time::pause();
+        tokio::time::advance(std::time::Duration::from_secs(301)).await;
+        tokio::time::resume();
+    } else {
+        send_concurrent_input_answer(
+            &handler,
+            task_id,
+            if ordinary_first {
+                ordinary_response.clone()
+            } else {
+                mcp_response.clone()
+            },
+        )
+        .await;
+    }
+    let first_sentinel = if ordinary_first {
+        "ordinary-answer-sentinel"
+    } else {
+        "auto-approval-sentinel"
+    };
+    let mcp_status = match action {
+        "accept" => "answered",
+        "cancel" => "cancelled",
+        "timeout" => "expired",
+        _ => unreachable!(),
+    };
+    let first_events = recv_events_until(&mut events, |received| {
+        find_runtime_event(received, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == first_sentinel
+        })
+        .is_some()
+            && (ordinary_first || contains_mcp_settlement(received, mcp_status))
+    })
+    .await;
+    assert_listed_and_persisted_interaction(&handler, root.path(), task_id, true).await;
+    assert!(
+        find_runtime_event(&first_events, "runtime.work.changed", |event| {
+            event["payload"]["taskId"] == task_id
+        })
+        .is_none(),
+        "settling only one question must not broadcast a cleared waiting state"
+    );
+
+    send_concurrent_input_answer(
+        &handler,
+        task_id,
+        if ordinary_first {
+            mcp_response
+        } else {
+            ordinary_response
+        },
+    )
+    .await;
+    let last_sentinel = if ordinary_first {
+        "auto-approval-sentinel"
+    } else {
+        "ordinary-answer-sentinel"
+    };
+    let last_events = recv_events_until(&mut events, |received| {
+        find_runtime_event(received, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == last_sentinel
+        })
+        .is_some()
+            && (!ordinary_first || contains_mcp_settlement(received, mcp_status))
+    })
+    .await;
+    assert_listed_and_persisted_interaction(&handler, root.path(), task_id, false).await;
+    assert!(
+        find_runtime_event(&last_events, "runtime.work.changed", |event| {
+            event["payload"]["taskId"] == task_id
+        })
+        .is_some(),
+        "answering the final question must notify subscribers"
+    );
+    let calls = read_json_lines(&log_path);
+    assert!(calls
+        .iter()
+        .any(|call| call["id"] == 98 && call["result"]["answers"]["goal"]["answers"][0] == "Yes"));
+    assert!(calls.iter().any(|call| call["id"] == 99
+        && call["result"]["action"]
+            == if action == "accept" {
+                "accept"
+            } else {
+                "cancel"
+            }));
+    let stopped = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel", "payload": {"taskId": task_id}
+        }))
+        .await
+        .unwrap();
+    assert_eq!(stopped["success"], true);
+}
+
+fn contains_mcp_settlement(events: &[Value], status: &str) -> bool {
+    find_runtime_event(events, "response.block.updated", |event| {
+        let payload = &event["payload"]["data"]["updates"]["render_payload"];
+        payload["requestId"] == 99 && payload["interactionStatus"] == status
+    })
+    .is_some()
+}
+
+async fn send_concurrent_input_answer(
+    handler: &RuntimeWorkRpcHandler,
+    task_id: &str,
+    response: Value,
+) {
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {"taskId": task_id, "requestUserInputResponse": response}
+        }))
+        .await
+        .unwrap();
+    assert_eq!(sent["success"], true, "{sent}");
+    assert_eq!(sent["accepted"], true, "{sent}");
+}
+
+async fn assert_listed_and_persisted_interaction(
+    handler: &RuntimeWorkRpcHandler,
+    executor_home: &Path,
+    task_id: &str,
+    waiting: bool,
+) {
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list", "payload": {}
+        }))
+        .await
+        .unwrap();
+    let task = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+        .find(|task| task["taskId"] == task_id)
+        .unwrap();
+    assert_eq!(
+        task["running"], true,
+        "the turn must remain active throughout the assertions"
+    );
+    let expected = if waiting {
+        json!("waitingForUserInput")
+    } else {
+        Value::Null
+    };
+    assert_eq!(
+        task["interactionStatus"], expected,
+        "task list must reflect all pending questions"
+    );
+    let persisted: Value =
+        serde_json::from_slice(&fs::read(executor_home.join("runtime-work/index.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        persisted["tasks"][task_id]["interaction_status"], expected,
+        "the persisted task must agree with the broadcast state"
+    );
+}
+
 async fn assert_no_mcp_approval_history(handler: &RuntimeWorkRpcHandler, task_id: &str) {
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -5076,12 +5321,17 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/interrupt"'; then
     turn_active=false
     printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+    if [ {completion_request_id} -eq 0 ]; then
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-input","turn":{{"id":"turn-input","status":"interrupted"}}}}}}'
+    fi
   elif printf '%s\n' "$line" | grep -q '"id":{}' && printf '%s\n' "$line" | grep -q '"result"'; then
     turn_active=false
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"auto-approval-sentinel","type":"commandExecution","status":"inProgress","command":"approval returned"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"id":98' && printf '%s\n' "$line" | grep -q '"result"'; then
+    printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"ordinary-answer-sentinel","type":"commandExecution","status":"inProgress","command":"ordinary answer returned"}}}}}}'
   fi
 done
 "#,

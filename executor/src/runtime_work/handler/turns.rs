@@ -965,11 +965,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         self.record_background_terminal_notification(local_task_id, &message);
-        if codex_notification_requires_user_input(&message)
-            && message["method"] != "mcpServer/elicitation/request"
-        {
-            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
-        } else if matches!(
+        if matches!(
             message.get("method").and_then(Value::as_str),
             Some("item/completed")
         ) && crate::runtime_work::codex_user_input::async_question_payload_from_item(
@@ -1029,15 +1025,10 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         }
-        if message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
-            && !self.has_pending_mcp_elicitation(local_task_id)
+        if codex_notification_requires_user_input(&message)
+            || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
         {
-            self.set_interaction_status(local_task_id, None);
-        }
-        if message["method"] == "mcpServer/elicitation/request"
-            && codex_notification_requires_user_input(&message)
-        {
-            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+            self.refresh_pending_user_input_status(local_task_id);
         }
         event_mapper.map(
             &self.event_tx,
