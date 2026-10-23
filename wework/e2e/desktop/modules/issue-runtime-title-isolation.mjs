@@ -33,12 +33,22 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
   const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
   let settled = false
   let observedTitle
+  const observations = []
   while (Date.now() < deadline) {
     const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     observedTitle = debug.workbench?.activeTask?.title
     const completedMessages = Number(
       await control.command('getElementCount', `${content} [data-testid="message-assistant"]`)
     )
+    observations.push({
+      at: new Date().toISOString(),
+      observedTitle,
+      completedMessages,
+      running: debug.workbench?.lifecycleCurrentTaskRunning,
+      task: debug.workbench?.currentRuntimeTask,
+      lifecycle: debug.workbench?.activeLifecycle,
+      messages: debug.pane?.messageSummary,
+    })
     if (
       observedTitle === title &&
       completedMessages > assistantCount &&
@@ -49,7 +59,15 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  assert.ok(settled, 'The renamed conversation did not finish its follow-up turn')
+  assert.ok(
+    settled,
+    `The renamed conversation did not finish its follow-up turn: ${JSON.stringify({
+      title,
+      binding,
+      assistantCount,
+      observations,
+    })}`
+  )
   assert.equal(observedTitle, title, 'The renderer did not receive the runtime title update')
   const persisted = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
   assert.equal(persisted.title, issue.title, 'A private conversation title renamed the bound Issue')
