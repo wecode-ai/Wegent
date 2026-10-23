@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import {
   access,
   mkdir,
@@ -323,8 +324,16 @@ export class CoreDshPluginManager {
 
   private async writeActiveBundles(manifest: ProfileManifest, state: PluginState): Promise<void> {
     const current = manifest.dsh?.profile?.bundles ?? []
-    const builtIns = current.filter(name => IMMUTABLE_CORE_DSH_PLUGINS.has(name))
     const dependencies = new Set(Object.keys(manifest.dependencies ?? {}))
+    const installationBundles = await Promise.all(
+      current.map(async name => {
+        if (IMMUTABLE_CORE_DSH_PLUGINS.has(name)) return name
+        if (dependencies.has(name)) return null
+        const installed = await this.readRuntimePackage(name)
+        return installed?.dsh?.bundle?.patch ? name : null
+      })
+    )
+    const builtIns = installationBundles.filter((name): name is string => name !== null)
     const disabled = new Set(state.disabled)
     const enabledUsers = state.order.filter(name => dependencies.has(name) && !disabled.has(name))
     manifest.dsh = {
@@ -357,9 +366,16 @@ export class CoreDshPluginManager {
   private async readPackage(name: string): Promise<PackageManifest | null> {
     const profilePackage = await readJson(join(this.packageRoot(name), 'package.json'))
     if (profilePackage) return profilePackage as PackageManifest
-    return (await readJson(
-      join(this.options.runtimeRoot, 'node_modules', ...name.split('/'), 'package.json')
-    )) as PackageManifest | null
+    return this.readRuntimePackage(name)
+  }
+
+  private async readRuntimePackage(name: string): Promise<PackageManifest | null> {
+    const require = createRequire(await realpath(this.options.dshEntry))
+    for (const directory of require.resolve.paths(name) ?? []) {
+      const manifest = await readJson(join(directory, ...name.split('/'), 'package.json'))
+      if (manifest) return manifest as PackageManifest
+    }
+    return null
   }
 
   private packageRoot(name: string): string {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import { ProjectComposerBody, type ProjectComposerBodyProps } from './ProjectComposerBody'
 import { ComposerTextInput } from './ComposerTextInput'
+import { ComposerAutocompleteInput } from './ComposerAutocompleteInput'
 import type { ComposerInputHandle } from './composerInputTypes'
 import type { ComposerTransferServices } from './useComposerTransfers'
 import { createCollaborationTranslator } from '../i18n'
@@ -129,6 +130,20 @@ describe('shared PC composer body', () => {
     expect(button('send').disabled).toBe(false)
     await click('send')
     expect(submit).toHaveBeenCalledWith('Newest draft', undefined)
+  })
+  it('inserts a delayed voice result through the complete editor handle chain', async () => {
+    await mount({
+      renderEditor: props => (
+        <ComposerAutocompleteInput {...props} translate={createCollaborationTranslator('en')} />
+      ),
+    })
+    const insertion = input.current!.captureInsertion?.()
+    expect(insertion).toBeTruthy()
+    await act(async () => {
+      expect(insertion!.insertText('Voice transcript')).toBe(true)
+    })
+    expect(input.current!.getValue()).toBe('Voice transcript')
+    expect(change).toHaveBeenCalledWith('Voice transcript')
   })
   it.each(['chat', 'document'] as const)(
     'preserves the %s editor surface and separate toolbar',

@@ -58,6 +58,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-context-resilience',
   'cloud-login-proxy',
   'core-dsh-plugin-management',
+  'voice-input',
   'plugin-development',
   'plugin-auto-update',
   'plugin-account-auth',
