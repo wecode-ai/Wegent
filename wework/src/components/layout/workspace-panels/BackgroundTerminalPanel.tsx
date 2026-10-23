@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { NativeTerminalElement } from '@/e2e/native-terminal-diagnostics'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { createXtermWebLinksAddon } from './xtermLinks'
@@ -24,7 +25,7 @@ export function BackgroundTerminalPanel({
   const hasOutput = output.length > 0
 
   useEffect(() => {
-    const container = containerRef.current
+    const container = containerRef.current as NativeTerminalElement | null
     if (!container || !hasOutput) return
     const xterm = new Terminal({
       disableStdin: true,
@@ -42,6 +43,14 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      container.__weworkViewportForE2E = () => ({
+        viewportY: xterm.buffer.active.viewportY,
+        baseY: xterm.buffer.active.baseY,
+        length: xterm.buffer.active.length,
+        rows: xterm.rows,
+      })
+    }
     const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
     resourceRef.current = { terminal: xterm, fit, output: '' }
     const observer = new ResizeObserver(() => {
@@ -52,6 +61,7 @@ export function BackgroundTerminalPanel({
       observer.disconnect()
       disposeTheme()
       resourceRef.current = null
+      delete container.__weworkViewportForE2E
       xterm.dispose()
     }
   }, [hasOutput, terminal?.id, appearance.codeFont, appearance.codeFontSize])

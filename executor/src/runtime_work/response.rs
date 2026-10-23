@@ -725,7 +725,9 @@ pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
         "recencyAt".to_owned(),
         Value::Number(link.recency_at.into()),
     );
-    if let Some(completed_at) = link.completed_at {
+    // Keep historical completion internally for ordering and stale-provider recovery,
+    // but do not project it as completion of the currently running execution.
+    if let Some(completed_at) = link.completed_at.filter(|_| !link.running) {
         task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
     }
     if let Some(parent) = link.parent {

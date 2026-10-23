@@ -29,6 +29,10 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import {
+  getNativeTerminalDiagnostics,
+  recordNativeTerminalKey,
+} from './native-terminal-diagnostics'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getConversationDiagnosticsSnapshot,
@@ -1107,6 +1111,7 @@ async function pressNativeDesktopControlKey(
   phase: 'press' | 'down' | 'up' = 'press'
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  recordNativeTerminalKey('focus-requested', key, findDesktopControlElements(selector)[0] ?? null)
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
@@ -1116,9 +1121,13 @@ async function pressNativeDesktopControlKey(
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  recordNativeTerminalKey('target-focused', key, element)
   const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
-  const recordKey = (event: KeyboardEvent) => received.push(event)
+  const recordKey = (event: KeyboardEvent) => {
+    received.push(event)
+    recordNativeTerminalKey('native-event', key, element, event)
+  }
   window.addEventListener(eventType, recordKey, true)
   try {
     await invokeDesktopHost('e2e.pressKey', {
@@ -1127,7 +1136,9 @@ async function pressNativeDesktopControlKey(
       phase,
       focus: false,
     })
+    recordNativeTerminalKey('host-acknowledged', key, element)
     await waitForDesktopControlTick()
+    recordNativeTerminalKey('after-render-tick', key, element)
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
         `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
@@ -3048,6 +3059,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        nativeTerminalKeys: getNativeTerminalDiagnostics(),
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {

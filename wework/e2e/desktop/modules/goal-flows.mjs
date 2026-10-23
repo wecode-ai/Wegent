@@ -775,6 +775,16 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     await control.command('getWorkbenchDebugSnapshot', 'body')
   )
   assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.execution.running,
+    true,
+    'The autonomous supervisor correction was not recognized before its first model output'
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.task?.completedAt,
+    null,
+    'The running correction wire summary retained the preceding turn completion'
+  )
+  assert.equal(
     beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,
     supervisorTaskId,
     'The supervisor correction task was not current before replaying the stale settlement'

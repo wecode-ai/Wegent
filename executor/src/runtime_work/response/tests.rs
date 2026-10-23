@@ -216,6 +216,50 @@ fn active_thread_keeps_previous_completion_time_for_sorting() {
 }
 
 #[test]
+fn running_task_wire_summary_omits_previous_completion_but_retains_internal_ordering() {
+    let link = RuntimeTaskLink::from_thread_metadata(
+        &json!({
+            "id": "thread-1",
+            "status": {"type": "active"},
+            "updatedAt": 1_792_773_818_072_i64,
+            "recencyAt": 1_792_773_818_000_i64,
+            "turns": [{"id": "correction", "status": "inProgress"}],
+        }),
+        Some(RuntimeTaskLink {
+            completed_at: Some(1_792_773_817_910),
+            updated_at: 1_792_773_817_910,
+            ..RuntimeTaskLink::default()
+        }),
+        "/workspace/project".to_owned(),
+        true,
+    );
+    assert!(link.running);
+    assert_eq!(link.completed_at, Some(1_792_773_817_910));
+
+    for task in [link.clone(), link.list_summary()] {
+        let payload = local_task_json(task);
+        assert_eq!(payload["running"], true);
+        assert_eq!(payload["updatedAt"], 1_792_773_818_072_i64);
+        assert_eq!(payload["recencyAt"], 1_792_773_818_000_i64);
+        assert!(payload.get("completedAt").is_none());
+    }
+}
+
+#[test]
+fn settled_task_wire_summary_retains_completion() {
+    for status in ["done", "failed", "cancelled"] {
+        let payload = local_task_json(RuntimeTaskLink {
+            status: status.to_owned(),
+            running: false,
+            completed_at: Some(1_792_773_817_910),
+            ..RuntimeTaskLink::default()
+        });
+        assert_eq!(payload["completedAt"], 1_792_773_817_910_i64);
+        assert_eq!(payload["status"], status);
+    }
+}
+
+#[test]
 fn completed_thread_preserves_provider_recency_for_sorting() {
     let link = RuntimeTaskLink::from_thread_metadata(
         &json!({

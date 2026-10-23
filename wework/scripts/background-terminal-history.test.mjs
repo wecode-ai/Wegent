@@ -4,25 +4,28 @@ import { verifyTerminalHistory } from '../e2e/desktop/scenarios/background-termi
 
 const marker = 'WEWORK_BACKGROUND_PROCESS_ONE'
 
-function historyControl({ stuck = false, missingTick = false, pendingOutput = false } = {}) {
+function historyControl({
+  stuck = false,
+  missingTick = false,
+  pendingOutput = false,
+  untrusted = false,
+} = {}) {
   let row = 121
+  let lastRow = row
   let elapsed = 0
   const calls = []
-  let pendingRow = null
+  let samples = []
+  let pages = 0
   vi.spyOn(Date, 'now').mockImplementation(() => elapsed)
   const control = {
     calls,
     async command(action, selector, options = {}) {
       elapsed += 2000
       calls.push({ action, selector, options })
-      if (action === 'getAttribute') {
-        if (pendingRow !== null) {
-          const transientRow = row + 4
-          row = pendingRow
-          pendingRow = null
-          return String(transientRow)
-        }
-        return String(row)
+      if (action === 'getWorkbenchDebugSnapshot') {
+        return JSON.stringify({
+          nativeTerminalKeys: { current: { buffer: { viewportY: row - 1 } }, samples },
+        })
       }
       if (action === 'getText') {
         return row === 1
@@ -30,11 +33,24 @@ function historyControl({ stuck = false, missingTick = false, pendingOutput = fa
           : `${marker}_TICK_${row}`
       }
       if (action === 'nativePress') {
-        if (options.key === 'Shift+PageUp' && !stuck) {
-          if (pendingOutput) pendingRow = Math.max(1, row - 40)
-          else row = Math.max(1, row - 40)
+        if (options.key === 'Shift+PageUp') {
+          if (pendingOutput && pages === 0) {
+            row += 80
+            lastRow = row
+          }
+          const baseline = row - 1
+          if (!stuck) row = Math.max(1, row - 40)
+          samples = [
+            {
+              phase: 'native-event',
+              event: { key: 'PageUp', isTrusted: !untrusted },
+              buffer: { viewportY: baseline },
+            },
+            { phase: 'after-render-tick', key: 'Shift+PageUp', buffer: { viewportY: row - 1 } },
+          ]
+          pages += 1
         }
-        if (options.key === 'Shift+PageDown') row = Math.min(121, row + 40)
+        if (options.key === 'Shift+PageDown') row = Math.min(lastRow, row + 40)
         return
       }
       if (action === 'waitFor') {
@@ -64,10 +80,15 @@ test('fails when a native page-up does not move the viewport', async () => {
   await assert.rejects(verifyTerminalHistory(history.control, 10000), /did not move backwards/)
 })
 
-test('waits for backward movement when live output advances before page-up renders', async () => {
+test('rejects paging without a trusted native key event', async () => {
+  const history = historyControl({ untrusted: true })
+  await assert.rejects(verifyTerminalHistory(history.control, 10000), /real native key event/)
+})
+
+test('compares positions at the native key event when output advances beyond the old baseline', async () => {
   const history = historyControl({ pendingOutput: true })
   await verifyTerminalHistory(history.control, 10000)
-  assert.equal(history.control.calls.filter(call => call.options.key === 'Shift+PageUp').length, 3)
+  assert.equal(history.control.calls.filter(call => call.options.key === 'Shift+PageUp').length, 5)
 })
 
 test('still fails when the restored initial output is missing', async () => {
