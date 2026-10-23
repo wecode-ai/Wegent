@@ -1,3 +1,4 @@
+import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -158,7 +159,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await assertCompleted(control, manualIssue)
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))
-      await control.command('click', scoped('stand-in-open'))
+      await openProjectStandIn(control, scoped('stand-in-open'), { connect: true })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: 'Handle my assignments locally',

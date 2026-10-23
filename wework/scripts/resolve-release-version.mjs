@@ -93,6 +93,10 @@ export function resolveReleaseVersion({
     version = nextStableVersion(tags)
   }
 
+  if (publishRelease && tags.includes(`wework-v${version}`)) {
+    throw new Error(`Wework version ${version} already exists. Publish a new version instead.`)
+  }
+
   return {
     version,
     channel: inputChannel,

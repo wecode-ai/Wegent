@@ -237,6 +237,8 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   )
   const beforeUninstall = await readCapabilities()
   const removedEntry = beforeUninstall.plugins[managedKey]
+  assert.equal(removedEntry.runtime.codex_link, newRoot)
+  assert.equal(newRoot, join(codexHome, 'plugins/cache/wegent', pluginKey, newVersion))
   const residueBackup = join(resultDir, 'plugin-reconciliation-residue')
   await cp(removedEntry.store_path, residueBackup, { recursive: true })
   setPhase('plugin-upgrade-uninstall')
@@ -269,12 +271,14 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   const sharedPluginKey = `${pluginKey}-shared`
   const sharedManagedKey = `${sharedPluginKey}@wework-personal`
   const sharedStorePath = `${removedEntry.store_path}-shared`
-  const sharedClaudeRoot = join(
-    dirname(dirname(dirname(removedEntry.runtime.claude_link))),
-    'wework-personal',
-    sharedPluginKey,
-    newVersion
-  )
+  const sharedClaudeRoot = removedEntry.runtime.claude_link
+    ? join(
+        dirname(dirname(dirname(removedEntry.runtime.claude_link))),
+        'wework-personal',
+        sharedPluginKey,
+        newVersion
+      )
+    : undefined
   const sharedCodexRoot = join(
     dirname(dirname(dirname(removedEntry.runtime.codex_link))),
     'wework-personal',
@@ -282,7 +286,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     newVersion
   )
   await cp(residueBackup, sharedStorePath, { recursive: true })
-  await cp(residueBackup, sharedClaudeRoot, { recursive: true })
+  if (sharedClaudeRoot) await cp(residueBackup, sharedClaudeRoot, { recursive: true })
   await cp(residueBackup, sharedCodexRoot, { recursive: true })
   stale.plugins[sharedManagedKey] = {
     ...removedEntry,
@@ -292,7 +296,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     installed_plugin_id: Number(removedEntry.installed_plugin_id) + 100000,
     store_path: sharedStorePath,
     runtime: {
-      claude_link: sharedClaudeRoot,
+      ...(sharedClaudeRoot ? { claude_link: sharedClaudeRoot } : {}),
       codex_link: sharedCodexRoot,
     },
   }
@@ -304,7 +308,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await access(removedEntry.store_path)
   await access(newRoot)
   await access(sharedStorePath)
-  await access(sharedClaudeRoot)
+  if (sharedClaudeRoot) await access(sharedClaudeRoot)
   await access(sharedCodexRoot)
   await capture('05b-refresh-cleared-uninstalled-residue')
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)

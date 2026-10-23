@@ -75,6 +75,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-runtime-path-recovery',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
   'project-ai-settings',

@@ -8,6 +8,10 @@ import { verifyIssueConversationDrawers } from '../modules/issue-conversation-dr
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
+  assertFullscreenIssueComposerColumn,
+  assertFullscreenIssueComposerColumnAtWindowSize,
+} from '../modules/issue-composer-layout.mjs'
+import {
   verifyIssueDetailPropertyUi,
   verifyNewDiscussionComposerUi,
   verifyReplyComposerUi,
@@ -468,6 +472,30 @@ export function createDesktopScenario({
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        const createIssuePanel = scoped('[data-testid="cloud-todo-create-panel"]')
+        const createIssueFullscreen = scoped('[data-testid="cloud-todo-create-fullscreen"]')
+        const createIssueColumns = {
+          contentSelector: scoped('[data-testid="cloud-todo-create-content"]'),
+          footerSelector: scoped('[data-testid="cloud-todo-create-footer"]'),
+          optionsSelector: scoped('[data-testid="cloud-todo-create-options"]'),
+          panelSelector: createIssuePanel,
+        }
+        await control.command('click', createIssueFullscreen)
+        await control.command('waitFor', `${createIssuePanel}.h-full`, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await assertFullscreenIssueComposerColumn(control, {
+          ...createIssueColumns,
+          label: 'Cloud fullscreen Issue composer',
+        })
+        await assertFullscreenIssueComposerColumnAtWindowSize(control, {
+          ...createIssueColumns,
+          windowSize: { width: 640, height: 800 },
+          maxContentWidth: 700,
+          label: 'Narrow cloud fullscreen Issue composer',
+        })
+        await control.command('click', createIssueFullscreen)
         await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
           value: ISSUE_TITLE,
         })

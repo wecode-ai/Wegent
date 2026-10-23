@@ -159,7 +159,7 @@ export function WeworkIssueHomeComposer({
                 ? props.onSubmit(
                     value ?? props.value,
                     standInDeviceId,
-                    standIn?.profileId ?? 'default'
+                    standIn?.profileId || undefined
                   )
                 : props.onSubmit(value ?? props.value)
             }
@@ -184,7 +184,7 @@ export function WeworkIssueHomeComposer({
                     disabled={props.disabled}
                     deviceId={standInDeviceId}
                     userId={userId}
-                    profileId={standIn?.profileId ?? 'default'}
+                    profileId={standIn?.profileId || undefined}
                     onSelectProfile={profileId =>
                       setStandIn({
                         projectId: props.projectId,
@@ -193,7 +193,7 @@ export function WeworkIssueHomeComposer({
                       })
                     }
                     onSelect={deviceId =>
-                      setStandIn({ projectId: props.projectId, deviceId, profileId: 'default' })
+                      setStandIn({ projectId: props.projectId, deviceId, profileId: '' })
                     }
                   />
                 )}
