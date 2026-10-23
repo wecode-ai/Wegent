@@ -265,6 +265,10 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
         }});
         if sequence == 2 {
             handler.route_codex_notification(output.clone());
+            if router_observed_completion {
+                // A stale execution can retire its route while its replacement is active.
+                handler.mark_thread_event_route_idle("thread-1");
+            }
         }
         handler
             .map_execution_codex_notification(

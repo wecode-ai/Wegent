@@ -659,9 +659,13 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn retire_codex_command_notification_claims(
+        &self,
         routing: &mut RuntimeThreadEventRouting,
         task_id: &str,
     ) {
+        if self.is_active_local_task(task_id) {
+            return;
+        }
         let global_progress = routing
             .global_notification_progress
             .get(task_id)
@@ -902,7 +906,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(route) = routing.routes.get_mut(thread_id) {
             route.active = false;
             let local_task_id = route.local_task_id.clone();
-            Self::retire_codex_command_notification_claims(&mut routing, &local_task_id);
+            self.retire_codex_command_notification_claims(&mut routing, &local_task_id);
         }
     }
 
@@ -912,10 +916,11 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .expect("thread event routing lock should not be poisoned");
         if let Some(removed) = routing.routes.remove(thread_id) {
-            if !routing
-                .routes
-                .values()
-                .any(|route| route.local_task_id == removed.local_task_id)
+            if !self.is_active_local_task(&removed.local_task_id)
+                && !routing
+                    .routes
+                    .values()
+                    .any(|route| route.local_task_id == removed.local_task_id)
             {
                 routing
                     .command_notification_claims
@@ -936,7 +941,7 @@ impl RuntimeWorkRpcHandler {
             .thread_event_routing
             .lock()
             .expect("thread event routing lock should not be poisoned");
-        Self::retire_codex_command_notification_claims(&mut routing, local_task_id);
+        self.retire_codex_command_notification_claims(&mut routing, local_task_id);
         for route in routing.routes.values_mut() {
             if route.local_task_id == local_task_id {
                 route.active = false;
