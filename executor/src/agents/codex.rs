@@ -4320,6 +4320,7 @@ fn configured_codex_provider(
         routing_model_id: None,
         codex_request_mode: Default::default(),
         max_output_tokens: None,
+        model_context_window: None,
     })
 }
 

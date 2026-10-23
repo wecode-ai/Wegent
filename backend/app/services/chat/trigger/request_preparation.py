@@ -483,6 +483,16 @@ def _canonical_codex_upstream_api_format(api_format: str) -> str:
     }.get(normalized, normalized)
 
 
+def _positive_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _build_cloud_gateway_model_config(
     db: "Session",
     *,
@@ -602,6 +612,15 @@ def _build_cloud_gateway_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
+    # The executor derives the Claude Code auto-compact budget from these
+    # values, so they must come from the Model CRD instead of relying on
+    # client-side model options that a web-started task never sends.
+    context_window = _positive_int(provider_config.get("context_window"))
+    if context_window is not None:
+        config["model_context_window"] = context_window
+    max_output_tokens = _positive_int(provider_config.get("max_output_tokens"))
+    if max_output_tokens is not None:
+        config["max_output_tokens"] = max_output_tokens
     config.update(model_options)
     return config
 
