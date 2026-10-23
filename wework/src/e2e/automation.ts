@@ -29,6 +29,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -1129,38 +1130,18 @@ async function pressNativeDesktopControlKey(
     windowLabel,
   })
   record('window-focused')
-  await waitForDesktopControlTick()
-  record('focus-tick-finished')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
-  const received: KeyboardEvent[] = []
-  const eventType = phase === 'up' ? 'keyup' : 'keydown'
-  const recordKey = (event: KeyboardEvent) => received.push(event)
-  window.addEventListener(eventType, recordKey, true)
-  try {
+  record('target-focused')
+  await sendNativeKeyAndWait(element, phase, async () => {
     record('sending-key')
-    await invokeDesktopHost('e2e.pressKey', {
-      windowLabel,
-      key,
-      phase,
-      focus: false,
-    })
+    await invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
     record('key-sent')
-    await waitForDesktopControlTick()
-    record('key-tick-finished')
-    if (!received.some(event => event.isTrusted && event.target === element)) {
-      throw new Error(
-        `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
-          `active=${document.activeElement?.getAttribute('data-testid') ?? ''}, ` +
-          `received=${received.map(event => event.key).join(',')}`
-      )
-    }
-  } finally {
-    window.removeEventListener(eventType, recordKey, true)
-  }
+  })
+  record('key-received')
   return document.activeElement?.getAttribute('data-testid') ?? ''
 }
 
