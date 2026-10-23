@@ -51,6 +51,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
+  'runtime-input-answer-persistence': './scenarios/runtime-input-answer-persistence.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -174,6 +175,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'goal-state-sync',
   'model-settings',
   'codex-native-catalog',
+  'runtime-input-answer-persistence',
   'reply-predictions',
   'reply-prediction-auth',
   'collaboration-worktree-policy',

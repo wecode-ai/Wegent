@@ -134,13 +134,16 @@ The main desktop flow's short-conversation layout regression stores `short-conve
 
 The `collaboration-runtime-reconciliation` Core checkpoint runs independently and creates its own isolated cloud project, Issue, agent, and real Executor. A transparent WebSocket proxy holds actual completion events to cover snapshot-first, final-event-first, and terminal transactions contending on a real MySQL row lock. Each order checks the complete final text in the database, the Issue UI, and after reload. While a continuation's model response is held, it replays duplicate, reordered, unsequenced, and empty old completion events. Every replay waits for the real backend acknowledgement before asserting that the new turn, workflow, and execution capacity remain unchanged. The proxy only schedules transport; every component except the model service is real. Cleanup releases the model, transaction locks, and proxy connections.
 
+The `runtime-input-answer-persistence` Core checkpoint answers real MCP elicitation forms in the main workbench pane and a temporary chat. The Executor, Codex app-server, MCP server, desktop automation transport, and work-list refresh stay real; only the model service is mocked. Executor request gates hold the accepted answer after the real response and hold the terminal continuation so the terminal history deterministically arrives before the work-list refresh completes. The checkpoint asserts that the full answer summary remains visible before and after the refresh. It also verifies that a transport failure and a stale executor rejection never mark the answer as accepted, and that archiving while acceptance is pending does not restore the answer.
+
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`project-ai-settings`, `model-routing`, `permission-modes`,
+`runtime-input-answer-persistence`, `computer-use`,
 `task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
 `cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,

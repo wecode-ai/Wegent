@@ -124,6 +124,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
+`runtime-input-answer-persistence` Core checkpoint 会在主工作区和临时聊天中通过真实交互回答 MCP elicitation 表单。Executor、Codex app-server、MCP server、桌面自动化传输和工作区列表刷新均为真实集成，仅模型服务由 loopback fixture 提供。测试通过 Executor 请求闸门在真实响应后保持已接受的答案待定，并延迟终态续跑响应，从而确定性地建立“接受成功 → 终态历史先到 → 工作区列表刷新后完成”的顺序，并在刷新前后都断言完整答案摘要可见。checkpoint 同时验证传输失败和过期请求的真实拒绝都不会把答案标记为成功，以及等待接受期间归档不会恢复答案。
+
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
 `remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
 `cloud-space-mention`、`priority-filter`、`telemetry-consent`、
@@ -131,7 +133,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `project-assignment-notification`、`offline-local-project-space`、
 `core-dsh-plugin-management`、`plugin-auto-update`、
 `plugin-workspace-publication`、`project-ai-settings`、`model-routing`、
-`permission-modes`、`computer-use`、`task-status-sync`、
+`permission-modes`、`runtime-input-answer-persistence`、`computer-use`、`task-status-sync`、
 `task-board-association`、`core-task-flow`、`task-attachments`、
 `cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
 `cloud-worktree-queued-cancel`、`cloud-worktree-tools`、

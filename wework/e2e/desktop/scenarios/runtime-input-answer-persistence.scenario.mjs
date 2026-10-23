@@ -1,0 +1,412 @@
+import assert from 'node:assert/strict'
+import { join } from 'node:path'
+
+import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
+import {
+  assistantMessage,
+  createSse,
+  mcpToolRequestEvents,
+  requestContainsToolOutput,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  ACTIVE_WORKBENCH_SELECTOR,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  selectE2EModel,
+} from '../modules/shared.mjs'
+import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+
+const PROMPT = 'WEWORK_E2E_INPUT_ANSWER_PERSISTENCE: confirm the inner-site access audience.'
+const COMPLETION = 'WEWORK_E2E_INPUT_ANSWER_PERSISTENCE_COMPLETE'
+const TOOL_NAME = 'confirm_inner_site_access'
+const SEARCH_CALL_ID = 'wework-e2e-input-answer-elicitation-search'
+const TOOL_CALL_ID = 'wework-e2e-input-answer-elicitation-call'
+const ANSWER_OPTION = '[data-testid="request-user-input-option-audience-1"]'
+const ANSWER_TEXT = '仅自己'
+const SIDE_CHAT = '[data-testid="right-workspace-chat-panel"]'
+const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
+const WORKBENCH = ACTIVE_WORKBENCH_SELECTOR
+
+function deferred() {
+  let resolve
+  const promise = new Promise(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
+async function readJson(request) {
+  const chunks = []
+  for await (const chunk of request) chunks.push(chunk)
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function waitForCount(control, selector, expected, message, timeoutMs) {
+  const startedAt = Date.now()
+  let latest = null
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = Number(await control.command('getElementCount', selector, { visible: true }))
+    if (latest === expected) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`${message}: observed=${latest}`)
+}
+
+async function waitForRequestHold(control) {
+  const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
+  assert.ok(held?.heldCount > 0, `The request hold was never entered: ${JSON.stringify(held)}`)
+  return held
+}
+
+async function releaseRequestHold(control, timeoutMs) {
+  assert.equal(
+    await control.command('releaseLocalExecutorRequestHold', 'body'),
+    'true',
+    'The work-list refresh gate was not held'
+  )
+  const startedAt = Date.now()
+  let latest = null
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body'))
+    if (latest?.released && latest.completedCount === latest.heldCount) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`The held executor request never completed: ${JSON.stringify(latest)}`)
+}
+
+async function openElicitation(control, scope, composer, timeoutMs) {
+  await control.command('fill', composer, { value: PROMPT })
+  await control.command('press', composer, { key: 'Enter' })
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const urlCard = Number(
+      await control.command(
+        'getElementCount',
+        `${scope} [data-testid="mcp-url-authorization-card"]`,
+        { visible: true }
+      )
+    )
+    if (urlCard > 0) {
+      await control.command('click', `${scope} [data-testid="mcp-url-authorization-cancel"]`)
+      break
+    }
+    const formCard = Number(
+      await control.command('getElementCount', `${scope} [data-testid="request-user-input-card"]`, {
+        visible: true,
+      })
+    )
+    if (formCard > 0) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  await control.command('waitFor', `${scope} [data-testid="request-user-input-card"]`, {
+    text: '访问范围',
+    visible: true,
+    timeoutMs,
+  })
+}
+
+async function assertAnswerSummary(control, scope) {
+  const summary = `${scope} [data-testid="request-user-input-summary"]`
+  await control.command('waitFor', `${scope} [data-testid="final-processing-toggle"]`, {
+    visible: true,
+    timeoutMs: 10_000,
+  })
+  const visible = Number(await control.command('getElementCount', summary, { visible: true }))
+  if (visible === 0) {
+    await control.command('click', `${scope} [data-testid="final-processing-toggle"]`)
+  }
+  await control.command('waitFor', summary, {
+    text: ANSWER_TEXT,
+    visible: true,
+    timeoutMs: 10_000,
+  })
+}
+
+async function assertAcceptedAnswerCached(control, scope) {
+  await control.command('waitFor', `${scope} [data-testid="request-user-input-summary"]`, {
+    text: ANSWER_TEXT,
+    visible: true,
+    timeoutMs: 10_000,
+  })
+  await waitForCount(
+    control,
+    `${scope} [data-testid="request-user-input-card"]`,
+    0,
+    'The accepted answer left its request form pending',
+    10_000
+  )
+}
+
+async function startNewChat(control, composer, timeoutMs) {
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', `${WORKBENCH} [data-testid="desktop-empty-composer-frame"]`, {
+    visible: true,
+    timeoutMs,
+  })
+  await control.command('waitFor', composer, { visible: true, timeoutMs })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
+}
+
+export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTimeoutMs }) {
+  const evidencePath = join(resultDir, 'runtime-input-answer-evidence.jsonl')
+  const pendingGates = new Set()
+  let activeContinuationGate = null
+  let modelRequestCount = 0
+
+  function nextContinuationGate() {
+    const gate = deferred()
+    pendingGates.add(gate)
+    activeContinuationGate = gate
+    return gate
+  }
+
+  async function handleHttp(request, response, url) {
+    if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
+      return false
+    }
+    const body = await readJson(request)
+    if (!JSON.stringify(body).includes(PROMPT)) return false
+    modelRequestCount += 1
+    const responseId = `wework-input-answer-${modelRequestCount}-${Date.now()}`
+    if (requestContainsToolOutput(body, TOOL_CALL_ID)) {
+      assert.ok(
+        JSON.stringify(body).includes('E2E_MCP_ELICITATION_ACCEPTED:owner'),
+        'The real MCP server did not return the accepted audience to the model'
+      )
+      const gate = activeContinuationGate
+      assert.ok(gate, 'The terminal continuation arrived without a release gate')
+      await gate.promise
+      response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+      response.end(
+        createSse([
+          responseCreated(responseId),
+          assistantMessage(COMPLETION),
+          responseCompleted(responseId),
+        ])
+      )
+      return true
+    }
+    const selection = mcpToolRequestEvents(body, {
+      toolName: TOOL_NAME,
+      argumentsValue: {},
+      searchCallId: SEARCH_CALL_ID,
+      toolCallId: TOOL_CALL_ID,
+    })
+    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+    response.end(
+      createSse([responseCreated(responseId), ...selection.events, responseCompleted(responseId)])
+    )
+    return true
+  }
+
+  return {
+    codexConfigToml: mcpElicitationConfigToml(evidencePath),
+    handleHttp,
+    cleanup() {
+      for (const gate of pendingGates) gate.resolve()
+      pendingGates.clear()
+    },
+    async verify(control) {
+      const taskTimeoutMs = Math.max(uiTimeoutMs, modelResponseTimeoutMs, 30_000)
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: taskTimeoutMs,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, WORKBENCH)
+
+      const mainGate = nextContinuationGate()
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
+        'The main elicitation was not attached to a runtime task',
+        taskTimeoutMs
+      )
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.list' }),
+      })
+      await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
+      await waitForRequestHold(control)
+      await assertAcceptedAnswerCached(control, WORKBENCH)
+      mainGate.resolve()
+      await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
+        text: COMPLETION,
+        visible: true,
+        timeoutMs: taskTimeoutMs,
+      })
+      await assertAnswerSummary(control, WORKBENCH)
+      assert.equal(
+        JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body'))?.released,
+        false,
+        'The terminal history was asserted after the work-list refresh completed'
+      )
+      await releaseRequestHold(control, taskTimeoutMs)
+      await control.command('waitFor', `${WORKBENCH} [data-testid="request-user-input-summary"]`, {
+        text: ANSWER_TEXT,
+        visible: true,
+        timeoutMs: taskTimeoutMs,
+      })
+
+      const sideGate = nextContinuationGate()
+      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: `${primary}+Alt+S`,
+      })
+      await control.command('waitFor', SIDE_CHAT, { visible: true, timeoutMs: taskTimeoutMs })
+      await control.command('waitFor', SIDE_COMPOSER, { visible: true, timeoutMs: taskTimeoutMs })
+      await openElicitation(control, SIDE_CHAT, SIDE_COMPOSER, taskTimeoutMs)
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.list' }),
+      })
+      await control.command('click', `${SIDE_CHAT} ${ANSWER_OPTION}`)
+      await waitForRequestHold(control)
+      await assertAcceptedAnswerCached(control, SIDE_CHAT)
+      sideGate.resolve()
+      await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+        text: COMPLETION,
+        visible: true,
+        timeoutMs: taskTimeoutMs,
+      })
+      await assertAnswerSummary(control, SIDE_CHAT)
+      assert.equal(
+        JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body'))?.released,
+        false,
+        'The temporary-chat terminal history settled after its work-list refresh completed'
+      )
+      await releaseRequestHold(control, taskTimeoutMs)
+      await control.command('waitFor', `${SIDE_CHAT} [data-testid="request-user-input-summary"]`, {
+        text: ANSWER_TEXT,
+        visible: true,
+        timeoutMs: taskTimeoutMs,
+      })
+
+      await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      const failureGate = nextContinuationGate()
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await control.command('failNextLocalExecutorRequest', 'body', {
+        value: JSON.stringify({
+          method: 'runtime.tasks.send',
+          message: 'Desktop E2E intentional runtime transport failure',
+        }),
+      })
+      await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => String(snapshot.workbench?.error ?? '').includes('transport failure'),
+        'The rejected transport did not surface an error',
+        taskTimeoutMs
+      )
+      await waitForCount(
+        control,
+        `${WORKBENCH} [data-testid="request-user-input-summary"]`,
+        0,
+        'A failed answer transport was marked as accepted',
+        taskTimeoutMs
+      )
+      await control.command('waitFor', `${WORKBENCH} [data-testid="request-user-input-card"]`, {
+        text: '访问范围',
+        visible: true,
+        timeoutMs: taskTimeoutMs,
+      })
+      await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
+      failureGate.resolve()
+      await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
+        text: COMPLETION,
+        visible: true,
+        timeoutMs: taskTimeoutMs,
+      })
+      await assertAnswerSummary(control, WORKBENCH)
+
+      await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      const rejectionGate = deferred()
+      activeContinuationGate = rejectionGate
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({
+          method: 'runtime.tasks.send',
+          phase: 'before-dispatch',
+        }),
+      })
+      await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
+      await waitForRequestHold(control)
+      await control.command('click', `${WORKBENCH} [data-testid="pause-response-button"]`)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.pane?.status?.isBusy === false,
+        'The runtime turn did not stop before the stale answer was dispatched',
+        taskTimeoutMs
+      )
+      await releaseRequestHold(control, taskTimeoutMs)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          /(not pending|response channel is closed)/.test(String(snapshot.workbench?.error ?? '')),
+        'The executor rejection did not surface for the stale answer',
+        taskTimeoutMs
+      )
+      await waitForCount(
+        control,
+        `${WORKBENCH} [data-testid="request-user-input-summary"]`,
+        0,
+        'A rejected input answer was marked as accepted',
+        taskTimeoutMs
+      )
+      rejectionGate.resolve()
+
+      await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      const archiveGate = nextContinuationGate()
+      await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      const archiveTask = await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
+        'The archive elicitation was not attached to a runtime task',
+        taskTimeoutMs
+      )
+      const archiveAddress = archiveTask.workbench.currentRuntimeTask
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({
+          method: 'runtime.tasks.send',
+          phase: 'after-response',
+        }),
+      })
+      await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
+      await waitForRequestHold(control)
+      // Let the runtime finish its turn so archiving can cancel it; the answer
+      // acceptance itself stays held until after the archive has completed.
+      archiveGate.resolve()
+      const archiveRow = `[data-testid="runtime-local-task-row-${archiveAddress.taskId}"]`
+      const archiveButton = `[data-testid="runtime-local-task-archive-${archiveAddress.taskId}"]`
+      await control.command('waitFor', archiveRow, { visible: true, timeoutMs: taskTimeoutMs })
+      await control.command('hover', archiveRow)
+      await control.command('waitFor', archiveButton, { visible: true, timeoutMs: taskTimeoutMs })
+      await control.command('click', archiveButton)
+      await waitForCount(
+        control,
+        archiveRow,
+        0,
+        'The task was not archived while the input answer acceptance was pending',
+        taskTimeoutMs
+      )
+      await releaseRequestHold(control, taskTimeoutMs)
+      await new Promise(resolve => setTimeout(resolve, 250))
+      assert.deepEqual(
+        JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(archiveAddress),
+          })
+        ),
+        [],
+        'An accepted input answer was restored into its archived conversation'
+      )
+      await waitForCount(
+        control,
+        archiveRow,
+        0,
+        'An archived conversation was restored by its late input answer',
+        taskTimeoutMs
+      )
+    },
+  }
+}

@@ -84,6 +84,7 @@ export const DESKTOP_CHECKPOINTS = [
   'fork-provider-preservation',
   'codex-account-login',
   'permission-modes',
+  'runtime-input-answer-persistence',
   'computer-use',
   'task-status-sync',
   'task-board-association',

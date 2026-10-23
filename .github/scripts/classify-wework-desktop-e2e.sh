@@ -53,6 +53,7 @@ core_segments=(
   fork-provider-preservation
   codex-account-login
   permission-modes
+  runtime-input-answer-persistence
   workbench-mode
   computer-use
   task-status-sync
@@ -212,7 +213,7 @@ core_shards=(
   harness-app-development,harness-app-lifecycle,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
-  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,runtime-input-answer-persistence,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
@@ -1087,10 +1088,12 @@ classify_wework_path() {
       ;;
 
     # Right-workspace temporary chats have an independently bootstrapped
-    # ephemeral-thread scenario.
+    # ephemeral-thread scenario. Accepted runtime input answers are also shared
+    # between the main pane and temporary chats.
     wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
+      select_target "core:runtime-input-answer-persistence"
       return
       ;;
 
@@ -1154,9 +1157,15 @@ classify_wework_path() {
     wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
       select_target "core:core-task-flow"
       select_target "core:permission-modes"
+      select_target "core:runtime-input-answer-persistence"
       select_target "core:project-ai-settings"
       select_target "core:claude-runtime"
       select_cloud_worktree_checkpoints
+      return
+      ;;
+
+    wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs)
+      select_target "core:runtime-input-answer-persistence"
       return
       ;;
 
