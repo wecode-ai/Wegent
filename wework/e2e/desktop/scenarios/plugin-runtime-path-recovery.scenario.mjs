@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { lstat, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { accountCommandEvents, accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
 import {
   verifyPluginEnabledState,
@@ -30,12 +30,11 @@ import {
 } from '../modules/plugin-runtime-path-fixture.mjs'
 import {
   assistantMessage,
-  functionCall,
   readRequestBody,
+  requestAdvertisesProgrammaticExec,
+  requestAdvertisesShellTool,
   responseCompleted,
   responseCreated,
-  selectShellToolCommand,
-  selectTool,
 } from '../modules/response-protocol.mjs'
 import {
   closeComposerPluginPicker,
@@ -502,27 +501,26 @@ export async function createDesktopScenario({
       const result = activeCall ? accountCommandResult(body.input, activeCall.id) : null
       let events
       if (result?.sessionId) {
-        const tool = selectTool(body, 'write_stdin', {
-          session_id: result.sessionId,
-          chars: '',
-          yield_time_ms: 1000,
+        events = accountCommandEvents(body, result.pollId, {
+          sessionId: result.sessionId,
         })
-        events = functionCall(result.pollId, tool.name, tool.arguments)
       } else if (result) {
         activeCall.output = result.output
         assert.ok(result.output.includes(activeCall.expected), 'Real plugin command failed')
         events = [assistantMessage(`${activeCall.id} completed`)]
       } else if (
         activeCall &&
-        body.tools?.some(tool => ['exec_command', 'shell_command'].includes(tool.name)) &&
+        (requestAdvertisesShellTool(body) || requestAdvertisesProgrammaticExec(body)) &&
         JSON.stringify(body.input ?? '').includes(activeCall.prompt)
       ) {
         assert.ok(
           requestContainsSkillLocator(body, activeCall.skillPath, activeCall.skillName),
           'Real Codex did not discover the selected plugin skill from the recovered runtime'
         )
-        const tool = selectShellToolCommand(body, activeCall.command, workspacePath)
-        events = functionCall(activeCall.id, tool.name, tool.arguments)
+        events = accountCommandEvents(body, activeCall.id, {
+          command: activeCall.command,
+          workspacePath,
+        })
       } else {
         // Temporary diagnostics: record why a request missed the fixture branches.
         const diagnostic = {

@@ -1,6 +1,80 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { accountCommandResult } from '../e2e/desktop/modules/account-auth-command.mjs'
+import {
+  accountCommandEvents,
+  accountCommandResult,
+} from '../e2e/desktop/modules/account-auth-command.mjs'
+
+test('programmatic shell calls preserve arguments and poll yielded commands', async () => {
+  const request = {
+    input: [
+      {
+        type: 'additional_tools',
+        role: 'developer',
+        tools: [
+          { type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }] },
+        ],
+      },
+    ],
+  }
+  const command = "sh '/a path/plugin.sh'"
+  const [event] = accountCommandEvents(request, 'business', {
+    command,
+    workspacePath: '/workspace',
+  })
+  assert.equal(event.item.type, 'custom_tool_call')
+  assert.equal(event.item.namespace, 'functions')
+  assert.equal(event.item.call_id, 'business')
+  const captured = []
+  const run = new Function('tools', 'text', `return (async () => { ${event.item.input} })()`)
+  await run(
+    {
+      exec_command: async args => {
+        assert.deepEqual(args, { cmd: command, workdir: '/workspace', yield_time_ms: 1000 })
+        return 'Process running with session ID 123'
+      },
+    },
+    value => captured.push(value)
+  )
+  const pending = accountCommandResult(
+    [{ type: 'custom_tool_call_output', call_id: 'business', output: captured[0] }],
+    'business'
+  )
+  const [poll] = accountCommandEvents(request, pending.pollId, { sessionId: pending.sessionId })
+  const pollRun = new Function('tools', 'text', `return (async () => { ${poll.item.input} })()`)
+  await pollRun(
+    {
+      write_stdin: async args => {
+        assert.equal(args.session_id, 123)
+        return 'PLUGIN_RECOVERY_OK'
+      },
+    },
+    value => captured.push(value)
+  )
+  assert.deepEqual(
+    accountCommandResult(
+      [{ type: 'custom_tool_call_output', call_id: pending.pollId, output: captured[1] }],
+      'business'
+    ),
+    { output: 'PLUGIN_RECOVERY_OK' }
+  )
+})
+
+test('native commands keep their protocol and unsupported requests fail', () => {
+  for (const name of ['exec_command', 'shell_command']) {
+    const events = accountCommandEvents({ tools: [{ name }] }, 'business', {
+      command: 'pwd',
+      workspacePath: '/workspace',
+    })
+    const item = events.find(event => event.type === 'response.output_item.done').item
+    assert.equal(item.name, name)
+    assert.equal(JSON.parse(item.arguments).workdir, '/workspace')
+  }
+  assert.throws(
+    () => accountCommandEvents({}, 'business', { command: 'pwd' }),
+    /supported shell tool/
+  )
+})
 
 const output = (call_id, value) => ({ type: 'function_call_output', call_id, output: value })
 
