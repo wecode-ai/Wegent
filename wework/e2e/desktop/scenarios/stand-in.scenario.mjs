@@ -111,6 +111,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         uiTimeoutMs
       )
       await captureScreenshot(control, 'stand-in-01-project-entry.png')
+      await control.command(
+        'waitFor',
+        `${CONTENT} [data-testid="stand-in-open"] svg[data-state="disabled"]`
+      )
       assert.equal(
         await control.command(
           'getElementCount',
