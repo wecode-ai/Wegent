@@ -2147,17 +2147,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'model_protocol_matrix') {
-      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
-      return
-    }
-
-    if (this.scenario === 'provider_switch_retry') {
-      this.handleProviderSwitchRetryResponse(response, protocol, body, modelRequest)
-      return
-    }
-
-    if (this.scenario === 'vision_sidecar') {
+    if (this.scenario === 'vision_sidecar' || isReplyPredictionVisionRequest(body)) {
       const serialized = JSON.stringify(body)
       const modelCase = [LOCAL_VISION_SIDECAR_CASE, CLOUD_VISION_SIDECAR_CASE].find(
         candidate => body.model === candidate.sidecarModelId || body.model === candidate.mainModelId
@@ -2214,6 +2204,16 @@ class DesktopE2EServer {
         ])
         return
       }
+    }
+
+    if (this.scenario === 'model_protocol_matrix') {
+      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      return
+    }
+
+    if (this.scenario === 'provider_switch_retry') {
+      this.handleProviderSwitchRetryResponse(response, protocol, body, modelRequest)
+      return
     }
 
     if (this.scenario === 'multimodal_vision') {

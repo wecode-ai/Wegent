@@ -348,6 +348,7 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
 
 export function WeworkSharedProject({
   api,
+  projectCatalogApi,
   detailServices,
   devices,
   focusedCommentId,
@@ -370,6 +371,7 @@ export function WeworkSharedProject({
   workspace,
 }: {
   api: SharedWorkspaceApi
+  projectCatalogApi?: SharedWorkspaceApi['projects']
   detailServices?: ProjectSpaceDetailServices
   devices?: DeviceInfo[]
   focusedCommentId?: string | null
@@ -482,6 +484,7 @@ export function WeworkSharedProject({
   const standInWorkspaceApi = useMemo(
     () => ({
       ...scopedApi,
+      projects: projectCatalogApi ?? api.projects,
       standIn:
         services.standInApi && services.getLocalRuntimeSidebarIdentity
           ? bindProjectStandInApi(
@@ -494,6 +497,8 @@ export function WeworkSharedProject({
     }),
     [
       scopedApi,
+      api.projects,
+      projectCatalogApi,
       services.standInApi,
       services.getLocalRuntimeSidebarIdentity,
       userId,
@@ -1825,6 +1830,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           return (
             <WeworkSharedProject
               api={projectApi}
+              projectCatalogApi={platformApi?.projects}
               detailServices={
                 props.services.projectSpaceDetailServices?.[
                   project.project_store === 'local' ? 'local' : 'cloud'

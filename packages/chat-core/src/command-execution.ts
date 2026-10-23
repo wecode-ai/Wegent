@@ -35,22 +35,3 @@ export function mergeCommandExecutionPayload(previous: unknown, update: unknown)
     return update
   return { ...previous, ...update }
 }
-
-export function preserveCommandExecutionOutput<T extends WorkbenchProcessingBlock>(
-  local: WorkbenchProcessingBlock,
-  snapshot: T
-): T {
-  if (!commandExecutionPayload(local) || !commandExecutionPayload(snapshot)) return snapshot
-  if (local.type !== 'tool' || snapshot.type !== 'tool' || typeof local.toolOutput !== 'string')
-    return snapshot
-  const incoming = snapshot.toolOutput
-  if (
-    incoming === undefined ||
-    incoming === null ||
-    (commandExecutionPayload(snapshot)?.status === 'inProgress' &&
-      typeof incoming === 'string' &&
-      local.toolOutput.startsWith(incoming))
-  )
-    return { ...snapshot, toolOutput: local.toolOutput }
-  return snapshot
-}
