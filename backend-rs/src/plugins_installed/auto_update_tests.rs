@@ -199,14 +199,11 @@ fn marketplace_name_matches_source_mapping() {
 
 #[test]
 fn kind_name_matches_source_digest() {
-    // sha256("enterprise:weibo-miniapp-h5-develop-agent")[:10].
-    let digest = Sha256::digest(b"enterprise:weibo-miniapp-h5-develop-agent");
+    // sha256("enterprise:example-agent")[:10].
+    let digest = Sha256::digest(b"enterprise:example-agent");
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    let expected = format!("weibo-miniapp-h5-develop-agent-{}", &hex[..10]);
-    assert_eq!(
-        kind_name("enterprise", "weibo-miniapp-h5-develop-agent"),
-        expected
-    );
+    let expected = format!("example-agent-{}", &hex[..10]);
+    assert_eq!(kind_name("enterprise", "example-agent"), expected);
 }
 
 #[test]

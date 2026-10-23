@@ -5007,7 +5007,10 @@ export function PluginsWorkspace({
     const baseDetailPlugin = installedDetail
       ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
-    const detailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    // Detail reads enrich presentation; the inventory owns installation identity.
+    const detailPlugin = selectedMarketplacePluginDetail
+      ? withMarketplacePluginDetail(baseDetailPlugin, selectedMarketplacePluginDetail.raw)
+      : baseDetailPlugin
     const detailedMarketplacePlugin = withMarketplaceDetailComponents(
       selectedMarketplacePlugin,
       detailPlugin

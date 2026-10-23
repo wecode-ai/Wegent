@@ -218,6 +218,10 @@ Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
+The newly merged `stand-in-project-enable` checkpoint has no historical sample.
+It shares preparation with the stand-in configuration flows in Core shard 3,
+which now contains 15 tasks; other ordinary Core shards contain 14. The estimates
+above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
 - `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.

@@ -11,6 +11,7 @@ import {
   newStandInRole,
   standInRoleName,
   roleIncludesProject,
+  disconnectStandInProject,
   type PersonalStandInSettings,
   type StandInRole,
 } from '@/api/personalStandIn'
@@ -84,6 +85,9 @@ export function StandInSettingsPage({
     store: initialProject.project_store === 'local' ? ('local' as const) : ('cloud' as const),
   }
   const connectedRole = projectRef && draft?.roles.find(row => roleIncludesProject(row, projectRef))
+  const projectEnabled = Boolean(
+    projectRef && draft?.roles.some(row => row.enabled && roleIncludesProject(row, projectRef))
+  )
   const firstProjectRole =
     projectRef &&
     draft?.roles.find(
@@ -178,7 +182,7 @@ export function StandInSettingsPage({
     else onCancel?.()
   }
   useImperativeHandle(ref, () => ({ requestClose: closeSettings }))
-  const save = async () => {
+  const save = async (disconnectProject = false) => {
     if (!draft || !role) return
     if (view === 'create' && !role.name.trim()) {
       setRoleNameError(true)
@@ -192,31 +196,34 @@ export function StandInSettingsPage({
     }
     if (view === 'project' && !projectRoleId) return
     const value =
-      projectRef && (view === 'project' || view === 'create' || view === 'main')
-        ? {
-            ...draft,
-            roles: draft.roles.map(row =>
-              row.id !== role.id
-                ? row
-                : {
-                    ...row,
-                    collaboration: {
-                      ...row.collaboration,
-                      enabled: true,
-                      allProjects: row.collaboration.enabled && row.collaboration.allProjects,
-                      projects: row.collaboration.projects.some(
-                        item => item.id === projectRef.id && item.store === projectRef.store
-                      )
-                        ? row.collaboration.projects
-                        : [...row.collaboration.projects, projectRef],
-                      excludedProjects: row.collaboration.excludedProjects.filter(
-                        item => item.id !== projectRef.id || item.store !== projectRef.store
-                      ),
-                    },
-                  }
-            ),
-          }
-        : draft
+      disconnectProject && projectRef
+        ? { ...draft, roles: draft.roles.map(row => disconnectStandInProject(row, projectRef)) }
+        : projectRef && (view === 'project' || view === 'create' || view === 'main')
+          ? {
+              ...draft,
+              roles: draft.roles.map(row =>
+                row.id !== role.id
+                  ? row
+                  : {
+                      ...row,
+                      enabled: view === 'project' ? true : row.enabled,
+                      collaboration: {
+                        ...row.collaboration,
+                        enabled: true,
+                        allProjects: row.collaboration.enabled && row.collaboration.allProjects,
+                        projects: row.collaboration.projects.some(
+                          item => item.id === projectRef.id && item.store === projectRef.store
+                        )
+                          ? row.collaboration.projects
+                          : [...row.collaboration.projects, projectRef],
+                        excludedProjects: row.collaboration.excludedProjects.filter(
+                          item => item.id !== projectRef.id || item.store !== projectRef.store
+                        ),
+                      },
+                    }
+              ),
+            }
+          : draft
     const result = await state.save(value)
     if (!result) return
     setHistory([])
@@ -244,7 +251,7 @@ export function StandInSettingsPage({
         ? row
         : {
             ...row,
-            name: standInRoleName(row, index, projects, t('standIn.personal.default_role')),
+            name: standInRoleName(row, index, t('standIn.personal.default_role')),
           }
     )
     setHistory(current => [...current, { view, draft }])
@@ -493,7 +500,7 @@ export function StandInSettingsPage({
                   >
                     {draft.roles.map((row, index) => (
                       <option key={row.id} value={row.id}>
-                        {standInRoleName(row, index, projects, t('standIn.personal.default_role'))}
+                        {standInRoleName(row, index, t('standIn.personal.default_role'))}
                       </option>
                     ))}
                   </select>
@@ -502,7 +509,6 @@ export function StandInSettingsPage({
               {initialProject && (view === 'project' || view === 'create') && (
                 <StandInProjectSetup
                   project={initialProject}
-                  projects={projects}
                   roles={draft.roles.filter(row => view !== 'create' || row.id !== role.id)}
                   projectRoleId={projectRoleId}
                   role={role}
@@ -719,12 +725,7 @@ export function StandInSettingsPage({
                 />
               )}
               {view === 'scheduling' && (
-                <StandInRoleScheduling
-                  projects={projects}
-                  settings={draft}
-                  onChange={setDraft}
-                  disabled={saving}
-                />
+                <StandInRoleScheduling settings={draft} onChange={setDraft} disabled={saving} />
               )}
               {view === 'advanced' && (
                 <StandInComposer
@@ -837,7 +838,7 @@ export function StandInSettingsPage({
                 </div>
               )}
             </div>
-            <footer className="flex items-center gap-3 border-t border-border px-5 py-4">
+            <footer className="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
               <span className="mr-auto text-xs text-text-muted">
                 {view === 'scheduling' ? (
                   t('standIn.personal.shared_scheduling')
@@ -864,14 +865,16 @@ export function StandInSettingsPage({
                 type="button"
                 data-testid="stand-in-save"
                 disabled={saving || (view === 'project' && !projectRoleId)}
-                onClick={() => void save()}
+                onClick={() => void save(view === 'project' && projectEnabled)}
                 className="min-h-9 rounded-md bg-text-primary px-4 font-medium text-background disabled:opacity-40"
               >
                 {t(
                   saving
                     ? 'standIn.saving'
                     : view === 'project'
-                      ? 'standIn.personal.use_this_stand_in'
+                      ? projectEnabled
+                        ? 'standIn.personal.disable_project'
+                        : 'standIn.personal.enable_and_use'
                       : view === 'create' && !initialProject
                         ? 'standIn.personal.create_role'
                         : view === 'connections'

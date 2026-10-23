@@ -31,7 +31,9 @@ impl RuntimeWorkRpcHandler {
     }
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let personal = store.all_personal_stand_ins().map_err(settings_error)?;
+        let personal = store
+            .all_personal_stand_ins(&self.device_id)
+            .map_err(settings_error)?;
         let local = store.list_projects().map_err(settings_error)?;
         let cloud = if personal.iter().any(|settings| {
             settings["roles"].as_array().is_some_and(|roles| {

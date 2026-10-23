@@ -110,7 +110,7 @@ const platformMessages = {
     projectActions: "项目操作",
     allSpaces: "所有空间",
     home: "新建 Issue",
-    standIn: "我的替身",
+    standIn: "我的分身",
     newConversation: "新建对话",
     teams: "协作小组",
     devices: "设备",
