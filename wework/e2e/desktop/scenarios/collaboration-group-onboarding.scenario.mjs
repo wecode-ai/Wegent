@@ -132,32 +132,55 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         initialDialog.text.includes('我'),
         'Project creation did not include the current user'
       )
-      await control.command(
-        'waitFor',
-        inProjectCreateDialog('.collaboration-project-create-collaborator-token'),
-        {
-          text: '当前设备智能体',
-          timeoutMs: uiTimeoutMs,
-        }
+      assert.equal(
+        initialDialog.text.includes('当前设备智能体'),
+        false,
+        'Project creation automatically selected the current-device Agent'
       )
 
+      const emptyProjectName = PROJECT_NAME + '-无智能体'
+      await control.command(
+        'fill',
+        inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
+        { value: emptyProjectName }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        inProjectCreateDialog('[data-testid="collaboration-project-create-confirm"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+        text: emptyProjectName,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-project-settings-agents"]')
+      )
+      await control.command('waitFor', scoped('[data-testid="project-agent-list-empty"]'))
+      assert.equal(
+        Number(
+          await control.command('getElementCount', scoped('[data-testid^="project-agent-row-"]'))
+        ),
+        0,
+        'A project created without selecting Agents still received an Agent'
+      )
+
+      // Reopen creation to verify that manually adding an Agent remains available.
+      await control.command('click', localWorkspaceTree + ' .collaboration-workspace-identity')
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-workspace-project-create"]')
+      )
+      await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
+      await control.command('waitFor', dialog, { timeoutMs: uiTimeoutMs })
       await control.command(
         'fill',
         inProjectCreateDialog('[data-testid="collaboration-project-name-input"]'),
         {
           value: PROJECT_NAME,
         }
-      )
-      await control.command('click', inProjectCreateDialog('[aria-label="取消 当前设备智能体"]'))
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            inProjectCreateDialog('[aria-label="取消 当前设备智能体"]')
-          )
-        ),
-        0,
-        'The default local Agent could not be removed from the new project'
       )
       await control.command(
         'click',

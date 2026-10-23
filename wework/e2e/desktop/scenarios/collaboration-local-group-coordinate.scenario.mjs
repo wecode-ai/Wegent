@@ -117,6 +117,20 @@ async function addAgent(control, name, prompt, timeoutMs) {
 }
 
 async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs) {
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+    timeoutMs,
+  })
+  const defaultAgentOption =
+    '[data-testid="project-agent-wegent-team"] label:has(input[aria-label="当前设备智能体"])'
+  await control.command('waitFor', defaultAgentOption, { timeoutMs })
+  await control.command('click', defaultAgentOption)
+  await control.command('clickWhenEnabled', '[data-testid="project-agent-wegent-create"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="project-agent-wegent-create"]', {
+    visible: false,
+    timeoutMs,
+  })
   const rowTestId = await waitForTestIdByText(
     control,
     scoped('[data-testid="project-agent-list"]'),
