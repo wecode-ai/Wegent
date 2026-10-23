@@ -117,6 +117,7 @@ export type WegentStorePluginSummary = {
   logo?: string | null
   category?: string | null
   pluginPath: string
+  runtimeRecoveryError?: string | null
 }
 
 export type WegentStoreListResult = {

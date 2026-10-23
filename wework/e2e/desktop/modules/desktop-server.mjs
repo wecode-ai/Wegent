@@ -6174,4 +6174,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, inputUserMessageTexts }
+export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }

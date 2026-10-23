@@ -83,22 +83,35 @@ export async function inventory(control) {
   return JSON.parse(await control.command('getComposerPluginInventoryDiagnostics', 'body'))
 }
 
-export async function assertInventory(control, slug, present) {
-  await until(
-    () => inventory(control),
-    state =>
-      state.sharedInventory.installedPlugins.some(item => item.pluginKey === slug) === present &&
-      state.composerApps.some(item => item.pluginKey === slug) === present,
-    `Shared inventory and composer disagree about ${slug}: expected present=${present}`
-  )
+export async function assertInventory(control, slug, present, timeoutMs = 10_000) {
+  let lastState = null
+  try {
+    await until(
+      async () => {
+        lastState = await inventory(control)
+        return lastState
+      },
+      state =>
+        state.sharedInventory.installedPlugins.some(item => item.pluginKey === slug) === present &&
+        state.composerApps.some(item => item.pluginKey === slug) === present,
+      `Shared inventory and composer disagree about ${slug}: expected present=${present}`,
+      timeoutMs
+    )
+  } catch (error) {
+    throw new Error(
+      `${error.message}; sharedInventory=${JSON.stringify(lastState?.sharedInventory ?? null)} ` +
+        `composerApps=${JSON.stringify(lastState?.composerApps ?? null)} ` +
+        `installedPlugins=${JSON.stringify(lastState?.installedPlugins ?? null)}`
+    )
+  }
 }
 
-export async function assertSurfaces(control, fixture, present) {
+export async function assertSurfaces(control, fixture, present, timeoutMs = 10_000) {
   assert.ok(
     Number.isSafeInteger(fixture.installedId) && fixture.installedId > 0,
     'Fixture installedId must be a positive safe integer'
   )
-  await assertInventory(control, fixture.slug, present)
+  await assertInventory(control, fixture.slug, present, timeoutMs)
   await control.command('click', testId('plugins-manage-button'))
   await control.command(
     'waitFor',
