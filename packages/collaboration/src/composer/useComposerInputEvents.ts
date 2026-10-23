@@ -10,6 +10,7 @@ import {
   type ComposerFollowUpBehavior,
   type ComposerSubmitOptions,
 } from "./composerInputTypes";
+import { recordComposerDiagnostic } from "./composerDiagnostics";
 import { textMetrics } from "./composerInputDiagnostics";
 
 export interface ComposerAutocompleteEvents {
@@ -129,6 +130,14 @@ export function useComposerInputEvents({
       return true;
     }
     if (event.key === "Enter") {
+      recordComposerDiagnostic("submit-key", {
+        canSend,
+        sendKey,
+        stateIsComposing: isComposing,
+        eventIsComposing: event.isComposing,
+        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+        valueLength: snapshot.value.length,
+      });
       debug?.("keydown-enter", {
         shiftKey: event.shiftKey,
         canSend,

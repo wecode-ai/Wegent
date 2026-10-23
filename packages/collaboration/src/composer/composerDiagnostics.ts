@@ -7,6 +7,14 @@ const SAFE_DETAIL_KEYS = new Set([
   "altKey",
   "code",
   "composerId",
+  "canSend",
+  "disabled",
+  "hasContent",
+  "isModelSelectionReady",
+  "sendKey",
+  "stateIsComposing",
+  "submitDisabled",
+  "suppressEnterUntilKeyUp",
   "ctrlKey",
   "dataKind",
   "dataLength",
@@ -44,6 +52,8 @@ export type ComposerDiagnosticEventName =
   | "external-value-apply"
   | "input-frame"
   | "keyboard"
+  | "submit-key"
+  | "submit-decision"
   | "transaction"
   | "value-set";
 

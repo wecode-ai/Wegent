@@ -32,6 +32,25 @@ describe('composer diagnostics', () => {
     expect(JSON.stringify(snapshot)).not.toContain('sensitive draft')
   })
 
+  test('retains submit guards without storing the submitted draft', () => {
+    recordComposerDiagnostic('submit-decision', {
+      valueLength: 19,
+      hasContent: true,
+      isModelSelectionReady: false,
+      disabled: false,
+      submitDisabled: false,
+      value: 'private submission',
+    })
+    expect(getComposerDiagnosticsSnapshot()?.events[0]?.details).toEqual({
+      valueLength: 19,
+      hasContent: true,
+      isModelSelectionReady: false,
+      disabled: false,
+      submitDisabled: false,
+    })
+    expect(JSON.stringify(getComposerDiagnosticsSnapshot())).not.toContain('private submission')
+  })
+
   test('classifies input data without preserving its contents', () => {
     expect(classifyComposerInputData('zhongwen')).toEqual({
       dataLength: 8,
