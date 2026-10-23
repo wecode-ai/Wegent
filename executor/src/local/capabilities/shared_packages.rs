@@ -414,7 +414,26 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             .and_then(|plugins| plugins.get(&spec.key))
             .cloned();
         let mut installed_spec = spec.clone();
-        let store_path = if let Some(download) = &spec.download_path {
+        let root = self
+            .store
+            .shared_root()
+            .map_err(PluginSyncFailure::runtime_metadata)?;
+        // Reconnects resend signed URLs for unchanged packages. Reuse only an
+        // explicitly matching archive hash, and still verify the immutable files.
+        let unchanged_package = spec.checksum.as_deref().is_some_and(|checksum| {
+            previous
+                .as_ref()
+                .and_then(|entry| entry.get("checksum"))
+                .and_then(Value::as_str)
+                == Some(checksum)
+        }) && previous
+            .as_ref()
+            .and_then(|entry| entry.get("store_path"))
+            .and_then(Value::as_str)
+            .map(Path::new)
+            .is_some_and(|path| path.starts_with(root.join("shared/plugins")) && path.is_dir());
+        let download = spec.download_path.as_deref().filter(|_| !unchanged_package);
+        let store_path = if let Some(download) = download {
             let bytes = self
                 .package_provider
                 .download_plugin(download)
@@ -422,10 +441,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .map_err(|error| {
                     PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
                 })?;
-            let root = self
-                .store
-                .shared_root()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
             let package = publish_plugin_archive(&root, &bytes, spec.checksum.as_deref()).map_err(
                 |error| {
                     PluginSyncFailure::new(
@@ -464,10 +479,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     ),
                 ));
             }
-            let root = self
-                .store
-                .shared_root()
-                .map_err(PluginSyncFailure::runtime_metadata)?;
             let package = verify_published_package(&root, PackageKind::Plugin, checksum).map_err(
                 |error| {
                     PluginSyncFailure::runtime_metadata(CapabilitySyncError::invalid_payload(error))
@@ -498,14 +509,23 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
 }
 
 #[cfg(test)]
+#[path = "shared_packages_reconnect_tests.rs"]
+mod reconnect_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Cursor, Write};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     #[derive(Clone)]
-    struct Packages {
+    pub(super) struct Packages {
         skill: Vec<u8>,
-        plugin: Vec<u8>,
+        pub(super) plugin: Vec<u8>,
+        pub(super) plugin_downloads: Arc<AtomicUsize>,
     }
 
     impl CapabilityPackageProvider for Packages {
@@ -528,7 +548,10 @@ mod tests {
             _path: &'a str,
         ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>
         {
-            Box::pin(async { Ok(self.plugin.clone()) })
+            Box::pin(async {
+                self.plugin_downloads.fetch_add(1, Ordering::SeqCst);
+                Ok(self.plugin.clone())
+            })
         }
     }
 
@@ -543,8 +566,9 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
-    fn packages(version: &str) -> Packages {
+    pub(super) fn packages(version: &str) -> Packages {
         Packages {
+            plugin_downloads: Arc::new(AtomicUsize::new(0)),
             skill: archive(&[("SKILL.md", version)]),
             plugin: archive(&[
                 (
@@ -556,7 +580,7 @@ mod tests {
         }
     }
 
-    fn store(root: &Path) -> GlobalCapabilityStore {
+    pub(super) fn store(root: &Path) -> GlobalCapabilityStore {
         GlobalCapabilityStore::new(
             root.join("state/manifest-v2.json"),
             root.join("claude/skills"),
