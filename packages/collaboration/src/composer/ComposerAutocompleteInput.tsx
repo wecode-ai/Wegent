@@ -456,6 +456,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
         editorRef.current?.focus()
       },
       getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
+      captureInsertion: () => editorRef.current?.captureInsertion() ?? null,
       insertReference: reference => {
         const editor = editorRef.current
         if (!editor) return
