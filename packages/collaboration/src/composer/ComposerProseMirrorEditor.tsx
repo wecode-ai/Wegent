@@ -147,7 +147,9 @@ export const ComposerProseMirrorEditor = forwardRef<
   const composerDiagnosticIdRef = useRef<number | null>(null);
   const [hasContent, setHasContent] = useState(props.value !== "");
   const [composing, setComposing] = useState(false);
-  callbacksRef.current = resolvedProps;
+  useLayoutEffect(() => {
+    callbacksRef.current = resolvedProps;
+  });
 
   useLayoutEffect(() => {
     textareaRefRef.current = props.textareaRef;
