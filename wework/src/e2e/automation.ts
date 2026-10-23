@@ -30,6 +30,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
+import { recentResourceTimings } from './resource-timing-diagnostics'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -1115,6 +1116,9 @@ function logNativeTerminalKeyPhase(selector: string, key: string, phase: string)
     phase,
     visibility: document.visibilityState,
     focused: document.hasFocus(),
+    ...(phase === 'key-received'
+      ? { networkTimeOrigin: performance.timeOrigin, network: recentResourceTimings(12, true) }
+      : {}),
   })
 }
 
@@ -3052,22 +3056,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
-        network: performance.getEntriesByType('resource').map(entry => {
-          const timing = entry as PerformanceResourceTiming
-          return {
-            path: new URL(timing.name, location.href).pathname,
-            initiatorType: timing.initiatorType,
-            startTime: timing.startTime,
-            duration: timing.duration,
-            fetchStart: timing.fetchStart,
-            connectStart: timing.connectStart,
-            connectEnd: timing.connectEnd,
-            requestStart: timing.requestStart,
-            responseStart: timing.responseStart,
-            responseEnd: timing.responseEnd,
-            nextHopProtocol: timing.nextHopProtocol,
-          }
-        }),
+        networkTimeOrigin: performance.timeOrigin,
+        network: recentResourceTimings(),
       })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
@@ -3319,6 +3309,7 @@ async function postDesktopControlStarted(
 }
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+  performance.setResourceTimingBufferSize(5000)
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -3347,7 +3338,13 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      if (command.action.startsWith('native')) {
+        logNativeTerminalKeyPhase(command.selector, command.key ?? '', 'command-received')
+      }
       await postDesktopControlStarted(url, command, clientId)
+      if (command.action.startsWith('native')) {
+        logNativeTerminalKeyPhase(command.selector, command.key ?? '', 'command-start-acknowledged')
+      }
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
