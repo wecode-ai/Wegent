@@ -19,6 +19,7 @@ import type {
   ComposerFollowUpBehavior,
 } from './composerInputTypes'
 import { primaryComposerSubmitOptions } from './composerInputTypes'
+import { recordComposerDiagnostic } from './composerDiagnostics'
 import {
   browserComposerTransferServices,
   workspacePathReferenceText,
@@ -174,6 +175,12 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       !planModeActive &&
       !goalDraftActive
     const submitValue = (current: string, options?: ComposerSubmitOptions) => {
+      recordComposerDiagnostic('submit-policy', {
+        valueLength: current.length,
+        isModelSelectionReady,
+        disabled,
+        submitDisabled,
+      })
       const hasContent =
         allowEmptySubmit ||
         current.trim() ||
