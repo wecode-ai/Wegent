@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
@@ -50,12 +51,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   }
 
   async function countAssignments(issue) {
-    const log = await readFile(environment.backendLogPath, 'utf8')
+    const log = await readFile(
+      join(dirname(environment.backendLogPath), 'backend-rs-logs', 'api.log'),
+      'utf8'
+    )
     const count = log
       .split('\n')
-      .filter(line =>
-        line.includes(`request : GET /api/v1/loop-items/${issue.id}/assignments `)
-      ).length
+      .filter(line => line.includes(`[API] GET /api/v1/loop-items/${issue.id}/assignments `)).length
     assignmentCounts[issue.id] = count
     return count
   }

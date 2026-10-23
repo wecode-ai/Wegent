@@ -1200,3 +1200,12 @@ def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     )
 
     assert response.status_code == 401
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("llm_responses",)) as client:
+        yield client

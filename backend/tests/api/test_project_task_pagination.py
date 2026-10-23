@@ -27,6 +27,7 @@ from app.models.resource_member import ResourceMember
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services import project_service
+from tests.retained_python_handlers import component_client
 
 
 @pytest.fixture
@@ -43,8 +44,9 @@ def client(test_db: Session, test_user: User) -> Generator[TestClient, None, Non
     app.include_router(router, prefix="/api/projects")
     app.dependency_overrides[get_db] = lambda: test_db
     app.dependency_overrides[get_current_user] = lambda: test_user
-    with TestClient(app) as client:
-        yield client
+    with TestClient(app) as production:
+        with component_client(production, ("projects",)) as client:
+            yield client
 
 
 def _task(db: Session, project: Project, **overrides: object) -> TaskResource:

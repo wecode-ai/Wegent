@@ -29,10 +29,9 @@
 //! page carrying `"Authentication failed: {e}"` / `"Invalid login session."`.
 //!
 //! The source seeds default resources for a newly created user through
-//! `app.services.k_batch.apply_default_resources_sync`. That K8s-style batch
-//! service (`BatchService.apply_resources` over a YAML resource directory) has
-//! no Rust equivalent in this repository yet; it is a separate migration item
-//! and is not emulated here.
+//! `app.services.k_batch.apply_default_resources_sync`. After the user write
+//! commits, the shared resource initializer applies those defaults with the
+//! application-owned Task/Workspace storage adapter and best-effort errors.
 
 use brz_http_server::{Html, StatusCode};
 use brz_redis::{Redis, RedisKey2, SetExpiration, SetOptions};
@@ -42,9 +41,13 @@ use serde_json::{Map, Value, json};
 use crate::config::OidcConfig;
 use crate::http_compat::FastApiError;
 use crate::oidc_service::OidcError;
-use crate::sql_support::StatementArg;
 use crate::state::AppState;
+#[cfg(test)]
 use crate::user_reader::USER_ENTITY_BY_ID_QUERY;
+#[cfg(test)]
+use users::USER_ENTITY_BY_NAME_QUERY;
+
+mod users;
 
 /// `CLI_SESSION_KEY_PREFIX` (`app.api.endpoints.oidc`).
 const CLI_SESSION_KEY_PREFIX: &str = "cli_login_session:";
@@ -52,16 +55,6 @@ const CLI_SESSION_KEY_PREFIX: &str = "cli_login_session:";
 const CLI_SESSION_EXPIRE_SECONDS: u64 = 300;
 /// `EMPLOYEE_ID_PREFERENCE_KEY` (`app.api.endpoints.oidc`).
 const EMPLOYEE_ID_PREFERENCE_KEY: &str = "employee_id";
-
-/// The `db.scalar(select(User).where(User.user_name == user_name))` statement:
-/// the bare mapped columns with no `AS users_<column>` labels and no `LIMIT`,
-/// exactly as SQLAlchemy renders a `select(User)` scalar read. The recorded
-/// exchange for this route carries the same projection and predicate.
-const USER_ENTITY_BY_NAME_QUERY: &str = "SELECT users.id, users.user_name, users.password_hash, users.email, users.git_info, users.is_active, users.`role`, users.auth_source, users.preferences, users.created_at, users.updated_at FROM users WHERE users.user_name = ?";
-
-/// `security.get_password_hash`: a bcrypt hash of a fresh `uuid.uuid4()`
-/// string. The local user has no usable password (OIDC-only account).
-const INSERT_USER_QUERY: &str = "INSERT INTO users (user_name, password_hash, email, git_info, is_active, auth_source, preferences) VALUES (?, ?, ?, ?, 1, 'oidc', ?)";
 
 /// Source `_cli_callback_success_page`: the exact literal template.
 const SUCCESS_PAGE: &str = r#"
@@ -341,8 +334,15 @@ async fn complete_login(
         .to_string();
 
     let employee_id = clean_string(user_data.get("userid"));
-    let (user_id, resolved_name) =
-        resolve_user(&app.mysql, &user_name, &email, employee_id.as_deref()).await?;
+    let user = users::resolve_user(&app.mysql, &user_name, &email, employee_id.as_deref()).await?;
+    if user.created {
+        crate::new_user_resources::apply(app, app.seed_tasks.as_ref(), i64::from(user.id)).await;
+    }
+    if !user.is_active {
+        return Err("User not active".to_string());
+    }
+    let user_id = user.id;
+    let resolved_name = user.user_name;
 
     let access_token = crate::auth_login::create_access_token(&app.auth, &resolved_name, user_id)
         .map_err(|_| "Unable to create access token".to_string())?;
@@ -360,153 +360,6 @@ async fn userinfo_endpoint(app: &AppState) -> Option<String> {
         .get("userinfo_endpoint")
         .and_then(Value::as_str)
         .map(str::to_owned)
-}
-
-/// The `users` row projection the source's `select(User)` reads carry.
-#[derive(Debug, brz_mysql::FromMysqlRow)]
-struct CliUserRow {
-    id: i32,
-    user_name: String,
-    #[allow(dead_code, reason = "selected to match the source column list")]
-    password_hash: String,
-    email: Option<String>,
-    #[allow(dead_code, reason = "selected to match the source column list")]
-    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
-    is_active: i8,
-    #[allow(dead_code, reason = "selected to match the source column list")]
-    role: String,
-    auth_source: String,
-    preferences: String,
-    #[allow(dead_code, reason = "selected to match the source column list")]
-    created_at: chrono::NaiveDateTime,
-    #[allow(dead_code, reason = "selected to match the source column list")]
-    updated_at: chrono::NaiveDateTime,
-}
-
-/// `user = db.scalar(...)`; then the create branch (`db.commit`,
-/// `db.refresh`, default resources) or the update branch (`db.commit` when
-/// something changed, `db.refresh`), followed by the active-user check.
-async fn resolve_user(
-    mysql: &brz_mysql::MysqlService,
-    user_name: &str,
-    email: &str,
-    employee_id: Option<&str>,
-) -> Result<(i32, String), String> {
-    let existing: Option<CliUserRow> = mysql
-        .fetch_optional(USER_ENTITY_BY_NAME_QUERY, (user_name,))
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let user = match existing {
-        Some(user) => {
-            update_changed_columns(mysql, &user, email, employee_id).await?;
-            refresh_user(mysql, user.id).await?
-        }
-        None => create_user(mysql, user_name, email, employee_id).await?,
-    };
-    if user.is_active == 0 {
-        return Err("User not active".to_string());
-    }
-    Ok((user.id, user.user_name))
-}
-
-/// `db.refresh(user)`: the identity-map reload by primary key.
-async fn refresh_user(mysql: &brz_mysql::MysqlService, user_id: i32) -> Result<CliUserRow, String> {
-    mysql
-        .fetch_optional(USER_ENTITY_BY_ID_QUERY, (user_id,))
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "OIDC user row disappeared on refresh".to_string())
-}
-
-/// The existing-user branch. SQLAlchemy's unit of work emits one UPDATE
-/// carrying only the changed mapped columns, in model declaration order
-/// (`email`, `auth_source`, `preferences`); nothing changed emits no write,
-/// which is what the recorded exchange shows for this route.
-async fn update_changed_columns(
-    mysql: &brz_mysql::MysqlService,
-    user: &CliUserRow,
-    email: &str,
-    employee_id: Option<&str>,
-) -> Result<(), String> {
-    let mut assignments: Vec<(&'static str, StatementArg)> = Vec::new();
-    if user.email.as_deref() != Some(email) {
-        assignments.push(("email = ?", StatementArg::Str(email.to_string())));
-    }
-    if user.auth_source == "unknown" {
-        assignments.push(("auth_source = ?", StatementArg::Str("oidc".to_string())));
-    }
-    if let Some(preferences) = store_employee_id_preference(&user.preferences, employee_id) {
-        assignments.push(("preferences = ?", StatementArg::Str(preferences)));
-    }
-    if assignments.is_empty() {
-        return Ok(());
-    }
-    let set_clause = assignments
-        .iter()
-        .map(|(clause, _)| *clause)
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut arguments: Vec<StatementArg> = assignments
-        .into_iter()
-        .map(|(_, argument)| argument)
-        .collect();
-    arguments.push(StatementArg::Int(i64::from(user.id)));
-    mysql
-        .execute(
-            format!("UPDATE users SET {set_clause} WHERE users.id = ?"),
-            arguments,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-/// The new-user branch: `User(...)` with the source's field values, then the
-/// `db.refresh` reload by the inserted primary key.
-async fn create_user(
-    mysql: &brz_mysql::MysqlService,
-    user_name: &str,
-    email: &str,
-    employee_id: Option<&str>,
-) -> Result<CliUserRow, String> {
-    // `security.get_password_hash(str(uuid.uuid4()))` — bcrypt is CPU-heavy,
-    // so it runs on the blocking pool like the login path's verification.
-    let password_hash =
-        tokio::task::spawn_blocking(|| bcrypt::hash(random_uuid_v4(), bcrypt::DEFAULT_COST))
-            .await
-            .map_err(|error| error.to_string())?
-            .map_err(|error| error.to_string())?;
-
-    let mut preferences = Map::new();
-    if let Some(employee_id) = employee_id {
-        preferences.insert(
-            EMPLOYEE_ID_PREFERENCE_KEY.to_string(),
-            Value::String(employee_id.to_string()),
-        );
-    }
-    let preferences =
-        crate::internal_callback::py_json::python_dumps_utf8(&Value::Object(preferences));
-
-    let execution = mysql
-        .execute(
-            INSERT_USER_QUERY,
-            (
-                user_name,
-                password_hash.as_str(),
-                email,
-                "[]",
-                preferences.as_str(),
-            ),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "AUTO_INCREMENT id fits i32"
-    )]
-    let user_id = execution.last_insert_id as i32;
-    refresh_user(mysql, user_id).await
 }
 
 /// `_store_employee_id_preference`: `Some(serialized preferences)` when the

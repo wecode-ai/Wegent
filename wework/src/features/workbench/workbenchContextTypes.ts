@@ -526,4 +526,9 @@ export interface WorkbenchProviderProps {
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
+  /**
+   * Increments whenever a retained workspace tab is revealed again. Providers
+   * revalidate their per-tab runtime-work snapshot when it changes.
+   */
+  workspaceTabRevealRevision?: number
 }

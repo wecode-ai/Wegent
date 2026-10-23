@@ -12,7 +12,12 @@ function fixture() {
     catalog: vi.fn<StandInExecutorApi['catalog']>().mockResolvedValue({ models: [] }),
     run: vi.fn<StandInExecutorApi['run']>().mockResolvedValue({ deviceId: 'mac', taskId: 'task' }),
     list: vi.fn<StandInExecutorApi['list']>().mockResolvedValue([]),
-    get: vi.fn<StandInExecutorApi['get']>().mockResolvedValue(settings),
+    get: vi
+      .fn<StandInExecutorApi['get']>()
+      .mockImplementation(async (_project, _user, _store, deviceId) => ({
+        ...settings,
+        executionDeviceId: deviceId,
+      })),
     save: vi.fn<StandInExecutorApi['save']>().mockResolvedValue(settings),
   }
   const api = bindProjectStandInApi(transport, 7, 'cloud', async () => ({ deviceId: 'mac' }))
@@ -31,12 +36,18 @@ describe('device-local Stand-in settings', () => {
     const { api, transport } = fixture()
     const current = await api.get('project', 'cloud-device')
     expect(transport.get).toHaveBeenCalledWith('project', 7, 'cloud', 'cloud-device', 'default')
-    await api.save('project', { ...current, enabled: true })
-    expect(transport.save).toHaveBeenCalledExactlyOnceWith('project', 7, 'cloud', {
-      ...settings,
-      enabled: true,
-      executionDeviceId: 'cloud-device',
-    })
+    await api.save('project', { ...current, enabled: true }, 'cloud-device')
+    expect(transport.save).toHaveBeenCalledExactlyOnceWith(
+      'project',
+      7,
+      'cloud',
+      {
+        ...settings,
+        enabled: true,
+        executionDeviceId: 'cloud-device',
+      },
+      'cloud-device'
+    )
   })
 
   it('never contacts an offline old device when saving another device', async () => {
@@ -47,14 +58,15 @@ describe('device-local Stand-in settings', () => {
     expect(transport.save).toHaveBeenCalledOnce()
   })
 
-  it('keeps local projects on the current device', async () => {
+  it('lets the selected Executor validate local project access', async () => {
     const { transport } = fixture()
     const api = bindProjectStandInApi(transport, 7, 'local', async () => ({ deviceId: 'mac' }))
-    await expect(api.get('project', 'cloud-device')).rejects.toThrow('Local projects')
-    await expect(
-      api.save('project', { ...settings, executionDeviceId: 'cloud-device' })
-    ).rejects.toThrow('Local projects')
-    expect(transport.save).not.toHaveBeenCalled()
+    transport.get.mockRejectedValue(new Error('Project not found'))
+    transport.save.mockRejectedValue(new Error('Project not found'))
+    await expect(api.get('project', 'cloud-device')).rejects.toThrow('Project not found')
+    await expect(api.save('project', settings, 'cloud-device')).rejects.toThrow('Project not found')
+    expect(transport.get).toHaveBeenCalledWith('project', 7, 'local', 'cloud-device', 'default')
+    expect(transport.save).toHaveBeenCalledWith('project', 7, 'local', settings, 'cloud-device')
   })
 
   it('addresses RPCs to the selected Executor', async () => {
@@ -66,7 +78,7 @@ describe('device-local Stand-in settings', () => {
       { projectId: 'project', userId: 7, projectStore: 'cloud', standInId: 'default' },
       'cloud-device'
     )
-    await api.save('project', 7, 'cloud', { ...settings, executionDeviceId: 'cloud-device' })
+    await api.save('project', 7, 'cloud', settings, 'cloud-device')
     expect(request).toHaveBeenLastCalledWith(
       'runtime.stand_in.save',
       expect.objectContaining({ projectStore: 'cloud' }),
@@ -94,9 +106,43 @@ describe('device-local Stand-in settings', () => {
       'project',
       7,
       'cloud',
-      expect.objectContaining({ id: 'review', tags: ['review'] })
+      expect.objectContaining({ id: 'review', tags: ['review'] }),
+      'mac'
     )
   })
+})
+
+it('routes personal saves to the selected Executor independently of stored device fields', async () => {
+  const saved = {
+    userId: 7,
+    executionDeviceId: 'current-device',
+    version: 1,
+    autoSelect: false,
+    roles: [],
+  }
+  const request = vi.fn().mockResolvedValue(saved)
+  const api = createStandInExecutorApi(request)
+  const stale = { ...saved, executionDeviceId: 'old-device' }
+  await expect(api.personalSave(7, stale, 'current-device')).resolves.toBe(saved)
+  expect(request).toHaveBeenCalledExactlyOnceWith(
+    'runtime.stand_in.personal.save',
+    { userId: 7, settings: stale },
+    'current-device'
+  )
+})
+
+it('preserves Executor responses and uses explicit project save targets', async () => {
+  const { api, transport } = fixture()
+  transport.get.mockResolvedValue(settings)
+  expect(await api.get('project', 'selected-device')).toBe(settings)
+  await api.save('project', { ...settings, executionDeviceId: 'old-device' }, 'selected-device')
+  expect(transport.save).toHaveBeenCalledWith(
+    'project',
+    7,
+    'cloud',
+    { ...settings, executionDeviceId: 'old-device' },
+    'selected-device'
+  )
 })
 
 it('explicitly runs a saved disabled stand-in through its selected device', async () => {

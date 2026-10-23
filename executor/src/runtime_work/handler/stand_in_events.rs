@@ -15,7 +15,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let personal = store.all_personal_stand_ins().map_err(settings_error)?;
+        let personal = store
+            .all_personal_stand_ins(&self.device_id)
+            .map_err(settings_error)?;
         let configs: Vec<Value> = self
             .stand_in_project_configs(&personal, project, "cloud")
             .into_iter()

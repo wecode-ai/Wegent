@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
-import { newStandInRole } from '@/api/personalStandIn'
+import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -10,7 +10,7 @@ import { runtimeItem } from '@/features/notifications/standInNotifications.fixtu
 import '@/i18n'
 import { StandInOverviewPage } from './StandInOverviewPage'
 
-function fixture() {
+function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   const personalAgents = vi.fn(async () => [])
   const personalSave = vi.fn(async (_user, value) => value)
   const props = {
@@ -28,7 +28,7 @@ function fixture() {
           executionDeviceId: 'device',
           version: 0,
           autoSelect: false,
-          roles: [newStandInRole('device', 'default')],
+          roles,
         })),
         personalSave,
         personalAgents,
@@ -37,6 +37,35 @@ function fixture() {
   }
   return { props, personalAgents, personalSave }
 }
+
+it('lists existing stand-ins without execution history and keeps project names separate', async () => {
+  const role = newStandInRole('device', 'default')
+  role.collaboration = {
+    ...role.collaboration,
+    enabled: true,
+    allProjects: false,
+    projects: [{ id: '12', store: 'cloud' }],
+  }
+  const { props } = fixture([role])
+  props.projects[0].name = 'Downloads'
+  render(<StandInOverviewPage {...props} />)
+  const row = await screen.findByTestId('stand-in-overview-role-default')
+  expect(within(row).getByText('默认分身')).toBeInTheDocument()
+  expect(within(row).getByText('Downloads')).toBeInTheDocument()
+  expect(row).toHaveTextContent('已连接 1 个项目')
+  expect(row).toHaveTextContent('未开启')
+  expect(screen.getByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
+})
+
+it('opens the selected stand-in from the overview list', async () => {
+  const first = { ...newStandInRole('device', 'first'), name: 'Coding' }
+  const second = { ...newStandInRole('device', 'second'), name: 'Reviewer' }
+  const { props } = fixture([first, second])
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await user.click(await screen.findByTestId('stand-in-overview-role-second'))
+  expect(await screen.findByRole('combobox', { name: '当前分身' })).toHaveValue('second')
+})
 
 it('shows state and work history first, and opens settings only after an explicit action', async () => {
   const { props, personalAgents, personalSave } = fixture()

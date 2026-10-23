@@ -20,6 +20,7 @@ use serde_json::json;
 use crate::auth::{SessionUser, UserRow};
 use crate::board_snapshot;
 use crate::http_compat::FastApiError;
+use crate::loop_tasks::auth::FlexibleUser;
 use crate::state::AppState;
 
 mod response;
@@ -39,9 +40,13 @@ mod collaboration_groups;
 mod access;
 mod collaboration_access;
 mod environment_authorization;
+/// `cloud_project_service.list_members` and the collaboration-permission
+/// reads shared by the project projections.
+pub(crate) mod members;
 
 pub(crate) use access::{
-    LOOP_ITEMS_COLUMNS, entity_columns, project_access_point_statement, role_for_priority,
+    LOOP_ITEMS_COLUMNS, WORKSPACE_ID_COLUMN, entity_columns, project_access_point_statement,
+    role_for_priority,
 };
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
@@ -65,6 +70,33 @@ pub struct CloudMetadataInput {
     pub execution_environment: Option<OpaqueJson>,
     pub tags: Option<OpaqueJson>,
     pub member_capabilities: Option<OpaqueJson>,
+}
+
+impl CloudMetadataInput {
+    /// `CloudProject.membership_mode`: `inherit` unless the metadata stores
+    /// another explicit mode.
+    pub(crate) fn membership_mode(&self) -> &str {
+        self.membership_mode.as_deref().unwrap_or("inherit")
+    }
+
+    /// `CloudProjectService._member_capabilities(project)`: the metadata
+    /// `member_capabilities` object reduced to trimmed, non-empty string
+    /// descriptions keyed by member id.
+    pub(crate) fn member_capabilities(&self) -> std::collections::HashMap<String, String> {
+        let Some(values) = self.member_capabilities.as_ref().map(OpaqueJson::to_value) else {
+            return std::collections::HashMap::new();
+        };
+        let Some(values) = values.as_object() else {
+            return std::collections::HashMap::new();
+        };
+        values
+            .iter()
+            .filter_map(|(member_id, description)| {
+                let description = description.as_str()?.trim();
+                (!description.is_empty()).then(|| (member_id.clone(), description.to_string()))
+            })
+            .collect()
+    }
 }
 
 /// `loop_items` project-row columns consumed by the list projection.
@@ -208,25 +240,49 @@ async fn all_user_grant_roles<M: Mysql>(
 }
 
 /// `require_cloud_project_role`: the point form of `project_access_query`,
-/// reduced to one row. Returns the accessible active project row and the
-/// aggregated role priority, or `None` when no permission source grants the
-/// caller access (the source raises `404 "Cloud project not found"`).
-async fn project_access<M: Mysql>(
+/// reduced to one row. The accessible active project and the aggregated role
+/// priority come from the single statement; `None` means no permission source
+/// granted the caller access (the source raises `404 "Cloud project not
+/// found"`).
+pub(crate) struct ProjectAccessRow {
+    pub project: ProjectListRow,
+    pub priority: i64,
+}
+
+/// `require_cloud_project_role` including the `project_sources` reads that the
+/// source performs on every access check even when the caller ignores them.
+pub(crate) async fn project_access_details<M: Mysql>(
     mysql: &M,
     project_id: i64,
     user_id: i32,
-) -> Result<Option<(ProjectListRow, i64)>, brz_mysql::MysqlError> {
+) -> Result<Option<ProjectAccessRow>, brz_mysql::MysqlError> {
     // The source inlines the user and project ids into the statement, so it
     // carries no bind parameters.
     let statement = project_access_point_statement(user_id, project_id);
     let row: Option<MysqlRow> = mysql.fetch_optional(statement, ()).await?;
-    row.map(|row| {
-        // The joined aggregate supplies the caller's role priority; read it
-        // before the typed project projection consumes the row.
-        let priority: i64 = row.get_required("anon_1_priority")?;
-        ProjectListRow::from_mysql_row(row).map(|project| (project, priority))
-    })
-    .transpose()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    // The joined aggregate supplies the caller's role priority and the leading
+    // scalar subquery the parent workspace id; read both before the typed
+    // project projection consumes the row.
+    let priority: i64 = row.get_required("anon_3_priority")?;
+    let workspace_id: Option<i64> = row.get("anon_1")?;
+    let project = ProjectListRow::from_mysql_row(row)?;
+    // `check` resolves permission provenance after the role query.
+    members::record_project_sources(mysql, project_id, user_id, workspace_id, user_id).await?;
+    Ok(Some(ProjectAccessRow { project, priority }))
+}
+
+/// [`project_access_details`] reduced to the project row and role priority.
+pub(crate) async fn project_access<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    user_id: i32,
+) -> Result<Option<(ProjectListRow, i64)>, brz_mysql::MysqlError> {
+    Ok(project_access_details(mysql, project_id, user_id)
+        .await?
+        .map(|access| (access.project, access.priority)))
 }
 
 /// `workspace_id` query parameter (`Query(default=None)`): the optional parent
@@ -312,7 +368,7 @@ async fn get_cloud_project(
 
 /// `project_id: int` path parameter: FastAPI parses it as an integer and
 /// raises a 422 `int_parsing` validation error for any other text.
-fn parse_project_id(project_id: &str) -> Result<i64, FastApiError> {
+pub(crate) fn parse_project_id(project_id: &str) -> Result<i64, FastApiError> {
     project_id.parse::<i64>().map_err(|_| {
         FastApiError::validation(json!([{
             "type": "int_parsing",
@@ -355,40 +411,54 @@ pub(crate) fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
 }
 
+/// Query parameters for `GET /api/v1/cloud-projects/{project_id}/chat-agents`.
+///
+/// The source declares `include_archived: bool = False`; archived rows are
+/// only returned to a caller with at least `Maintainer` on the project.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ChatAgentListQuery {
+    #[serde(default)]
+    pub include_archived: bool,
+}
+
 /// GET /api/v1/cloud-projects/{project_id}/chat-agents: the chat-agents free
 /// function, injecting the process-lifetime application state.
 #[brz_http_server::get("/api/v1/cloud-projects/:project_id/chat-agents")]
 async fn list_project_chat_agents(
     #[inject(state)] state: &AppState,
     project_id: &str,
-    #[auth] current_user: SessionUser,
+    query: brz_http_server::Query<ChatAgentListQuery>,
+    #[auth] current_user: FlexibleUser,
 ) -> Result<Vec<board_snapshot::handler::AgentView>, FastApiError> {
-    project_chat_agents(state, project_id, current_user.0).await
+    project_chat_agents(state, project_id, current_user.0, query.include_archived).await
 }
 
 /// Handler body for `GET /api/v1/cloud-projects/{project_id}/chat-agents`.
 ///
 /// Mirrors `app.api.endpoints.cloud_projects.list_project_chat_agents` ->
-/// `project_chat_service.list_agents(db, user_id, project_id)`. The source
-/// pipeline:
-/// 1. `get_current_user_jwt_apikey_tasktoken` — the same JWT decode and
-///    labeled `users` lookup as `get_current_user` (the recorded `users`
-///    exchange matches the standard twelve-column projection). The target's
-///    `get_current_user` reproduces that lookup.
+/// `project_chat_service.list_agents(db, user_id, project_id, include_archived)`.
+/// The source pipeline:
+/// 1. `get_current_user_jwt_apikey_tasktoken` — JWT, API-key, or task-token
+///    authentication plus the labeled `users` lookup (the recorded exchange
+///    matches the standard twelve-column projection).
 /// 2. `require_cloud_project_role(db, project_id, user_id, Viewer)` — the
 ///    set-based `project_access_query` point form resolves the active project
-///    row and the caller's effective role in one statement. No grant for the
-///    caller raises `404 "Cloud project not found"`, and a caller the union
-///    only reaches at `RestrictedAnalyst` priority fails the `Viewer`
-///    permission check with `403 {"detail": "Insufficient permission"}`.
-/// 3. `ProjectChatAgent` scan — active `loop_items` chat-agent rows
-///    (`resource_type='chat_agent'`, `status='active'`, unset `deleted_at`)
-///    ordered by `created_at ASC`, filtered by `_agent_visible_to_user`
-///    against the caller's role.
+///    row and the caller's effective role; the same call resolves permission
+///    sources and re-reads the `CloudProject` entity. No grant for the caller
+///    raises `404 "Cloud project not found"`, and a caller the union only
+///    reaches at `RestrictedAnalyst` priority fails the `Viewer` permission
+///    check with `403 {"detail": "Insufficient permission"}`.
+/// 3. With `include_archived`, a second `require_cloud_project_role` at
+///    `Maintainer`.
+/// 4. `ProjectChatAgent` scan — chat-agent rows
+///    (`resource_type='chat_agent'`, unset `deleted_at`) for the requested
+///    statuses ordered by `created_at ASC`, filtered by `project_agent_visible`
+///    against the caller; each row is projected by `agent_to_view`.
 async fn project_chat_agents(
     state: &AppState,
     project_id: &str,
     current_user: UserRow,
+    include_archived: bool,
 ) -> Result<Vec<board_snapshot::handler::AgentView>, FastApiError> {
     // The source route declares `project_id: int`; FastAPI rejects a
     // non-integer path segment with a 422 before the handler runs.
@@ -401,21 +471,10 @@ async fn project_chat_agents(
         })])
     })?;
 
-    // `list_agents` forwards `project_id=str(project_id)` to
-    // `require_cloud_project_role`, so the recorded `project_access_query`
-    // binds the string project id; `require_cloud_project_role` reproduces
-    // that statement's point form.
-    let repository = board_snapshot::repository::BoardSnapshotRepository::new(&state.mysql);
-    let access = repository
-        .require_cloud_project_role(number, current_user.id)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(|| {
-            FastApiError::detail(
-                brz_http_server::StatusCode::NOT_FOUND,
-                "Cloud project not found",
-            )
-        })?;
+    // `require_cloud_project_role(db, project_id, user_id, Viewer)`:
+    // `list_agents` forwards `project_id=str(project_id)`, so the recorded
+    // `project_access_query` binds the string project id.
+    let access = require_cloud_project_role(state, number, current_user.id).await?;
 
     // `has_permission(role, Viewer)`: RestrictedAnalyst (a signed-in-user-only
     // visitor) fails and the source raises
@@ -424,16 +483,26 @@ async fn project_chat_agents(
         return Err(FastApiError::forbidden("Insufficient permission"));
     }
 
-    // `project_chat_service.list_agents`: active chat-agent rows for the
-    // project, filtered by visibility against the caller.
+    // `if include_archived: require_cloud_project_role(..., Maintainer)`.
+    if include_archived {
+        let access = require_cloud_project_role(state, number, current_user.id).await?;
+        if !board_snapshot::repository::has_permission(&access.role, "Maintainer") {
+            return Err(FastApiError::forbidden("Insufficient permission"));
+        }
+    }
+
+    // `project_chat_service.list_agents`: chat-agent rows for the project,
+    // filtered by visibility against the caller.
+    let repository = board_snapshot::repository::BoardSnapshotRepository::new(&state.mysql);
     let agents = repository
-        .list_agents(project_id)
+        .list_agents(project_id, include_archived)
         .await
         .map_err(internal_error)?;
     let mut visible_agents: Vec<board_snapshot::handler::AgentView> = Vec::new();
-    for agent in agents.iter().filter(|agent| {
-        board_snapshot::handler::agent_visible_to_user(agent, current_user.id, &access.role)
-    }) {
+    for agent in agents
+        .iter()
+        .filter(|agent| board_snapshot::handler::agent_visible_to_user(agent, current_user.id))
+    {
         visible_agents.push(
             board_snapshot::handler::agent_to_view(
                 state,
@@ -446,6 +515,30 @@ async fn project_chat_agents(
     }
 
     Ok(visible_agents)
+}
+
+/// `require_cloud_project_role(db, project_id, user_id, required_role)`:
+/// the access statement, the permission-source reads, and the `CloudProject`
+/// entity re-read that the source performs before comparing the role.
+async fn require_cloud_project_role(
+    state: &AppState,
+    project_id: i64,
+    user_id: i32,
+) -> Result<board_snapshot::repository::ProjectAccess, FastApiError> {
+    let repository = board_snapshot::repository::BoardSnapshotRepository::new(&state.mysql);
+    let access = repository
+        .require_cloud_project_role(project_id, user_id)
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(cloud_project_not_found)?;
+    // `db.get(CloudProject, str(project_id))` runs after the role query; the
+    // row only feeds the returned access value, but the read stays
+    // request-owned.
+    repository
+        .project_entity(project_id)
+        .await
+        .map_err(internal_error)?;
+    Ok(access)
 }
 
 #[cfg(test)]
@@ -525,5 +618,34 @@ mod tests {
                 "input": "abc",
             }])
         );
+    }
+
+    /// Deferred APIs retain Python ownership and registered Rust implementations.
+    #[test]
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
+        const PATH: &str = "/api/v1/cloud-projects/:project_id/chat-agents";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).unwrap();
+        assert!(
+            !config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must remain on Python"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(!table.matches(
+            &http::Method::GET,
+            "/api/v1/cloud-projects/2753648597973755964/chat-agents"
+        ));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
     }
 }

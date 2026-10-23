@@ -1697,11 +1697,8 @@ export function createHybridWorkbenchServices(
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },
-      async personalSave(userId, settings) {
-        return (await standInApiForDevice(settings.executionDeviceId)).personalSave(
-          userId,
-          settings
-        )
+      async personalSave(userId, settings, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
       },
       async readTask(deviceId, taskId) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
@@ -1731,12 +1728,13 @@ export function createHybridWorkbenchServices(
           standInId
         )
       },
-      async save(projectId, userId, projectStore, settings) {
-        return (await standInApiForDevice(settings.executionDeviceId)).save(
+      async save(projectId, userId, projectStore, settings, deviceId) {
+        return (await standInApiForDevice(deviceId)).save(
           projectId,
           userId,
           projectStore,
-          settings
+          settings,
+          deviceId
         )
       },
     },

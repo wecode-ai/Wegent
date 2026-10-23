@@ -43,15 +43,25 @@ async fn connector_tools(
 mod tests {
     use brz_http_server::__private::inventory;
 
-    /// The connector-runtime tool listing is registered exactly once in the
-    /// public route group. Before this repair the path had no route at all, so
-    /// the listener answered the recorded request with a framework 404.
+    const PATH: &str = "/api/connector-runtime/tools";
+
+    /// The connector-runtime tool listing is selected for Rust and registered
+    /// exactly once in the public route group. Before this cutover the path had
+    /// no active rule, so the listener forwarded the recorded request to the
+    /// Python fallback, which answered the traffic `502 fallback upstream
+    /// unavailable`.
     #[test]
-    fn tool_listing_is_registered_in_the_public_group() {
+    fn tool_listing_is_selected_and_registered_in_the_public_group() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = crate::RouteTable::compile(crate::load_routes_config(&file).unwrap()).unwrap();
+        assert!(
+            table.matches(&http::Method::GET, PATH),
+            "GET {PATH} must be selected for Rust"
+        );
         let paths: Vec<_> = inventory::iter::<crate::__http_registry_http_apis::Entry>()
             .flat_map(|entry| (entry.0.routes)().iter().map(|route| route.path))
-            .filter(|path| *path == "/api/connector-runtime/tools")
+            .filter(|path| *path == PATH)
             .collect();
-        assert_eq!(paths, ["/api/connector-runtime/tools"]);
+        assert_eq!(paths, [PATH]);
     }
 }

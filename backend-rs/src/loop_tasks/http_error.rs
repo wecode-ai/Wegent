@@ -75,6 +75,12 @@ impl HttpError {
     /// `500 Internal Server Error` (dependency or unexpected failure).
     pub fn internal(error: brz_mysql::MysqlError) -> Self {
         tracing::error!(%error, "loop-items database dependency failure");
+        Self::internal_detail()
+    }
+
+    /// `500 Internal Server Error` for an unexpected source failure that does
+    /// not carry a database error.
+    pub fn internal_detail() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: "Internal server error".to_string(),

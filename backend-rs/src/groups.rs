@@ -13,7 +13,6 @@
 //! approved members of every group, and paginate.
 use std::collections::HashMap;
 
-use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use serde::Serialize;
 
@@ -235,10 +234,13 @@ fn validation_error(field: &str, kind: &str, message: &str, input: impl Serializ
     ]))
 }
 
-/// Dependency failure mapped to the source 500 response.
+/// Dependency failure mapped to the source 500 response. A SQLAlchemy error
+/// propagates out of the endpoint, so the application-level
+/// `python_exception_handler` renders `{"error_code": 500, "detail": ...}`
+/// rather than FastAPI's default `{"detail": "Internal Server Error"}`.
 fn internal(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "groups database dependency failure");
-    FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+    FastApiError::unhandled()
 }
 
 /// `list_user_groups`' role resolution: direct + entity-derived memberships
@@ -431,5 +433,29 @@ mod tests {
             .and_hms_micro_opt(16, 21, 14, 999999)
             .unwrap();
         assert_eq!(pydantic_datetime(dt), "2026-05-29T16:21:14");
+    }
+
+    /// The cutover is real only when the route table selects the pattern the
+    /// handler registers. `config/routes.toml` lists `/api/groups`, and the
+    /// exact path must not capture the literal `/api/groups/search` sibling.
+    #[test]
+    fn route_table_selects_the_registered_group_list_handler() {
+        const PATH: &str = "/api/groups";
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).expect("routes file loads");
+        let table = crate::RouteTable::compile(config).expect("routes compile");
+        assert!(table.matches(&http::Method::GET, "/api/groups"));
+        assert!(!table.matches(&http::Method::POST, "/api/groups"));
+        assert!(!table.matches(&http::Method::GET, "/api/groups/search"));
+
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
     }
 }
