@@ -24,7 +24,7 @@ describe('Wework desktop release planning', () => {
     })
   })
 
-  test('classifies renderer, DSH, executor, and managed runtime changes as components', () => {
+  test('requires a new app release for renderer, DSH, executor, and runtime changes', () => {
     expect(
       classifyDesktopChanges([
         'wework/src/App.tsx',
@@ -36,7 +36,7 @@ describe('Wework desktop release planning', () => {
         'wework/resources/bundled-harness-runtime/runtimes.json',
         'pnpm-lock.yaml',
       ])
-    ).toBe('component')
+    ).toBe('full')
   })
 
   test('requires a full release for Electron host and unmanaged resource changes', () => {
@@ -57,7 +57,7 @@ describe('Wework desktop release planning', () => {
     ).toBe('none')
   })
 
-  test('keeps the installed app version for a component-only publication', () => {
+  test('uses a new app version for a component-only publication', () => {
     expect(
       planDesktopRelease({
         tags,
@@ -67,18 +67,17 @@ describe('Wework desktop release planning', () => {
         candidateTag: 'wework-v0.2.9',
         candidatePrerelease: false,
         publishRelease: true,
-        sourceSha: 'a'.repeat(40),
       })
     ).toEqual({
-      kind: 'component',
-      version: '0.2.8',
-      releaseTag: `wework-v0.2.8-runtime.${'a'.repeat(12)}`,
+      kind: 'full',
+      version: '0.2.9',
+      releaseTag: 'wework-v0.2.9',
       prerelease: false,
       baseTag: 'wework-v0.2.8',
     })
   })
 
-  test('uses the previous published source as the component release notes baseline', () => {
+  test('preserves the previous published source while advancing the version', () => {
     expect(
       planDesktopRelease({
         tags,
@@ -88,7 +87,6 @@ describe('Wework desktop release planning', () => {
         candidateTag: 'wework-v0.2.9',
         candidatePrerelease: false,
         publishRelease: true,
-        sourceSha: 'b'.repeat(40),
         currentRelease: {
           tag: 'wework-v0.2.8',
           version: '0.2.8',
@@ -96,7 +94,9 @@ describe('Wework desktop release planning', () => {
         },
       })
     ).toMatchObject({
-      releaseTag: `wework-v0.2.8-runtime.${'b'.repeat(12)}`,
+      kind: 'full',
+      version: '0.2.9',
+      releaseTag: 'wework-v0.2.9',
       baseTag: 'a'.repeat(40),
     })
   })
@@ -166,5 +166,38 @@ describe('Wework desktop release planning', () => {
       kind: 'full',
       version: '0.2.8',
     })
+  })
+})
+
+test('skips unchanged source without creating a same-version runtime release', () => {
+  expect(
+    planDesktopRelease({
+      tags,
+      changedPaths: [],
+      channel: 'beta',
+      candidateVersion: '0.2.9-beta.1',
+      candidateTag: 'wework-v0.2.9-beta.1',
+      candidatePrerelease: true,
+      publishRelease: true,
+    })
+  ).toMatchObject({ kind: 'none', releaseTag: 'wework-v0.2.9-beta.1' })
+})
+
+test('advances the beta version for a component-only release from a stable baseline', () => {
+  expect(
+    planDesktopRelease({
+      tags,
+      changedPaths: ['wework/src/App.tsx'],
+      channel: 'beta',
+      candidateVersion: '0.2.9-beta.1',
+      candidateTag: 'wework-v0.2.9-beta.1',
+      candidatePrerelease: true,
+      publishRelease: true,
+    })
+  ).toMatchObject({
+    kind: 'full',
+    version: '0.2.9-beta.1',
+    releaseTag: 'wework-v0.2.9-beta.1',
+    prerelease: true,
   })
 })

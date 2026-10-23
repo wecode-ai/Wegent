@@ -116,7 +116,6 @@ import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
-  shouldStageDesktopComponentUpdates,
   type DesktopComponentUpdateController,
 } from './runtime/desktop-components.js'
 import {
@@ -331,7 +330,6 @@ let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
-let startupComponentUpdate: Promise<void> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -467,7 +465,7 @@ const appUpdates = new AppUpdateService({
   log: event => appUpdateLogger.info(event),
   prepareUpdate: async (version, channel, onProgress) => {
     if (!componentUpdates) throw new Error('Component update manager is not initialized.')
-    await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
+    await componentUpdates.stageUpdateForApp(version, channel, onProgress)
     if (desktopDataPaths) {
       const cache = packagedUpdaterCache(
         process.env.HOME?.trim() || app.getPath('home'),
@@ -2250,20 +2248,6 @@ function startDesktopRuntime(): Promise<void> {
     await pluginDevelopmentChildRuntime?.writeState('ready')
     logStartupStep('desktop-runtime-start', 'completed')
     startupTelemetrySuccess.markRuntimeReady()
-    if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
-      startupComponentUpdate =
-        componentUpdates
-          ?.stageAvailableUpdate()
-          .then(staged => {
-            if (staged) console.log('[components] update staged for the next application restart')
-          })
-          .catch(error => {
-            console.error('[components] update check failed', error)
-          })
-          .finally(() => {
-            startupComponentUpdate = null
-          }) ?? null
-    }
   })()
     .catch(async error => {
       const failurePublished = startupTelemetry.fail('desktop_runtime')
@@ -2340,7 +2324,6 @@ if (hasSingleInstanceLock) {
       cloudCredentials,
       prepareCleanup: async () => {
         await runtimeStartPromise
-        await startupComponentUpdate
         await prepareApplicationShutdown()
         disposeCoreDshViews()
         if (mainWindow && !mainWindow.isDestroyed()) {

@@ -9,38 +9,6 @@ import { compareWeworkVersions } from './update-channel-manifests.mjs'
 
 const RELEASE_TAG_PATTERN = /^wework-v(\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?)$/
 
-const COMPONENT_PATH_PREFIXES = [
-  'executor/',
-  'packages/chat-core/',
-  'wework/dsh/',
-  'wework/harness-runtime/',
-  'wework/src/',
-]
-
-const COMPONENT_PATHS = new Set([
-  'package.json',
-  'pnpm-lock.yaml',
-  'wework/.prettierrc.json',
-  'wework/codex-binaries.lock.json',
-  'wework/components.json',
-  'wework/eslint.config.js',
-  'wework/index.html',
-  'wework/package.json',
-  'wework/postcss.config.js',
-  'wework/tailwind.config.js',
-  'wework/tsconfig.app.json',
-  'wework/tsconfig.json',
-  'wework/tsconfig.node.json',
-  'wework/vite.config.ts',
-])
-
-const COMPONENT_RESOURCE_PREFIXES = [
-  'wework/resources/binaries/codex/',
-  'wework/resources/binaries/dws-',
-  'wework/resources/bundled-harness-runtime/',
-  'wework/resources/bundled-plugins/',
-]
-
 export function resolveCurrentRelease(tags, channel) {
   if (channel !== 'stable' && channel !== 'beta') {
     throw new Error(`Unsupported Wework release channel: ${channel}`)
@@ -59,19 +27,9 @@ export function resolveCurrentRelease(tags, channel) {
 }
 
 export function classifyDesktopChanges(changedPaths) {
-  let componentChanged = false
-
-  for (const path of changedPaths) {
-    if (isIgnoredPath(path)) continue
-    if (!isWeworkReleasePath(path)) continue
-    if (isComponentPath(path)) {
-      componentChanged = true
-      continue
-    }
-    return 'full'
-  }
-
-  return componentChanged ? 'component' : 'none'
+  return changedPaths.some(path => !isIgnoredPath(path) && isWeworkReleasePath(path))
+    ? 'full'
+    : 'none'
 }
 
 export function planDesktopRelease({
@@ -83,7 +41,6 @@ export function planDesktopRelease({
   candidatePrerelease,
   publishRelease,
   currentRelease,
-  sourceSha = '',
   forceFull = false,
 }) {
   if (!publishRelease || forceFull) {
@@ -108,24 +65,11 @@ export function planDesktopRelease({
   }
 
   const kind = classifyDesktopChanges(changedPaths)
-  if (kind === 'full') {
-    return {
-      kind,
-      version: candidateVersion,
-      releaseTag: candidateTag,
-      prerelease: candidatePrerelease,
-      baseTag: current.tag,
-    }
-  }
-
-  if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
-    throw new Error(`A full source SHA is required for a component release: ${sourceSha}`)
-  }
   return {
     kind,
-    version: current.version,
-    releaseTag: `wework-v${current.version}-runtime.${sourceSha.slice(0, 12)}`,
-    prerelease: current.version.includes('-beta.'),
+    version: candidateVersion,
+    releaseTag: candidateTag,
+    prerelease: candidatePrerelease,
     baseTag: current.sourceRef || current.tag,
   }
 }
@@ -156,12 +100,6 @@ function isIgnoredPath(path) {
     return true
   }
   return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)
-}
-
-function isComponentPath(path) {
-  if (COMPONENT_PATHS.has(path)) return true
-  if (COMPONENT_PATH_PREFIXES.some(prefix => path.startsWith(prefix))) return true
-  return COMPONENT_RESOURCE_PREFIXES.some(prefix => path.startsWith(prefix))
 }
 
 function readTags() {
@@ -211,9 +149,6 @@ async function main() {
       }
     : resolveCurrentRelease(tags, channel)
   const paths = changedPaths(currentSourceRef, current?.tag)
-  const sourceSha =
-    process.env.GITHUB_SHA?.trim() ||
-    execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
   const plan = planDesktopRelease({
     tags,
     changedPaths: paths ?? [],
@@ -223,7 +158,6 @@ async function main() {
     candidatePrerelease,
     publishRelease,
     currentRelease: current,
-    sourceSha,
     forceFull:
       paths === null || (process.env.GITHUB_REF?.startsWith('refs/tags/wework-v') ?? false),
   })
