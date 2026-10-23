@@ -70,18 +70,29 @@ export function disconnectStandInProject(
   role: StandInRole,
   project: StandInProjectRef
 ): StandInRole {
-  if (!roleIncludesProject(role, project)) return role
   const matches = (value: StandInProjectRef) =>
     value.id === project.id && value.store === project.store
+  if (role.agentProject && !matches(role.agentProject)) return role
+  const source = role.collaboration
+  const projects = source.projects.filter(value => !matches(value))
+  const excludedProjects =
+    source.allProjects && !source.excludedProjects.some(matches)
+      ? [...source.excludedProjects, project]
+      : source.excludedProjects
+  const enabled = role.agentProject ? false : source.enabled
+  if (
+    projects.length === source.projects.length &&
+    excludedProjects === source.excludedProjects &&
+    enabled === source.enabled
+  )
+    return role
   return {
     ...role,
     collaboration: {
-      ...role.collaboration,
-      enabled: role.agentProject ? false : role.collaboration.enabled,
-      projects: role.collaboration.projects.filter(value => !matches(value)),
-      excludedProjects: role.collaboration.allProjects
-        ? [...role.collaboration.excludedProjects, project]
-        : role.collaboration.excludedProjects,
+      ...source,
+      enabled,
+      projects,
+      excludedProjects,
     },
   }
 }

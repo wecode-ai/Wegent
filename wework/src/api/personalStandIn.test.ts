@@ -6,6 +6,24 @@ const other = { id: 'two', store: 'local' as const }
 const sameIdInCloud = { id: 'one', store: 'cloud' as const }
 
 describe('project-only stand-in disabling', () => {
+  it.each([false, true])('removes dormant associations with allProjects=%s', allProjects => {
+    const role = newStandInRole('mac', 'dormant')
+    role.collaboration = {
+      ...role.collaboration,
+      allProjects,
+      projects: [project, other],
+    }
+    const result = disconnectStandInProject(role, project)
+    expect(result.collaboration.enabled).toBe(false)
+    const reactivated = {
+      ...result,
+      enabled: true,
+      collaboration: { ...result.collaboration, enabled: true },
+    }
+    expect(roleIncludesProject(reactivated, project)).toBe(false)
+    expect(roleIncludesProject(reactivated, other)).toBe(true)
+  })
+
   it.each([false, true])(
     'preserves other projects and global enablement with allProjects=%s',
     allProjects => {

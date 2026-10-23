@@ -1,17 +1,17 @@
-import { useId } from "react";
+import { useId } from 'react'
 
 /** The right-hand shadow separates into a faceless double. */
 export function StandInIcon({
   enabled = false,
-  className = "h-7 w-7",
+  className = 'h-7 w-7',
 }: {
-  enabled?: boolean;
-  className?: string;
+  enabled?: boolean
+  className?: string
 }) {
-  const id = useId();
-  const figureId = `${id}-figure`;
-  const shadowMaskId = `${id}-shadow`;
-  const primaryTransform = "translate(1.2 2.1) scale(0.85)";
+  const id = useId()
+  const figureId = `${id}-figure`
+  const shadowMaskId = `${id}-shadow`
+  const primaryTransform = 'translate(1.2 2.1) scale(0.85)'
   return (
     <svg
       className={`stand-in-icon ${className}`}
@@ -22,7 +22,7 @@ export function StandInIcon({
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      data-state={enabled ? "enabled" : "disabled"}
+      data-state={enabled ? 'enabled' : 'disabled'}
     >
       <defs>
         <g id={figureId}>
@@ -53,5 +53,5 @@ export function StandInIcon({
       </g>
       <use href={`#${figureId}`} transform={primaryTransform} />
     </svg>
-  );
+  )
 }

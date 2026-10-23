@@ -8,6 +8,7 @@ import {
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `分身项目启用-${process.pid}`
+const OTHER_PROJECT = `保留分身项目-${process.pid}`
 const USER_ID = 9001
 
 /** A project connection must visibly enable a previously disabled personal stand-in. */
@@ -16,12 +17,17 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await createLocalCollaborationProject(control, CONTENT, OTHER_PROJECT)
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      const project = (await rpc('projects.list', {})).find(row => row.name === PROJECT)
+      const projects = await rpc('projects.list', {})
+      const project = projects.find(row => row.name === PROJECT)
+      const otherProject = projects.find(row => row.name === OTHER_PROJECT)
       assert.ok(project)
+      assert.ok(otherProject)
+      const otherRef = { id: otherProject.id, store: 'local' }
       const settings = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       const role = {
         id: 'project-enable',
@@ -31,9 +37,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         version: 0,
         executionDeviceId: settings.executionDeviceId,
         collaboration: {
-          enabled: false,
+          enabled: true,
           allProjects: false,
-          projects: [],
+          projects: [otherRef],
           excludedProjects: [],
           tags: [],
         },
@@ -58,7 +64,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       assert.equal(saved.roles[0].enabled, true)
       assert.equal(saved.roles[0].collaboration.enabled, true)
       assert.equal(saved.roles[0].collaboration.allProjects, false)
-      assert.deepEqual(saved.roles[0].collaboration.projects, [{ id: project.id, store: 'local' }])
+      assert.deepEqual(saved.roles[0].collaboration.projects, [
+        otherRef,
+        { id: project.id, store: 'local' },
+      ])
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-summary"]', {
         text: '已开启',
@@ -71,7 +80,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       })
       const disconnected = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       assert.equal(disconnected.roles[0].enabled, true)
-      assert.deepEqual(disconnected.roles[0].collaboration.projects, [])
+      assert.equal(disconnected.roles[0].collaboration.enabled, true)
+      assert.deepEqual(disconnected.roles[0].collaboration.projects, [otherRef])
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-save"]', {
         text: '开启并用于此项目',
