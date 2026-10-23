@@ -149,9 +149,7 @@ async function sendPromptWithButton(
       control,
       snapshot => !snapshot.testIds.includes('cloud-model-catalog-sync-dialog'),
       'The cloud model catalog sync dialog did not close after Codex restarted',
-      // Syncing the catalog also restarts Codex, which can outlive the
-      // response timeout under parallel cloud checkpoint load.
-      WORKBENCH_READY_TIMEOUT_MS
+      timeoutMs
     )
   }
   await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)

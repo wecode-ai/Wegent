@@ -18,6 +18,7 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
 import {
+  listLegacyLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
@@ -408,13 +409,13 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-function seedDesktopE2ELocalModels(
+export function seedDesktopE2ELocalModels(
   runtimeConfig: DesktopE2ERuntimeConfig,
   modelServerUrl: string
-): boolean {
+): void {
   const seedLocalModels =
     runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
-  if (!seedLocalModels) return false
+  if (!seedLocalModels) return
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
@@ -478,8 +479,22 @@ function seedDesktopE2ELocalModels(
     },
   ]
   const providerOwnedModelIds = new Set(getProviderModelConfigs().map(model => model.id))
+  // saveLocalModelConfig validates vision proxies against standalone storage.
+  const standaloneModelIds = new Set(
+    listLegacyLocalModelConfigs()
+      .filter(model => model.enabled)
+      .map(model => model.id)
+  )
   for (const model of localModels) {
     if (providerOwnedModelIds.has(model.id)) continue
+    const visionModelConfigId =
+      'visionModelConfigId' in model ? model.visionModelConfigId : undefined
+    if (visionModelConfigId && !standaloneModelIds.has(visionModelConfigId)) {
+      console.warn(
+        `[Wework] Skipping E2E model fixture ${model.id}: its vision proxy ${visionModelConfigId} is not an enabled standalone model.`
+      )
+      continue
+    }
     saveLocalModelConfig({
       catalogReady: localModelsCatalogReady,
       ...model,
@@ -487,6 +502,7 @@ function seedDesktopE2ELocalModels(
       apiKey: 'wework-e2e-test-key',
       enabled: true,
     })
+    standaloneModelIds.add(model.id)
   }
   saveLocalUserPreferences({
     wework_new_chat_model_selection: {
@@ -495,43 +511,52 @@ function seedDesktopE2ELocalModels(
       options: {},
     },
   })
-  return true
 }
 
-async function seedDesktopE2ECloudConnection(): Promise<void> {
-  const runtimeConfig = getDesktopE2ERuntimeConfig()
-  const backendUrl =
-    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
-  const modelServerUrl =
+function resolveDesktopE2ECloudBackendUrl(runtimeConfig: DesktopE2ERuntimeConfig) {
+  return runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+}
+
+function resolveDesktopE2EModelServerUrl(
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  backendUrl?: string
+) {
+  return (
     runtimeConfig.modelServerUrl ??
     import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
     backendUrl
-  const seededLocalModels = modelServerUrl
-    ? seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
-    : false
+  )
+}
+
+async function seedDesktopE2ECloudConnection(
+  runtimeConfig: DesktopE2ERuntimeConfig
+): Promise<void> {
+  const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   if (!backendUrl) return
   const config = normalizeCloudBackendUrl(backendUrl)
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
-  try {
-    const response = await fetch(`${config.apiBaseUrl}/users/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(10000),
-    })
-    if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
-    const user = await response.json()
-    saveStoredCloudConnection({
-      ...config,
-      webUrl: config.backendUrl,
-      user,
-      connectedAt: new Date().toISOString(),
-    })
-  } catch (error) {
-    if (!seededLocalModels) throw error
-    console.warn(
-      '[Wework] E2E cloud identity unavailable; continuing with local model fixtures.',
-      error
-    )
+  const response = await fetch(`${config.apiBaseUrl}/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+  const user = await response.json()
+  saveStoredCloudConnection({
+    ...config,
+    webUrl: config.backendUrl,
+    user,
+    connectedAt: new Date().toISOString(),
+  })
+}
+
+export async function seedDesktopE2ERuntime(): Promise<void> {
+  const runtimeConfig = getDesktopE2ERuntimeConfig()
+  const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
+  const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
+  if (modelServerUrl) {
+    seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
+  await seedDesktopE2ECloudConnection(runtimeConfig)
 }
 
 export async function installWeworkAutomationBridge(
@@ -549,7 +574,7 @@ export async function installWeworkAutomationBridge(
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
-  await seedDesktopE2ECloudConnection()
+  await seedDesktopE2ERuntime()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {

@@ -574,6 +574,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let active = false
   let nextAttachmentId = 1
   return {
+    appEnvironment: {
+      // This scenario authenticates no cloud session; keep model fixtures local.
+      WEWORK_E2E_CLOUD_BACKEND_URL: '',
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
         json(response, 200, {
