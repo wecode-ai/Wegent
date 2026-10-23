@@ -78,9 +78,10 @@ export async function openWorkspaceAgentConfiguration(control, contentSelector, 
   const sidebar = selector => inCollaborationSidebar(selector, contentSelector)
   const workspaceTree = sidebar(`[data-testid="collaboration-workspace-tree-${workspaceId}"]`)
   await control.command('hover', `${workspaceTree} .collaboration-workspace-row`)
+  // Only the active Workspace exposes the untagged trigger, so match both forms.
   await control.command(
     'clickWhenEnabled',
-    `${workspaceTree} [data-testid="collaboration-workspace-actions"]`
+    `${workspaceTree} [data-testid^="collaboration-workspace-actions"]`
   )
   await control.command('clickWhenEnabled', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(
@@ -374,7 +375,9 @@ export async function verifyWorkspaceAgentDisplayNames(
 
   // The picker merges personal resources with Workspace Agents, so it is the
   // user-facing proof that both catalogs resolve the same display name.
-  await control.command('click', scoped('[data-testid="project-agent-add"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+    timeoutMs,
+  })
   const option = scoped(`[data-testid="project-agent-option-${agent.team_id}"]`)
   await control.command('waitFor', option, { timeoutMs })
   assert.equal(
@@ -393,7 +396,11 @@ export async function verifyWorkspaceAgentDisplayNames(
   })
 
   // Leaving and re-entering the settings page re-reads the persisted Team.
-  await control.command('click', scoped('[data-testid="collaboration-workspace-nav-projects"]'))
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-workspace-nav-projects"]'),
+    { timeoutMs }
+  )
   await control.command(
     'waitFor',
     scoped('[data-testid="collaboration-workspace-project-create"]'),
