@@ -71,6 +71,24 @@ export { captureWebContentsDataUrl } from './web-contents-capture.js'
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 export const WEWORK_WORKBENCH_PRINCIPAL = '@wegent/dsh-workbench'
 
+function traceE2EInputCapability(
+  params: Record<string, unknown>,
+  capability: string,
+  stage: string
+): void {
+  const inputDiagnosticId = params.inputDiagnosticId
+  if (
+    process.env.VITE_WEWORK_E2E !== 'true' ||
+    typeof inputDiagnosticId !== 'string' ||
+    !/^[0-9a-f-]{36}$/.test(inputDiagnosticId)
+  )
+    return
+  console.info(
+    '[desktop-e2e-input-main]',
+    JSON.stringify({ at: new Date().toISOString(), inputDiagnosticId, capability, stage })
+  )
+}
+
 export function e2eOpenDialogOverride(
   environment: NodeJS.ProcessEnv = process.env
 ): { canceled: false; filePaths: string[] } | null {
@@ -719,7 +737,8 @@ export function createElectronCapabilityRouter(
       desktopServices
     )
   })
-  router.register('e2e.focusMainWindow', async () => {
+  router.register('e2e.focusMainWindow', async params => {
+    traceE2EInputCapability(params, 'e2e.focusMainWindow', 'focus-start')
     await e2eHost.focusMainWindow()
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
@@ -727,9 +746,12 @@ export function createElectronCapabilityRouter(
     target.focus()
     const primaryContents = e2eHost.captureTarget('main')
     if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    traceE2EInputCapability(params, 'e2e.focusMainWindow', 'focus-complete')
   })
   router.register('e2e.focusWindow', params => {
+    traceE2EInputCapability(params, 'e2e.focusWindow', 'focus-start')
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
+    traceE2EInputCapability(params, 'e2e.focusWindow', 'focus-complete')
   })
   router.register('e2e.insertText', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
@@ -744,7 +766,8 @@ export function createElectronCapabilityRouter(
       process.env
     )
   })
-  router.register('e2e.pressKey', params => {
+  router.register('e2e.pressKey', async params => {
+    traceE2EInputCapability(params, 'e2e.pressKey', 'key-start')
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
     const phase = optionalStringParam(params, 'phase') ?? 'press'
     if (!['press', 'down', 'up'].includes(phase)) {
@@ -754,7 +777,7 @@ export function createElectronCapabilityRouter(
     if (!contents) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
     }
-    return sendE2EKey(
+    const result = await sendE2EKey(
       contents,
       stringParam(params, 'key'),
       () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
@@ -762,6 +785,8 @@ export function createElectronCapabilityRouter(
       phase as E2EKeyPhase,
       booleanParam(params, 'focus') ?? true
     )
+    traceE2EInputCapability(params, 'e2e.pressKey', 'key-complete')
+    return result
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
   router.register('e2e.getProcessExplorerWindowSnapshot', () => {

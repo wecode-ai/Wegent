@@ -11,6 +11,36 @@ describe('desktop host events', () => {
     vi.unstubAllGlobals()
   })
 
+  test('distinguishes a pending host fetch from a pending response body', async () => {
+    let deliverResponse: (response: unknown) => void = () => undefined
+    let deliverBody: (body: unknown) => void = () => undefined
+    const responseBody = new Promise(resolve => {
+      deliverBody = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise(resolve => {
+            deliverResponse = resolve
+          })
+      )
+    )
+    const { invokeDesktopHost } = await import('./desktopHost')
+    const stages: string[] = []
+    const pending = invokeDesktopHost('e2e.pressKey', { key: 'Shift+PageUp' }, stage => {
+      stages.push(stage)
+    })
+
+    expect(stages).toEqual(['fetch-start'])
+    deliverResponse({ ok: true, status: 200, json: () => responseBody })
+    await vi.waitFor(() => expect(stages).toEqual(['fetch-start', 'response-headers']))
+    deliverBody({ ok: true, result: 'key-delivered' })
+
+    await expect(pending).resolves.toBe('key-delivered')
+    expect(stages).toEqual(['fetch-start', 'response-headers', 'response-body'])
+  })
+
   test('shares one bounded poll loop across subscribers and advances the cursor', async () => {
     vi.useFakeTimers()
     let resolveFirstRequest:

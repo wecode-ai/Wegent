@@ -28,7 +28,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
-import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { createDesktopInputTracer, parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getConversationDiagnosticsSnapshot,
@@ -1107,27 +1107,39 @@ async function pressNativeDesktopControlKey(
   phase: 'press' | 'down' | 'up' = 'press'
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
-  await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+  const { inputDiagnosticId, trace } = createDesktopInputTracer({
     windowLabel,
+    selector,
+    key,
+    phase,
   })
+  await invokeDesktopHost(
+    windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow',
+    { windowLabel, inputDiagnosticId },
+    stage => trace(`focus.${stage}`)
+  )
+  trace('focus.tick-start')
   await waitForDesktopControlTick()
+  trace('focus.tick-complete')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  trace('target-focused')
   const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', {
-      windowLabel,
-      key,
-      phase,
-      focus: false,
-    })
+    await invokeDesktopHost(
+      'e2e.pressKey',
+      { windowLabel, key, phase, focus: false, inputDiagnosticId },
+      stage => trace(`key.${stage}`)
+    )
+    trace('key.tick-start')
     await waitForDesktopControlTick()
+    trace('key.tick-complete')
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
         `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
@@ -1135,6 +1147,7 @@ async function pressNativeDesktopControlKey(
           `received=${received.map(event => event.key).join(',')}`
       )
     }
+    trace('verified')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }

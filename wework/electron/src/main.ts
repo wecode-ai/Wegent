@@ -422,6 +422,12 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-input] ')) {
+      console.info('[renderer-e2e-input]', {
+        webContentsId: contents.id,
+        message: redactLog(message).slice(0, 4096),
+      })
+    }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,

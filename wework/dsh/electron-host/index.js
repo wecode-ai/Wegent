@@ -75,7 +75,10 @@ async function invoke(req, res, client) {
     if (!isRecord(body) || typeof body.capability !== 'string' || !isRecord(body.params)) {
       throw new ElectronHostError('invalid_params', 'Request must contain capability and params')
     }
+    traceE2EInputHttp(body, 'received')
+    res.once('finish', () => traceE2EInputHttp(body, 'response-sent'))
     const result = await client.invoke(body.capability, body.params)
+    traceE2EInputHttp(body, 'pipe-response')
     sendJson(res, 200, { ok: true, result: result ?? null })
   } catch (error) {
     const normalized =
@@ -94,6 +97,26 @@ async function invoke(req, res, client) {
       },
     })
   }
+}
+
+function traceE2EInputHttp(body, stage) {
+  const inputDiagnosticId = body.params.inputDiagnosticId
+  if (
+    process.env.VITE_WEWORK_E2E !== 'true' ||
+    !body.capability.startsWith('e2e.') ||
+    typeof inputDiagnosticId !== 'string' ||
+    !/^[0-9a-f-]{36}$/.test(inputDiagnosticId)
+  )
+    return
+  console.info(
+    '[desktop-e2e-input-host-http]',
+    JSON.stringify({
+      at: new Date().toISOString(),
+      inputDiagnosticId,
+      capability: body.capability,
+      stage,
+    })
+  )
 }
 
 function trustedBrowserRequest(req) {
