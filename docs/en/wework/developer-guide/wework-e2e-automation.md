@@ -181,6 +181,10 @@ long-plugin-list shards remain separate. The concurrency limit must accommodate
 the complete matrix in one scheduling wave; classifier regression tests enforce
 both the shard budget and this constraint. Shared runner capacity can still
 introduce external queueing.
+Lint, unit-test, platform E2E, and desktop E2E summary jobs use
+`always() && !cancelled()`: failures still produce a summary, while cancellation
+stops superseded summaries from waiting for runners and blocking newer runs.
+Cleanup and diagnostic upload steps retain their existing cancellation handling.
 
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards

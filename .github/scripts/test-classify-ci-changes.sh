@@ -1742,6 +1742,15 @@ assert_workflow_trigger_case "push job is not a trigger" "false" $'on: pull_requ
 
 for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
+  summary_condition="$(awk '
+    /^  [[:alnum:]-]+-summary:/ { in_summary = 1; next }
+    in_summary && /^    if:/ { print; exit }
+  ' "$workflow_path")"
+  if [[ "$summary_condition" != *"always() && !cancelled()"* ]]; then
+    printf '%s must report failures while allowing superseded summaries to cancel\n' \
+      "$workflow" >&2
+    exit 1
+  fi
   if workflow_has_top_level_trigger "$workflow_path" "push"; then
     printf '%s must not repeat merge queue validation after entering main\n' \
       "$workflow" >&2
