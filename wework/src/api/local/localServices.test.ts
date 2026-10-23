@@ -69,6 +69,36 @@ describe('createLocalAppServices', () => {
     resetLocalRuntimeChatStreamsForTests()
   })
 
+  test('forwards stand-in settings to the local Executor without a second device check', async () => {
+    const ensure = vi.fn()
+    const available = vi.fn()
+    const settings = {
+      userId: 7,
+      executionDeviceId: 'old-device',
+      version: 0,
+      autoSelect: false,
+      roles: [],
+    }
+    const request = vi.fn().mockResolvedValue(settings)
+    const services = createLocalAppServices({
+      ensure,
+      available,
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+    })
+
+    await expect(services.standInApi!.personalGet(7, 'selected-device')).resolves.toBe(settings)
+    await services.standInApi!.personalSave(7, settings, 'selected-device')
+    expect(request).toHaveBeenCalledWith('runtime.stand_in.personal.save', { userId: 7, settings })
+    expect(ensure).not.toHaveBeenCalled()
+    expect(available).not.toHaveBeenCalled()
+
+    request.mockRejectedValueOnce(new Error('invalid personal stand-in settings'))
+    await expect(services.standInApi!.personalSave(7, settings, 'selected-device')).rejects.toThrow(
+      'invalid personal stand-in settings'
+    )
+  })
+
   test('loads project plugins from disk without either online Codex catalog', async () => {
     const listFromDisk = vi
       .spyOn(codexPlugins, 'listLocalInstalledPluginsFromDisk')

@@ -214,7 +214,8 @@ describe('Personal stand-in settings', () => {
             }),
           }),
         ],
-      })
+      }),
+      'mac'
     )
   })
 
@@ -224,7 +225,7 @@ describe('Personal stand-in settings', () => {
     const user = userSetup()
     render(<StandInSettingsPage {...props} initialProject={props.projects[0]} onSaved={onSaved} />)
     await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
-    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('First project 替身')
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('First project 分身')
     expect(screen.getByTestId('stand-in-project-select')).toHaveValue('__new')
     expect(screen.queryByTestId('execution-settings')).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
@@ -237,7 +238,7 @@ describe('Personal stand-in settings', () => {
         roles: [
           expect.objectContaining({ id: 'default' }),
           expect.objectContaining({
-            name: 'First project 替身',
+            name: 'First project 分身',
             enabled: true,
             collaboration: expect.objectContaining({
               enabled: true,
@@ -246,7 +247,8 @@ describe('Personal stand-in settings', () => {
             }),
           }),
         ],
-      })
+      }),
+      'mac'
     )
     expect(onSaved).toHaveBeenCalledOnce()
   })
@@ -262,7 +264,7 @@ describe('Personal stand-in settings', () => {
     await user.click(screen.getByTestId('stand-in-cancel'))
     expect(screen.getByTestId('stand-in-project-select')).toHaveValue('default')
     expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: 'First project 替身' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'First project 分身' })).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
   })
 
@@ -303,7 +305,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-list-configure'))
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('请填写替身名称')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写分身名称')
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-role-name'))
     await user.paste('Review')
@@ -311,7 +313,7 @@ describe('Personal stand-in settings', () => {
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByTestId('stand-in-role-select')).toHaveDisplayValue('Review')
     expect(screen.getByTestId('stand-in-scheduling-open')).toHaveTextContent(
-      '所有替身、所有工作来源共用'
+      '所有分身、所有工作来源共用'
     )
     expect(personalSave).toHaveBeenCalledWith(
       7,
@@ -320,7 +322,8 @@ describe('Personal stand-in settings', () => {
           expect.objectContaining({ id: 'default' }),
           expect.objectContaining({ name: 'Review', agentResourceId: 42, enabled: false }),
         ],
-      })
+      }),
+      'mac'
     )
   })
 
@@ -348,7 +351,8 @@ describe('Personal stand-in settings', () => {
             }),
           }),
         ],
-      })
+      }),
+      'mac'
     )
   })
 
@@ -385,7 +389,8 @@ describe('Personal stand-in settings', () => {
             }),
           }),
         ],
-      })
+      }),
+      'mac'
     )
     await user.click(screen.getByTestId('stand-in-connections-open'))
     expect(screen.queryByTestId('stand-in-all-projects')).not.toBeInTheDocument()
@@ -417,7 +422,8 @@ describe('Personal stand-in settings', () => {
       expect.objectContaining({
         executionDeviceId: 'remote',
         roles: [expect.objectContaining({ executionDeviceId: 'remote' })],
-      })
+      }),
+      'remote'
     )
   })
 
@@ -427,7 +433,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-list-configure'))
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('请填写替身名称')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写分身名称')
     expect(screen.queryByTestId('stand-in-reload')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-cancel'))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -435,7 +441,7 @@ describe('Personal stand-in settings', () => {
     expect(personalSave).not.toHaveBeenCalled()
   })
 
-  it('labels unnamed migrated roles by project and allows their configuration to be saved', async () => {
+  it('keeps unnamed migrated roles distinct from their projects and allows saving', async () => {
     const first = { ...newStandInRole('mac', 'first'), version: 1 }
     const second = { ...newStandInRole('mac', 'second'), version: 1 }
     first.collaboration = {
@@ -451,8 +457,8 @@ describe('Personal stand-in settings', () => {
     const { props, personalSave } = fixture({ roles: [first, second] })
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
-    expect(await screen.findByRole('option', { name: 'First project' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Second project' })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: '默认分身' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '默认分身 2' })).toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-auto'))
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
@@ -496,7 +502,8 @@ describe('Personal stand-in settings', () => {
     await screen.findByTestId('stand-in-scheduling-open')
     expect(personalSave).toHaveBeenCalledWith(
       7,
-      expect.objectContaining({ autoSelect: true, roles: [second, first] })
+      expect.objectContaining({ autoSelect: true, roles: [second, first] }),
+      'mac'
     )
   })
 

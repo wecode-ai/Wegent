@@ -1,6 +1,10 @@
 import { useContext, useEffect, useState, type ComponentProps } from 'react'
 import { ChevronRight, Folder, Settings } from 'lucide-react'
-import { roleIncludesProject, subscribePersonalStandIn } from '@/api/personalStandIn'
+import {
+  roleIncludesProject,
+  standInRoleName,
+  subscribePersonalStandIn,
+} from '@/api/personalStandIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -20,6 +24,7 @@ export function StandInOverviewPage({
   const state = usePersonalStandIn(props.services, props.userId, undefined, false)
   const { saved, setDraft } = state
   const [editing, setEditing] = useState(false)
+  const [editingRoleId, setEditingRoleId] = useState<string>()
   const [openError, setOpenError] = useState<string | null>(null)
   useEffect(() => {
     const unsubscribe = subscribePersonalStandIn(value => {
@@ -31,8 +36,8 @@ export function StandInOverviewPage({
     }
   }, [props.userId, saved?.executionDeviceId, setDraft])
   const roles = state.draft?.roles ?? []
-  const connected = props.projects.filter(project =>
-    roles.some(role =>
+  const roleProjects = roles.map(role =>
+    props.projects.filter(project =>
       roleIncludesProject(role, {
         id: project.id,
         store: project.project_store === 'local' ? 'local' : 'cloud',
@@ -63,6 +68,7 @@ export function StandInOverviewPage({
     return (
       <StandInSettingsPage
         {...props}
+        initialProfileId={editingRoleId}
         onCancel={() => setEditing(false)}
         onSaved={() => {
           state.reload()
@@ -81,7 +87,10 @@ export function StandInOverviewPage({
           <button
             type="button"
             data-testid="stand-in-settings-open"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              setEditingRoleId(undefined)
+              setEditing(true)
+            }}
             className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm hover:bg-muted"
           >
             <Settings className="h-4 w-4" />
@@ -105,26 +114,43 @@ export function StandInOverviewPage({
             </button>
           </div>
         ) : (
-          <div
-            className="flex items-center gap-3 rounded-xl bg-muted/40 p-4"
-            data-testid="stand-in-overview-status"
-          >
-            <StandInIcon
-              enabled={roles.some(role => role.enabled && role.collaboration.enabled)}
-              className="h-5 w-5 shrink-0"
-            />
-            <div>
-              <p className="font-medium">
-                {t(
-                  roles.some(role => role.enabled && role.collaboration.enabled)
-                    ? 'standIn.auto_on'
-                    : 'standIn.auto_off'
-                )}
-              </p>
-              <p className="mt-1 text-sm text-text-muted">
-                {t('standIn.personal.connected_selected', { count: connected.length })}
-              </p>
-            </div>
+          <div className="space-y-3" data-testid="stand-in-overview-status">
+            {roles.map((role, index) => {
+              const enabled = role.enabled && role.collaboration.enabled
+              return (
+                <button
+                  key={role.id}
+                  type="button"
+                  data-testid={`stand-in-overview-role-${role.id}`}
+                  onClick={() => {
+                    setEditingRoleId(role.id)
+                    setEditing(true)
+                  }}
+                  className="flex min-h-11 w-full items-center gap-3 rounded-xl bg-muted/40 p-4 text-left hover:bg-muted"
+                >
+                  <StandInIcon enabled={enabled} className="h-5 w-5 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">
+                      {standInRoleName(role, index, t('standIn.personal.default_role'))}
+                    </span>
+                    <span className="mt-1 block text-sm text-text-muted">
+                      {t('standIn.personal.connected_selected', {
+                        count: roleProjects[index].length,
+                      })}
+                    </span>
+                    {!!roleProjects[index].length && (
+                      <span className="mt-1 block truncate text-xs text-text-muted">
+                        {roleProjects[index].map(project => project.name).join(' · ')}
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-sm text-text-secondary">
+                    {t(enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                </button>
+              )
+            })}
           </div>
         )}
         <div className="space-y-4" data-testid="stand-in-activity">

@@ -8,7 +8,7 @@ import {
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身独立控制-${process.pid}`
+const PROJECT = `分身独立控制-${process.pid}`
 const USER_ID = 9001
 const AUTO = '[data-testid="stand-in-auto"]'
 const PROMPT = '[data-testid="stand-in-prompt"]'
