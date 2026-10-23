@@ -20,6 +20,7 @@ import {
   artifactHeaders,
   startArtifactDevice,
   artifactDatabaseState,
+  prepareArtifactDatabaseState,
   type ArtifactShell,
   type ArtifactDevice,
 } from '../../utils/artifact-device-fixture'
@@ -27,6 +28,11 @@ import {
 type Artifact = { id: number; name: string; context_type: string; remote_task_id: number }
 type Done = { task_id: number; contexts: Artifact[] }
 test.describe.configure({ mode: 'serial', timeout: 180_000 })
+
+test.beforeAll(async () => {
+  test.setTimeout(330_000)
+  await test.step('Prepare isolated artifact database dependencies', prepareArtifactDatabaseState)
+})
 
 function completionFrames(page: Page): Done[] {
   const frames: Done[] = []
@@ -212,7 +218,8 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
         user_id: userId,
         expected_device_id: primary.id,
       }
-      const stored = await artifactDatabaseState({ ...identity, operation: 'inspect' })
+      const stored = await test.step('Inspect real artifact database state', () =>
+        artifactDatabaseState({ ...identity, operation: 'inspect' }))
       expect(stored).toMatchObject({ binary_size: 0, image_base64: '', extracted_text: '' })
       const controlRejected = await request.post(
         `${artifactApiUrl}/api/devices/${primary.targetId}/commands`,
@@ -236,11 +243,12 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
         page.getByTestId(`remote-workspace-artifact-download-${report.id}`)
       ).toBeVisible()
       await download(page, report, content)
-      const rebound = await artifactDatabaseState({
-        ...identity,
-        operation: 'rebind',
-        replacement_device_id: replacement.id,
-      })
+      const rebound = await test.step('Rebind the task without changing its artifact source', () =>
+        artifactDatabaseState({
+          ...identity,
+          operation: 'rebind',
+          replacement_device_id: replacement.id,
+        }))
       expect(rebound.executor_name).toBe(`device-${replacement.targetId}`)
       expect(rebound.source.executor_name).toBe(`device-${primary.targetId}`)
       await download(page, report, content)

@@ -9,7 +9,7 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { expect, type APIRequestContext, type TestInfo } from '@playwright/test'
 import { prepareArtifactDeviceUser } from './artifact-device-user'
 
-export { artifactDatabaseState } from './artifact-database-state'
+export { artifactDatabaseState, prepareArtifactDatabaseState } from './artifact-database-state'
 
 const repository = resolve(__dirname, '../../..')
 export const artifactApiUrl = process.env.E2E_API_URL || 'http://localhost:8000'
