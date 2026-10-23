@@ -3,21 +3,22 @@ export async function traceSmartAppVerification<T>(
   operation: () => Promise<T>
 ): Promise<T> {
   const startedAt = Date.now()
-  console.info('[Wework] Smart App verification', { stage, phase: 'started' })
+  console.info('[smart-app-verification]', {
+    stage,
+    status: 'started',
+    timestamp: new Date(startedAt).toISOString(),
+  })
+  let status = 'failed'
   try {
     const result = await operation()
-    console.info('[Wework] Smart App verification', {
-      stage,
-      phase: 'finished',
-      elapsedMs: Date.now() - startedAt,
-    })
+    status = 'completed'
     return result
-  } catch (error) {
-    console.info('[Wework] Smart App verification', {
+  } finally {
+    console.info('[smart-app-verification]', {
       stage,
-      phase: 'failed',
+      status,
+      timestamp: new Date().toISOString(),
       elapsedMs: Date.now() - startedAt,
     })
-    throw error
   }
 }

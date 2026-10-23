@@ -144,6 +144,7 @@ mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_events;
 mod stand_in_workspace;
 mod supervisor;
 mod system;
@@ -977,7 +978,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
-        self.start_stand_in_scheduler();
+        self.start_local_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
@@ -1123,6 +1124,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
             "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
             "runtime.stand_in.run" => self.run_stand_in(payload).await,
+            "runtime.stand_in.assignment" => {
+                self.handle_stand_in_assignment(payload).await?;
+                Ok(json!({"success":true}))
+            }
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),

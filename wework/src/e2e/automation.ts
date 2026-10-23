@@ -30,7 +30,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
-import { recentResourceTimings } from './resource-timing-diagnostics'
+import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -576,14 +576,9 @@ export async function installWeworkAutomationBridge(
   }
   installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
-  try {
-    await beforeSeed.catch(() => undefined)
-    await seedDesktopE2ERuntime()
-  } finally {
-    // Commands must observe seeded models, including the catalog-readiness barrier.
-    // Keep failure diagnostics reachable if seeding itself fails.
-    installDesktopControlClient()
-  }
+  installDesktopControlClient()
+  await beforeSeed.catch(() => undefined)
+  await seedDesktopE2ERuntime()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
@@ -1109,44 +1104,45 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   return element.textContent?.trim() ?? ''
 }
 
-function logNativeTerminalKeyPhase(selector: string, key: string, phase: string) {
-  if (!selector.includes('.xterm-helper-textarea')) return
-  logRuntimeTaskCreateStage('native-terminal-key', {
-    key,
-    phase,
-    visibility: document.visibilityState,
-    focused: document.hasFocus(),
-    ...(phase === 'key-received'
-      ? { networkTimeOrigin: performance.timeOrigin, network: recentResourceTimings(12, true) }
-      : {}),
-  })
-}
-
 async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
-  phase: 'press' | 'down' | 'up' = 'press'
+  phase: 'press' | 'down' | 'up' = 'press',
+  measurement?: { selector: string }
 ): Promise<string> {
-  const record = (step: string) => logNativeTerminalKeyPhase(selector, key, step)
-  record('start')
   const windowLabel = getDesktopWindowLabel()
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
-  record('window-focused')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
-  record('target-focused')
-  await sendNativeKeyAndWait(element, phase, async () => {
-    record('sending-key')
-    await invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
-    record('key-sent')
-  })
-  record('key-received')
-  return document.activeElement?.getAttribute('data-testid') ?? ''
+  const eventType = phase === 'up' ? 'keyup' : 'keydown'
+  const expectedKey = parseDesktopControlKey(key).key
+  const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
+  if (measurement && !viewportTarget) throw new Error('Native viewport target is unavailable')
+  const observation = viewportTarget
+    ? createNativeKeyObservation(element, () => readNativeTerminalViewport(viewportTarget))
+    : null
+  const recordKey = (event: KeyboardEvent) => {
+    if (event.key === expectedKey) observation?.record(event)
+  }
+  window.addEventListener(eventType, recordKey, true)
+  try {
+    await sendNativeKeyAndWait(element, phase, () =>
+      invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
+    )
+  } finally {
+    window.removeEventListener(eventType, recordKey, true)
+  }
+  return observation && viewportTarget
+    ? JSON.stringify({
+        viewportBefore: observation.result(),
+        viewportAfter: readNativeTerminalViewport(viewportTarget),
+      })
+    : (document.activeElement?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -3056,8 +3052,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
-        networkTimeOrigin: performance.timeOrigin,
-        network: recentResourceTimings(),
+        network: performance.getEntriesByType('resource').map(entry => {
+          const timing = entry as PerformanceResourceTiming
+          return {
+            path: new URL(timing.name, location.href).pathname,
+            initiatorType: timing.initiatorType,
+            startTime: timing.startTime,
+            duration: timing.duration,
+            fetchStart: timing.fetchStart,
+            connectStart: timing.connectStart,
+            connectEnd: timing.connectEnd,
+            requestStart: timing.requestStart,
+            responseStart: timing.responseStart,
+            responseEnd: timing.responseEnd,
+            nextHopProtocol: timing.nextHopProtocol,
+          }
+        }),
       })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
@@ -3241,7 +3251,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
     case 'nativePress': {
-      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+      return pressNativeDesktopControlKey(
+        command.selector,
+        command.key ?? '',
+        'press',
+        command.target ? { selector: command.target } : undefined
+      )
     }
     case 'nativeKeyDownOnly': {
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'down')
@@ -3298,18 +3313,41 @@ async function postDesktopControlStarted(
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
-  const response = await fetch(`${url}/started`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ id: command.id, clientId }),
-  })
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  let response: Response
+  try {
+    response = await fetch(`${url}/started`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify({ id: command.id, clientId }),
+    })
+  } finally {
+    window.clearInterval(probe)
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+  }
   if (!response.ok) {
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
+  }
+  if (Date.now() - startedAt > 1000) {
+    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
+      commandId: command.id,
+      action: command.action,
+      startedAt,
+      elapsedMs: Date.now() - startedAt,
+      maxEventLoopLagMs,
+      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+      visibility: document.visibilityState,
+    })
   }
 }
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
-  performance.setResourceTimingBufferSize(5000)
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
@@ -3338,13 +3376,10 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
-      if (command.action.startsWith('native')) {
-        logNativeTerminalKeyPhase(command.selector, command.key ?? '', 'command-received')
-      }
+      const diagnostic = { commandId: command.id, action: command.action, clientId }
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
       await postDesktopControlStarted(url, command, clientId)
-      if (command.action.startsWith('native')) {
-        logNativeTerminalKeyPhase(command.selector, command.key ?? '', 'command-start-acknowledged')
-      }
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3358,7 +3393,9 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
+        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
         await postDesktopControlResult(url, result)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
         console.error('[Wework] Desktop E2E result acknowledgement failed:', {
           commandId: command.id,

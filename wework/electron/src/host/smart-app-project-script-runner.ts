@@ -1,17 +1,16 @@
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
-import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 import {
   resolveWorkbenchProjectPnpmCommand,
   type WorkbenchProjectPnpmCommand,
 } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 
 const SCRIPT_NAME = /^[A-Za-z0-9:_-]+$/
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 const SCRIPT_ORDER = ['typecheck', 'test', 'build'] as const
-// Preparation owns installation; verification only runs the prepared project's checks.
 const PROJECT_RUN_ARGS = ['--config.verify-deps-before-run=false', 'run']
 const SAFE_ENVIRONMENT_KEYS = new Set([
   'CI',
@@ -93,10 +92,12 @@ export async function runSmartAppProjectScripts(
     }
   }
   const resolveCommand = options.resolveCommand ?? resolveWorkbenchProjectPnpmCommand
-  const command = await resolveCommand({
-    runtimeRoot: options.runtimeRoot,
-    environment: options.environment,
-  })
+  const command = await traceSmartAppVerification('scripts.command', () =>
+    resolveCommand({
+      runtimeRoot: options.runtimeRoot,
+      environment: options.environment,
+    })
+  )
   const environment = projectScriptEnvironment(command.environment, options.projectRoot)
   const run = options.run ?? runCommand
   const logsDirectory = join(options.projectRoot, 'test-results', 'smart-app', 'logs')
@@ -104,7 +105,7 @@ export async function runSmartAppProjectScripts(
   const scripts: SmartAppProjectScriptResult[] = []
   for (const key of SCRIPT_ORDER) {
     const script = options.scripts[key]
-    const result = await traceSmartAppVerification(`scripts/${key}`, () =>
+    const result = await traceSmartAppVerification(`scripts.${key}`, () =>
       run(command.command, [...command.argsPrefix, ...PROJECT_RUN_ARGS, script], {
         cwd: options.projectRoot,
         env: environment,

@@ -149,7 +149,6 @@ export const ComposerProseMirrorEditor = forwardRef<
   const composerDiagnosticIdRef = useRef<number | null>(null);
   const [hasContent, setHasContent] = useState(props.value !== "");
   const [composing, setComposing] = useState(false);
-  // Native listeners must observe committed props, not a suspended render.
   useLayoutEffect(() => {
     callbacksRef.current = resolvedProps;
   });

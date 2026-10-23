@@ -1,86 +1,61 @@
-import { EventEmitter } from 'node:events'
-import { mkdir, writeFile } from 'node:fs/promises'
-import type { WebContents } from 'electron'
 import { afterEach, expect, test, vi } from 'vitest'
-import { installE2ERendererCpuProfile } from './e2e-renderer-cpu-profile.js'
+import { contentTracing } from 'electron'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { installE2ERendererCpuProfiling } from './e2e-renderer-cpu-profile.js'
 
-vi.mock('node:fs/promises', () => ({ mkdir: vi.fn(), writeFile: vi.fn() }))
-const enabled = { VITE_WEWORK_E2E: 'true', WEWORK_E2E_RENDERER_CPU_PROFILE: 'true' }
-
-function fixture() {
-  const contents = Object.assign(new EventEmitter(), {
-    id: 7,
-    isDestroyed: () => false,
-    debugger: {
-      isAttached: vi.fn(() => false),
-      attach: vi.fn(),
-      detach: vi.fn(),
-      sendCommand: vi.fn(async (method: string) =>
-        method === 'Profiler.stop'
-          ? {
-              profile: {
-                nodes: [
-                  {
-                    callFrame: {
-                      url: 'http://user:private-value@localhost/app.js?token=private-value#fragment',
-                    },
-                  },
-                ],
-              },
-            }
-          : {}
-      ),
-    },
-  })
-  return { contents, webContents: contents as unknown as WebContents }
-}
-
+vi.mock('node:fs/promises', () => ({ mkdir: vi.fn() }))
+vi.mock('electron', () => ({ contentTracing: { startRecording: vi.fn(), stopRecording: vi.fn() } }))
 afterEach(() => {
   vi.useRealTimers()
-  vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
-test('never attaches outside explicitly enabled isolated E2E sessions', () => {
-  const { contents, webContents } = fixture()
-  const dispose = installE2ERendererCpuProfile(webContents, '/diagnostics', {
-    WEWORK_E2E_RENDERER_CPU_PROFILE: 'true',
+function fixture() {
+  let loaded = () => {}
+  let destroyed = false
+  const contents = {
+    id: 4,
+    isDestroyed: () => destroyed,
+    on: vi.fn((_event: 'did-finish-load', listener: () => void) => {
+      loaded = listener
+    }),
+  }
+  return {
+    contents,
+    load: () => loaded(),
+    destroy: () => {
+      destroyed = true
+    },
+  }
+}
+
+test('does not enable profiling outside an explicitly configured isolated E2E run', () => {
+  const f = fixture()
+  installE2ERendererCpuProfiling(f.contents, {
+    WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: '/evidence',
   })
-  contents.emit('did-finish-load')
-  expect(contents.debugger.attach).not.toHaveBeenCalled()
-  dispose()
+  expect(f.contents.on).not.toHaveBeenCalled()
+  expect(contentTracing.startRecording).not.toHaveBeenCalled()
 })
 
-test('writes bounded samples without URL credentials and stops on disposal', async () => {
+test('saves bounded CPU samples and stops when the renderer is destroyed', async () => {
   vi.useFakeTimers()
-  const { contents, webContents } = fixture()
-  const dispose = installE2ERendererCpuProfile(webContents, '/diagnostics', enabled)
-  contents.emit('did-finish-load')
-  await vi.advanceTimersByTimeAsync(5000)
-  expect(mkdir).toHaveBeenCalledWith('/diagnostics', { recursive: true })
-  expect(writeFile).toHaveBeenCalledWith(
-    '/diagnostics/e2e-renderer-7-1.cpuprofile',
-    expect.any(String)
+  const f = fixture()
+  const directory = join(tmpdir(), 'wework-cpu-profile-evidence')
+  installE2ERendererCpuProfiling(f.contents, {
+    VITE_WEWORK_E2E: 'true',
+    WEWORK_E2E_CONTROL_URL: 'http://localhost',
+    WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: directory,
+  })
+  f.load()
+  f.load()
+  await vi.advanceTimersByTimeAsync(20_000)
+  expect(contentTracing.stopRecording).toHaveBeenCalledExactlyOnceWith(
+    join(directory, 'renderer-4-0.trace.json')
   )
-  const payload = String(vi.mocked(writeFile).mock.calls[0][1])
-  expect(payload).toContain('http://localhost/app.js')
-  expect(payload).not.toContain('private-value')
-  dispose()
-  expect(contents.debugger.detach).toHaveBeenCalledOnce()
-  expect(vi.getTimerCount()).toBe(0)
-})
-
-test('retains an existing debugger owner without changing application execution', async () => {
-  vi.useFakeTimers()
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-  const { contents, webContents } = fixture()
-  contents.debugger.isAttached.mockReturnValue(true)
-  const dispose = installE2ERendererCpuProfile(webContents, '/diagnostics', enabled)
-  contents.emit('did-finish-load')
-  await vi.advanceTimersByTimeAsync(0)
-  expect(warn).toHaveBeenCalled()
-  expect(contents.debugger.attach).not.toHaveBeenCalled()
-  expect(contents.debugger.detach).not.toHaveBeenCalled()
-  expect(vi.getTimerCount()).toBe(0)
-  dispose()
+  f.destroy()
+  await vi.advanceTimersByTimeAsync(20_000)
+  expect(contentTracing.stopRecording).toHaveBeenCalledTimes(2)
+  expect(contentTracing.startRecording).toHaveBeenCalledTimes(2)
 })

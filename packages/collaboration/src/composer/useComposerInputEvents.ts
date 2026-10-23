@@ -10,8 +10,8 @@ import {
   type ComposerFollowUpBehavior,
   type ComposerSubmitOptions,
 } from "./composerInputTypes";
-import { recordComposerDiagnostic } from "./composerDiagnostics";
 import { textMetrics } from "./composerInputDiagnostics";
+import { recordComposerDiagnostic } from "./composerDiagnostics";
 
 export interface ComposerAutocompleteEvents {
   isOpen: () => boolean;
@@ -130,12 +130,13 @@ export function useComposerInputEvents({
       return true;
     }
     if (event.key === "Enter") {
-      recordComposerDiagnostic("submit-key", {
+      recordComposerDiagnostic("keyboard-policy", {
         canSend,
-        sendKey,
         stateIsComposing: isComposing,
         eventIsComposing: event.isComposing,
         suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+        keyCode: event.keyCode,
+        sendKey,
         valueLength: snapshot.value.length,
       });
       debug?.("keydown-enter", {

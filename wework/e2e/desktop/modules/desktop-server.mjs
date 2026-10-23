@@ -1314,6 +1314,8 @@ class DesktopE2EServer {
 
   async handleControl(request, response) {
     cors(response)
+    response.setHeader('X-Wework-Control-Received-At', String(Date.now()))
+    response.setHeader('Access-Control-Expose-Headers', 'X-Wework-Control-Received-At')
     if (request.method === 'OPTIONS') {
       response.writeHead(204)
       response.end()
@@ -2078,6 +2080,7 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/started') {
       const started = await readRequestBody(request)
+      this.recordControlTransport('started', started.clientId)
       const pending = this.commandResults.get(started.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${started.id}` })

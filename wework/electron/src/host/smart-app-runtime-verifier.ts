@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import semver from 'semver'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 import { runtimeNodeArgs } from '../runtime/electron-node-runtime.js'
 import { dshBrowserAuthenticationCookies } from '../runtime/dsh-browser-auth.js'
 import {
@@ -16,7 +17,6 @@ import {
 import { DshRuntime, type DshRuntimeOptions } from '../runtime/dsh-runtime.js'
 import type { CommandRunner } from '../runtime/core-dsh-runtime.js'
 import { runSmartAppRuntimeProbe } from './smart-app-project-script-runner.js'
-import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 import { copySmartAppDeliveryFiles } from './smart-app-package-validator.js'
 import {
   verifySmartAppPage,
@@ -103,12 +103,10 @@ export async function verifySmartAppRuntime(
       options.manifest.requirements.dsh
     )
     const isolatedProject = join(temporaryRoot, 'project')
-    await traceSmartAppVerification('runtime/copy', () =>
-      dependencies.copyProject(options.projectRoot, isolatedProject)
-    )
+    await dependencies.copyProject(options.projectRoot, isolatedProject)
     const environment = isolatedVerificationEnvironment(options.environment, home)
     const port = await dependencies.reservePort()
-    const launch = await traceSmartAppVerification('runtime/prepare', () =>
+    const launch = await traceSmartAppVerification('runtime.prepare', () =>
       dependencies.prepareLaunch({
         runtimeRoot: options.runtimeRoot,
         dataDirectory: temporaryRoot,
@@ -125,7 +123,7 @@ export async function verifySmartAppRuntime(
       })
     )
     stage = 'config'
-    await traceSmartAppVerification('runtime/config', () =>
+    await traceSmartAppVerification('runtime.config', () =>
       abortable(
         dependencies.runCommand(
           launch.command,
@@ -141,7 +139,7 @@ export async function verifySmartAppRuntime(
       )
     )
     stage = 'start'
-    const verificationRuntime = dependencies.createRuntime({
+    runtime = dependencies.createRuntime({
       name: `dsh-smart-app-verification-${options.manifest.name}`,
       url: launch.url,
       probeUrl: launch.url,
@@ -152,11 +150,11 @@ export async function verifySmartAppRuntime(
       logDirectory: options.logDirectory,
       logFileName: 'runtime.log',
     })
-    runtime = verificationRuntime
-    await traceSmartAppVerification('runtime/start', () =>
-      abortable(verificationRuntime.start(), options.signal)
+    const activeRuntime = runtime
+    await traceSmartAppVerification('runtime.start', () =>
+      abortable(activeRuntime.start(), options.signal)
     )
-    const page = await traceSmartAppVerification('runtime/page', () =>
+    const page = await traceSmartAppVerification('runtime.page', () =>
       dependencies.verifyPage({
         baseUrl: launch.url,
         path: options.contract.runtime.path,
@@ -201,7 +199,9 @@ export async function verifySmartAppRuntime(
     }[stage]
     return { issues: [runtimeIssue(code, `Smart App runtime ${stage} failed`)] }
   } finally {
-    await runtime?.stop().catch(() => {})
+    await traceSmartAppVerification('runtime.stop', async () => {
+      await runtime?.stop().catch(() => {})
+    })
     await rm(temporaryRoot, { recursive: true, force: true })
   }
 }

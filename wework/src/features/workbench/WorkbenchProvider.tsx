@@ -1,3 +1,4 @@
+import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
@@ -16,7 +17,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
-import { useDebugSnapshot } from '@/hooks/useDebugSnapshot'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
@@ -904,6 +904,7 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
+  const taskComposerCatalogsRequired = loadTaskComposerCatalogs || taskComposerCatalogsRequested
   const taskComposerCatalogsEnabled =
     taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
@@ -1055,7 +1056,9 @@ export function WorkbenchProvider({
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
-    isWorkbenchShellReady && modelSelection.isSelectionReady && !skillSelection.isLoading
+    isWorkbenchShellReady &&
+    (!taskComposerCatalogsRequired || modelSelection.isSelectionReady) &&
+    !skillSelection.isLoading
 
   useEffect(() => {
     onStartupReadyChange?.(isWorkbenchShellReady)
@@ -1323,7 +1326,7 @@ export function WorkbenchProvider({
     state.devices,
   ])
 
-  useDebugSnapshot(debugSnapshotEnabled && publishDebugSnapshots, () => {
+  useDebugSnapshotPublisher(debugSnapshotEnabled && publishDebugSnapshots, () => {
     updateWorkbenchDebugSnapshot({
       state,
       lifecycle: lifecycleSnapshot,

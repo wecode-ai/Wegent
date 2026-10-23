@@ -1,3 +1,4 @@
+import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
 import { useStandInNotifications } from './useStandInNotifications'
 import { standInOrigin, type StandInNotification } from './standInNotifications'
 import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
@@ -395,6 +396,8 @@ function ConnectedNotificationCenter({
     window.addEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
     return () => window.removeEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
   }, [openSettings])
+
+  useStandInAssignmentNotifications(inboxes.collaboration, taskSource, accountKey, userId)
 
   const collaboration = useStandInNotifications(
     inboxes.collaboration,

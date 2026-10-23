@@ -1,103 +1,58 @@
-import type { WebContents } from 'electron'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
+import { contentTracing } from 'electron'
 
-type CpuProfile = {
-  nodes: Array<{ callFrame: { url: string } }>
+interface ProfileContents {
+  id: number
+  isDestroyed(): boolean
+  on(event: 'did-finish-load', listener: () => void): unknown
 }
 
-export function installE2ERendererCpuProfile(
-  contents: WebContents,
-  directory: string,
+export function installE2ERendererCpuProfiling(
+  contents: ProfileContents,
   environment: NodeJS.ProcessEnv = process.env
-): () => void {
+): void {
+  const directory = environment.WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY
   if (
     environment.VITE_WEWORK_E2E !== 'true' ||
-    environment.WEWORK_E2E_RENDERER_CPU_PROFILE !== 'true'
+    !environment.WEWORK_E2E_CONTROL_URL ||
+    !directory ||
+    !isAbsolute(directory)
   )
-    return () => {}
-  const recorder = new RendererCpuRecorder(contents, directory)
-  contents.once('did-finish-load', recorder.start)
-  contents.once('destroyed', recorder.dispose)
-  return recorder.dispose
+    return
+  let collecting = false
+  contents.on('did-finish-load', () => {
+    if (collecting) return
+    collecting = true
+    void collectProfiles(contents, directory).finally(() => {
+      collecting = false
+    })
+  })
 }
 
-class RendererCpuRecorder {
-  private timer: ReturnType<typeof setTimeout> | null = null
-  private stopped = false
-  private attached = false
-  private sequence = 0
-
-  constructor(
-    private contents: WebContents,
-    private directory: string
-  ) {}
-
-  readonly start = () => {
-    void this.begin().catch(this.fail)
-  }
-
-  private async begin() {
-    if (this.contents.debugger.isAttached())
-      throw new Error('Renderer debugger is already attached')
-    this.contents.debugger.attach('1.3')
-    this.attached = true
-    await this.contents.debugger.sendCommand('Profiler.enable')
-    await this.contents.debugger.sendCommand('Profiler.setSamplingInterval', { interval: 5000 })
-    await this.resume()
-  }
-
-  private async resume() {
-    if (this.stopped) return
-    await this.contents.debugger.sendCommand('Profiler.start')
-    if (!this.stopped) {
-      this.timer = setTimeout(() => void this.sample().catch(this.fail), 5000)
-    }
-  }
-
-  private async sample() {
-    if (this.stopped) return
-    const result = (await this.contents.debugger.sendCommand('Profiler.stop')) as {
-      profile: CpuProfile
-    }
-    for (const node of result.profile.nodes) {
-      const url = node.callFrame.url
-      if (!url) continue
-      if (URL.canParse(url)) {
-        const parsed = new URL(url)
-        parsed.username = ''
-        parsed.password = ''
-        parsed.search = ''
-        parsed.hash = ''
-        node.callFrame.url = parsed.href
-      } else {
-        node.callFrame.url = url.split(/[?#]/, 1)[0]
-      }
-    }
-    await mkdir(this.directory, { recursive: true })
-    const file = `e2e-renderer-${this.contents.id}-${++this.sequence}.cpuprofile`
-    await writeFile(join(this.directory, file), JSON.stringify(result.profile))
-    await this.resume()
-  }
-
-  private readonly fail = (error: unknown) => {
-    console.warn(
-      '[Wework] Renderer CPU diagnostic failed:',
-      error instanceof Error ? error.message : String(error)
-    )
-    this.dispose()
-  }
-
-  readonly dispose = () => {
-    this.stopped = true
-    if (this.timer !== null) clearTimeout(this.timer)
-    this.contents.removeListener('did-finish-load', this.start)
-    this.contents.removeListener('destroyed', this.dispose)
+async function collectProfiles(contents: ProfileContents, directory: string): Promise<void> {
+  let sequence = 0
+  while (!contents.isDestroyed()) {
     try {
-      if (this.attached && !this.contents.isDestroyed()) this.contents.debugger.detach()
-    } catch {
-      // Diagnostic cleanup must not replace the original scenario failure.
+      await mkdir(directory, { recursive: true })
+      const startedAt = Date.now()
+      await contentTracing.startRecording({
+        included_categories: ['disabled-by-default-v8.cpu_profiler', 'renderer.scheduler'],
+        recording_mode: 'record-continuously',
+        trace_buffer_size_in_kb: 32768,
+      })
+      await new Promise(resolve => setTimeout(resolve, 20_000))
+      const file = `renderer-${contents.id}-${sequence++}.trace.json`
+      await contentTracing.stopRecording(join(directory, file))
+      console.info('[e2e-renderer-cpu-profile]', { file, startedAt, finishedAt: Date.now() })
+    } catch (error) {
+      if (contents.isDestroyed()) return
+      console.warn('[e2e-renderer-cpu-profile]', {
+        webContentsId: contents.id,
+        error: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : undefined,
+      })
+      return
     }
-    this.attached = false
   }
 }

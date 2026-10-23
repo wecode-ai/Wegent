@@ -33,9 +33,8 @@ describe('composer diagnostics', () => {
   })
 
   test('retains submit guards without storing the submitted draft', () => {
-    recordComposerDiagnostic('submit-decision', {
+    recordComposerDiagnostic('submit-policy', {
       valueLength: 19,
-      hasContent: true,
       isModelSelectionReady: false,
       disabled: false,
       submitDisabled: false,
@@ -43,7 +42,6 @@ describe('composer diagnostics', () => {
     })
     expect(getComposerDiagnosticsSnapshot()?.events[0]?.details).toEqual({
       valueLength: 19,
-      hasContent: true,
       isModelSelectionReady: false,
       disabled: false,
       submitDisabled: false,

@@ -62,16 +62,22 @@ export function useStandInNotifications(
         (existing.version === version || !matchesStandInVersion(existing.version, state))
       )
         continue
-      const unread = source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting'
-      const live = Date.parse(state.updatedAt) > observedTasks.current.startedAt
+      const liveSettlement =
+        !existing &&
+        state.status !== 'running' &&
+        Date.parse(state.updatedAt) > observedTasks.current.startedAt
+      const unread =
+        source?.unreadTaskKeys.has(item.runtimeItem.key) ||
+        state.status === 'waiting' ||
+        liveSettlement
       next[item.runtimeItem.key] = {
-        version: !existing && (unread || live) ? '' : version,
+        version: !existing && unread ? '' : version,
         savedAt: Date.now(),
       }
       changed = true
     }
     if (changed) store.write(next)
-  }, [trackedItems, source?.unreadTaskKeys, store])
+  }, [trackedItems, source?.unreadTaskKeys, store, observedTasks])
 
   const isUnread = (item: StandInNotification) => {
     if (!item.read_at) return true
@@ -120,7 +126,9 @@ export function useStandInNotifications(
       const alreadyDelivered = matchesStandInVersion(deliveredVersion, state)
       const unread =
         readVersion == null
-          ? source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting'
+          ? source?.unreadTaskKeys.has(item.runtimeItem.key) ||
+            state.status === 'waiting' ||
+            (firstObservation && !historical)
           : !matchesStandInVersion(readVersion, state)
       if (!unread && !firstObservation && !alreadyDelivered) continue
       nextDelivered[item.runtimeItem.key] = { version, savedAt: Date.now() }
@@ -149,6 +157,7 @@ export function useStandInNotifications(
     delivered,
     store,
     storageKey,
+    observedTasks,
     systemEnabled,
     t,
   ])

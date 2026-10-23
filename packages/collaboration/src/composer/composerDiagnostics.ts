@@ -7,14 +7,6 @@ const SAFE_DETAIL_KEYS = new Set([
   "altKey",
   "code",
   "composerId",
-  "canSend",
-  "disabled",
-  "hasContent",
-  "isModelSelectionReady",
-  "sendKey",
-  "stateIsComposing",
-  "submitDisabled",
-  "suppressEnterUntilKeyUp",
   "ctrlKey",
   "dataKind",
   "dataLength",
@@ -38,6 +30,14 @@ const SAFE_DETAIL_KEYS = new Set([
   "transactionMs",
   "valueLength",
   "viewIsComposing",
+  "canSend",
+  "disabled",
+  "isModelSelectionReady",
+  "submitDisabled",
+  "stateIsComposing",
+  "suppressEnterUntilKeyUp",
+  "keyCode",
+  "sendKey",
 ]);
 
 export type ComposerDiagnosticEventName =
@@ -52,8 +52,8 @@ export type ComposerDiagnosticEventName =
   | "external-value-apply"
   | "input-frame"
   | "keyboard"
-  | "submit-key"
-  | "submit-decision"
+  | "keyboard-policy"
+  | "submit-policy"
   | "transaction"
   | "value-set";
 

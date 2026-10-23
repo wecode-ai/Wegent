@@ -1,3 +1,4 @@
+import { useDebugSnapshotPublisher } from '@/features/workbench/useDebugSnapshotPublisher'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import {
   transcriptRangeFromPage,
@@ -9,13 +10,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type SetStateAction,
 } from 'react'
 import i18n from '@/i18n'
-import { useDebugSnapshot } from '@/hooks/useDebugSnapshot'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
@@ -285,6 +286,10 @@ export function useWorkbenchPaneSession({
   )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
+  const codeCommentContextsRef = useRef(codeCommentContexts)
+  useLayoutEffect(() => {
+    codeCommentContextsRef.current = codeCommentContexts
+  }, [codeCommentContexts])
   const [browserAnnotationCommand, setBrowserAnnotationCommand] =
     useState<BrowserAnnotationCommand | null>(null)
   const browserAnnotationCommandSequenceRef = useRef(0)
@@ -341,10 +346,10 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, setErrorForScope]
   )
   const clearError = useCallback(() => setError(null), [setError])
-  const inputWriteVersionRef = useRef(0)
+  const inputEditRevisionRef = useRef(0)
   const setInput = useCallback(
     (value: string) => {
-      inputWriteVersionRef.current += 1
+      inputEditRevisionRef.current += 1
       scopedSetInput(value)
     },
     [scopedSetInput]
@@ -358,8 +363,21 @@ export function useWorkbenchPaneSession({
 
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
-      setCodeCommentContexts([])
-      if (!contexts.some(isBrowserAnnotationContext)) return
+      // Native cleanup clears the entire page; retain an edited annotation batch.
+      const submittedAnnotations = contexts.filter(isBrowserAnnotationContext)
+      const currentAnnotations = codeCommentContextsRef.current.filter(isBrowserAnnotationContext)
+      const preserveAnnotations =
+        reason === 'send_success' &&
+        (submittedAnnotations.length !== currentAnnotations.length ||
+          currentAnnotations.some(context => !submittedAnnotations.includes(context)))
+      setCodeCommentContexts(current =>
+        current.filter(
+          context =>
+            !contexts.includes(context) ||
+            (preserveAnnotations && isBrowserAnnotationContext(context))
+        )
+      )
+      if (preserveAnnotations || !contexts.some(isBrowserAnnotationContext)) return
 
       browserAnnotationCommandSequenceRef.current += 1
       setBrowserAnnotationCommand({
@@ -1825,11 +1843,17 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
-        const submittedInputWriteVersion = inputWriteVersionRef.current
+        let submittedInputRevision = inputEditRevisionRef.current
         const clearSubmittedInput = () => {
-          // The composer may already have cleared this submission and accepted
-          // another draft while the send operation was awaiting its result.
-          if (inputWriteVersionRef.current === submittedInputWriteVersion) setInput('')
+          // A delayed send acknowledgment must not erase the next composer draft.
+          if (inputEditRevisionRef.current !== submittedInputRevision) return
+          setInput('')
+          submittedInputRevision = inputEditRevisionRef.current
+        }
+        const restoreSubmittedInput = (scopeKey: string, value: string) => {
+          if (inputEditRevisionRef.current === submittedInputRevision) {
+            setInputForScope(scopeKey, value)
+          }
         }
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
@@ -1923,7 +1947,7 @@ export function useWorkbenchPaneSession({
               clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
-              setCodeCommentContexts([])
+              clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             } else {
               currentAttachments.forEach(addExistingAttachment)
               setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
@@ -2005,7 +2029,7 @@ export function useWorkbenchPaneSession({
             if (seededGoalAddress) {
               clearRuntimePaneGoalSeed(seededGoalAddress)
             }
-            restoreInputAfterFailure(submittedInput)
+            restoreSubmittedInput(inputScopeKey, submittedInput)
             setGoalDraftActive(true)
             setPendingGoalState(null)
           }
@@ -2147,7 +2171,7 @@ export function useWorkbenchPaneSession({
               },
             })
           } catch (error) {
-            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )
@@ -2178,7 +2202,7 @@ export function useWorkbenchPaneSession({
             }
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
-            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )
@@ -2187,6 +2211,7 @@ export function useWorkbenchPaneSession({
         }
 
         if (hasCodeComments) {
+          resetAttachments()
           const queuedMessage: RuntimePaneQueuedMessage = {
             id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
             content: appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts),
@@ -2202,12 +2227,10 @@ export function useWorkbenchPaneSession({
           }
 
           if (paneIsBusy) {
-            resetAttachments()
             if (options.interruptWhenBusy) {
               const sent = await interruptAndSendQueuedMessage(queuedMessage)
               if (!sent) {
                 currentAttachments.forEach(addExistingAttachment)
-                setCodeCommentContexts(codeCommentContexts)
               } else {
                 clearSubmittedInput()
                 clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
@@ -2237,7 +2260,6 @@ export function useWorkbenchPaneSession({
           }
           if (result.accepted) {
             clearSubmittedInput()
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
             const lifecycleAfterSend = currentRuntimeTask
@@ -2250,9 +2272,9 @@ export function useWorkbenchPaneSession({
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
             clearSubmittedInput()
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
+            currentAttachments.forEach(addExistingAttachment)
             setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
           }
           return result.accepted || isRuntimeTaskBusyError(sendError)
@@ -2303,7 +2325,7 @@ export function useWorkbenchPaneSession({
         }
         if (result.accepted) {
           clearSubmittedInput()
-          setCodeCommentContexts([])
+          clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
         } else if (isRuntimeTaskBusyError(sendError)) {
           const lifecycleAfterSend = currentRuntimeTask
             ? lifecycleStore.getTask(currentRuntimeTask)
@@ -2344,7 +2366,6 @@ export function useWorkbenchPaneSession({
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,
         resetAttachments,
-        restoreInputAfterFailure,
         sendCurrentInput,
         sendQueuedMessageAsGuidance,
         sendRuntimeMessage,
@@ -2987,7 +3008,7 @@ export function useWorkbenchPaneSession({
     transcriptLoading,
   ])
 
-  useDebugSnapshot(debugSnapshotEnabled, () => {
+  useDebugSnapshotPublisher(debugSnapshotEnabled, () => {
     updateRuntimePaneDebugSnapshot(
       {
         currentRuntimeTask,

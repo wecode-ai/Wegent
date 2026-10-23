@@ -36,6 +36,7 @@ export interface WorkbenchDebugSnapshot {
   idleTasks: ReturnType<typeof getIdleTaskSchedulerDiagnostics>
   updatedAt: string
   workbench: {
+    publishedAt: string
     isBootstrapping: boolean
     error: string | null
     currentProject: WorkbenchState['currentProject']
@@ -302,6 +303,7 @@ export function updateWorkbenchDebugSnapshot({
     : null
   const lifecycleCurrentTaskRunning = activeLifecycle?.derived.isRunning ?? false
   workbenchSnapshot = {
+    publishedAt: new Date().toISOString(),
     isBootstrapping: state.isBootstrapping,
     error: state.error,
     currentProject: state.currentProject,

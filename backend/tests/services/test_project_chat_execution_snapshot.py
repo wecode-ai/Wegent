@@ -1,5 +1,6 @@
 """Durable execution reconciliation must survive a fresh database read."""
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -337,6 +338,87 @@ def test_managed_execution_root_remains_authoritative(
         assert execution.status == "failed"
         assert row.status == "streaming"
         assert changed == []
+
+
+@pytest.mark.parametrize(
+    "mismatch", [None, "turn", "execution", "failed", "cancelled", "sequence"]
+)
+def test_device_final_content_after_managed_snapshot(
+    test_db, test_user, run, monkeypatch, mismatch
+):
+    from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+    from app.models.loop_item_execution import LoopItemExecution
+
+    project, task, row = run
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="cloud",
+        execution_device_id="snapshot-device",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.metadata_json = {**row.metadata_json, "execution_id": execution.id}
+    test_db.commit()
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    original_handle = loop_item_execution_service.handle_runtime_event
+    reconciled = {}
+
+    def reconcile_before_event(db, **kwargs):
+        reconcile_execution_snapshot(db, user_id=test_user.id, snapshot=report())
+        if mismatch in {"failed", "cancelled"}:
+            execution.status = mismatch
+        elif mismatch == "execution":
+            row.metadata_json = {**row.metadata_json, "execution_id": execution.id + 1}
+        db.commit()
+        advance.reset_mock()
+        reconciled.update(
+            version=execution.version, task_version=task.version, content=row.content
+        )
+        return original_handle(db, **kwargs)
+
+    monkeypatch.setattr(
+        loop_item_execution_service, "handle_runtime_event", reconcile_before_event
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    with patch.object(project_chat_service, "_advance_task_to_review") as advance:
+        projected = _project_chat_runtime_event_sync(
+            "snapshot-device",
+            {
+                "event": "response.completed",
+                "payload": {
+                    "taskId": "runtime-1",
+                    "subtaskId": "wrong-turn" if mismatch == "turn" else "turn-1",
+                    "eventSeq": 10 if mismatch == "sequence" else 11,
+                    "data": {"text": "Actual final response"},
+                },
+            },
+            test_user.id,
+        )
+        advance.assert_not_called()
+    test_db.expire_all()
+    assert execution.version == reconciled["version"]
+    assert task.version == reconciled["task_version"]
+    if mismatch is None:
+        assert projected["message"]["content"] == "Actual final response"
+        assert projected["workflow_continuation"] is None
+        assert row.content == "Actual final response"
+        assert execution.status == "completed"
+    else:
+        assert projected is None
+        assert row.content == reconciled["content"]
 
 
 def test_conflicting_terminal_report_cannot_replace_durable_outcome(

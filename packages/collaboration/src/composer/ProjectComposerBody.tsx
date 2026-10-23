@@ -19,6 +19,7 @@ import type {
   ComposerFollowUpBehavior,
 } from './composerInputTypes'
 import { primaryComposerSubmitOptions } from './composerInputTypes'
+import { recordComposerDiagnostic } from './composerDiagnostics'
 import {
   browserComposerTransferServices,
   workspacePathReferenceText,
@@ -32,7 +33,6 @@ import {
   DOCUMENT_EDITOR_CLASS,
 } from './ProjectChatComposerSurface'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
-import { recordComposerDiagnostic } from './composerDiagnostics'
 
 export interface ProjectComposerBodyProps {
   presentation?: 'chat' | 'document' | 'configuration'
@@ -175,17 +175,16 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       !planModeActive &&
       !goalDraftActive
     const submitValue = (current: string, options?: ComposerSubmitOptions) => {
+      recordComposerDiagnostic('submit-policy', {
+        valueLength: current.length,
+        isModelSelectionReady,
+        disabled,
+        submitDisabled,
+      })
       const hasContent =
         allowEmptySubmit ||
         current.trim() ||
         (!requireText && (attachments.length || codeCommentCount))
-      recordComposerDiagnostic('submit-decision', {
-        valueLength: current.length,
-        hasContent: Boolean(hasContent),
-        isModelSelectionReady,
-        disabled,
-        submitDisabled: Boolean(submitDisabled),
-      })
       if (hasContent && isModelSelectionReady && !disabled && !submitDisabled)
         onSubmit(current, options)
     }

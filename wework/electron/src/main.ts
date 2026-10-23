@@ -1,7 +1,7 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
-import { installE2ERendererCpuProfile } from './host/e2e-renderer-cpu-profile.js'
+import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
   app,
@@ -405,7 +405,6 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   '[Wework] Conversation search diagnostic '
 )
 app.on('web-contents-created', (_event, contents) => {
-  installE2ERendererCpuProfile(contents, app.getPath('logs'))
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
   }
@@ -1267,6 +1266,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       webviewTag: true,
     },
   })
+  installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,

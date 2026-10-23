@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 import {
   validateSmartAppArtifacts,
   type SmartAppArtifactValidationResult,
@@ -44,7 +45,6 @@ import type {
 } from './smart-app-verification-types.js'
 
 import { SmartAppVerificationError } from './smart-app-verification-types.js'
-import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 export { SmartAppVerificationError } from './smart-app-verification-types.js'
 
 const REPORT_PATH = join('test-results', 'smart-app', 'verification.json')
@@ -325,7 +325,7 @@ export class SmartAppVerifier {
     const startedAt = this.dependencies.now().toISOString()
     let inputFingerprint: string
     try {
-      inputFingerprint = await traceSmartAppVerification('fingerprint/input', () =>
+      inputFingerprint = await traceSmartAppVerification('inputs', () =>
         this.dependencies.fingerprint(root, 'verification-input')
       )
     } catch (error) {
@@ -393,14 +393,14 @@ export class SmartAppVerifier {
     const artifactsStartedAt = this.dependencies.now().toISOString()
     let artifacts: SmartAppArtifactValidationResult
     try {
-      deliverableFingerprint = await traceSmartAppVerification('fingerprint/deliverable', () =>
-        this.dependencies.fingerprint(root, 'deliverable')
+      deliverableFingerprint = await this.dependencies.fingerprint(root, 'deliverable')
+      artifacts = await traceSmartAppVerification('artifacts', () =>
+        this.dependencies.validateArtifacts({
+          projectRoot: root,
+          manifest,
+          contract,
+        })
       )
-      artifacts = await this.dependencies.validateArtifacts({
-        projectRoot: root,
-        manifest,
-        contract,
-      })
     } catch (error) {
       artifacts = { issues: [environmentIssue('SA-ENV-ARTIFACTS', error)] }
     }
