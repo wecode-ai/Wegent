@@ -118,6 +118,8 @@ impl serde::Serialize for NullableConfig {
 struct StoredProjectConfig {
     #[serde(default)]
     mode: Option<String>,
+    #[serde(default, rename = "taskSource")]
+    task_source: Option<ProjectTaskSource>,
     #[serde(default)]
     device_id: Option<String>,
     #[serde(default)]
@@ -130,6 +132,14 @@ struct StoredProjectConfig {
     git: Option<ProjectGitConfig>,
     #[serde(default, rename = "modelSelection")]
     model_selection: Option<ProjectModelSelection>,
+}
+
+/// `ProjectConfig.taskSource` (`Literal["api", "dingtalk"]`).
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ProjectTaskSource {
+    Api,
+    Dingtalk,
 }
 
 /// `ProjectExecutionConfig` (`extra="forbid"`).

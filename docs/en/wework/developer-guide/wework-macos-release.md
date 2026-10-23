@@ -123,7 +123,7 @@ offline:
 `components.json` records the application version, release channel, and each
 component's version, resource path, and content SHA-256. The Electron
 application itself continues to update through `electron-updater`; the other
-seven components use independent
+seven components use target-version
 `components-<channel>-<platform>-<arch>.json` manifests.
 
 For macOS, publication locates immutable signed components by their unsigned
@@ -174,23 +174,9 @@ dependencies before running release scripts. Harness Runtime archive
 collection uses the `tar` package declared by Wework; dependencies installed
 in build jobs are not automatically available in the publish job.
 
-The version boundary follows whether an artifact must remain atomically
-compatible with the Electron host:
-
-- Application-versioned artifacts: Electron, Chromium, embedded Node, the main
-  process, preload, startup shell, Host capability implementations, native Node
-  modules, application identity, signing permissions, icons, installers,
-  updater protocols, and incompatible local-data migrations.
-- Independently versioned components: Core DSH, Wework core DSH plugins and UI,
-  Wework application static assets, bundled personal plugins and Skills,
-  Executor, Codex, and DWS.
-- User-installed marketplace plugins remain independently managed by the
-  plugin system and are not part of desktop component publication.
-
-Independent components must still exactly match the current Electron
-`appVersion` and switch as one atomic component set. A component change that
-requires a new Host capability, native module, or incompatible data format
-automatically becomes a full application release.
+All bundled desktop components and Electron share one application release version.
+Component hashes and upstream product versions support integrity checks and reuse
+across releases. User-installed marketplace plugins remain independently managed.
 
 The Wework UI, core plugins, application static assets, bundled personal
 plugins, and Executor share one `wework-<sourceSha12>` runtime version, where
@@ -205,27 +191,22 @@ The Wework application is further split by change frequency:
 `weworkCorePlugins` contains frequently changing application code and UI,
 while `weworkAppStatic` contains stable `web/vendor` and `web/wasm` assets. The
 client atomically composes both components into the complete plugin directory
-before startup. A routine Wework UI change should publish and download only
+before startup. A routine Wework UI change should change only the content of
 `weworkCorePlugins`, whose archive must remain below 20 MiB. If it exceeds that
 limit, re-examine component ownership instead of adding external binaries such
 as Codex, Core DSH, or DWS to the version Release.
 
-The release workflow automatically compares the source commit recorded by the
-previous component manifest. If only managed components changed, the Electron
-application version stays unchanged and installed clients receive only new
-component manifests. Changes to the Electron main process, preload, packaged
-resources, or release boundary advance the application version and the full
-Electron update manifests. Wework changes that cannot be classified safely
-default to a full update.
+Every desktop code or bundled component change advances the application version
+and publishes one immutable `wework-v<appVersion>` Release with complete installers,
+Electron YAML, and component manifests. Unrelated changes skip publication.
+Published versions cannot be reused for different code. Component changes also
+advance the stable patch or beta sequence; same-version Runtime releases are removed.
 
-Every publication creates an immutable Release containing complete installers
-with the newest components. Full updates use a `wework-v<appVersion>` tag;
-component updates use `wework-v<appVersion>-runtime.<sourceSha12>`, where
-`sourceSha12` is the first 12 hexadecimal characters of the source commit,
-without advancing the Electron `appVersion`. The newest stable publication is
-marked as the GitHub `latest` Release. New users download a complete installer
-from that Release, while every historical Release also remains independently
-installable.
+Clients check application versions through the selected stable/beta channel.
+Downloading an update stages its matching components before downloading the host;
+both activate together after restart. Startup no longer checks for independent
+same-version component updates. Component manifests and caches optimize transfer
+and storage, rather than creating a second update path.
 
 Repository-built Wework core plugin/UI, application static asset, bundled
 plugin, and Executor archives are uploaded to their corresponding version
@@ -233,9 +214,8 @@ Release. External Core DSH, Codex, DWS, and other non-repository binary
 dependencies use content-addressed archives stored centrally in
 `wework-updater` for reuse across versions. Rolling component manifests are
 also published there, but it is no longer the first-time installer download
-entry point. Existing users therefore download only components that actually
-changed and do not redownload Electron and Chromium for a component-only
-change.
+entry point. Existing users reuse unchanged components and download the slim
+host update that matches the new application version.
 
 Online Electron host updates use a separate `WeWorkHostUpdate` artifact. The
 rolling Electron manifest points at a slim host package without the seven
@@ -251,7 +231,7 @@ the `store` mode that only wraps the original bytes. Formal Release E2E reads
 the ZIP summary and rejects an uncompressed host update artifact. Complete
 installers always contain every component for first-time offline installation.
 
-The client accepts only a component manifest that exactly matches the running
+The client accepts only a component manifest that exactly matches the target
 Electron application version, channel, platform, and architecture. A
 manifest's `downloadUrl` may point to a version Release, a shared dependency
 Release, or independent object storage; it does not need to share the rolling
