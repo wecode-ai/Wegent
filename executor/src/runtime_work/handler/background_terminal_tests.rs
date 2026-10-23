@@ -36,12 +36,18 @@ async fn background_terminal_prevents_idle_restart_until_native_exit() {
 
 #[test]
 fn background_terminal_output_survives_execution_settlement_gap() {
-    verify_background_terminal_settlement(true);
+    verify_background_terminal_settlement(true, false);
 }
 
 #[test]
 fn background_terminal_output_survives_before_completion_mapper_drains() {
-    verify_background_terminal_settlement(false);
+    verify_background_terminal_settlement(false, false);
+}
+
+#[test]
+fn background_terminal_output_survives_before_execution_observes_native_completion() {
+    verify_background_terminal_settlement(true, true);
+    verify_background_terminal_settlement(false, true);
 }
 
 #[test]
@@ -100,12 +106,14 @@ fn background_terminal_item_snapshot_preserves_output_received_after_initial_yie
     let _ = fs::remove_dir_all(root);
 }
 
-fn verify_background_terminal_settlement(persist_before_finish: bool) {
-    let (mut handler, root) = isolated_runtime_work_handler(if persist_before_finish {
-        "background-terminal-settlement"
-    } else {
-        "background-terminal-before-persistence"
-    });
+fn verify_background_terminal_settlement(persist_before_finish: bool, retain_active_turn: bool) {
+    let (mut handler, root) =
+        isolated_runtime_work_handler(match (persist_before_finish, retain_active_turn) {
+            (true, false) => "background-terminal-settlement",
+            (false, false) => "background-terminal-before-persistence",
+            (true, true) => "background-terminal-native-completion-persisted",
+            (false, true) => "background-terminal-native-completion-pending",
+        });
     let (event_tx, mut event_rx) = broadcast::channel(8);
     handler.event_tx = Some(event_tx);
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
@@ -140,7 +148,13 @@ fn verify_background_terminal_settlement(persist_before_finish: bool) {
     if persist_before_finish {
         handler.persist_completed_codex_turn_from_notification("task-1", &completion);
     }
-    handler.clear_active_codex_turn("task-1", execution_id);
+    if retain_active_turn {
+        handler.route_codex_notification(completion.clone());
+        assert!(handler.active_codex_turn("task-1").is_some());
+        assert!(event_rx.try_recv().is_err());
+    } else {
+        handler.clear_active_codex_turn("task-1", execution_id);
+    }
     assert!(handler.is_active_local_task("task-1"));
     handler.route_codex_notification(json!({
         "method": "item/commandExecution/outputDelta",
@@ -159,6 +173,10 @@ fn verify_background_terminal_settlement(persist_before_finish: bool) {
     }
     let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
     assert_eq!(messages[0]["blocks"][0]["tool_output"], "ready\ntick\n");
+    assert!(
+        event_rx.try_recv().is_err(),
+        "output must be emitted only once"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -185,6 +203,65 @@ fn background_terminal_started_turn_does_not_route_before_execution_mapper_is_re
         event_rx.try_recv().is_err(),
         "a new turn must remain owned by its execution mapper"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn background_terminal_output_is_owned_once_while_waiting_for_goal_continuation() {
+    let (mut handler, root) = isolated_runtime_work_handler("background-terminal-goal-handoff");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, "task-1");
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        subtask_id: "turn-1".into(),
+        ..ExecutionRequest::default()
+    };
+    handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), true);
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    let completion = json!({"method": "turn/completed", "params": {
+        "threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "items": [{
+            "id": "command-1", "type": "commandExecution", "command": "pnpm dev",
+            "status": "inProgress", "aggregatedOutput": "ready\n"
+        }]}
+    }});
+    let mut mapper = CodexNotificationEventMapper::default();
+    handler.route_codex_notification(completion.clone());
+    handler
+        .map_execution_codex_notification(
+            "task-1",
+            execution_id,
+            &request,
+            handler.active_codex_turn("task-1"),
+            &mut mapper,
+            completion,
+        )
+        .await;
+    while event_rx.try_recv().is_ok() {}
+    let output = json!({"method": "item/commandExecution/outputDelta", "params": {
+        "threadId": "thread-1", "turnId": "turn-1", "itemId": "command-1", "delta": "tick\n"
+    }});
+    handler.route_codex_notification(output.clone());
+    handler
+        .map_execution_codex_notification(
+            "task-1",
+            execution_id,
+            &request,
+            handler.active_codex_turn("task-1"),
+            &mut mapper,
+            output,
+        )
+        .await;
+    assert_eq!(
+        event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["tool_output_delta"],
+        "tick\n"
+    );
+    assert!(event_rx.try_recv().is_err());
+    let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert_eq!(messages[0]["blocks"][0]["tool_output"], "ready\ntick\n");
     let _ = fs::remove_dir_all(root);
 }
 

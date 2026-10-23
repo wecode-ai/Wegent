@@ -942,6 +942,21 @@ impl RuntimeWorkRpcHandler {
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
+        let notification = codex_notification(&message);
+        let notification_turn_id = codex_notification_turn_id(&message);
+        let command_notification = notification.method.starts_with("item/commandExecution/")
+            || item_type(&notification_item(notification.params)) == "commandexecution";
+        if command_notification
+            && notification_turn_id.is_some()
+            && notification_turn_id == event_mapper.execution_completed_turn_id
+        {
+            // Goal continuations keep this receiver alive after native completion.
+            // The global router owns all subsequent output from that completed turn.
+            return;
+        }
+        if notification.method == "turn/completed" {
+            event_mapper.execution_completed_turn_id = notification_turn_id;
+        }
         if self.sync_runtime_task_goal_from_notification(local_task_id, &message) {
             self.journal_active_goal_turn(local_task_id, request, active_turn.as_ref());
         }

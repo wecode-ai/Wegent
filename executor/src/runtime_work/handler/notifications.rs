@@ -385,7 +385,11 @@ impl RuntimeWorkRpcHandler {
             .replaying_route_generations
             .get(&thread_id)
             .is_some_and(|generation| Some(*generation) != replay_generation);
-        let Some(route) = routing.routes.get(&thread_id).filter(|_| !route_replaying) else {
+        let Some(route) = routing
+            .routes
+            .get_mut(&thread_id)
+            .filter(|_| !route_replaying)
+        else {
             debug_unrouted_codex_notification(
                 &message,
                 if route_replaying {
@@ -416,6 +420,10 @@ impl RuntimeWorkRpcHandler {
             }
             return;
         };
+        if codex_notification(&message).method == "turn/completed" {
+            route.native_completed_turn_id = notification_turn_id.clone();
+        }
+        let native_completed_turn_id = route.native_completed_turn_id.clone();
         let local_task_id = route.local_task_id.clone();
         let route_request = route.request.clone();
         let event_mapper = route.event_mapper.clone();
@@ -455,6 +463,7 @@ impl RuntimeWorkRpcHandler {
                         active: route_active,
                         nested: true,
                         generation,
+                        native_completed_turn_id: None,
                     },
                 );
             }
@@ -465,11 +474,17 @@ impl RuntimeWorkRpcHandler {
         let command_notification = notification.method.starts_with("item/commandExecution/")
             || item_type(&notification_item(notification.params)) == "commandexecution";
         let active_turn = self.active_codex_turn(&local_task_id);
-        // The turn callback finishes before its execution task settles. Completed
-        // commands belong to the global router during that handoff window.
-        let completed_command_turn = active_turn.is_none()
-            && command_notification
+        // These receivers advance independently: native completion can reach this
+        // router before the execution callback clears its active turn. Ownership
+        // must follow this ordered stream rather than that callback's scheduling.
+        let completed_command_turn = command_notification
             && notification_turn_id.as_deref().is_some_and(|turn_id| {
+                if native_completed_turn_id.as_deref() == Some(turn_id) {
+                    return true;
+                }
+                if active_turn.is_some() {
+                    return false;
+                }
                 let streamed =
                     self.active_codex_transcript_items
                         .lock()
@@ -586,6 +601,7 @@ impl RuntimeWorkRpcHandler {
             RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active, generation)
         });
         if route.local_task_id != local_task_id {
+            route.native_completed_turn_id = None;
             route.generation = next_thread_event_route_generation(&mut routing);
             routing.replaying_route_generations.remove(thread_id);
             routing

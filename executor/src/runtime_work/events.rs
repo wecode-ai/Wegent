@@ -292,6 +292,7 @@ struct EventEmitContext<'a> {
 
 #[derive(Default)]
 pub(crate) struct CodexNotificationEventMapper {
+    pub(crate) execution_completed_turn_id: Option<String>,
     active_output_item_id: Option<String>,
     agent_message_phases: CodexAgentMessagePhaseTracker,
     subagent_item_ids: BTreeSet<String>,

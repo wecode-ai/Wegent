@@ -709,6 +709,7 @@ struct RuntimeThreadEventRoute {
     active: bool,
     nested: bool,
     generation: u64,
+    native_completed_turn_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -795,6 +796,7 @@ impl RuntimeThreadEventRoute {
             active,
             nested: false,
             generation,
+            native_completed_turn_id: None,
         }
     }
 }
