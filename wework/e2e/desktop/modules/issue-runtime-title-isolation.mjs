@@ -10,12 +10,20 @@ import {
 export async function verifyIssueRuntimeTitleIsolation(control, content, project, issue, binding) {
   const rpc = (method, params) => requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
   const title = `Private conversation for ${issue.id}`
-  const renamed = await rpc('runtime.tasks.rename', {
-    deviceId: binding.device_id,
-    taskId: binding.task_id,
-    title,
+  const tabId = await control.command('getAttribute', content, {
+    value: 'data-workspace-tab-content',
+    visible: true,
   })
-  assert.equal(renamed.accepted, true, 'The executor did not rename the conversation')
+  assert.ok(tabId, 'The conversation tab has no portal owner')
+  const header = `[data-workspace-tab-portal-owner=${JSON.stringify(tabId)}]:not([hidden])`
+  const dialog = '[data-testid="conversation-rename-input-overlay"]'
+  const input = `${dialog} [data-testid="conversation-rename-input"]`
+  // The header and dialog are portals outside the conversation's tab content.
+  await control.command('clickWhenEnabled', `${header} [data-testid="conversation-rename-button"]`)
+  await control.command('waitFor', input, { visible: true, enabled: true })
+  await control.command('fill', input, { value: title })
+  await control.command('clickWhenEnabled', `${dialog} [data-testid="conversation-rename-confirm"]`)
+  await control.command('waitFor', dialog, { visible: false })
   const afterRename = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
   assert.equal(afterRename.title, issue.title, 'Renaming the conversation renamed the Issue')
   assert.equal(afterRename.version, issue.version, 'Renaming the conversation mutated the Issue')

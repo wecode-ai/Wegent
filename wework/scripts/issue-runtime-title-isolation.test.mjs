@@ -31,36 +31,107 @@ function snapshot(state = current) {
 
 afterEach(() => vi.restoreAllMocks())
 
-test('waits for the new turn and its exact visible response without counting mounted rows', async () => {
+test('renames through the UI before observing the new turn and its exact visible response', async () => {
+  const requests = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, options) => {
-    const { method } = JSON.parse(options.body)
+    const request = JSON.parse(options.body)
+    requests.push(request)
+    assert.equal(request.method, 'todos.get', 'Runtime renames must use the UI refresh flow')
     return new Response(
       JSON.stringify({
         ok: true,
-        result: method === 'runtime.tasks.rename' ? { accepted: true } : issue,
+        result: issue,
       }),
       { headers: { 'Content-Type': 'application/json' } }
     )
   })
-  const snapshots = [snapshot(previous), snapshot(previous), snapshot()]
+  const content = '[data-testid="workspace-tab-content-task-tab"]'
+  const header =
+    '[data-workspace-tab-portal-owner="task-tab"]:not([hidden]) [data-testid="conversation-rename-button"]'
+  const dialog = '[data-testid="conversation-rename-input-overlay"]'
+  const staleTitle = snapshot(previous)
+  staleTitle.workbench.activeTask.title = 'Draft first-message title'
+  const snapshots = [staleTitle, snapshot(previous), snapshot(previous), snapshot()]
   const calls = []
+  let dialogOpened = false
+  let renameFilled = false
+  let renameSaved = false
+  let dialogClosed = false
   const control = {
     setScenario: vi.fn(),
     async command(action, selector, options) {
       calls.push({ action, selector, options })
+      if (action === 'getAttribute') {
+        assert.equal(selector, content)
+        assert.equal(options.value, 'data-workspace-tab-content')
+        return 'task-tab'
+      }
+      if (action === 'clickWhenEnabled') {
+        if (selector === header) dialogOpened = true
+        else {
+          assert.equal(selector, `${dialog} [data-testid="conversation-rename-confirm"]`)
+          assert.equal(renameFilled, true, 'The rename title was not filled before saving')
+          renameSaved = true
+        }
+        return ''
+      }
+      if (action === 'fill' && selector === `${dialog} [data-testid="conversation-rename-input"]`) {
+        assert.equal(dialogOpened, true)
+        assert.equal(options.value, title)
+        renameFilled = true
+        return ''
+      }
+      if (action === 'waitFor' && selector === dialog) {
+        assert.equal(renameSaved, true)
+        assert.equal(options.visible, false)
+        dialogClosed = true
+        return ''
+      }
       if (action === 'getLocationOrigin') return 'http://executor.test'
-      if (action === 'getWorkbenchDebugSnapshot') return JSON.stringify(snapshots.shift())
+      if (action === 'getWorkbenchDebugSnapshot') {
+        assert.equal(dialogClosed, true, 'The UI rename must finish its refresh before observing')
+        return JSON.stringify(snapshots.shift())
+      }
       if (['fill', 'press', 'waitFor'].includes(action)) return ''
       throw new Error(`Mounted row counts cannot identify a new turn: ${action}`)
     },
   }
-  await verifyIssueRuntimeTitleIsolation(control, '#task-tab', { id: 1 }, issue, binding)
+  await verifyIssueRuntimeTitleIsolation(control, content, { id: 1 }, issue, binding)
   const responseWait = calls.find(
     call => call.action === 'waitFor' && call.selector.includes('data-message-id')
   )
   assert.ok(responseWait.selector.includes('follow-up-assistant'))
   assert.equal(responseWait.options.visible, true)
   assert.equal(snapshots.length, 0, 'The previous completion incorrectly satisfied the follow-up')
+  assert.equal(requests.length, 2, 'Both title-isolation checks must read the persisted Issue')
+  for (const request of requests)
+    assert.deepEqual(request.params, { project_id: 1, task_id: issue.id })
+})
+
+test('propagates an unfinished UI rename before sending a follow-up', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch')
+  const failure = new Error('Rename dialog remained open after a rejected save')
+  const calls = []
+  const control = {
+    setScenario: vi.fn(),
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'getAttribute') return 'task-tab'
+      if (action === 'waitFor' && options.visible === false) throw failure
+      if (['clickWhenEnabled', 'fill', 'waitFor'].includes(action)) return ''
+      throw new Error(`A failed rename must stop the flow: ${action}`)
+    },
+  }
+  await assert.rejects(
+    verifyIssueRuntimeTitleIsolation(control, '#task-tab', { id: 1 }, issue, binding),
+    error => error === failure
+  )
+  assert.equal(fetch.mock.calls.length, 0)
+  assert.equal(control.setScenario.mock.calls.length, 0)
+  assert.equal(
+    calls.some(call => call.action === 'press'),
+    false
+  )
 })
 
 test('accepts a new completed turn for the same renamed conversation', () => {
