@@ -74,6 +74,7 @@ from app.db.session import SessionLocal
 from app.models.subtask import SubtaskStatus
 from app.models.user import User
 from app.schemas.device import (
+    DeviceCapabilitySyncResult,
     DeviceHeartbeatPayload,
     DeviceOfflineEvent,
     DeviceOnlineEvent,
@@ -129,6 +130,8 @@ from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_write_coordination import configure_plugin_session
+from app.services.plugin_write_errors import PluginWriteError
 from app.services.project_chat.service import project_chat_service
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
@@ -1843,6 +1846,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         return {"success": True, "device_id": payload.device_id}
 
+    @trace_async("device.register.capability_sync", tracer_name="backend.device")
     async def _sync_global_capabilities_to_registered_device(
         self,
         *,
@@ -1851,27 +1855,28 @@ class DeviceNamespace(socketio.AsyncNamespace):
     ) -> None:
         """Best-effort desired-state sync when a device comes online."""
         try:
-            with _db_session() as db:
-                plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
-                    db, user_id=user_id
-                )
-                plugin_device_installation_service.ensure_pending_for_device(
-                    db,
+            include_plugins = await run_sync_in_executor(
+                partial(
+                    self._prepare_plugins_for_registered_device,
                     user_id=user_id,
                     device_id=device_id,
                 )
+            )
             result = (
                 await device_capability_sync_service.sync_current_device_capabilities(
                     user_id=user_id,
                     device_id=device_id,
                     timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
+                    include_plugins=include_plugins,
                 )
             )
-            with _db_session() as db:
-                plugin_device_installation_service.record_device_sync_result(
-                    db,
-                    user_id=user_id,
-                    result=result,
+            if include_plugins:
+                await run_sync_in_executor(
+                    partial(
+                        self._record_registration_sync_result,
+                        user_id=user_id,
+                        result=result,
+                    )
                 )
             if not result.success:
                 logger.warning(
@@ -1883,6 +1888,40 @@ class DeviceNamespace(socketio.AsyncNamespace):
         except Exception:
             logger.exception(
                 "[Device WS] Error syncing global capabilities after registration"
+            )
+
+    def _prepare_plugins_for_registered_device(
+        self, *, user_id: int, device_id: str
+    ) -> bool:
+        """Keep plugin coordination failures outside Skills/MCP synchronization."""
+        try:
+            with _db_session() as db:
+                configure_plugin_session(db)
+                plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+                    db, user_id=user_id
+                )
+                plugin_device_installation_service.ensure_pending_for_device(
+                    db, user_id=user_id, device_id=device_id
+                )
+            return True
+        except PluginWriteError as exc:
+            logger.warning(
+                "[Device WS] Plugin sync after register deferred: "
+                "user=%s device=%s code=%s; syncing Skills/MCP only",
+                user_id,
+                device_id,
+                exc.code,
+            )
+            return False
+
+    def _record_registration_sync_result(
+        self, *, user_id: int, result: DeviceCapabilitySyncResult
+    ) -> None:
+        """Persist the acknowledgement in the same worker as its session."""
+        with _db_session() as db:
+            configure_plugin_session(db)
+            plugin_device_installation_service.record_device_sync_result(
+                db, user_id=user_id, result=result
             )
 
     def _schedule_runtime_auth_sync_after_heartbeat(

@@ -61,6 +61,7 @@ from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.access import can_view_item
+from app.services.loop_items.change_requests import update_change_request_source
 from app.services.notification_copy import comment_preview
 from app.services.project_chat.mention_notification import (
     notify_project_chat_mentions,
@@ -969,6 +970,10 @@ class ProjectChatService:
                 mention.model_dump(by_alias=True) for mention in request.mentions
             ]
         }
+        if request.mentions and all(
+            mention.type == "user" for mention in request.mentions
+        ):
+            metadata["execution_dispatch"] = "comment_only"
         if request.model is not None:
             metadata["model"] = request.model
         reply = self._resolve_reply_context(
@@ -1000,6 +1005,7 @@ class ProjectChatService:
         notify_project_chat_mentions(
             db,
             project=project,
+            task_id=request.task_id,
             item=item,
             comment_id=message_id,
             actor_user_id=user_id,
@@ -1010,6 +1016,9 @@ class ProjectChatService:
         )
         if request.task_id:
             if item is not None:
+                item.metadata_json = update_change_request_source(
+                    item.metadata_json, f"activity:{row.message_id}", row.content
+                )
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
                 )
@@ -1536,9 +1545,25 @@ class ProjectChatService:
             error=None if row.status == "completed" else error or content,
         )
         self._advance_task_to_review(db, row)
+        self._index_activity_change_requests(db, row)
         # DB-generated timestamps lose subsecond precision. Record the result
         # after its status transition so the activity preserves causal order.
         self._record_activity_timestamp(row)
+
+    def _index_activity_change_requests(
+        self, db: Session, row: ProjectChatMessage
+    ) -> None:
+        if not row.task_id:
+            return
+        item = db.get(LoopItem, row.task_id)
+        if item is None:
+            return
+        metadata = update_change_request_source(
+            item.metadata_json, f"activity:{row.message_id}", row.content
+        )
+        if metadata != item.metadata_json:
+            item.metadata_json = metadata
+            self._queue_loop_item_change(db, item)
 
     @staticmethod
     def _record_activity_timestamp(row: ProjectChatMessage) -> None:
@@ -1704,6 +1729,8 @@ class ProjectChatService:
                 existing.metadata_json = metadata
                 existing.status = message_status
             existing.message_type = "text"
+        if existing.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
+            self._index_activity_change_requests(db, existing)
         self._commit(db)
         db.refresh(existing)
         return self.to_view(existing, db=db), "snapshot"
@@ -2176,6 +2203,19 @@ class ProjectChatService:
                     status.HTTP_403_FORBIDDEN, "Insufficient permission"
                 )
             return project
+        if project.task_provider in {"github", "gitlab"}:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            external_task = external_loop_item_provider.get(db, task_id, user_id)
+            if external_task["cloud_project_id"] != str(project.id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            if not has_permission(access.role, required_role):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                )
+            return project
         task = (
             db.query(LoopItem)
             .filter(
@@ -2187,17 +2227,6 @@ class ProjectChatService:
             .first()
         )
         if task is None:
-            if project.task_provider in {"github", "gitlab"}:
-                from app.services.loop_items.external_provider import (
-                    external_loop_item_provider,
-                )
-
-                external_loop_item_provider.get(db, task_id, user_id)
-                if not has_permission(access.role, required_role):
-                    raise HTTPException(
-                        status.HTTP_403_FORBIDDEN, "Insufficient permission"
-                    )
-                return project
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")

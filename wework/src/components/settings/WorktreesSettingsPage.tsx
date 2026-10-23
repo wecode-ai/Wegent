@@ -79,6 +79,15 @@ function WorktreeRow({
           <div className="mt-1 truncate text-xs text-text-secondary" title={item.path}>
             {item.path}
           </div>
+          {item.lastError && (
+            <div
+              data-testid="worktree-error"
+              role="alert"
+              className="mt-1 break-words text-xs text-red-600"
+            >
+              {item.lastError}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -307,7 +316,7 @@ export function WorktreesSettingsPage({
 
   const groups = useMemo(
     () =>
-      groupWorktrees(items.filter(item => item.state === 'active' || item.state === 'restorable')),
+      groupWorktrees(items.filter(item => ['active', 'restorable', 'failed'].includes(item.state))),
     [items]
   )
   const unavailable = !api || availableDevices.length === 0

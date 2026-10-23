@@ -47,6 +47,7 @@ def test_compaction_keeps_latest_and_live_intents_and_deletes_in_bounded_batches
     malformed = add_row(test_db, test_user, 10, json={"spec": {"automatic": True}})
     test_db.flush()
     before = test_db.query(Kind).count()
+    inactive_id, expired_id = inactive.id, expired.id
 
     assert {row.id for row in obsolete_query(test_db, test_user.id, 100)} == {
         inactive.id,
@@ -58,7 +59,7 @@ def test_compaction_keeps_latest_and_live_intents_and_deletes_in_bounded_batches
     assert compact_batch(test_db, test_user.id, 1) == 0
 
     remaining = {row.id for row in test_db.query(Kind.id)}
-    assert inactive.id not in remaining and expired.id not in remaining
+    assert inactive_id not in remaining and expired_id not in remaining
     assert {
         row.id
         for row in (

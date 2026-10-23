@@ -1,3 +1,4 @@
+import { verifyIssueRuntimeTitleIsolation } from './issue-runtime-title-isolation.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
@@ -58,7 +59,9 @@ async function verifyDraft(control, project, existingItem) {
   const content = `[data-testid="workspace-tab-content-${tabId}"]`
   const composer = `${content} [data-testid="chat-message-input"][contenteditable="true"]`
   const chooseProject = async () => {
-    await control.command('click', `${content} [data-testid="project-space-context-pill"]`)
+    const projectPicker = `${content} button[data-testid="project-space-context-pill"]`
+    await control.command('waitFor', projectPicker, { visible: true })
+    await control.command('click', projectPicker)
     await control.command(
       'markElementWithText',
       '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
@@ -138,6 +141,7 @@ async function verifyDraft(control, project, existingItem) {
     text: persisted.title,
     visible: true,
   })
+  await verifyIssueRuntimeTitleIsolation(control, content, project, persisted, binding)
   await control.command('click', `[data-testid="workspace-tab-close-${tabId}"]`)
   console.log(`[e2e] Draft ${existingItem ? 'association' : 'creation'} persisted: ${persisted.id}`)
 }

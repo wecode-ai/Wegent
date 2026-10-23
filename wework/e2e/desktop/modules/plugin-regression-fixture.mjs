@@ -94,14 +94,24 @@ export async function assertInventory(control, slug, present) {
 }
 
 export async function assertSurfaces(control, fixture, present) {
+  assert.ok(
+    Number.isSafeInteger(fixture.installedId) && fixture.installedId > 0,
+    'Fixture installedId must be a positive safe integer'
+  )
   await assertInventory(control, fixture.slug, present)
   await control.command('click', testId('plugins-manage-button'))
   await control.command(
     'waitFor',
     `${testId('plugin-management-installed-list')}, ${testId('plugin-management-empty-state')}`
   )
-  const manager = await control.command('getText', testId('plugin-management-page-content'))
-  assert.equal(manager.includes(fixture.slug), present, 'Manager disagrees with account membership')
+  const manager = JSON.parse(
+    await control.command('snapshot', testId('plugin-management-page-content'))
+  )
+  assert.equal(
+    manager.testIds.includes(`installed-plugin-row-${fixture.installedId}`),
+    present,
+    'Manager disagrees with account membership'
+  )
   await control.command('click', testId('new-chat-button'))
   await control.command('click', testId('composer-plugin-picker-button'))
   await control.command('waitFor', testId('composer-plugin-picker'))

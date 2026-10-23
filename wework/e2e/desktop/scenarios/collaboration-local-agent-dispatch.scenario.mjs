@@ -4,6 +4,7 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -340,6 +341,7 @@ export async function createDesktopScenario({
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `local-agent-dispatch-${Date.now()}-${modelRequests}`
       const kind = codexRequestKind(body)
       if (kind === 'prewarm' || kind === 'compaction') {

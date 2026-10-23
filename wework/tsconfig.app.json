@@ -3,6 +3,8 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
       "@/*": ["./src/*"],
       "@wecode/*": ["./wecode/*"],
       "@extensions/*": ["./wecode/extensions/*", "./src/extensions/*"],

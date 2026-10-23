@@ -202,6 +202,22 @@ describe('WorktreesSettingsPage', () => {
     )
   })
 
+  test('shows persisted worktree failures so leftover directories remain diagnosable', async () => {
+    const response = await listWorktrees()
+    listWorktrees.mockResolvedValue({
+      ...response,
+      items: response.items.map((item: object) => ({
+        ...item,
+        state: 'failed',
+        lastError: 'Managed worktree repository identity is unavailable',
+      })),
+    })
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    expect(await screen.findByTestId('worktree-error')).toHaveTextContent(
+      'Managed worktree repository identity is unavailable'
+    )
+  })
+
   test('updates cleanup settings and removes a deleted worktree without reloading the page', async () => {
     render(<WorktreesSettingsPage api={api} devices={devices} />)
     await screen.findByText('Fix settings')

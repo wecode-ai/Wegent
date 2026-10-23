@@ -16,13 +16,17 @@ from app.models.delivery import CloudProject, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import CloudProjectCreate
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces.responses import list_workspace_responses
-from app.services.workspaces.storage import workspace_kind_payload
+from app.services.workspaces.storage import (
+    ensure_resource_grant,
+    workspace_kind_payload,
+)
 
 
 @pytest.fixture
@@ -120,6 +124,58 @@ def test_independent_project_creation_does_not_lock_absent_parent_grants(
                 pool.submit(create_project, workspace_id) for workspace_id in (11, 12)
             ]
             assert len({future.result(timeout=20) for future in futures}) == 2
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
+
+
+@pytest.mark.parametrize("same_identity", [False, True])
+def test_concurrent_resource_grants_do_not_lock_absent_rows(
+    mysql_url: str, same_identity: bool
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ResourceMember.__table__.create(engine)
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(_db, _cursor, statement, _params, _context, _many) -> None:
+        if statement.startswith("INSERT INTO resource_members"):
+            ready.wait()
+
+    def authorize(resource_id: int) -> int:
+        with Session(engine) as db:
+            # Authentication and permission checks can establish an older snapshot.
+            assert db.query(ResourceMember.id).count() == 0
+            grant = ensure_resource_grant(
+                db,
+                workspace_id=11,
+                resource_type="Team",
+                resource_id=resource_id,
+                added_by_user_id=1,
+                role=BaseRole.Developer,
+            )
+            grant_id = grant.id
+            db.commit()
+            return grant_id
+
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        identities = (101, 101 if same_identity else 102)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(authorize, identity) for identity in identities]
+            ids = [future.result(timeout=20) for future in futures]
+        assert len(set(ids)) == (1 if same_identity else 2)
+        with Session(engine) as db:
+            grants = db.query(ResourceMember).all()
+            assert len(grants) == len(set(identities))
+            assert {grant.resource_id for grant in grants} == set(identities)
+            assert all(
+                grant.role == "Developer"
+                and grant.status == "approved"
+                and grant.entity_type == "workspace"
+                and grant.entity_id == "11"
+                and grant.user_id == 0
+                for grant in grants
+            )
     finally:
         sa.event.remove(engine, "before_cursor_execute", synchronize)
         engine.dispose()

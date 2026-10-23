@@ -106,7 +106,6 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       await control.command('navigate', 'body', { value: '/settings/general' })
       await control.command('waitFor', '[data-testid="reply-prediction-enabled"]')
       await control.command('scrollIntoView', '[data-testid="reply-prediction-settings"]')
-      await control.command('click', '[data-testid="reply-prediction-enabled"]')
       await control.command(
         'waitFor',
         '[data-testid="reply-prediction-enabled"][aria-checked="true"]'

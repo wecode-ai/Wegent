@@ -82,6 +82,7 @@ def restore_completed_turn_content(
     ):
         return CompletedTurnContentProjection(True)
     row.content = content
+    project_chat_service._index_activity_change_requests(db, row)
     if execution is not None:
         execution.last_event_seq = sequence
     project_chat_service._commit(db)

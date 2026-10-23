@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.security import get_current_user_jwt_apikey_tasktoken
 from app.models.user import User
-from app.schemas.delivery import LoopItemCommentCreate
-from app.schemas.issue_activity_comment import IssueActivityCommentResponse
+from app.schemas.issue_activity_comment import (
+    IssueActivityCommentCreate,
+    IssueActivityCommentResponse,
+)
 from app.services.project_chat.issue_comments import (
     add_issue_comment,
     list_issue_comments,
@@ -45,7 +47,7 @@ def list_activity_comments(
 def add_activity_comment(
     project_id: str,
     item_id: str,
-    values: LoopItemCommentCreate,
+    values: IssueActivityCommentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, Any]:
@@ -56,4 +58,5 @@ def add_activity_comment(
         project_id=project_id,
         item_id=item_id,
         body=values.body,
+        mentions=values.mentions,
     )

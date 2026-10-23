@@ -12,6 +12,7 @@ import {
 import { subscribeIssueDispatch } from './issueDispatch'
 import { readActiveNotificationPreferences } from './notificationPreferences'
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
+import { assignment, runtimeItem } from './standInNotifications.fixtures'
 
 const api = vi.hoisted(() => ({
   list: vi.fn(),
@@ -146,6 +147,63 @@ beforeEach(() => {
 })
 
 describe('notification center', () => {
+  it.each(['cloud', 'local'] as const)(
+    'opens the %s Issue for a handled stand-in notification',
+    async projectStore => {
+      const cloud = projectStore === 'cloud'
+      const notification = {
+        ...assignment,
+        payload: { ...assignment.payload, action: 'create_personal_task' },
+      }
+      taskState.reminders = {
+        items: [
+          {
+            ...runtimeItem,
+            task: {
+              ...runtimeItem.task,
+              runtimeHandle: {
+                origin: { ...(runtimeItem.task.runtimeHandle!.origin as object), projectStore },
+              },
+            },
+          },
+        ],
+        unreadTaskKeys: new Set(),
+        markRuntimeTaskRead,
+      }
+      api.list.mockImplementation((_offset, category) =>
+        Promise.resolve({
+          items: cloud && category === 'collaboration' ? [notification] : [],
+          unread_count: 0,
+          next_offset: null,
+        })
+      )
+      api.read.mockResolvedValue(notification)
+      const open = vi.fn()
+      window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
+      try {
+        render(viewWithTask())
+        fireEvent.click(screen.getByTestId('wework-notifications-button'))
+        fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+        const row = await screen.findByTestId(
+          cloud
+            ? 'issue-dispatch-notification-create-task'
+            : `wework-notification-stand-in:${encodeURIComponent(runtimeItem.key)}`
+        )
+        await waitFor(() => expect(row).toBeEnabled())
+        fireEvent.click(row)
+        await waitFor(() => expect(open).toHaveBeenCalledOnce())
+        expect(open.mock.calls[0][0].detail).toBe(
+          `wework://boards/${cloud ? '' : 'local/'}12/issues/ISSUE-1`
+        )
+        if (cloud) expect(api.read).toHaveBeenCalledWith(assignment.id)
+        else expect(api.read).not.toHaveBeenCalled()
+        expect(markRuntimeTaskRead).toHaveBeenCalledWith(runtimeItem.address)
+      } finally {
+        window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
+      }
+    }
+  )
+
   it('does not register an incomplete source before workbench reminders are available', async () => {
     taskState.reminders = null
     render(viewWithTask())
