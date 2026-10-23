@@ -9,6 +9,7 @@ export async function createDesktopScenario() {
     async verify(control) {
       // The isolated profile has no prepared speech model. No microphone or
       // model-service mock is needed to exercise the real first-use path.
+      await control.command('waitFor', '[data-testid="new-chat-button"]')
       await control.command('click', '[data-testid="new-chat-button"]')
       const voice = '[data-testid="composer-voice-input"]'
       await control.command('waitFor', `${voice} button:not(:disabled)`)
