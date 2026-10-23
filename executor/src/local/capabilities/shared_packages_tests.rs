@@ -526,14 +526,12 @@ async fn metadata_changes_apply_without_redownloading() {
     handler.apply_sync(payload.clone()).await.unwrap();
     payload["plugins"][0]["enabled"] = json!(false);
     payload["plugins"][0]["component_states"] = json!({"skills/demo": false});
-    payload["plugins"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("cloud_plugin_id");
     assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
-    assert!(store.manifest.load().unwrap()["plugins"]["demo@wegent"]
-        .get("cloud_plugin_id")
-        .is_none());
+    // Identity fields from the earlier install survive a metadata-only sync.
+    assert_eq!(
+        store.manifest.load().unwrap()["plugins"]["demo@wegent"]["cloud_plugin_id"],
+        json!(42)
+    );
     let installed = read_installed_plugins(&store.plugins_dir).unwrap();
     assert_eq!(
         installed["plugins"]["demo@wegent"][0]["componentStates"],

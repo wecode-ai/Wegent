@@ -1778,6 +1778,12 @@ where
             }
         }
         for path in &file_paths {
+            // The store manifest lives outside the managed plugin roots; the
+            // transaction still snapshots it, but the managed-path guard only
+            // applies to runtime and registration files.
+            if path == &self.store.manifest.path {
+                continue;
+            }
             self.store.ensure_state_path(path, false)?;
         }
         let original_manifest = manifest.clone();

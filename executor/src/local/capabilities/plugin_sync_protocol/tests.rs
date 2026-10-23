@@ -23,7 +23,7 @@ impl CapabilityPackageProvider for Provider {
 
     fn download_plugin<'a>(
         &'a self,
-        _path: &'a str,
+        path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
         Box::pin(async {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -31,12 +31,15 @@ impl CapabilityPackageProvider for Provider {
             if self.fail.load(Ordering::SeqCst) {
                 return Err(invalid("Test download failure"));
             }
-            Ok(package())
+            // The store verifies package identity, so each fixture plugin
+            // downloads an archive whose manifest declares the same name.
+            let name = path.rsplit('/').next().unwrap_or("alpha");
+            Ok(package(name))
         })
     }
 }
 
-fn package() -> Vec<u8> {
+fn package(name: &str) -> Vec<u8> {
     let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
     archive
         .start_file(
@@ -44,9 +47,8 @@ fn package() -> Vec<u8> {
             zip::write::FileOptions::default(),
         )
         .unwrap();
-    archive
-        .write_all(br#"{"name":"alpha","version":"1.0.0"}"#)
-        .unwrap();
+    let manifest = format!(r#"{{"name":"{name}","version":"1.0.0"}}"#);
+    archive.write_all(manifest.as_bytes()).unwrap();
     archive
         .start_file("payload.txt", zip::write::FileOptions::default())
         .unwrap();
@@ -56,7 +58,7 @@ fn package() -> Vec<u8> {
 
 fn plugin(name: &str, id: i64) -> Value {
     json!({"name": name, "marketplace": "wework", "version": "1.0.0",
-        "installed_plugin_id": id, "checksum": sha256_digest(&package()), "download_path": "/test/package"})
+        "installed_plugin_id": id, "checksum": sha256_digest(&package(name)), "download_path": format!("/test/package/{name}")})
 }
 
 fn delta(generation: u64, plugins: Vec<Value>, removals: Vec<Value>) -> Value {
@@ -244,7 +246,10 @@ async fn duplicate_inflight_requests_share_work_and_failed_requests_retry() {
     let result = handler.apply_sync(payload).await.unwrap();
     assert_eq!(result["plugins"][0]["status"], "synced");
     assert_eq!(result["plugins"][0]["generation"], 1);
-    assert_eq!(result["plugins"][0]["checksum"], sha256_digest(&package()));
+    assert_eq!(
+        result["plugins"][0]["checksum"],
+        sha256_digest(&package("alpha"))
+    );
     assert_eq!(handler.package_provider.calls.load(Ordering::SeqCst), 2);
 }
 
