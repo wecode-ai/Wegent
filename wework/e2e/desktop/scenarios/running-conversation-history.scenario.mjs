@@ -6,7 +6,11 @@ import { gunzipSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  createSingleRootLocalProject,
+  selectE2EModel,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -219,6 +223,34 @@ async function waitForTranscriptState(control, predicate, description, timeoutMs
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
+}
+
+async function reloadWorkbench(control) {
+  const readyCount = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  let timeout
+  try {
+    await Promise.race([
+      control.awaitReadyAfter(readyCount),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('The reloaded control client did not reconnect')),
+          WORKBENCH_READY_TIMEOUT_MS
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+  // Control registration precedes device discovery and persisted task restoration.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.workbench?.isBootstrapping === false &&
+      snapshot.workbench.runtimeWorkSummary.totalTasks > 0,
+    'The reloaded workbench did not restore its task index',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
 }
 
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
@@ -599,21 +631,20 @@ export function createDesktopScenario({
         'Pagination returned the live cache again'
       )
 
-      const pagedReadyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(pagedReadyCount),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('The paginated conversation did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
+      const restored = await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The paginated conversation did not finish restoration',
+        WORKBENCH_READY_TIMEOUT_MS
+      )
+      assert.equal(restored.pane.transcript.hasMoreBefore, true)
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
       await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
       for (let page = 0; page < 2; page += 1) {
@@ -637,17 +668,7 @@ export function createDesktopScenario({
       })
       await control.command('click', taskRow)
 
-      const readyCountBeforeReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(readyCountBeforeReload),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('The reloaded Wework window did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })

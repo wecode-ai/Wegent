@@ -332,7 +332,7 @@ describe('runtimeConversationTurns', () => {
     expect(turns).toHaveLength(2)
     expect(turns[0]).toMatchObject({
       id: 'turn-1',
-      startedAt: 1000,
+      startedAt: Date.parse(userMessage('user-1', 'Implement the fix').createdAt),
     })
     expect(turns[0].items.map(item => item.id)).toEqual(['user-1', 'guidance-1'])
     expect(turns[1]).toMatchObject({

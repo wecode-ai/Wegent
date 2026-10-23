@@ -27,6 +27,23 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("keeps the observed pending start when send acknowledgement assigns the native turn", () => {
+    const pending: RuntimeConversationTurn = {
+      id: null,
+      clientUserMessageId: "user",
+      status: "pending",
+      startedAt: 40_000,
+      items: [],
+    };
+    expect(
+      reduceRuntimeConversationTurns([pending], {
+        type: "assistant_started",
+        subtaskId: "turn",
+        clientUserMessageId: "user",
+        startedAt: 42_000,
+      })[0],
+    ).toMatchObject({ id: "turn", startedAt: 40_000 });
+  });
   it("freezes the observed interval without reconstructing a millisecond endpoint from rounded native timestamps", () => {
     vi.spyOn(Date, "now").mockReturnValue(58_200);
     try {

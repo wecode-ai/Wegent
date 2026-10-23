@@ -178,8 +178,8 @@ export function updateStartedTurn(
       id: action.subtaskId,
       status: optimistic.status === "cancelled" ? "cancelled" : "streaming",
       startedAt:
-        action.startedAt ??
         optimistic.startedAt ??
+        action.startedAt ??
         runtimeMessageTimestampFromTurn(optimistic),
       durationMs:
         optimistic.status === "cancelled" ? optimistic.durationMs : undefined,
