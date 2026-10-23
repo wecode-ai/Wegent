@@ -53,6 +53,9 @@ from app.schemas.runtime_work import DeviceWorkspaceUpsert
 from app.services.ghost_capabilities import MergedGhostCapabilities
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
+from app.services.loop_item_executions.runtime_identity import (
+    execution_runtime_turn_id,
+)
 from app.services.loop_item_executions.service import (
     TaskContext,
     loop_item_execution_service,
@@ -3190,7 +3193,11 @@ def test_execution_truth_rejection_blocks_project_chat_projection(
 
 
 def _create_terminal_runtime_activity(
-    test_db: Session, test_user: User, *, content: str
+    test_db: Session,
+    test_user: User,
+    *,
+    content: str,
+    turn_id: str | None = None,
 ) -> ProjectChatMessage:
     """Create a completed execution with its already-projected runtime activity."""
 
@@ -3219,6 +3226,9 @@ def _create_terminal_runtime_activity(
     )
     test_db.add_all([task, execution])
     test_db.flush()
+    metadata = {"execution_id": execution.id, "run_status": "completed"}
+    if turn_id is not None:
+        metadata["runtime_turn_id"] = turn_id
     activity = ProjectChatMessage(
         message_id=str(uuid.uuid4()),
         project_id=project.id,
@@ -3228,7 +3238,7 @@ def _create_terminal_runtime_activity(
         sender_name="Agent",
         message_type="text",
         content=content,
-        metadata_json={"execution_id": execution.id, "run_status": "completed"},
+        metadata_json=metadata,
         status="completed",
         runtime_device_id="local-device",
         runtime_task_id=execution.runtime_task_id,
@@ -3239,6 +3249,89 @@ def _create_terminal_runtime_activity(
 
 
 def test_delayed_completed_event_restores_reconciled_activity_content(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+    )
+    execution = test_db.get(LoopItemExecution, activity.metadata_json["execution_id"])
+    turn_id = execution_runtime_turn_id(execution)
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": turn_id,
+                "eventSeq": 5,
+                "data": {"value": "Final answer from the delayed event"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["mode"] == "snapshot"
+    assert projected["message"]["messageId"] == activity.message_id
+    assert projected["message"]["content"] == "Final answer from the delayed event"
+    test_db.refresh(activity)
+    assert activity.content == "Final answer from the delayed event"
+    assert activity.metadata_json["runtime_turn_id"] == turn_id
+
+
+def test_delayed_completed_event_rejects_an_activity_bound_to_another_turn(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+        turn_id="turn-b",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "turn-a",
+                "eventSeq": 5,
+                "data": {"value": "Stale answer from another turn"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "Runtime reconciled"
+    assert activity.metadata_json["runtime_turn_id"] == "turn-b"
+
+
+def test_delayed_completed_event_requires_a_turn_id(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     activity = _create_terminal_runtime_activity(
@@ -3262,21 +3355,57 @@ def test_delayed_completed_event_restores_reconciled_activity_content(
             "event": "response.completed",
             "payload": {
                 "taskId": activity.runtime_task_id,
-                "subtaskId": "turn-reconciled-1",
                 "eventSeq": 5,
-                "data": {"value": "Final answer from the delayed event"},
+                "data": {"value": "Unattributed delayed answer"},
             },
         },
         test_user.id,
     )
 
     assert projected is not None
-    assert projected["mode"] == "snapshot"
-    assert projected["message"]["messageId"] == activity.message_id
-    assert projected["message"]["content"] == "Final answer from the delayed event"
+    assert projected["message"] is None
     test_db.refresh(activity)
-    assert activity.content == "Final answer from the delayed event"
-    assert activity.metadata_json["runtime_turn_id"] == "turn-reconciled-1"
+    assert activity.content == "Runtime reconciled"
+    assert "runtime_turn_id" not in activity.metadata_json
+
+
+def test_delayed_completed_event_rejects_an_unbound_foreign_turn(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "turn-from-another-execution",
+                "eventSeq": 5,
+                "data": {"value": "Misattributed delayed answer"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "Runtime reconciled"
+    assert "runtime_turn_id" not in activity.metadata_json
 
 
 def test_delayed_completed_event_preserves_existing_completed_content(

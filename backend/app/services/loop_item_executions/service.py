@@ -49,6 +49,7 @@ from app.services.loop_item_executions.profile import (
 from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
     execution_runtime_task_id,
+    execution_runtime_turn_id,
     runtime_task_id_for,
 )
 from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
@@ -1971,6 +1972,7 @@ class LoopItemExecutionService:
         *,
         runtime_device_id: str,
         runtime_task_id: str,
+        turn_id: object,
         owner_user_id: int | None = None,
     ) -> Optional[ProjectChatMessage]:
         """Return an outcome-only activity owned by a terminal execution.
@@ -1978,11 +1980,19 @@ class LoopItemExecutionService:
         A reconciliation can elect the terminal execution before the final
         Runtime event arrives. The execution is then no longer active, so the
         delayed final text must be matched through the execution aggregate
-        instead of the streaming-activity query. Only activities that still
-        carry the outcome-only marker are eligible, so a delayed event for an
-        older turn cannot overwrite a later turn's completed content.
+        instead of the streaming-activity query. A delayed event is eligible
+        only when its turn is bound to the activity or deterministically owned
+        by the execution, so an older turn cannot overwrite a later one.
         """
 
+        if not isinstance(turn_id, str) or not turn_id:
+            logger.info(
+                "[LoopItemExecution] Refused delayed completion without a turn "
+                "device=%s task=%s",
+                runtime_device_id,
+                runtime_task_id,
+            )
+            return None
         device_ids = runtime_device_identity_ids(
             db,
             runtime_device_id,
@@ -1999,15 +2009,33 @@ class LoopItemExecutionService:
             query = query.filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id
             )
-        execution = query.order_by(LoopItemExecution.id.desc()).first()
-        if execution is None:
-            return None
-        activity = self._linked_activity(db, execution)
-        if activity is None or activity.status != "completed":
-            return None
-        if (activity.content or "").strip() not in {"", "Runtime reconciled"}:
-            return None
-        return activity
+        executions = query.order_by(LoopItemExecution.id.desc()).all()
+        for execution in executions:
+            activity = self._linked_activity(db, execution)
+            if activity is None or activity.status != "completed":
+                continue
+            if (activity.content or "").strip() not in {"", "Runtime reconciled"}:
+                continue
+            metadata = (
+                activity.metadata_json
+                if isinstance(activity.metadata_json, dict)
+                else {}
+            )
+            bound_turn_id = metadata.get("runtime_turn_id")
+            if isinstance(bound_turn_id, str) and bound_turn_id:
+                if bound_turn_id == turn_id:
+                    return activity
+                continue
+            if execution_runtime_turn_id(execution) == turn_id:
+                return activity
+        logger.info(
+            "[LoopItemExecution] Refused unassociated delayed completion "
+            "device=%s task=%s turn=%s",
+            runtime_device_id,
+            runtime_task_id,
+            turn_id,
+        )
+        return None
 
     def open_execution_activity(
         self,
