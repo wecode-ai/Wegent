@@ -25,6 +25,7 @@ import {
   isolatedPath,
   pluginEntry,
   readCapabilityManifest,
+  refreshWithOccupiedPluginRuntime,
   relocateInstalledHome,
   relocatedPath,
   replaceOwnedRuntimeWithForeignDirectory,
@@ -387,7 +388,8 @@ export async function createDesktopScenario({
     await cloud.launchBackend()
     backendStopped = false
     await cloud.waitForConnectedAppDevice()
-    await refresh(control, primary)
+    await openPlugin(control, primary)
+    await refreshWithOccupiedPluginRuntime(control, blocked, workbenchReadyTimeoutMs)
     await waitRuntime(missing, '1.0.0')
     assert.equal(
       await readFile(join(foreign, 'unrelated-owner.txt'), 'utf8'),
