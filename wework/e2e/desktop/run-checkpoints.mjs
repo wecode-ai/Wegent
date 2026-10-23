@@ -80,7 +80,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
-  'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
+  'model-overload-recovery': './scenarios/goal-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'latest-conversation-history': './scenarios/latest-conversation-history.scenario.mjs',

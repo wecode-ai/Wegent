@@ -3013,6 +3013,42 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
   })
 
+  test('uses the current installation identity when membership arrives after catalog detail', async () => {
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdatePolicy: 'manual',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await screen.findByTestId('plugin-auto-update-toggle-101')
+    const snapshot = getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))!
+    const marketplaceItems = snapshot.marketplaceItems.map(item => ({
+      ...item,
+      installedPluginId: 707,
+      version: '1.1.0',
+      latestReleaseId: 1002,
+    }))
+    // The catalog and account membership settle independently during refresh.
+    await act(async () => {
+      setPluginMarketplaceCache({ ...snapshot, marketplaceItems, installedPlugins: [] })
+    })
+    await act(async () => {
+      setPluginMarketplaceCache({
+        ...snapshot,
+        marketplaceItems,
+        installedPlugins: snapshot.installedPlugins.map(plugin => ({
+          ...plugin,
+          metadata: { ...plugin.metadata, labels: { ...plugin.metadata.labels, id: '707' } },
+          spec: { ...plugin.spec, releaseId: 1002, version: '1.1.0' },
+        })),
+      })
+    })
+    expect(screen.getByTestId('plugin-detail-actions-707')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-auto-update-toggle-707')).toBeInTheDocument()
+  })
+
   test('lets users explicitly opt in to automatic marketplace plugin updates', async () => {
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
