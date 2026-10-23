@@ -5381,7 +5381,10 @@
       "requirements_summary": "Instructions",
       "open_personal_settings": "Change stand-in settings",
       "shared_settings_help": "Changes also affect other projects using this stand-in.",
-      "use_this_stand_in": "Use for this project",
+      "enable_and_use": "Enable and use for this project",
+      "disable_project": "Disable for this project",
+      "disable_project_help": "Disabling affects only new tasks in this project. Other projects and running tasks are unaffected.",
+      "enable_and_use_help": "Saving enables automatic handling for this stand-in, including its other connected projects. Only new assignments after enablement are handled.",
       "settings_title": "Personal stand-in settings",
       "automatic_summary": "Auto handling"
     }

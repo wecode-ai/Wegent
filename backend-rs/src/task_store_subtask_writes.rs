@@ -14,7 +14,8 @@ use brz_mysql::{Mysql, MysqlResult, MysqlRow};
 
 use crate::task_store::{
     DefaultTaskStore, SUBTASKS_TABLE, latest_assistant_for_user_by_statuses_statement,
-    latest_subtask_ref_statement, subtask_by_id_refresh_statement, subtask_ref_statement,
+    latest_subtask_ref_statement, running_assistant_for_user_statement,
+    subtask_by_id_refresh_statement, subtask_ref_statement, update_subtask_cancelled_statement,
     update_subtask_completed_statement,
 };
 
@@ -83,6 +84,52 @@ pub(super) async fn update_subtask_completed<M: Mysql>(
         )
         .await
         .map(|outcome| outcome.rows_affected)
+}
+
+/// `subtask_store.get_running_assistant_for_user`: the caller's running
+/// assistant subtask of one task.
+pub(super) async fn running_assistant_for_user<M: Mysql>(
+    store: &DefaultTaskStore<M>,
+    task_id: i64,
+    user_id: i64,
+) -> MysqlResult<Option<MysqlRow>> {
+    store
+        .mysql
+        .fetch_optional(
+            running_assistant_for_user_statement(SUBTASKS_TABLE),
+            (task_id, user_id),
+        )
+        .await
+}
+
+/// `subtask_store.update_fields` for the cancel flow: mark one subtask
+/// CANCELLED with progress 100.
+pub(super) async fn update_subtask_cancelled<M: Mysql>(
+    store: &DefaultTaskStore<M>,
+    subtask_id: i64,
+    updated_at: &str,
+    completed_at: &str,
+    reset_error_message: bool,
+) -> MysqlResult<u64> {
+    let statement = update_subtask_cancelled_statement(SUBTASKS_TABLE, reset_error_message);
+    let outcome = if reset_error_message {
+        store
+            .mysql
+            .execute(
+                statement,
+                ("CANCELLED", 100, "", updated_at, completed_at, subtask_id),
+            )
+            .await?
+    } else {
+        store
+            .mysql
+            .execute(
+                statement,
+                ("CANCELLED", 100, updated_at, completed_at, subtask_id),
+            )
+            .await?
+    };
+    Ok(outcome.rows_affected)
 }
 
 /// `db.refresh(subtask)`: re-read one subtask row by primary key.

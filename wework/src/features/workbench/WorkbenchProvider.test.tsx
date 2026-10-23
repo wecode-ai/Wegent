@@ -2938,6 +2938,39 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.subscribeLocalExecutorEvents.mockResolvedValue(vi.fn())
   })
 
+  test('revalidates runtime work when a retained workspace tab is revealed again', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock()
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+    const cloudConnectionValue: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'test-disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    const renderTree = (workspaceTabRevealRevision: number) => (
+      <CloudConnectionContext.Provider value={cloudConnectionValue}>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          workspaceTabRevealRevision={workspaceTabRevealRevision}
+        >
+          <div />
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+
+    const { rerender } = render(renderTree(0))
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
+
+    rerender(renderTree(1))
+
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+  })
+
   test('keeps the workbench context value stable across activation-only flags', async () => {
     const services = createWorkbenchServices()
     const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
@@ -16127,6 +16160,90 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(listRuntimeWork).toHaveBeenCalledTimes(callsBeforeUpdate)
+  })
+
+  test('preserves supervisor events received during a task snapshot request', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const listRuntimeWork = vi.fn().mockResolvedValue(createRuntimeWork())
+    const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeTopLevelStreamLifecycleProbe />
+        <RuntimePaneSendProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() => expect(streamHandlers.onRuntimeSupervisorUpdated).toBeDefined())
+    const callsBeforeSnapshot = listRuntimeWork.mock.calls.length
+    const pendingSnapshot = deferred<RuntimeWorkListResponse>()
+    listRuntimeWork.mockReturnValueOnce(pendingSnapshot.promise)
+    act(() => {
+      streamHandlers.onRuntimeGoalUpdated?.({
+        taskId: 'runtime-a',
+        deviceId: 'device-1',
+        goal: null,
+      })
+    })
+
+    await waitFor(() =>
+      expect(listRuntimeWork.mock.calls.length).toBeGreaterThan(callsBeforeSnapshot)
+    )
+
+    act(() => {
+      streamHandlers.onRuntimeSupervisorUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'supervisor-state-1',
+        deviceId: 'device-1',
+        supervisor: {
+          mode: 'auto',
+          status: 'active',
+          instructions: 'Keep the task focused',
+          modelSelection: {
+            modelName: 'supervisor-model',
+            modelType: 'public',
+          },
+          intervalSeconds: 30,
+          lastEvaluatedAt: 1786557741000,
+          lastContentHash: 'latest',
+          lastError: null,
+          suggestions: [],
+        },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-a-supervisor-last-evaluated')).toHaveTextContent(
+        '1786557741000'
+      )
+    )
+    await act(async () => {
+      const staleWork = createRuntimeWork()
+      staleWork.projects[0].deviceWorkspaces[0].tasks[0].supervisor = {
+        mode: 'auto',
+        status: 'checking',
+        instructions: 'Keep the task focused',
+        intervalSeconds: 30,
+        lastEvaluatedAt: 1,
+        suggestions: [],
+      }
+      pendingSnapshot.resolve(staleWork)
+      await pendingSnapshot.promise
+    })
+    expect(screen.getByTestId('runtime-a-supervisor-last-evaluated')).toHaveTextContent(
+      '1786557741000'
+    )
   })
 
   test('hides the runtime goal when the settled task reports the goal complete', async () => {

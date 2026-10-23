@@ -61,3 +61,12 @@ def test_runtime_rpc_router_accepts_internal_service_token(
         "emitted": False,
         "reason": "device_offline",
     }
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("runtime_rpc",)) as client:
+        yield client

@@ -54,6 +54,7 @@ from app.services.loop_items.assignment_notification import (
 )
 from app.services.loop_items.change_requests import persist_external_badge_source
 from app.services.notification_copy import NotificationTarget
+from app.services.notification_target import board_status_label
 from app.services.project_automation_domain import runnable_wegent_team
 
 logger = logging.getLogger(__name__)
@@ -1537,6 +1538,7 @@ class ExternalLoopItemProvider:
                     str(issue.get(self._body_key(project)) or "").strip()
                     or str(issue.get("title") or item_id)
                 ),
+                notification_target=self._notification_target(project, issue, item_id),
             )
         db.commit()
         return self._response(db, project, issue, access, user_id)
@@ -2738,15 +2740,16 @@ class ExternalLoopItemProvider:
 
         labels = ExternalLoopItemProvider._labels(issue)
         priority = ExternalLoopItemProvider._priority(labels)
+        item_status = ExternalLoopItemProvider._status(
+            labels, str(issue.get("state") or "")
+        )
         return NotificationTarget(
             project_id=str(project.id),
             project_name=project.name or "",
             item_id=item_id,
             item_key=item_id,
             item_title=str(issue.get("title") or item_id),
-            item_status=ExternalLoopItemProvider._status(
-                labels, str(issue.get("state") or "")
-            ),
+            item_status=board_status_label(project, item_status),
             item_priority=None if priority == "none" else priority,
         )
 

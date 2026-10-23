@@ -9,6 +9,7 @@ import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import {
   createConversationAuthModelFixture,
+  sendOrdinaryChat,
   verifyConversationQrAuthorization,
 } from '../modules/plugin-conversation-auth.mjs'
 import {
@@ -199,8 +200,10 @@ export async function createDesktopScenario({
       if (authEvents) {
         events = authEvents
       } else if (latestModelInputText(body).includes(ordinaryPrompt)) {
+        const message = `${ordinaryPrompt} #${ordinaryRequests + 1}`
+        assert.ok(latestModelInputText(body).includes(message), 'Unexpected ordinary chat message')
         ordinaryRequests += 1
-        events = [assistantMessage(`${ordinaryPrompt} completed`)]
+        events = [assistantMessage(`${message} completed`)]
       } else if (requestText.includes(prompt) && command) {
         const result = accountCommandResult(body.input, callId)
         if (result?.sessionId) {
@@ -679,9 +682,11 @@ export async function createDesktopScenario({
                   'gh authorization card remained open after cancellation'
                 )
               }
-              await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
-              await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-              await control.command('waitFor', 'body', { text: `${ordinaryPrompt} completed` })
+              await sendOrdinaryChat({
+                control,
+                ordinaryPrompt,
+                getOrdinaryRequests: () => ordinaryRequests,
+              })
               const recovered = JSON.parse(await control.command('snapshot', 'body'))
               assert.ok(
                 !recovered.testIds.includes('github-cli-auth'),

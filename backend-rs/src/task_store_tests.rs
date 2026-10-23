@@ -308,3 +308,69 @@ async fn mutation_statements_match_the_recorded_single_table_shapes() {
         "UPDATE tasks SET json=?, updated_at=? WHERE tasks.id = ?"
     );
 }
+
+/// `_cancel_chat_shell_task`: the running-assistant read has no `ORDER BY`
+/// and binds the task and user ids, and the terminal write binds
+/// status/progress/timestamps; the `error_message` column appears only when
+/// the stored value differs from the empty string the source writes.
+#[tokio::test]
+async fn cancel_flow_statements_match_the_recorded_shapes() {
+    let mysql = crate::sql_test_support::KindQueryCapture::writing();
+    let store = DefaultTaskStore::new(mysql.clone());
+
+    assert!(
+        store
+            .running_assistant_for_user(292195215235945, 2126)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .update_subtask_cancelled(
+                292195215235945,
+                292195215235962,
+                "2026-10-21 19:48:18.914062",
+                "2026-10-21 19:48:18.914024",
+                false,
+            )
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .update_subtask_cancelled(
+                292195215235945,
+                292195215235962,
+                "2026-10-21 19:48:18.914062",
+                "2026-10-21 19:48:18.914024",
+                true,
+            )
+            .await
+            .unwrap(),
+        0
+    );
+
+    let reads: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
+    let writes: Vec<String> = mysql.writes().into_iter().map(|query| query.sql).collect();
+
+    assert_eq!(
+        reads[0],
+        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, \
+         executor_name, executor_deleted_at, prompt, message_id, parent_id, status, progress, \
+         result, error_message, created_at, updated_at, completed_at, sender_type, \
+         sender_user_id, reply_to_subtask_id FROM `subtasks` WHERE task_id = ? AND \
+         user_id = ? AND `role` = 'ASSISTANT' AND status = 'RUNNING' LIMIT 1"
+    );
+    assert_eq!(
+        writes[0],
+        "UPDATE subtasks SET status=?, progress=?, updated_at=?, completed_at=? \
+         WHERE subtasks.id = ?"
+    );
+    assert_eq!(
+        writes[1],
+        "UPDATE subtasks SET status=?, progress=?, error_message=?, updated_at=?, \
+         completed_at=? WHERE subtasks.id = ?"
+    );
+}

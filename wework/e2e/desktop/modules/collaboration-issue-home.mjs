@@ -37,9 +37,19 @@ export async function verifyCollaborationIssueHome(
   }
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
   assert.equal(
-    Number(await control.command('getElementCount', `${projectRow} svg`)),
+    Number(await control.command('getElementCount', `${projectRow} svg:not(.stand-in-icon)`)),
     0,
     'Project names must not have folder icons'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${projectRow} svg.stand-in-icon[data-state="disabled"]`
+      )
+    ),
+    1,
+    'Inactive stand-ins must retain their shadow icon in project rows'
   )
   await control.command('hover', projectRow)
   assert.equal(

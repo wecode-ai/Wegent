@@ -232,3 +232,14 @@ def test_shared_download_rechecks_policy_after_share_token_issued(
     )
 
     _assert_download_disabled(response)
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(
+        test_client, ("attachment_detail", "attachment_download")
+    ) as client:
+        yield client

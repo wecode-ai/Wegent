@@ -1011,7 +1011,7 @@ async function verifyWorkspaceIssueCreation(control) {
   const createIssueFullscreen = `${createIssueDialog} [data-testid="cloud-todo-create-fullscreen"]`
   const createIssueContent = `${createIssueDialog} [data-testid="cloud-todo-create-content"]`
   const createIssueFooter = `${createIssueDialog} [data-testid="cloud-todo-create-footer"]`
-  await control.command('click', createIssueSelector)
+  await control.command('clickWhenEnabled', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

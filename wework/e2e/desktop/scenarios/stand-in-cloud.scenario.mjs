@@ -182,7 +182,7 @@ export function createDesktopScenario({
           `Remote device must have an active project authorization: ${JSON.stringify(authorized.items.map(row => ({ device_key: row.device_key, app_device_id: row.app_device_id, can_use: row.can_use, status: row.status })))}`
         )
         const agent = await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
-          name: '云端替身助手',
+          name: '云端分身助手',
           runtime: 'codex',
           system_prompt: `${MARKER}_AGENT`,
           execution_policy: { mode: 'fixed', environment_id: String(remote.id) },
@@ -196,7 +196,7 @@ export function createDesktopScenario({
             },
           },
         })
-        const historical = await createIssue('启用云端替身前已分配')
+        const historical = await createIssue('启用云端分身前已分配')
         // The real inbox must resolve the stored assigner, without additional inbox lookups.
         const beforeStandIn = await request('/v1/wework-notifications?category=collaboration')
         const historicalNotice = beforeStandIn.items.find(
@@ -341,7 +341,7 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
-        await control.command('waitFor', processing, { text: '替身处理' })
+        await control.command('waitFor', processing, { text: '分身处理' })
         assert.ok(
           (await control.command('getText', processing)).includes('云端设备自动接手'),
           'Completed stand-in notification must preserve its assignment title'

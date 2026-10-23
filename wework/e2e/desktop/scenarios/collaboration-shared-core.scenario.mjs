@@ -38,6 +38,8 @@ const AGENT_ASSIGNMENT_COMMENT = '请处理实现步骤'
 const AGENT_WORKFLOW_STEP = '实现'
 const AGENT_NAME = '协作核心 Codex'
 const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
+const FIXED_TASK_TAB_CONTENT = '[data-testid="workspace-tab-content-fixed-task"]'
+const FIXED_TASK_TAB_SELECT = '[data-testid="workspace-tab-select-fixed-task"]'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -79,6 +81,78 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
 
 function terminalExecution(execution) {
   return ['completed', 'failed', 'cancelled'].includes(execution.status)
+}
+
+function taskTabIds(snapshot) {
+  return snapshot.testIds.filter(
+    testId => testId === 'workspace-tab-fixed-task' || testId.startsWith('workspace-tab-task-')
+  )
+}
+
+async function waitForFixedTaskTabSnapshot(control, predicate, message, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let latest = null
+  while (Date.now() < deadline) {
+    latest = JSON.parse(await control.command('snapshot', FIXED_TASK_TAB_CONTENT))
+    if (predicate(latest)) return latest
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`${message}: ${JSON.stringify(latest?.testIds ?? null)}`)
+}
+
+/**
+ * A runtime task created from the Collaboration tab must be loaded by the
+ * already-open Tasks tab. Retained tabs cache runtime work, so activating one
+ * again has to revalidate that cache instead of showing the list from mount.
+ */
+async function verifyTaskTabLoadedCollaborationTask(control, taskId, taskTabIdsBefore, timeoutMs) {
+  const rowTestId = `runtime-local-task-row-${taskId}`
+  await control.command('click', FIXED_TASK_TAB_SELECT)
+  await control.command('waitFor', `${FIXED_TASK_TAB_SELECT}[aria-selected="true"]`, {
+    timeoutMs,
+  })
+  await waitForFixedTaskTabSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(rowTestId),
+    `The already-open Tasks tab did not load the runtime task created in Collaboration (${taskId})`,
+    timeoutMs
+  )
+  const tabSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="workspace-tab-strip"]')
+  )
+  assert.deepEqual(
+    taskTabIds(tabSnapshot),
+    taskTabIdsBefore,
+    'The Tasks tab list only refreshed because the test opened another Tasks tab'
+  )
+
+  if (
+    Number(
+      await control.command('getElementCount', `[data-testid="${rowTestId}"]`, {
+        visible: true,
+      })
+    ) === 0
+  ) {
+    const taskProjectIds = JSON.parse(await control.command('snapshot', FIXED_TASK_TAB_CONTENT))
+      .testIds.filter(testId => testId.startsWith('project-runtime-task-sortable-'))
+      .map(testId => testId.slice('project-runtime-task-sortable-'.length))
+    for (const projectId of taskProjectIds) {
+      await control.command(
+        'click',
+        `[data-testid="project-row-${projectId}"] [data-testid="project-item-button"]`
+      )
+      const visibleRows = Number(
+        await control.command('getElementCount', `[data-testid="${rowTestId}"]`, {
+          visible: true,
+        })
+      )
+      if (visibleRows > 0) break
+    }
+  }
+  await control.command('waitFor', `[data-testid="${rowTestId}"]`, {
+    visible: true,
+    timeoutMs,
+  })
 }
 
 export function createDesktopScenario({
@@ -194,6 +268,13 @@ export function createDesktopScenario({
         )
 
         const platformSnapshot = await snapshot(control)
+        const taskTabIdsBefore = taskTabIds(
+          JSON.parse(await control.command('snapshot', '[data-testid="workspace-tab-strip"]'))
+        )
+        assert.ok(
+          taskTabIdsBefore.includes('workspace-tab-fixed-task'),
+          'The fixed Tasks tab was not open before the Collaboration task was created'
+        )
         assert.ok(
           platformSnapshot.testIds.includes('wework-collaboration-platform') &&
             platformSnapshot.testIds.includes('collaboration-platform-root'),
@@ -788,6 +869,17 @@ export function createDesktopScenario({
           'The private personal Task unexpectedly changed the shared Issue assignee'
         )
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
+        await verifyTaskTabLoadedCollaborationTask(
+          control,
+          binding.taskId ?? binding.task_id,
+          taskTabIdsBefore,
+          uiTimeoutMs
+        )
+        await capture(control, 'collaboration-shared-core-09-task-tab-refreshed.png')
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
         await verifyCollaborationLocalProjectImport(control, {
           cloudProjectId: project.id,
           cloudWorkspaceId: workspace.id,

@@ -37,7 +37,7 @@ impl HttpDependencies {
                     "{}/executor-manager/sandboxes/{task_id}",
                     self.executor_manager_base
                 ),
-                "http://executor-manager/executor-manager/sandboxes/:task_id",
+                crate::executor_manager::sandbox_metric_name(&self.executor_manager_base),
             )
             .map_err(anyhow::Error::from)
     }
@@ -51,7 +51,10 @@ impl HttpDependencies {
                     "{}/executor-manager/executor/address",
                     self.executor_manager_base
                 ),
-                "http://executor-manager/executor-manager/executor/address",
+                format!(
+                    "{}/executor-manager/executor/address",
+                    self.executor_manager_base
+                ),
             )
             .map_err(anyhow::Error::from)
     }

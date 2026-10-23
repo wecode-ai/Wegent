@@ -12,6 +12,8 @@
 use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 
+use crate::cloud_projects::WORKSPACE_ID_COLUMN;
+
 use super::loop_repository::{ItemMetadata, ProjectMetadata};
 
 /// The source's unlabeled `loop_items` projection (`db.get(LoopItem, id)` /
@@ -74,10 +76,10 @@ pub async fn loop_item<M: Mysql>(mysql: &M, item_id: &str) -> MysqlResult<Option
         .fetch_optional(
             &format!(
                 "SELECT {LOOP_ITEMS_UNLABELED} \nFROM loop_items \n\
-                 WHERE loop_items.id = '{item_id}' \n\
+                 WHERE loop_items.id = ? \n\
                  AND loop_items.resource_type IN ('task')",
             ),
-            (),
+            (item_id,),
         )
         .await
 }
@@ -88,11 +90,11 @@ pub async fn project<M: Mysql>(mysql: &M, project_id: &str) -> MysqlResult<Optio
     mysql
         .fetch_optional(
             &format!(
-                "SELECT {LOOP_ITEMS_UNLABELED} \nFROM loop_items \n\
-                 WHERE loop_items.id = '{project_id}' \n\
+                "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_UNLABELED} \nFROM loop_items \n\
+                 WHERE loop_items.id = ? \n\
                  AND loop_items.resource_type IN ('project')",
             ),
-            (),
+            (project_id,),
         )
         .await
 }
@@ -136,7 +138,7 @@ mod tests {
             queries[0].sql,
             normalize(&format!(
                 "SELECT {LOOP_ITEMS_UNLABELED} FROM loop_items \
-                 WHERE loop_items.id = 'WEWORKBU7D045F-5' \
+                 WHERE loop_items.id = ? \
                  AND loop_items.resource_type IN ('task')"
             ))
         );
@@ -164,8 +166,8 @@ mod tests {
         assert_eq!(
             queries[0].sql,
             normalize(&format!(
-                "SELECT {LOOP_ITEMS_UNLABELED} FROM loop_items \
-                 WHERE loop_items.id = '6202125112230396586' \
+                "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_UNLABELED} FROM loop_items \
+                 WHERE loop_items.id = ? \
                  AND loop_items.resource_type IN ('project')"
             ))
         );
