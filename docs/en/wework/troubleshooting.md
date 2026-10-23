@@ -46,6 +46,10 @@ If recovery is exhausted, retry later or select **Switch model and retry**.
 Authentication, quota, and context-window errors are not automatically recovered
 under the overload policy.
 
+### Background terminal history
+
+Background terminals retain collected output after restoring a conversation. Use `Shift + PageUp` and `Shift + PageDown` to navigate history. Screen-reader row positions and character alignment update with the output; live output and history navigation should not block other interface actions.
+
 ### Unable to connect to the model service
 
 When the local model proxy cannot send a request to the model service, the conversation shows **Unable to connect to the model service** and includes the complete failed endpoint directly in the error card. `Failed to send a request` means that the client did not receive a usable HTTP response. Check the current network, VPN, proxy, and DNS settings. For an internal endpoint, also confirm that the device is connected to the corporate network or VPN.
