@@ -60,12 +60,18 @@ async function runNativeTurn(fixture, home, resumeId) {
     stdout = (await execution).stdout
   } catch (error) {
     const configPath = join(home, 'config.toml')
-    const config = await readFile(configPath, 'utf8')
+    const [configResult, homeResult] = await Promise.allSettled([
+      readFile(configPath, 'utf8'),
+      realpath(home),
+    ])
+    const config = configResult.status === 'fulfilled' ? configResult.value : ''
     console.error(
       '[native-migration-resume]',
       JSON.stringify({
         configPath,
-        resolvedHome: await realpath(home),
+        resolvedHome: homeResult.status === 'fulfilled' ? homeResult.value : undefined,
+        homeError: homeResult.status === 'rejected' ? homeResult.reason.message : undefined,
+        configError: configResult.status === 'rejected' ? configResult.reason.message : undefined,
         configBytes: Buffer.byteLength(config),
         providerSection: config
           .split('\n')
