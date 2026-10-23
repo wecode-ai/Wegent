@@ -386,6 +386,11 @@ impl JsonRpcConnection {
     ) -> Result<(), String> {
         let request_id = json_rpc_request_id(message)
             .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
+        // Auto-approved requests were not forwarded to the UI and must not create
+        // a settled interaction or clear another request's waiting state.
+        let notifications = notifications.filter(|_| {
+            !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message))
+        });
         let result = receive_mcp_server_elicitation_response(
             message,
             request_user_input_answers.as_mut(),

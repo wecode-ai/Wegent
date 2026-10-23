@@ -14,8 +14,16 @@ use std::os::unix::fs::PermissionsExt;
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
-use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
+use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex, OwnedMutexGuard};
+use wegent_executor::{
+    agents::{
+        run_codex_app_server_turn_with_cancel, CodexAppServerClient, CodexAppServerTurnOptions,
+    },
+    local::app_ipc::RuntimeWorkHandler,
+    protocol::ExecutionRequest,
+    runner::ExecutionOutcome,
+    runtime_work::RuntimeWorkRpcHandler,
+};
 
 #[path = "support/runtime_task_project_move.rs"]
 mod runtime_task_project_move;
@@ -2547,6 +2555,206 @@ async fn runtime_tasks_auto_approve_mcp_tool_calls_with_full_access() {
         .is_none(),
         "full access should not surface MCP tool approval as request_user_input"
     );
+    assert_no_mcp_approval_history(&handler, "local-task-mcp-tool-approval").await;
+}
+
+#[tokio::test]
+async fn mcp_tool_approval_notifications_follow_manual_visibility_on_both_response_paths() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex_home = EnvGuard::set("CODEX_HOME", root.path().join("codex").to_str().unwrap());
+    for dedicated in [false, true] {
+        for auto_approve in [false, true] {
+            let log_path = root
+                .path()
+                .join(format!("approval-{dedicated}-{auto_approve}.jsonl"));
+            let binary = write_fake_codex_mcp_tool_approval(&log_path);
+            let client = CodexAppServerClient::new(binary.display().to_string());
+            let mut request: ExecutionRequest = serde_json::from_value(codex_execution_request(
+                "enable auto merge",
+                "/tmp/project",
+                "gpt-5.5",
+            ))
+            .unwrap();
+            request.extra.insert(
+                "runtime_permission_profile".to_owned(),
+                json!(if auto_approve {
+                    ":danger-full-access"
+                } else {
+                    ":workspace"
+                }),
+            );
+            let (notification_tx, mut notifications) = mpsc::unbounded_channel();
+            let (answer_tx, answers) = mpsc::channel(1);
+            let manual_response = json!({
+                "requestId": 99,
+                "interactionScope": "turn-input",
+                "answers": {"__mcp_approval": {"answers": ["Allow"]}}
+            });
+            if !auto_approve {
+                answer_tx.send(manual_response.clone()).await.unwrap();
+            }
+            let options = CodexAppServerTurnOptions {
+                notifications: Some(notification_tx),
+                request_user_input_answers: Some(answers),
+                ..Default::default()
+            };
+            let turn = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                if dedicated {
+                    run_codex_app_server_turn_with_cancel(
+                        binary.to_str().unwrap(),
+                        request,
+                        options,
+                    )
+                    .await
+                } else {
+                    client.run_turn_with_cancel(request, options).await
+                }
+            })
+            .await
+            .expect("approval fixture should finish")
+            .expect("MCP approval should be accepted");
+            assert_eq!(
+                turn.outcome,
+                ExecutionOutcome::Completed {
+                    content: "answered".to_owned()
+                },
+                "dedicated={dedicated}, auto_approve={auto_approve}"
+            );
+            let messages = std::iter::from_fn(|| notifications.try_recv().ok()).collect::<Vec<_>>();
+            let pending = messages
+                .iter()
+                .filter(|message| {
+                    message["method"] == "mcpServer/elicitation/request" && message["id"] == 99
+                })
+                .collect::<Vec<_>>();
+            let settled = messages
+                .iter()
+                .filter(|message| {
+                    message["method"] == "wegent/mcpElicitation/settled" && message["id"] == 99
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                pending.len(),
+                usize::from(!auto_approve),
+                "dedicated={dedicated}"
+            );
+            assert_eq!(
+                settled.len(),
+                usize::from(!auto_approve),
+                "dedicated={dedicated}"
+            );
+            if !auto_approve {
+                assert_eq!(settled[0]["params"]["interactionStatus"], "answered");
+                assert_eq!(settled[0]["params"]["response"], manual_response);
+            }
+            assert!(read_json_lines(&log_path)
+                .iter()
+                .any(|message| { message["id"] == 99 && message["result"]["action"] == "accept" }));
+            client.restart().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn auto_approved_mcp_tool_does_not_clear_another_pending_user_question() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _codex_home = EnvGuard::set("CODEX_HOME", root.path().join("codex").to_str().unwrap());
+    let log_path = root.path().join("concurrent-approval.jsonl");
+    let ordinary_question = r#"{"id":98,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"ordinary-question","questions":[{"id":"goal","header":"Goal","question":"Continue?","options":[{"label":"Yes","description":"Continue the task."}]}],"autoResolutionMs":null}}"#;
+    let binary = write_fake_codex_interaction(
+        &log_path,
+        "fake-codex-concurrent-approval",
+        &format!("{ordinary_question}\n{MCP_TOOL_APPROVAL_REQUEST}"),
+        0,
+        98,
+    );
+    let (event_tx, mut events) = broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        binary.display().to_string(),
+        event_tx,
+    );
+    let task_id = "local-task-concurrent-approval";
+    let created = handler.handle_runtime_rpc(json!({
+        "method": "runtime.tasks.create",
+        "payload": {
+            "taskId": task_id, "workspacePath": "/tmp/project", "message": "ask before continuing",
+            "executionRequest": codex_execution_request("ask before continuing", "/tmp/project", "gpt-5.5")
+        }
+    })).await.unwrap();
+    assert_eq!(created["accepted"], true);
+    let received = recv_events_until(&mut events, |received| {
+        find_runtime_event(received, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == "auto-approval-sentinel"
+        })
+        .is_some()
+    })
+    .await;
+    assert!(read_json_lines(&log_path)
+        .iter()
+        .any(|message| message["id"] == 99 && message["result"]["action"] == "accept"));
+    assert!(
+        find_runtime_event(&received, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["render_payload"]["requestId"] == 98
+        })
+        .is_some()
+    );
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list", "payload": {}
+        }))
+        .await
+        .unwrap();
+    let task = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+        .find(|task| task["taskId"] == task_id)
+        .unwrap();
+    assert_eq!(task["running"], true);
+    assert_eq!(task["interactionStatus"], "waiting_for_user_input");
+    assert_no_mcp_approval_history(&handler, task_id).await;
+
+    let sent = handler.handle_runtime_rpc(json!({
+        "method": "runtime.tasks.send",
+        "payload": {
+            "address": {"deviceId": "device-1", "workspacePath": "/tmp/project", "taskId": task_id},
+            "message": "Yes",
+            "requestUserInputResponse": {"requestId": 98, "answers": {"goal": {"answers": ["Yes"]}}}
+        }
+    })).await.unwrap();
+    assert_eq!(sent["success"], true, "{sent}");
+    assert_eq!(sent["accepted"], true);
+    wait_until_task_idle(&handler, task_id).await;
+    assert!(read_json_lines(&log_path).iter().any(|message| {
+        message["id"] == 98 && message["result"]["answers"]["goal"]["answers"][0] == "Yes"
+    }));
+    assert_no_mcp_approval_history(&handler, task_id).await;
+}
+
+async fn assert_no_mcp_approval_history(handler: &RuntimeWorkRpcHandler, task_id: &str) {
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {"taskId": task_id, "workspacePath": "/tmp/project"}
+        }))
+        .await
+        .unwrap();
+    assert!(
+        transcript["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+            .all(|block| block["tool_name"] != "request_user_input"
+                || block["render_payload"]["requestId"] != 99),
+        "automatic approval must not reappear in history: {transcript}"
+    );
 }
 
 #[tokio::test]
@@ -4774,6 +4982,7 @@ fn write_fake_codex_request_user_input(log_path: &Path) -> PathBuf {
         "fake-codex-request-user-input",
         r#"{"id":99,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{"label":"Work goal","description":"Focus on one concrete task."}]}],"autoResolutionMs":null}}"#,
         2200,
+        99,
     )
 }
 
@@ -4783,15 +4992,19 @@ fn write_fake_codex_mcp_elicitation(log_path: &Path) -> PathBuf {
         "fake-codex-mcp-elicitation",
         r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"wegent-sites","mode":"form","message":"请选择内网访问范围。","requestedSchema":{"type":"object","properties":{"audience":{"type":"string","title":"访问范围","enum":["all","owner"],"enumNames":["所有人","仅自己"]}},"required":["audience"]}}}"#,
         0,
+        99,
     )
 }
+
+const MCP_TOOL_APPROVAL_REQUEST: &str = r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"GitHub","mode":"form","message":"Allow GitHub to enable pull request auto-merge?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session"]}}}"#;
 
 fn write_fake_codex_mcp_tool_approval(log_path: &Path) -> PathBuf {
     write_fake_codex_interaction(
         log_path,
         "fake-codex-mcp-tool-approval",
-        r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"GitHub","mode":"form","message":"Allow GitHub to enable pull request auto-merge?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session"]}}}"#,
+        MCP_TOOL_APPROVAL_REQUEST,
         0,
+        99,
     )
 }
 
@@ -4801,6 +5014,7 @@ fn write_fake_codex_mcp_tool_request_user_input(log_path: &Path) -> PathBuf {
         "fake-codex-mcp-tool-request-user-input",
         r#"{"id":99,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"call-board","questions":[{"id":"mcp_tool_call_approval_call-board","header":"Approve app tool call?","question":"Allow the wework_space MCP server to run tool \"get_board_item\"?","options":[{"label":"Allow","description":"Run the tool and continue."},{"label":"Allow for this session","description":"Run the tool and remember this choice for this session."},{"label":"Cancel","description":"Cancel this tool call."}]}],"autoResolutionMs":null}}"#,
         0,
+        99,
     )
 }
 
@@ -4809,6 +5023,7 @@ fn write_fake_codex_interaction(
     executable_prefix: &str,
     interaction_request: &str,
     notification_count: usize,
+    completion_request_id: u64,
 ) -> PathBuf {
     let path = temp_path(executable_prefix, "sh");
     let _ = fs::remove_file(log_path);
@@ -4861,16 +5076,19 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/interrupt"'; then
     turn_active=false
     printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-  elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
+  elif printf '%s\n' "$line" | grep -q '"id":{}' && printf '%s\n' "$line" | grep -q '"result"'; then
     turn_active=false
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
+    printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"auto-approval-sentinel","type":"commandExecution","status":"inProgress","command":"approval returned"}}}}}}'
   fi
 done
 "#,
         log_path.display(),
         interaction_request,
-        notification_count
+        notification_count,
+        completion_request_id
     );
     write_executable(&path, &content);
     path

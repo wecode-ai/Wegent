@@ -3205,6 +3205,9 @@ fn spawn_shared_mcp_server_elicitation_response(
         .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
     let correlation_key = interaction_value_key(&request_id)
         .ok_or_else(|| "mcpServer/elicitation/request has invalid JSON-RPC id".to_owned())?;
+    // Keep settlement visibility identical to the initial request notification.
+    let notifications = notifications
+        .filter(|_| !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message)));
     let client = client.clone();
     let message = message.clone();
     tokio::spawn(async move {
