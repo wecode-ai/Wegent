@@ -1829,7 +1829,7 @@ describe('TodoEditor status history', () => {
 })
 
 describe('TodoEditor create parent resolution', () => {
-  it('centers create content and footer in one column when fullscreen', async () => {
+  it('centers create content, options, and footer in one column when fullscreen', async () => {
     const user = userEvent.setup()
     render(
       <TodoEditor
@@ -1842,18 +1842,28 @@ describe('TodoEditor create parent resolution', () => {
         onClose={vi.fn()}
         api={api}
         currentUserId={1}
+        createOptions={<span data-testid="test-create-options">开始执行</span>}
       />
     )
 
     const content = screen.getByTestId('cloud-todo-create-content')
     const footer = screen.getByTestId('cloud-todo-create-footer')
+    const options = screen.getByTestId('cloud-todo-create-options')
+    const footerSection = footer.parentElement as HTMLElement
+    const optionsSection = options.parentElement as HTMLElement
     expect(content).not.toHaveClass('max-w-[768px]')
     expect(footer).not.toHaveClass('max-w-[768px]')
+    expect(options).not.toHaveClass('max-w-[768px]')
+    expect(footerSection).not.toHaveClass('px-14')
+    expect(optionsSection).not.toHaveClass('px-14')
 
     await user.click(screen.getByTestId('cloud-todo-create-fullscreen'))
 
     expect(content).toHaveClass('mx-auto', 'w-full', 'max-w-[768px]')
     expect(footer).toHaveClass('mx-auto', 'w-full', 'max-w-[768px]')
+    expect(options).toHaveClass('mx-auto', 'w-full', 'max-w-[768px]')
+    expect(footerSection).toHaveClass('px-14')
+    expect(optionsSection).toHaveClass('px-14')
   })
 
   it('keeps assignee management actions visible while search filters options', async () => {

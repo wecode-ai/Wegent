@@ -2626,6 +2626,11 @@ export function TodoEditor(props: TodoEditorProps) {
       </section>
     ) : null;
 
+  const fullScreenReadingColumn =
+    fullScreen && !workspacePanel ? "mx-auto w-full max-w-[768px]" : undefined;
+  const fullScreenSectionPadding =
+    fullScreen && !workspacePanel ? "px-14" : "px-5";
+
   return (
     <div
       className={cn(
@@ -2831,7 +2836,7 @@ export function TodoEditor(props: TodoEditorProps) {
               }
               className={cn(
                 twoColumn && "task-detail-left-inner",
-                fullScreen && !workspacePanel && "mx-auto w-full max-w-[768px]",
+                fullScreenReadingColumn,
               )}
             >
               {twoColumn && item && !workspacePanel ? (
@@ -4204,19 +4209,26 @@ export function TodoEditor(props: TodoEditorProps) {
         {!twoColumn ? (
           <>
             {isCreate && extensions?.renderCreateOptions ? (
-              <div className="shrink-0 border-t border-border px-5 py-3">
+              <div
+                className={cn(
+                  "shrink-0 border-t border-border py-3",
+                  fullScreenSectionPadding,
+                )}
+              >
                 <div
-                  className={cn(
-                    fullScreen &&
-                      !workspacePanel &&
-                      "mx-auto w-full max-w-[768px]",
-                  )}
+                  data-testid="cloud-todo-create-options"
+                  className={fullScreenReadingColumn}
                 >
                   {extensions.renderCreateOptions({ saving })}
                 </div>
               </div>
             ) : null}
-            <footer className="shrink-0 border-t border-border px-5 py-3">
+            <footer
+              className={cn(
+                "shrink-0 border-t border-border py-3",
+                fullScreenSectionPadding,
+              )}
+            >
               <div
                 data-testid={
                   isCreate
@@ -4225,9 +4237,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 }
                 className={cn(
                   "flex items-center gap-2",
-                  fullScreen &&
-                    !workspacePanel &&
-                    "mx-auto w-full max-w-[768px]",
+                  fullScreenReadingColumn,
                 )}
               >
                 <span className="text-xs text-text-muted">

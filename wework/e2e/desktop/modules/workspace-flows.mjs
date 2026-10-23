@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import {
+  assertFullscreenIssueComposerColumn,
+  assertFullscreenIssueComposerColumnAtWindowSize,
+} from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
 
@@ -1021,19 +1025,24 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  assert.equal(
-    await control.command('getComputedStyleValue', createIssueContent, {
-      value: 'max-width',
-    }),
-    '768px',
-    'Fullscreen Issue content must use the centered reading column'
-  )
-  assert.equal(
-    await control.command('getComputedStyleValue', createIssueFooter, {
-      value: 'max-width',
-    }),
-    '768px',
-    'Fullscreen Issue footer must align with the content column'
+  await assertFullscreenIssueComposerColumn(control, {
+    contentSelector: createIssueContent,
+    footerSelector: createIssueFooter,
+    panelSelector: createIssuePanel,
+    label: 'Workspace fullscreen Issue composer',
+  })
+  await assertFullscreenIssueComposerColumnAtWindowSize(control, {
+    contentSelector: createIssueContent,
+    footerSelector: createIssueFooter,
+    panelSelector: createIssuePanel,
+    windowSize: { width: 640, height: 800 },
+    maxContentWidth: 700,
+    label: 'Narrow workspace fullscreen Issue composer',
+  })
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-01-fullscreen.png',
+    createIssuePanel
   )
   await control.command('click', createIssueFullscreen)
   await control.command('fill', createIssueTitle, {
