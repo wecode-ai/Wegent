@@ -17,6 +17,7 @@ import {
 
 const TASK = 'stand-in-confirmation-work'
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
+const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
 const ROOT = '[data-testid="stand-in-overview"]'
 
 export function createDesktopScenario({
@@ -83,7 +84,9 @@ export function createDesktopScenario({
           title: '操作前确认验证',
           runtime: 'codex',
           workspacePath,
-          message: PROMPT,
+          message: DISPLAY_MESSAGE,
+          clientUserMessageId: 'stand-in-confirmation-initial',
+          restoreUserMessageContent: true,
           origin,
           executionRequest: {
             task_id: TASK,
@@ -117,6 +120,18 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="request-user-input-card"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="user-message-content"]', {
+        text: DISPLAY_MESSAGE,
+        timeoutMs: uiTimeoutMs,
+      })
+      const displayedMessage = await control.command(
+        'getText',
+        '[data-testid="user-message-content"]'
+      )
+      assert.ok(
+        !displayedMessage.includes(PROMPT),
+        'Internal execution instructions must stay hidden'
+      )
       assert.equal(requested, true)
       await assert.rejects(access(file), { code: 'ENOENT' })
       assert.equal(
