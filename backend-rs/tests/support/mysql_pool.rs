@@ -4,13 +4,10 @@
 
 //! Exercise the real SDK, including SQL rendering before network access.
 
-#[path = "mysql_pool_server.rs"]
-mod server;
-
 use std::time::Duration;
 
+use crate::sql_test_support::mysql_pool_server::capture_queries_until;
 use brz_mysql::MysqlRow;
-use server::capture_queries;
 use tokio::net::TcpListener;
 
 /// The application pool is shared with injected plain handles: a statement
@@ -26,13 +23,15 @@ pub(crate) async fn assert_plain_shared_pool() {
         );
         let pool_owner = wegent_backend_rs::connect_mysql(&url).unwrap();
         let handle = pool_owner.clone();
-        let server = tokio::spawn(capture_queries(listener, 1));
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(capture_queries_until(listener, stopped));
 
         let plain: Result<Option<MysqlRow>, _> = handle
             .fetch_optional("SELECT id FROM users WHERE id = ?", (1_i64,))
             .await;
         assert!(plain.unwrap_err().to_string().contains("test captured SQL"));
 
+        stop.send(()).unwrap();
         let queries = server.await.unwrap();
         assert_eq!(queries[0], "SELECT id FROM users WHERE id = ?");
         pool_owner.close().await;

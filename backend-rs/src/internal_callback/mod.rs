@@ -19,6 +19,7 @@ pub(crate) mod completion;
 pub(crate) mod emitter;
 pub(crate) mod event;
 pub(crate) mod parser;
+mod pipeline;
 pub(crate) mod py_json;
 pub(crate) mod session;
 mod socketio;
@@ -130,14 +131,33 @@ async fn handle_callback(
             request.executor_namespace.as_deref(),
         )
         .await;
+        let advance = if status == "COMPLETED" {
+            state
+                .task_store
+                .advance_pipeline_stage(&state.mysql, request.task_id, request.subtask_id)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "pipeline advancement failed");
+                    FastApiError::internal()
+                })?
+        } else {
+            None
+        };
+        let current_status = pipeline::task_status(state, request.task_id).await?;
         let result = final_result
             .or_else(|| event.result.clone())
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         event.result = Some(result.clone());
         // `WebSocketResultEmitter.emit`'s DONE branch: `chat:done` then
         // `task:status`.
-        if let Err(error) = emitter::emit_done_frames(redis, &event, user_id, &result).await {
+        if let Err(error) =
+            emitter::emit_done_frames(redis, &event, user_id, &result, current_status.as_deref())
+                .await
+        {
             tracing::warn!(%error, "callback done frames failed");
+        }
+        if let Some(advance) = advance {
+            pipeline::dispatch_next(state, advance).await?;
         }
     }
 

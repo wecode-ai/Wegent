@@ -67,6 +67,23 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
         .await
     }
 
+    async fn advance_pipeline_stage(
+        &self,
+        mysql: &brz_mysql::MysqlService,
+        task_id: i64,
+        completed_subtask_id: i64,
+    ) -> MysqlResult<Option<crate::task_store::PipelineStageAdvance>> {
+        crate::task_store::advance_pipeline_stage(
+            mysql,
+            TASKS_TABLE,
+            SUBTASKS_TABLE,
+            task_id,
+            completed_subtask_id,
+            None,
+        )
+        .await
+    }
+
     async fn max_subtask_message_id(&self, task_id: i64) -> MysqlResult<Option<i64>> {
         crate::task_store_create::max_subtask_message_id(&self.mysql, SUBTASKS_TABLE, task_id).await
     }

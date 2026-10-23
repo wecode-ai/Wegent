@@ -68,23 +68,38 @@ async fn serve_connection(
                 "unexpected command: {}",
                 request[0]
             );
-            packet(&mut stream, 1, &[0, 0, 0, 2, 0, 0, 0]).await;
+            // SQLx verifies SERVER_STATUS_IN_TRANS after START TRANSACTION.
+            let begins_transaction = request[0] == 0x03
+                && String::from_utf8_lossy(&request[1..])
+                    .trim()
+                    .eq_ignore_ascii_case("BEGIN");
+            let status = if begins_transaction { 3 } else { 2 };
+            packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await;
         }
     }
 }
 
-pub(crate) async fn capture_queries(listener: TcpListener, count: usize) -> Vec<String> {
+/// Keep transaction connections alive through rollback; the caller stops the
+/// server after its operation completes, rather than after its first query.
+pub(crate) async fn capture_queries_until(
+    listener: TcpListener,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+) -> Vec<String> {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let mut connections = tokio::task::JoinSet::new();
     let mut queries = Vec::new();
-    while queries.len() < count {
+    loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted.unwrap();
                 connections.spawn(serve_connection(stream, sender.clone()));
             }
             query = receiver.recv() => queries.push(query.unwrap()),
+            _ = &mut stop => break,
         }
+    }
+    while let Ok(query) = receiver.try_recv() {
+        queries.push(query);
     }
     connections.abort_all();
     queries

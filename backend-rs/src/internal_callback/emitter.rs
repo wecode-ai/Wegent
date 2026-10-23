@@ -518,6 +518,7 @@ pub(crate) async fn emit_done_frames<R: Redis>(
     event: &ExecutionEvent,
     user_id: Option<i64>,
     result: &Value,
+    task_status: Option<&str>,
 ) -> RedisResult<()> {
     let sanitized = match sanitize_client_payload(result) {
         Value::Object(object) if object.is_empty() => Value::Object(object),
@@ -534,11 +535,11 @@ pub(crate) async fn emit_done_frames<R: Redis>(
     );
     publish_emit(redis, "chat:done", event.task_id, Value::Object(payload)).await?;
 
-    let status = match event.event_type.as_str() {
+    let status = task_status.unwrap_or(match event.event_type.as_str() {
         "error" => "FAILED",
         "cancelled" => "CANCELLED",
         _ => "COMPLETED",
-    };
+    });
     // `_emit_task_status` returns early when the task has no owner.
     let Some(user_id) = user_id else {
         return Ok(());

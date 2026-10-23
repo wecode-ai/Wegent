@@ -210,7 +210,7 @@ pub async fn create_subtask_pair_with_executor_reference(
 }
 
 /// `_take_task_executor_reference` then the fallback assistant read.
-async fn resolve_executor_reference<T: MysqlTransaction>(
+pub(crate) async fn resolve_executor_reference<T: MysqlTransaction>(
     transaction: &mut T,
     tasks_table: &str,
     subtasks_table: &str,
@@ -265,7 +265,7 @@ async fn resolve_executor_reference<T: MysqlTransaction>(
 
 /// The assistant row with the resolved executor fields (`executor_*` stay empty
 /// only when both the labels and the fallback read produced nothing).
-fn assistant_row_with_executor<'a>(
+pub(crate) fn assistant_row_with_executor<'a>(
     assistant: &NewSubtaskRow<'a>,
     executor: &'a AssistantExecutor,
 ) -> NewSubtaskRow<'a> {
@@ -278,7 +278,7 @@ fn assistant_row_with_executor<'a>(
 }
 
 /// One `subtasks` row insert on the open transaction.
-async fn insert_subtask_row<T: MysqlTransaction>(
+pub(crate) async fn insert_subtask_row<T: MysqlTransaction>(
     transaction: &mut T,
     table: &str,
     with_id: bool,

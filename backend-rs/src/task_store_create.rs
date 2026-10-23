@@ -76,6 +76,14 @@ pub trait TaskStoreCreate: Send + Sync {
         request: &CreateSubtasksRequest<'_>,
     ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert>;
 
+    /// Atomically advance an automatic pipeline and append its next turn.
+    async fn advance_pipeline_stage(
+        &self,
+        mysql: &MysqlService,
+        task_id: i64,
+        completed_subtask_id: i64,
+    ) -> MysqlResult<Option<crate::task_store::PipelineStageAdvance>>;
+
     /// `task_store` message-id continuation read: `SELECT max(subtasks
     /// .message_id)` for one task, `None` when it has no subtasks.
     async fn max_subtask_message_id(&self, task_id: i64) -> MysqlResult<Option<i64>>;

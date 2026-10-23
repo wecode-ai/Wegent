@@ -20,6 +20,7 @@ pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     page_subtasks_by_task, subtask_context_columns,
 };
+pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
     active_project_task_statement, fetch_active_project_task, task_by_id_refresh_statement,
     task_project_update_statement, update_task_project_and_json,
