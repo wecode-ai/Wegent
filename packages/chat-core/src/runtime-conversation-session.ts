@@ -12,10 +12,11 @@ import type {
 import { applyRequestUserInputResponseToBlock } from "./runtime-user-input";
 import type {
   RuntimeConversationTurn,
+  RuntimePaneMessageAction,
   WorkbenchMessage,
 } from "./runtime-conversation";
 import {
-  mergeRuntimeConversationTurns,
+  hydrateRuntimeConversationTurns,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
   appendAcceptedRuntimeConversationUser,
@@ -77,11 +78,13 @@ export function createRuntimeConversationSession(
   let connection: Promise<void> | undefined;
   let latestRequest: Promise<void> | undefined;
   let invalidated = false;
+  let threadId: string | null = address.threadId ?? null;
   const listeners = new Set<() => void>();
   const guidanceListeners = new Set<
     (payload: RuntimeGuidanceAppliedPayload) => void
   >();
   const requests = new Map<string, Promise<void>>();
+  const pendingReads = new Set<RuntimePaneMessageAction[]>();
   const pageSize = 50;
   const contextUsageStore = createRuntimeContextUsageStore();
 
@@ -108,6 +111,7 @@ export function createRuntimeConversationSession(
         onMessageAction(action) {
           if (!listening || owner !== generation) return;
           revision += 1;
+          pendingReads.forEach((actions) => actions.push(action));
           turns = reduceRuntimeConversationTurns(turns, action);
           publishTurns();
         },
@@ -164,11 +168,34 @@ export function createRuntimeConversationSession(
   ) {
     const owner = generation;
     const requestedRevision = revision;
+    const requestedThread = threadId;
     const usageRevision = contextUsageStore.getRevision();
-    const response = await client.getTranscript({ ...address, ...options });
+    const actions: RuntimePaneMessageAction[] = [];
+    pendingReads.add(actions);
+    let response;
+    try {
+      response = await client.getTranscript({ ...address, ...options });
+    } finally {
+      pendingReads.delete(actions);
+    }
     if (!listening || owner !== generation) return;
+    if (requestedThread !== threadId && response.threadId !== threadId) return;
     const page = projectRuntimePaneTranscript(response);
-    turns = mergeRuntimeConversationTurns(turns, page.turns);
+    const changedThread = Boolean(
+      response.threadId && threadId && response.threadId !== threadId,
+    );
+    if (response.threadId) threadId = response.threadId;
+    turns = hydrateRuntimeConversationTurns(
+      changedThread ? [] : turns,
+      page.turns,
+      actions,
+      !changedThread,
+    );
+    if (changedThread) {
+      beforeCursor = null;
+      fullContent = false;
+      update({ loadedTranscriptRanges: [], turnNavigation: [] });
+    }
     const incomingRanges = transcriptRangeFromPage(page);
     const earlierPage =
       options.beforeCursor !== undefined &&

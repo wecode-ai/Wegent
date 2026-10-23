@@ -36,6 +36,61 @@ import {
 } from "./runtime-turn-updates";
 import { projectRuntimeConversationTurn } from "./runtime-turn-projection";
 
+/** Materialize in-flight deltas against their observed base, then atomically publish native order.
+ * Applying append-only deltas directly to history would duplicate output already persisted there.
+ */
+export function hydrateRuntimeConversationTurns(
+  local: RuntimeConversationTurn[],
+  snapshot: RuntimeConversationTurn[],
+  actions: RuntimePaneMessageAction[],
+  actionsAlreadyApplied = false,
+): RuntimeConversationTurn[] {
+  const localIds = new Set(local.map((turn) => turn.id));
+  // A viewer can attach after turn/start. Native history supplies that turn's prerequisites.
+  let observed = [
+    ...local,
+    ...snapshot.filter((turn) => !localIds.has(turn.id)),
+  ];
+  const updatedTextIds = new Set<string>();
+  for (const action of actions) {
+    if (!actionsAlreadyApplied)
+      observed = reduceRuntimeConversationTurns(observed, action);
+    if (
+      (action.type === "assistant_chunk" || action.type === "assistant_done") &&
+      action.itemId
+    ) {
+      updatedTextIds.add(action.itemId);
+    }
+  }
+  const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
+  return mergeRuntimeConversationTurns(observed, snapshot).map((turn) => {
+    const latest = observedByTurn.get(turn.id);
+    if (!latest || updatedTextIds.size === 0) return turn;
+    const latestItems = new Map(latest.items.map((item) => [item.id, item]));
+    return {
+      ...turn,
+      items: turn.items.map((item) => {
+        const live = latestItems.get(item.id);
+        if (
+          item.type !== "assistant_text" ||
+          live?.type !== "assistant_text" ||
+          !updatedTextIds.has(item.id)
+        )
+          return item;
+        // Text deltas are append-only. A native snapshot may already include a received delta,
+        // or even a suffix whose notification has not arrived; keep that complete prefix.
+        return item.content.startsWith(live.content)
+          ? item
+          : {
+              ...item,
+              content: live.content,
+              streamTextOffset: live.streamTextOffset,
+            };
+      }),
+    };
+  });
+}
+
 export function mergeRuntimeConversationTurns(
   localTurns: RuntimeConversationTurn[],
   snapshotTurns: RuntimeConversationTurn[],

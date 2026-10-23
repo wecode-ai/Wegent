@@ -155,7 +155,6 @@ import {
   getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
-  publishRuntimeTransportReplaced,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationTaskPlan,
@@ -2245,7 +2244,6 @@ export function WorkbenchProvider({
             syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
-          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
         },
         syncRuntimeTaskLifecycle
       ),

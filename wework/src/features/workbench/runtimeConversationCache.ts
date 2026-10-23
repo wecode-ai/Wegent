@@ -7,7 +7,6 @@ export {
   type ConversationScrollSnapshot,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
-import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
@@ -28,6 +27,7 @@ import {
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
+  hydrateRuntimeConversationTurns,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
@@ -60,8 +60,8 @@ import {
   queuedMessagesByConversation,
   queuedMessagesPausedByConversation,
   runtimeConversationKey,
-  runtimeTransportReplacedListeners,
   turnsByConversation,
+  threadIdsByConversation,
   turnContainsClientUserMessage,
   type RuntimeConversationMetadata,
 } from './runtimeConversationCacheStore'
@@ -75,6 +75,10 @@ export {
 } from './runtimeConversationCacheStore'
 
 const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
+export const EMPTY_RUNTIME_CONVERSATION_SNAPSHOT = {
+  turns: EMPTY_RUNTIME_CONVERSATION_TURNS,
+  messages: [] as WorkbenchMessage[],
+}
 const pendingConversationOperations = new Set<{
   address: RuntimeTaskAddress
   current: boolean
@@ -216,6 +220,28 @@ export function getRuntimeConversationMessages(address: RuntimeTaskAddress): Wor
   )
 }
 
+export function getRuntimeConversationSnapshot(address: RuntimeTaskAddress) {
+  const key = runtimeConversationKey(address)
+  const turns = turnsByConversation.get(key)
+  if (!turns) return EMPTY_RUNTIME_CONVERSATION_SNAPSHOT
+  projectRuntimeConversationMessages(key, turns)
+  return projectedMessagesByConversation.get(key)!
+}
+
+export function adoptRuntimeConversationThread(
+  address: RuntimeTaskAddress,
+  threadId?: string | null
+): boolean {
+  if (!threadId) return false
+  const key = runtimeConversationKey(address)
+  const previous = threadIdsByConversation.get(key)
+  threadIdsByConversation.set(key, threadId)
+  if (!previous || previous === threadId) return false
+  cacheRuntimeConversationTurns(key, [])
+  projectedMessagesByConversation.delete(key)
+  return true
+}
+
 export function getRuntimeConversationTurns(
   address: RuntimeTaskAddress
 ): RuntimeConversationTurn[] {
@@ -264,17 +290,6 @@ export function runtimeConversationMessageHasStartedTurn(
   )
 }
 
-export function publishRuntimeTransportReplaced(payload: RuntimeTransportReplacedPayload): void {
-  runtimeTransportReplacedListeners.forEach(listener => listener(payload))
-}
-
-export function subscribeRuntimeTransportReplaced(
-  listener: (payload: RuntimeTransportReplacedPayload) => void
-): () => void {
-  runtimeTransportReplacedListeners.add(listener)
-  return () => runtimeTransportReplacedListeners.delete(listener)
-}
-
 export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): symbol {
   const key = runtimeConversationKey(address)
   const existing = hydrationByConversation.get(key)
@@ -285,28 +300,22 @@ export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): 
   return token
 }
 
-export function runtimeConversationHydrationHasUpdates(
-  address: RuntimeTaskAddress,
-  token: symbol
-): boolean {
-  const hydration = hydrationByConversation.get(runtimeConversationKey(address))
-  return hydration?.token === token && hydration.bufferedActions.length > 0
-}
-
 export function completeRuntimeConversationHydration(
   address: RuntimeTaskAddress,
   token: symbol,
-  snapshotTurns: RuntimeConversationTurn[]
+  snapshotTurns: RuntimeConversationTurn[],
+  actionsAlreadyApplied = true
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  let turns = turnsByConversation.get(key) ?? []
-  for (const action of hydration.bufferedActions) {
-    turns = reduceRuntimeConversationTurns(turns, action)
-  }
-  turns = mergeRuntimeConversationTurns(turns, snapshotTurns)
+  const turns = hydrateRuntimeConversationTurns(
+    turnsByConversation.get(key) ?? [],
+    snapshotTurns,
+    hydration.bufferedActions,
+    actionsAlreadyApplied
+  )
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
@@ -321,10 +330,7 @@ export function abortRuntimeConversationHydration(
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  let turns = turnsByConversation.get(key) ?? []
-  for (const action of hydration.bufferedActions) {
-    turns = reduceRuntimeConversationTurns(turns, action)
-  }
+  const turns = turnsByConversation.get(key) ?? []
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
@@ -409,8 +415,6 @@ export function applyRuntimeConversationAction(
   const hydration = hydrationByConversation.get(key)
   if (hydration) {
     hydration.bufferedActions.push(action)
-    const turns = turnsByConversation.get(key) ?? []
-    return projectRuntimeConversationMessages(key, turns)
   }
   const currentTurns = turnsByConversation.get(key) ?? []
   const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)

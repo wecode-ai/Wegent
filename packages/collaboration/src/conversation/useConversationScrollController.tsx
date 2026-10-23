@@ -37,6 +37,7 @@ import {
   findLatestGuidanceMessageId,
   setConversationScrollSnapshot,
   createScrollSnapshot,
+  restoreConversationAnchor,
 } from './conversationScrollGeometry'
 import {
   RuntimeTranscriptGapMarker,
@@ -401,10 +402,7 @@ export function useConversationScrollController({
       if (currentScrollKey !== null) {
         lastMeasuredScrollSnapshotRef.current = {
           key: currentScrollKey,
-          snapshot: {
-            distanceFromBottomPx: Math.max(0, distanceToBottom),
-            pinnedToBottom: isScrolledToBottom,
-          },
+          snapshot: createScrollSnapshot(element, bottomOrigin),
         }
       }
       const scrollPosition = getDistanceFromTop(element, bottomOrigin)
@@ -528,6 +526,7 @@ export function useConversationScrollController({
         'auto',
         bottomOrigin
       )
+      restoreConversationAnchor(element, snapshot)
       lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
 
       const overflow = element.scrollHeight > element.clientHeight + 8

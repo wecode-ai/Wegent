@@ -21,7 +21,6 @@ import type {
   RuntimeSubagentStatus,
   WorkbenchMessage,
 } from '@/types/workbench'
-import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import { mergeRuntimeConversationTurns } from './runtimeConversationTurns'
 
@@ -42,6 +41,7 @@ export interface RuntimeConversationMetadata {
 }
 
 export const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
+export const threadIdsByConversation = new Map<string, string>()
 export const projectedMessagesByConversation = new Map<
   string,
   { turns: RuntimeConversationTurn[]; messages: WorkbenchMessage[] }
@@ -49,9 +49,6 @@ export const projectedMessagesByConversation = new Map<
 export const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<Subscription>>()
 const retainingListenersByConversation = new Map<string, Set<Subscription>>()
-export const runtimeTransportReplacedListeners = new Set<
-  (payload: RuntimeTransportReplacedPayload) => void
->()
 export const hydrationByConversation = new Map<
   string,
   { token: symbol; bufferedActions: RuntimePaneMessageAction[] }
@@ -114,6 +111,7 @@ function canonicalRuntimeConversationDeviceId(deviceId: string): string {
 function conversationMaps(): Map<string, unknown>[] {
   return [
     turnsByConversation,
+    threadIdsByConversation,
     projectedMessagesByConversation,
     metadataByConversation,
     listenersByConversation,
@@ -132,6 +130,17 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   cancelPendingStreamingNotification(previousKey)
   cancelTerminalConversationEviction(previousKey)
   cancelTerminalConversationEviction(nextKey)
+  const previousThread = threadIdsByConversation.get(previousKey)
+  const currentThread = threadIdsByConversation.get(nextKey)
+  const replacedThread = Boolean(
+    previousThread && currentThread && previousThread !== currentThread
+  )
+  if (replacedThread) {
+    turnsByConversation.delete(previousKey)
+    hydrationByConversation.delete(previousKey)
+    evictConversationViewport(previousKey)
+  }
+  moveEntry(threadIdsByConversation, previousKey, nextKey, (_, current) => current)
   moveEntry(turnsByConversation, previousKey, nextKey, (previous, current) =>
     isMoreRecent(previous, current)
       ? mergeRuntimeConversationTurns(current, previous)
@@ -342,7 +351,6 @@ export function clearRuntimeConversationCacheStore(): void {
   for (const entries of conversationMaps()) {
     entries.clear()
   }
-  runtimeTransportReplacedListeners.clear()
   canonicalDeviceIdByAlias.clear()
   revisionByValue = new WeakMap()
   nextRevision = 1

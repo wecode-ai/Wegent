@@ -19,6 +19,7 @@ fn cached_transcript_response(
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty());
     let mut response = transcript_response(TranscriptResponseInput {
+        canonical_turns: None,
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
         runtime: link.runtime.clone(),
@@ -43,6 +44,7 @@ fn cached_transcript_response(
         turn_navigation,
     });
     response["historyUnavailable"] = Value::Bool(history_unavailable);
+    response["threadId"] = json!(link.thread_id);
     if link.runtime == "claude_code" && link.status == "interrupted" && !running {
         if let Some(turn) = response
             .get_mut("turns")
@@ -184,6 +186,7 @@ struct TranscriptResponseInput {
     workspace_path: String,
     runtime: String,
     messages: Vec<Value>,
+    canonical_turns: Option<Vec<Value>>,
     context_usage: Option<Value>,
     running: bool,
     pagination: TranscriptPagination,
@@ -240,6 +243,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         workspace_path,
         runtime,
         mut messages,
+        canonical_turns,
         context_usage,
         running,
         pagination,
@@ -301,7 +305,11 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
             }
         }
     };
-    let turns = transcript_canonical_turns(&messages, turn_item_source);
+    let turns = if conversation_context_only {
+        transcript_canonical_turns(&messages, turn_item_source)
+    } else {
+        canonical_turns.unwrap_or_else(|| transcript_canonical_turns(&messages, turn_item_source))
+    };
     json!({
         "success": true,
         "taskId": local_task_id,
@@ -398,6 +406,7 @@ fn transcript_canonical_turns(
                 "id": item_id,
                 "type": "user_message",
                 "message": message,
+                "position": message.get("position"),
             }));
             continue;
         }
@@ -413,6 +422,13 @@ fn transcript_canonical_turns(
         }
     }
 
+    for turn in &mut turns {
+        if let Some(position) = turn["items"].as_array().into_iter().flatten()
+            .filter_map(|item| item["position"].as_u64()).min()
+        {
+            turn["position"] = json!(position);
+        }
+    }
     turns
 }
 
@@ -524,6 +540,7 @@ fn transcript_navigation_response(
     turn_navigation: Vec<Value>,
 ) -> Value {
     transcript_response(TranscriptResponseInput {
+        canonical_turns: None,
         local_task_id,
         workspace_path,
         runtime: "codex".to_owned(),

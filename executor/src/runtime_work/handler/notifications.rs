@@ -187,6 +187,7 @@ impl RuntimeWorkRpcHandler {
         if !item.is_object() {
             return;
         }
+        item["lifecycleCompleted"] = json!(notification.method == "item/completed");
         if is_codex_context_compaction_item_type(&item_type(&item)) {
             item["status"] = json!(if notification.method == "item/completed" {
                 "done"
@@ -252,6 +253,7 @@ impl RuntimeWorkRpcHandler {
         let Some(active) = active.filter(|active| !active.items.is_empty()) else {
             return;
         };
+        let positioned = thread.get("timeline").and_then(Value::as_bool) == Some(true);
         let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) else {
             return;
         };
@@ -261,6 +263,9 @@ impl RuntimeWorkRpcHandler {
         {
             turn["status"] = json!("inProgress");
             merge_codex_turn_items(turn, active.items);
+            return;
+        }
+        if positioned {
             return;
         }
         turns.push(json!({

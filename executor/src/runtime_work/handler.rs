@@ -196,7 +196,7 @@ use super::{
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
         full_transcript_messages, normalized_user_request_content, notification_item,
-        transcript_messages,
+        project_transcript, transcript_messages,
     },
     transcript_page::transcript_page,
     util::{

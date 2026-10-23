@@ -460,6 +460,7 @@ export function upsertBlocks(
     const index = exactIndex >= 0 ? exactIndex : contextCompactionIndex;
     const canonicalItem: RuntimeConversationItem = {
       id: block.id,
+      position: index >= 0 ? next[index]?.position : undefined,
       type: "block",
       block: limitWorkbenchProcessingBlock(
         index >= 0 && next[index]?.type === "block"
@@ -510,6 +511,7 @@ export function replaceAssistantTextWithBlock(
   if (index < 0) return upsertBlocks(items, [block]);
   return replaceAt(items, index, {
     id: block.id,
+    position: items[index].position,
     type: "block",
     block: limitWorkbenchProcessingBlock(block),
   });
@@ -601,7 +603,8 @@ export function boundVisibleRuntimeProcessingBlocks(
   items: RuntimeConversationItem[],
 ): Pick<RuntimeConversationTurn, "items" | "contentTruncated"> {
   const blockCount = items.reduce(
-    (count, item) => count + (item.type === "block" ? 1 : 0),
+    (count, item) =>
+      count + (item.type === "block" && item.position === undefined ? 1 : 0),
     0,
   );
   if (blockCount <= MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS) {
@@ -614,7 +617,12 @@ export function boundVisibleRuntimeProcessingBlocks(
   let blocksToDrop = blockCount - MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS;
   return {
     items: items.filter((item) => {
-      if (item.type !== "block" || blocksToDrop <= 0) return true;
+      if (
+        item.type !== "block" ||
+        item.position !== undefined ||
+        blocksToDrop <= 0
+      )
+        return true;
       blocksToDrop -= 1;
       return false;
     }),

@@ -45,7 +45,12 @@ export function mergeRuntimeConversationTurn(
       snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     itemMerge: undefined,
-    items,
+    items: orderRuntimeConversationItems(items),
+    position:
+      Math.min(local.position ?? Infinity, snapshot.position ?? Infinity) ===
+      Infinity
+        ? undefined
+        : Math.min(local.position ?? Infinity, snapshot.position ?? Infinity),
     fileChanges:
       local.fileChanges &&
       snapshot.fileChanges &&
@@ -163,7 +168,15 @@ export function orderRuntimeConversationTurns(
       timestamp: runtimeConversationTurnTimestamp(turn),
     }));
   let orderedTurns: RuntimeConversationTurn[];
-  if (
+  if (indexedTurns.some(({ turn }) => turn.position !== undefined)) {
+    orderedTurns = indexedTurns
+      .sort(
+        (left, right) =>
+          (left.turn.position ?? Infinity) -
+            (right.turn.position ?? Infinity) || left.index - right.index,
+      )
+      .map(({ turn }) => turn);
+  } else if (
     indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)
   ) {
     orderedTurns = indexedTurns
@@ -210,10 +223,27 @@ export function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false,
 ): RuntimeConversationItem[] {
-  const reconciledLocalItems = removeEquivalentAssistantTextItems(
-    localItems,
-    snapshotItems,
+  const positionedIds = new Set(
+    snapshotItems
+      .filter((item) => item.position !== undefined)
+      .map((item) => item.id),
   );
+  // A native identity confirms the observed stream through that item. Unpositioned items
+  // before that boundary are superseded by history, not a second history to append at its tail.
+  const confirmedIndex = localItems.reduce(
+    (last, item, index) => (positionedIds.has(item.id) ? index : last),
+    -1,
+  );
+  const reconciledLocalItems =
+    positionedIds.size > 0
+      ? localItems.filter(
+          (item, index) =>
+            item.position !== undefined ||
+            positionedIds.has(item.id) ||
+            (item.type === "user_message" && !item.message.runtimeGuidance) ||
+            index > confirmedIndex,
+        )
+      : removeEquivalentAssistantTextItems(localItems, snapshotItems);
   const localById = new Map(
     reconciledLocalItems.map((item) => [item.id, item]),
   );
@@ -230,7 +260,32 @@ export function mergeRuntimeConversationItems(
   const mergedLocalItems = reconciledLocalItems.map(
     (item) => snapshotById.get(item.id) ?? item,
   );
-  return insertMissingSnapshotItems(mergedLocalItems, mergedSnapshotItems);
+  return orderRuntimeConversationItems(
+    insertMissingSnapshotItems(mergedLocalItems, mergedSnapshotItems),
+  );
+}
+
+/** Persisted positions are authoritative; items still in flight remain provisional. */
+export function orderRuntimeConversationItems(
+  items: RuntimeConversationItem[],
+): RuntimeConversationItem[] {
+  if (!items.some((item) => item.position !== undefined)) return items;
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (left, right) =>
+        itemPosition(left.item) - itemPosition(right.item) ||
+        left.index - right.index,
+    )
+    .map(({ item }) => item);
+}
+
+function itemPosition(item: RuntimeConversationItem): number {
+  if (item.position !== undefined) return item.position;
+  // An acknowledged initial prompt may precede its native user item being persisted.
+  return item.type === "user_message" && !item.message.runtimeGuidance
+    ? -Infinity
+    : Infinity;
 }
 
 export function removeEquivalentAssistantTextItems(
@@ -470,6 +525,7 @@ export function mergeRuntimeConversationItem(
   snapshot: RuntimeConversationItem,
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {
+  snapshot = { ...snapshot, position: snapshot.position ?? local?.position };
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
   const snapshotBlock = preserveToolOutput(
     local.block,

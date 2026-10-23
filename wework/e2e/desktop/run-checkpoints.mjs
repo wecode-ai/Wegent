@@ -75,6 +75,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'streaming-timers': './scenarios/streaming-text.scenario.mjs',
   'streaming-scroll': './scenarios/streaming-text.scenario.mjs',
   'streaming-message-order': './scenarios/streaming-text.scenario.mjs',
+  'streaming-conversation-switching': './scenarios/streaming-text.scenario.mjs',
   'streaming-subagents': './scenarios/streaming-text.scenario.mjs',
 
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
@@ -167,6 +168,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'streaming-timers',
   'streaming-scroll',
   'streaming-message-order',
+  'streaming-conversation-switching',
   'streaming-subagents',
 
   'goal-state-sync',

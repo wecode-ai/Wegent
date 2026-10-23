@@ -17,6 +17,7 @@ export interface LoadedTranscriptRange {
   end: number;
 }
 export interface RuntimePaneTranscript {
+  threadId?: string | null;
   historyUnavailable?: boolean;
   runtime?: RuntimeName;
   messages: WorkbenchMessage[];
@@ -37,6 +38,7 @@ export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse,
 ): RuntimePaneTranscript {
   return {
+    threadId: transcript.threadId,
     historyUnavailable: transcript.historyUnavailable,
     runtime: transcript.runtime,
     running: transcript.running,
