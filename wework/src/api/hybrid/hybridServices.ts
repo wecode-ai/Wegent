@@ -1682,6 +1682,15 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async notifyAssignment(projectId, issueId, assignmentId, userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).notifyAssignment(
+          projectId,
+          issueId,
+          assignmentId,
+          userId,
+          deviceId
+        )
+      },
       async personalAgents(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
       },

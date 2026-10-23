@@ -21,6 +21,7 @@ core_segments=(
   stand-in-cloud
   stand-in-notifications
 
+  stand-in-assignment-notifications
   stand-in-personal-task
   stand-in-permissions
   collaboration-remote-agent-dispatch
@@ -224,7 +225,7 @@ core_shards=(
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-personal-task,stand-in-permissions
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,stand-in-personal-task,stand-in-permissions
   rendering-extensions,streaming-content,streaming-tools,streaming-timers
   streaming-scroll,streaming-message-order,streaming-subagents
   # Preserve the fixed interaction latency budget without CPU contention from other apps.
@@ -402,6 +403,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
   select_target "core:stand-in-cloud"
+  select_target "core:stand-in-assignment-notifications"
   select_target "core:stand-in-personal-task"
   select_target "core:stand-in-permissions"
   select_target "core:collaboration-remote-agent-dispatch"
@@ -742,6 +744,7 @@ classify_wework_path() {
 
     wework/src/features/notifications/* | \
       wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
+      select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
@@ -754,6 +757,7 @@ classify_wework_path() {
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
       if [[ "$path" == wework/src/features/workbench/runtimeTaskReminders* ]]; then
+        select_target "core:stand-in-assignment-notifications"
         select_target "core:stand-in-notifications"
         select_target "core:stand-in-cloud"
       fi
@@ -824,10 +828,15 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs)
+      select_target "core:stand-in-assignment-notifications"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-personal-task.scenario.mjs)
       select_target "core:stand-in-personal-task"
       return
       ;;
+
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
@@ -837,6 +846,7 @@ classify_wework_path() {
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-cloud"
+      select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-personal-task"
       select_target "core:stand-in-permissions"
       return

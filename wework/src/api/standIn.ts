@@ -19,6 +19,13 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   userId: number
 }
 export interface StandInExecutorApi {
+  notifyAssignment(
+    projectId: string,
+    issueId: string,
+    assignmentId: string,
+    userId: number,
+    deviceId: string
+  ): Promise<void>
   personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
   personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
   personalSave(userId: number, settings: PersonalStandInSettings): Promise<PersonalStandInSettings>
@@ -57,6 +64,13 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    notifyAssignment: async (projectId, itemId, assignmentId, recipientUserId, deviceId) => {
+      await request(
+        'runtime.stand_in.assignment',
+        { projectId, itemId, assignmentId, recipientUserId },
+        deviceId
+      )
+    },
     personalAgents: async (userId, deviceId) =>
       (
         await request<{ items: PersonalStandInAgent[] }>(

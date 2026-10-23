@@ -34,15 +34,11 @@ async fn cached_selection_failure_does_not_abort_local_polling() {
 }
 
 #[tokio::test]
-async fn cached_selection_failure_does_not_block_later_cloud_assignments() {
+async fn cached_selection_failure_does_not_block_later_cloud_notifications() {
     let started = Arc::new(AtomicUsize::new(0));
     let calls = started.clone();
     let router = Router::new()
         .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-        .route("/api/v1/cloud-projects/project/loop-items", get(|| async { Json(json!({"items":[
-            {"id":"failed","assignee_user_id":7,"tags":["review"],"human_task_binding":{"humanAssignmentId":"failed-human","assignmentId":"assignment"}},
-            {"id":"later","assignee_user_id":7,"tags":["docs"],"human_task_binding":{"humanAssignmentId":"later-human","assignmentId":"assignment"}}
-        ]})) }))
         .route("/api/v1/loop-items/{id}/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }))
         .route("/api/v1/loop-items/{id}/tasks", get(|| async { Json(json!([])) }))
         .route("/api/v1/cloud-projects/project/chat-agents", get(move || {
@@ -71,7 +67,17 @@ async fn cached_selection_failure_does_not_block_later_cloud_assignments() {
         )
         .unwrap();
     let configs = [("one","review"),("two","review"),("docs","docs")].map(|(id,tag)| json!({"id":id,"projectId":"project","projectStore":"cloud","userId":7,"tags":[tag],"autoSelect":true,"personalVersion":1,"enabledAfter":"2020-01-01T00:00:00Z","agentId":"probe"}));
-    handler.poll_cloud_stand_in(&configs).await.unwrap();
+    for (index, issue) in [
+        json!({"id":"failed","assignee_user_id":7,"tags":["review"],"human_task_binding":{"humanAssignmentId":"failed-human","assignmentId":"assignment"}}),
+        json!({"id":"later","assignee_user_id":7,"tags":["docs"],"human_task_binding":{"humanAssignmentId":"later-human","assignmentId":"assignment"}}),
+    ].iter().enumerate() {
+        let error = handler
+            .start_cloud_stand_in_with_roles(&configs, &issue)
+            .await.unwrap_err();
+        if index == 0 {
+            assert_eq!(error.code, "stand_in_selection_failed");
+        }
+    }
     assert_eq!(
         started.load(Ordering::SeqCst),
         1,
