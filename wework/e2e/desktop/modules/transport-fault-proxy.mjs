@@ -3,7 +3,7 @@ import { createServer, request as httpRequest } from 'node:http'
 
 /** Loopback transport faults only: never fabricate an API response. */
 export class TransportFaultProxy {
-  constructor(target) {
+  constructor(target, { preserveHost = false } = {}) {
     this.target = new URL(target)
     assert.equal(this.target.protocol, 'http:')
     assert.ok(['127.0.0.1', 'localhost'].includes(this.target.hostname))
@@ -15,6 +15,8 @@ export class TransportFaultProxy {
     this.rule = () => null
     this.paused = false
     this.acknowledgementsPaused = false
+    this.preserveHost = preserveHost
+    this.webSocketsDisconnected = false
     this.server = createServer((request, response) => this.forward(request, response))
     this.server.on('connection', socket => this.track(socket))
     this.server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head))
@@ -32,7 +34,10 @@ export class TransportFaultProxy {
       port: this.target.port,
       path: request.url,
       method: request.method,
-      headers: { ...request.headers, host: this.target.host },
+      headers: {
+        ...request.headers,
+        host: this.preserveHost ? request.headers.host : this.target.host,
+      },
     }
   }
 
@@ -61,7 +66,12 @@ export class TransportFaultProxy {
           }
           entry.release = () =>
             new Promise(resolve => {
+              if (response.destroyed || response.writableEnded) {
+                resolve()
+                return
+              }
               response.once('finish', resolve)
+              response.once('close', resolve)
               response.writeHead(incoming.statusCode, incoming.headers)
               response.end(Buffer.concat(chunks))
               entry.released = true
@@ -84,6 +94,10 @@ export class TransportFaultProxy {
   }
 
   upgrade(request, downstream, head) {
+    if (this.webSocketsDisconnected) {
+      downstream.destroy()
+      return
+    }
     const upstream = httpRequest(this.options(request))
     this.upstreams.add(upstream)
     upstream.once('close', () => this.upstreams.delete(upstream))
@@ -94,6 +108,11 @@ export class TransportFaultProxy {
       downstream.destroy()
     })
     upstream.once('upgrade', (response, socket, upstreamHead) => {
+      if (this.webSocketsDisconnected) {
+        socket.destroy()
+        downstream.destroy()
+        return
+      }
       this.track(socket)
       this.websockets.add(socket)
       this.deviceSockets.add(downstream)
@@ -135,6 +154,16 @@ export class TransportFaultProxy {
     for (const socket of this.deviceSockets) {
       if (paused) socket.pause()
       else socket.resume()
+    }
+  }
+
+  disconnectWebSockets(disconnected) {
+    this.webSocketsDisconnected = disconnected
+    if (disconnected) {
+      // Leave ordinary HTTP (including the pending sync POST) intact. New
+      // upgrades stay blocked until the real reconnect path is released.
+      for (const socket of this.websockets) socket.destroy()
+      for (const socket of this.deviceSockets) socket.destroy()
     }
   }
 

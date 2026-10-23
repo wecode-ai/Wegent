@@ -1369,6 +1369,7 @@ classify_path() {
       wework/e2e/desktop/modules/plugin-registration-coordination.mjs | \
       wework/e2e/desktop/support/registration-capabilities.py | \
       wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-sync-disconnect.mjs | \
       wework/e2e/desktop/modules/plugin-write-lease.mjs | \
       wework/e2e/desktop/support/plugin-write-lease.py | \
       wework/scripts/plugin-fault-proxy.test.mjs | \

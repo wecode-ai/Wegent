@@ -3081,6 +3081,35 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
     }
+    case 'getPluginSyncDiagnostics': {
+      const deviceId = command.value?.trim()
+      if (!deviceId) throw new Error('getPluginSyncDiagnostics requires a device id')
+      const { hasInFlightPluginDeviceSync } =
+        await import('@/features/plugins/pluginDeviceAutoSync')
+      const { getLocalExecutorCloudConnectionStatus } =
+        await import('@/features/cloud-connection/localExecutorCloudConnectionStatus')
+      const backend = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
+        'executor.backend.status'
+      )
+      return JSON.stringify({
+        deviceId,
+        backend: { configured: backend.configured, connected: backend.connected },
+        rendererConnected: getLocalExecutorCloudConnectionStatus().connected,
+        inFlight: hasInFlightPluginDeviceSync(deviceId),
+        localCatalogReads: ['started', 'completed', 'failed']
+          .flatMap(phase =>
+            performance
+              .getEntriesByName(`wework:plugin-local-catalog:${phase}`, 'mark')
+              .map(entry => ({
+                phase,
+                time: entry.startTime,
+                startedAt:
+                  phase === 'started' ? entry.startTime : (entry as PerformanceMark).detail,
+              }))
+          )
+          .sort((left, right) => left.time - right.time),
+      })
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
