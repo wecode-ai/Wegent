@@ -34,6 +34,8 @@ Child-thread views are read-only projections: they neither adopt the child as th
 
 Each live action is published once on arrival. Completing or aborting hydration only notifies subscribers of the snapshot change; replaying actions would repeat their side effects.
 
+Turn timing retains its observed start. A terminal duration is converted through its source start into an end time before being expressed against that same observed start; durations from different origins cannot be mixed directly.
+
 Paging and conversation-cache lifecycle own loaded native history. The provisional-output block limit cannot silently discard confirmed history. Goals project execution state; explicit transport gaps and recovery events belong to the synchronization layer.
 
 ## Viewport restoration

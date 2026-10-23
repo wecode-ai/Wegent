@@ -27,6 +27,31 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("settles duration against the same start already displayed while the turn was running", () => {
+    const running: RuntimeConversationTurn = {
+      id: "turn",
+      status: "streaming",
+      startedAt: 40_000,
+      items: [],
+    };
+    const settled = reduceRuntimeConversationTurns([running], {
+      type: "assistant_done",
+      subtaskId: "turn",
+      startedAt: 43_000,
+      durationMs: 17_000,
+    });
+    expect(settled[0]).toMatchObject({ startedAt: 40_000, durationMs: 20_000 });
+    const native = {
+      ...running,
+      status: "done" as const,
+      startedAt: 43_000,
+      durationMs: 17_000,
+    };
+    expect(mergeRuntimeConversationTurns([running], [native])[0]).toMatchObject(
+      { startedAt: 40_000, durationMs: 20_000 },
+    );
+  });
+
   it("retains observed child reasoning when a native parent snapshot omits it", () => {
     const reasoning = {
       id: "child-reasoning",

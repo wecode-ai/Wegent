@@ -50,3 +50,18 @@ export function turnStatus(
   if (turn.status === "cancelled") return "done";
   return turn.status;
 }
+
+/** Express an incoming elapsed duration against the start already observed by this view. */
+export function runtimeTurnDurationMs(
+  observedStart: number | undefined,
+  sourceStart: number | undefined,
+  durationMs: number | undefined,
+): number | undefined {
+  if (
+    durationMs === undefined ||
+    observedStart === undefined ||
+    sourceStart === undefined
+  )
+    return durationMs;
+  return Math.max(0, sourceStart + durationMs - observedStart);
+}

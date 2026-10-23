@@ -2,6 +2,7 @@ import {
   processingBlocks,
   assistantTextContent,
   preserveProcessingBlockTiming,
+  runtimeTurnDurationMs,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
@@ -75,8 +76,17 @@ export function mergeRuntimeConversationTurn(
       preserveLocalTerminal || preserveLocalFailure
         ? local.durationMs
         : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.durationMs ?? snapshot.durationMs)
-          : snapshot.durationMs,
+          ? (local.durationMs ??
+            runtimeTurnDurationMs(
+              local.startedAt,
+              snapshot.startedAt,
+              snapshot.durationMs,
+            ))
+          : runtimeTurnDurationMs(
+              local.startedAt,
+              snapshot.startedAt,
+              snapshot.durationMs,
+            ),
     completedAt:
       preserveLocalTerminal || preserveLocalFailure
         ? local.completedAt

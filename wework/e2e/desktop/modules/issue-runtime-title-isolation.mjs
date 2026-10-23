@@ -18,9 +18,16 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
   const afterRename = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
   assert.equal(afterRename.title, issue.title, 'Renaming the conversation renamed the Issue')
   assert.equal(afterRename.version, issue.version, 'Renaming the conversation mutated the Issue')
-  const assistantCount = Number(
-    await control.command('getElementCount', `${content} [data-testid="message-assistant"]`)
-  )
+  const conversationAddress = { deviceId: binding.device_id, taskId: binding.task_id }
+  const assistantMessages = async () => {
+    const messages = JSON.parse(
+      await control.command('getRuntimeConversationMessages', 'body', {
+        value: JSON.stringify(conversationAddress),
+      })
+    )
+    return messages.filter(message => message.role === 'assistant')
+  }
+  const assistantCount = (await assistantMessages()).length
   const composer = `${content} [data-testid="chat-message-input"][contenteditable="true"]`
   control.setScenario('checkpoint_task')
   await control.command('fill', composer, {
@@ -36,9 +43,7 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
   while (Date.now() < deadline) {
     const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     observedTitle = debug.workbench?.activeTask?.title
-    const completedMessages = Number(
-      await control.command('getElementCount', `${content} [data-testid="message-assistant"]`)
-    )
+    const completedMessages = (await assistantMessages()).length
     if (
       observedTitle === title &&
       completedMessages > assistantCount &&

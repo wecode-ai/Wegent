@@ -94,8 +94,9 @@ describe('runtimeConversationTurns', () => {
       const restored = projectRuntimeConversationTurns(snapshot).find(
         message => message.role === 'assistant'
       )!
-      expect(snapshot[0].startedAt).toBe(startedAt)
-      expect(snapshot[0].durationMs).toBe(10_000)
+      expect(snapshot[0].startedAt).toBe(startedAt - 1000)
+      expect(snapshot[0].durationMs).toBe(11_000)
+      expect(snapshot[0].startedAt! + snapshot[0].durationMs!).toBe(startedAt + 10_000)
       expect(snapshot[0].completedAt).toBe(new Date(startedAt + 10000).toISOString())
       expect(restored.createdAt).toBe(new Date(startedAt + 3000).toISOString())
       expect(restored.completedAt).toBeUndefined()

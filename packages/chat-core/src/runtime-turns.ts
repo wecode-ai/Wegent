@@ -1,4 +1,7 @@
-import { processingBlocks } from "./runtime-turn-helpers";
+import {
+  processingBlocks,
+  runtimeTurnDurationMs,
+} from "./runtime-turn-helpers";
 import { commandExecutionPayload } from "./command-execution";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
@@ -278,8 +281,12 @@ export function reduceRuntimeConversationTurns(
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
           status: "done",
           streamingThinkingContent: undefined,
-          startedAt: action.startedAt ?? turn.startedAt,
-          durationMs: action.durationMs,
+          startedAt: turn.startedAt ?? action.startedAt,
+          durationMs: runtimeTurnDurationMs(
+            turn.startedAt,
+            action.startedAt,
+            action.durationMs,
+          ),
           completedAt: new Date().toISOString(),
           fileChanges: action.fileChanges ?? turn.fileChanges,
           error: undefined,
@@ -293,8 +300,12 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "cancelled",
           streamingThinkingContent: undefined,
-          startedAt: action.startedAt ?? turn.startedAt,
-          durationMs: action.durationMs,
+          startedAt: turn.startedAt ?? action.startedAt,
+          durationMs: runtimeTurnDurationMs(
+            turn.startedAt,
+            action.startedAt,
+            action.durationMs,
+          ),
           completedAt: new Date().toISOString(),
           stoppedNotice: true,
         };
@@ -306,8 +317,12 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "failed",
           streamingThinkingContent: undefined,
-          startedAt: action.startedAt ?? turn.startedAt,
-          durationMs: action.durationMs,
+          startedAt: turn.startedAt ?? action.startedAt,
+          durationMs: runtimeTurnDurationMs(
+            turn.startedAt,
+            action.startedAt,
+            action.durationMs,
+          ),
           completedAt: new Date().toISOString(),
           error: action.error,
           errorType: action.errorType,
