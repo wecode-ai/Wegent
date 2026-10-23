@@ -60,6 +60,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     draft: value,
   }))
   const draftRef = useRef(draftState.draft)
+  const draftScopeKeyRef = useRef(scopeKey)
   const draft =
     draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftRef.current : value
   const appliedInsertionIdRef = useRef<number | null>(null)
@@ -89,6 +90,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
+  const lastSubmittedDraftEditVersionRef = useRef(0)
   const isComposingRef = useRef(false)
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
@@ -227,12 +229,22 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       publication => publication.value === value
     )
     const acknowledgesPublishedDraft = !replacingDraft && acknowledgedPublicationIndex >= 0
-    const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
+    // A completed submission can clear the shared draft after the user has
+    // already started the next message. Keep the newer local edit.
+    const hasNewerLocalDraft =
+      !replacingDraft &&
+      draftScopeKeyRef.current === scopeKey &&
+      !value &&
+      Boolean(draftRef.current) &&
+      draftEditVersionRef.current > lastSubmittedDraftEditVersionRef.current
+    const shouldSetComposer =
+      !acknowledgesPublishedDraft && !hasNewerLocalDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       scopeKey: scopeKey ?? null,
       sourceValueLength: value.length,
       draftLength: draftRef.current.length,
       acknowledgesPublishedDraft,
+      hasNewerLocalDraft,
       acknowledgedPublicationRevision: acknowledgesPublishedDraft
         ? publications[acknowledgedPublicationIndex]?.revision
         : null,
@@ -241,14 +253,19 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     committedValueRef.current = value
     if (replacingDraft) {
       draftRef.current = value
+      draftScopeKeyRef.current = scopeKey
       setDraftState({ scopeKey, sourceValue: value, draft: value })
     } else if (acknowledgesPublishedDraft) {
       publications.splice(0, acknowledgedPublicationIndex + 1)
       if (publications.length === 0) publishedDraftsRef.current.delete(scopeKey)
+      draftScopeKeyRef.current = scopeKey
       setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
+    } else if (hasNewerLocalDraft) {
+      publishedDraftsRef.current.delete(scopeKey)
     } else {
       publishedDraftsRef.current.delete(scopeKey)
       draftRef.current = value
+      draftScopeKeyRef.current = scopeKey
       setDraftState({ scopeKey, sourceValue: value, draft: value })
     }
     if (shouldSetComposer) {
@@ -275,6 +292,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
+    draftScopeKeyRef.current = scopeKey
     setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
     setComposerValue(nextDraft, nextDraft.length)
     scheduleDraftFlush(nextDraft)
@@ -283,6 +301,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const setDraft = useCallback(
     (nextDraft: string) => {
       draftRef.current = nextDraft
+      draftScopeKeyRef.current = scopeKey
       if (programmaticUpdateDepthRef.current === 0) {
         draftEditVersionRef.current += 1
         onDraftEdit?.(nextDraft)
@@ -293,7 +312,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       }
       scheduleDraftFlush(nextDraft)
     },
-    [cancelPendingFlush, onDraftEdit, scheduleDraftFlush]
+    [cancelPendingFlush, onDraftEdit, scheduleDraftFlush, scopeKey]
   )
 
   // Flush after the next frame so the editor state settles first.
@@ -330,11 +349,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     (valueOverride?: string, options?: ChatSubmitOptions) => {
       const submittedDraft = valueOverride ?? draftRef.current
       const submittedDraftEditVersion = draftEditVersionRef.current
+      lastSubmittedDraftEditVersionRef.current = submittedDraftEditVersion
       const submittedScopeKey = scopeKey
       const submission =
         options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
       if (clearOnSubmit && submittedDraft.trim()) {
         draftRef.current = ''
+        draftScopeKeyRef.current = submittedScopeKey
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
         setComposerValue('', 0)
@@ -346,6 +367,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         if (draftEditVersionRef.current !== submittedDraftEditVersion) return
         if (draftRef.current) return
         draftRef.current = submittedDraft
+        draftScopeKeyRef.current = submittedScopeKey
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
         setComposerValue(submittedDraft, submittedDraft.length)

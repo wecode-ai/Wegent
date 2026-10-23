@@ -370,6 +370,35 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('keeps a newer draft when a completed submit clears the shared value late', async () => {
+    let resolveSubmission: (accepted: boolean) => void = () => undefined
+    let clearSharedDraft: () => void = () => undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveSubmission = resolve
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('submitted draft')
+      clearSharedDraft = () => setValue('')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await userEvent.type(input, 'next draft')
+
+    act(() => resolveSubmission(true))
+    act(() => clearSharedDraft())
+
+    await waitFor(() => expect(input).toHaveValue('next draft'))
+  })
+
   test('clears the live composer when preserving a paused queue', async () => {
     const onResumeQueueWithInput = vi.fn()
 
