@@ -15,7 +15,7 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身通知-${process.pid}`
+const PROJECT = `分身通知-${process.pid}`
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
@@ -58,7 +58,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '在通知内继续处理替身任务', assignee_user_id: 9001 },
+          todo: { title: '在通知内继续处理分身任务', assignee_user_id: 9001 },
         },
         uiTimeoutMs
       )
@@ -95,10 +95,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         text: '处理完毕',
       })
       const notificationRow = selector(`wework-notification-${id}`)
-      await control.command('waitFor', notificationRow, { text: '替身处理' })
+      await control.command('waitFor', notificationRow, { text: '分身处理' })
       const rowText = await control.command('getText', notificationRow)
-      assert.ok(rowText.includes('在通知内继续处理替身任务'))
-      assert.ok(!rowText.includes('我的替身'), 'Handling must preserve the original title')
+      assert.ok(rowText.includes('在通知内继续处理分身任务'))
+      assert.ok(!rowText.includes('我的分身'), 'Handling must preserve the original title')
       assert.equal(
         await control.command('getElementCount', selector(`wework-notification-${id}-body`)),
         '0',
@@ -205,7 +205,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
         assert.equal(
           await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
-          '在通知内继续处理替身任务',
+          '在通知内继续处理分身任务',
           'Every notification hit target must open the original Issue'
         )
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
@@ -219,7 +219,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       })
       assert.equal(
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
-        '在通知内继续处理替身任务'
+        '在通知内继续处理分身任务'
       )
     },
   }

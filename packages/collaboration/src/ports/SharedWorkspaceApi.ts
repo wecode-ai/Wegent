@@ -962,6 +962,7 @@ export interface SharedWorkspaceApi {
     save(
       projectId: string,
       settings: WorkspaceStandInSettings,
+      deviceId?: string,
     ): Promise<WorkspaceStandInSettings>;
   };
   /** Device-addressed execution transcripts and live runtime events. */

@@ -636,7 +636,14 @@ impl RuntimeWorkRpcHandler {
             self.register_thread_event_route_from_store(&thread_id);
         }
         self.ensure_notification_router().await;
-        self.codex_app_server.request(method, params).await
+        match method {
+            "thread/goal/set" | "thread/goal/clear" => {
+                self.codex_app_server
+                    .mutate_thread_goal(method, params)
+                    .await
+            }
+            _ => self.codex_app_server.request(method, params).await,
+        }
     }
 
     pub(super) fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {

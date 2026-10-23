@@ -18,6 +18,7 @@ core_segments=(
   stand-in
   stand-in-workspace
   stand-in-controls
+  stand-in-project-enable
   stand-in-cloud
   stand-in-notifications
 
@@ -179,58 +180,34 @@ cloud_segments=(
   plugin-workspace-publication
   plugin-toggle-persistence
 )
-# Group checkpoints by observed parallel CI duration. Keep account auth and
-# the 24-plugin composer fixture on separate runners to avoid CPU contention.
+# Balance measured checkpoint durations across four workers, longest first.
+# Run 39930854745: five ordinary Cloud shards predict 291-339 seconds.
+# Keep account auth and the 24-plugin composer fixture on separate runners.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow
-  embedded-browser,cloud-project-creation
-  goal-lifecycle,cloud-worktree-archive-restore
-  rendering-extensions
-  project-automation
-  window-lifecycle
-  priority-filter,cloud-worktree-tools
-  resilience,telemetry-consent
-  cloud-worktree-create,automation-lifecycle,browser-multi-tabs
-  workspace-tabs,cloud-worktree-capability
-  supervisor-lifecycle,conversation-state
-  model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
+  plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
+  core-task-flow,goal-lifecycle,supervisor-lifecycle,priority-filter,cloud-worktree-create,plugin-toggle-persistence,cloud-worktree-tools,cloud-model-presets
+  plugin-auto-update,resilience,workspace-tabs,plugin-workspace-publication,plugin-write-coordination,workspace-attachments,cloud-device-lifecycle,plugin-account-auth-coordination
+  model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination
+  window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
-  cloud-worktree-queued-cancel,plugin-runtime-path-recovery
-  plugin-auto-update,plugin-workspace-publication,workspace-attachments
-  cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result
   plugin-composer-long-list
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
-  plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
-  plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination
 )
-# Group checkpoints by observed parallel CI duration while reusing the same
-# prebuilt application. Rendering runs apart from terminal/transcript workloads.
+# Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
+# Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
+# workspace-tabs uses its successful 116-second baseline from run 39920301020.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-app-development,harness-app-lifecycle,browser-annotation-design
-  supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
-  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
-  send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
-  claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
-  window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
-  workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
-  transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-crash-recovery,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
-  model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-personal-task,stand-in-permissions
-  rendering-extensions,streaming-content,streaming-tools,streaming-timers
-  streaming-scroll,streaming-message-order,streaming-subagents
-  # Preserve the fixed interaction latency budget without CPU contention from other apps.
+  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login
+  project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
+  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
+  claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
+  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
+  harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
-  # Drawer frame assertions also require a runner without competing Electron apps.
   collaboration-shared-core
 )
 
@@ -402,6 +379,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in"
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
+  select_target "core:stand-in-project-enable"
   select_target "core:stand-in-cloud"
   select_target "core:stand-in-personal-task"
   select_target "core:stand-in-permissions"
@@ -833,10 +811,11 @@ classify_wework_path() {
       select_target "core:stand-in-permissions"
       return
       ;;
-    wework/e2e/desktop/scenarios/stand-in-controls.scenario.mjs|wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs|wework/src/features/todo/StandInComposer*|wework/src/features/todo/StandInSettingsPage*|wework/src/features/todo/useStandInModels*|wework/src/features/todo/IssueStandInControl*|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
+    wework/e2e/desktop/scenarios/stand-in-project-enable.scenario.mjs|wework/src/features/todo/StandInOverviewPage*|wework/src/features/todo/StandInProjectSetup*|wework/src/features/todo/usePersonalStandIn*|wework/src/api/personalStandIn.ts|wework/e2e/desktop/scenarios/stand-in-controls.scenario.mjs|wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs|wework/src/features/todo/StandInComposer*|wework/src/features/todo/StandInSettingsPage*|wework/src/features/todo/useStandInModels*|wework/src/features/todo/IssueStandInControl*|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
       select_target "core:stand-in"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
+      select_target "core:stand-in-project-enable"
       select_target "core:stand-in-cloud"
       select_target "core:stand-in-personal-task"
       select_target "core:stand-in-permissions"
