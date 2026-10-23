@@ -117,6 +117,7 @@ export class SmartAppVerifier {
   }
 
   async verify(projectRoot: string): Promise<SmartAppVerificationReport> {
+    console.info('[smart-app-verification] requested')
     const root = await requiredSmartAppDirectory(projectRoot, 'Smart app project')
     const current = this.inFlight.get(root)
     if (current) return current
@@ -321,11 +322,23 @@ export class SmartAppVerifier {
   }
 
   private async runVerification(root: string): Promise<SmartAppVerificationReport> {
+    const runId = randomUUID()
+    const diagnosticStartedAt = Date.now()
+    const trace = (stage: string, phase: 'started' | 'finished' | 'failed') =>
+      console.info('[smart-app-verification] stage', {
+        runId,
+        stage,
+        phase,
+        elapsedMs: Date.now() - diagnosticStartedAt,
+      })
+    trace('fingerprint', 'started')
     const startedAt = this.dependencies.now().toISOString()
     let inputFingerprint: string
     try {
       inputFingerprint = await this.dependencies.fingerprint(root, 'verification-input')
+      trace('fingerprint', 'finished')
     } catch (error) {
+      trace('fingerprint', 'failed')
       return this.finishEnvironmentFailure(root, startedAt, error)
     }
 
@@ -335,6 +348,7 @@ export class SmartAppVerifier {
     let contract: SmartAppVerificationContract | null = null
     let deliverableFingerprint: string | null = null
 
+    trace('manifest', 'started')
     const manifestStartedAt = this.dependencies.now().toISOString()
     try {
       const validated = await this.dependencies.validatePackage(root)
@@ -351,11 +365,13 @@ export class SmartAppVerifier {
       issues.push(issueFromError(error, 'manifest'))
     }
     stages.push(stageResult('manifest', manifestStartedAt, this.dependencies.now(), issues))
+    trace('manifest', 'finished')
     if (!manifest || !contract || hasBlockingIssues(issues)) {
       appendSkippedStages(stages, 'scripts', this.dependencies.now)
       return this.finish(root, startedAt, inputFingerprint, deliverableFingerprint, stages, issues)
     }
 
+    trace('scripts', 'started')
     const scriptsStartedAt = this.dependencies.now().toISOString()
     let scripts: SmartAppProjectScriptsResult
     try {
@@ -378,11 +394,13 @@ export class SmartAppVerifier {
         scripts.scripts.at(-1)?.logPath ?? null
       )
     )
+    trace('scripts', 'finished')
     if (hasBlockingIssues(scripts.issues)) {
       appendSkippedStages(stages, 'artifacts', this.dependencies.now)
       return this.finish(root, startedAt, inputFingerprint, deliverableFingerprint, stages, issues)
     }
 
+    trace('artifacts', 'started')
     const artifactsStartedAt = this.dependencies.now().toISOString()
     let artifacts: SmartAppArtifactValidationResult
     try {
@@ -399,11 +417,13 @@ export class SmartAppVerifier {
     stages.push(
       stageResult('artifacts', artifactsStartedAt, this.dependencies.now(), artifacts.issues)
     )
+    trace('artifacts', 'finished')
     if (hasBlockingIssues(artifacts.issues)) {
       appendSkippedStages(stages, 'runtime', this.dependencies.now)
       return this.finish(root, startedAt, inputFingerprint, deliverableFingerprint, stages, issues)
     }
 
+    trace('runtime', 'started')
     const runtimeStartedAt = this.dependencies.now().toISOString()
     let runtime: { issues: SmartAppVerificationIssue[] }
     try {
@@ -420,6 +440,7 @@ export class SmartAppVerifier {
     }
     issues.push(...runtime.issues)
     stages.push(stageResult('runtime', runtimeStartedAt, this.dependencies.now(), runtime.issues))
+    trace('runtime', 'finished')
     return this.finish(root, startedAt, inputFingerprint, deliverableFingerprint, stages, issues)
   }
 
