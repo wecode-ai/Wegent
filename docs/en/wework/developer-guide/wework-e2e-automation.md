@@ -205,7 +205,16 @@ The 37 ordinary Cloud checkpoints total 5,769 seconds, distributed into five
 shards with predicted durations of 291–339 seconds; a sixth shard only reduces
 the maximum to 321 seconds. Two Core and three Cloud shards remain isolated.
 These scheduling estimates exclude per-shard setup and runtime resource
-variation and are not measured savings. Shards are balanced from observed CI durations; a new or
+variation and are not measured savings.
+Background-terminal history verification reads the first visible xterm row's
+`aria-posinset`, then waits for each native PageUp to strictly decrease that row
+until reaching the start of history. Each operation retains the default
+ten-second timeout, all twelve initial output lines are asserted, and native
+PageDown restores the viewport. A single ten-second deadline cannot bound many
+page operations: control latency under concurrent CI can exhaust it while
+history remains intact. Focused regressions cover a slow control channel, stalled
+scrolling, and missing history.
+Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:

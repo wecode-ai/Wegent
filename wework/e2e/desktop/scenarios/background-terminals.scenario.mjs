@@ -65,20 +65,30 @@ async function changeTheme(control, mode) {
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
-async function verifyTerminalHistory(control, timeoutMs) {
+export async function verifyTerminalHistory(control, timeoutMs) {
   const panel = '[data-testid="background-terminal-output-panel"]'
   const tree = `${panel} .xterm-accessibility-tree`
   const textarea = `${panel} .xterm-helper-textarea`
   await control.command('waitFor', tree, { text: MARKERS[0] })
-  const deadline = Date.now() + timeoutMs
+  const firstRow = `${tree} > [role="listitem"]:first-child[aria-posinset]`
+  await control.command('waitFor', firstRow, { timeoutMs })
+  let position = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
+  assert.ok(
+    Number.isSafeInteger(position) && position > 0,
+    'Missing terminal viewport row position'
+  )
   let pages = 0
-  while (
-    !(await control.command('getText', `${tree} > div`))
-      .split('\n')
-      .includes(`${MARKERS[0]}_TICK_1`) &&
-    Date.now() < deadline
-  ) {
+  while (position > 1) {
     await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
+    await control.command('waitFor', `${firstRow}:not([aria-posinset="${position}"])`, {
+      timeoutMs,
+    })
+    const next = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
+    assert.ok(
+      Number.isSafeInteger(next) && next > 0 && next < position,
+      `Native page-up did not move backwards: ${position} -> ${next}`
+    )
+    position = next
     pages += 1
   }
   await control.command('waitFor', tree, { text: `${MARKERS[0]}_TICK_12` })
