@@ -26,7 +26,7 @@ export function useStandInNotifications(
   const store = useMemo(() => createStandInRecordStore(storageKey), [storageKey])
   const versions = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const delivered = useMemo(() => createStandInRecordStore(`${storageKey}:delivered`), [storageKey])
-  const observedTasks = useRef({ storageKey, keys: new Set<string>() })
+  const observedTasks = useRef({ storageKey: '', startedAt: 0, keys: new Set<string>() })
   const items = useMemo(
     () => mergeStandInNotifications(inbox?.items ?? [], enabled ? (source?.items ?? []) : []),
     [inbox, source?.items, enabled]
@@ -78,7 +78,7 @@ export function useStandInNotifications(
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
     if (observedTasks.current.storageKey !== storageKey) {
-      observedTasks.current = { storageKey, keys: new Set<string>() }
+      observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
     }
     const observedTaskKeys = observedTasks.current.keys
     const currentKeys = new Set(trackedItems.map(item => item.runtimeItem?.key))
@@ -91,6 +91,8 @@ export function useStandInNotifications(
       const firstObservation = !observedTaskKeys.has(item.runtimeItem.key)
       observedTaskKeys.add(item.runtimeItem.key)
       if (state.status === 'running') continue
+      const historical =
+        firstObservation && Date.parse(state.updatedAt) <= observedTasks.current.startedAt
       const version = standInVersion(state)
       const deliveredVersion = delivered.getSnapshot()[item.runtimeItem.key]?.version
       if (deliveredVersion === version) continue
@@ -105,8 +107,8 @@ export function useStandInNotifications(
         ...delivered.getSnapshot(),
         [item.runtimeItem.key]: { version, savedAt: Date.now() },
       })
-      // Restored tasks establish a baseline; only live changes produce alerts.
-      if (firstObservation || alreadyDelivered) continue
+      // Baseline older settlements, but retain live completions that beat task discovery.
+      if (historical || alreadyDelivered || !unread) continue
       const viewingTask =
         source?.currentAddress?.deviceId === state.deviceId &&
         source?.currentAddress?.taskId === state.taskId &&

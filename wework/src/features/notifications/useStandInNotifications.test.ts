@@ -55,6 +55,31 @@ describe('stand-in notification read and delivery state', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
+  it('notifies a live completion that arrives before the running task was discovered', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-23T12:00:00Z'))
+      const hook = renderHook(
+        ({ item }: { item: RuntimeTaskReminderItem | null }) =>
+          useStandInNotifications(inbox, item ? source(item, true) : null, 'user', true, true),
+        { initialProps: { item: null } }
+      )
+      vi.setSystemTime(new Date('2026-10-23T12:00:01Z'))
+      const item = completed(new Date().toISOString())
+      hook.rerender({ item })
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(hook.result.current.unreadCount).toBe(1)
+      hook.unmount()
+      const restored = renderHook(() =>
+        useStandInNotifications(inbox, source(item, true), 'user', true, true)
+      )
+      expect(send).toHaveBeenCalledTimes(1)
+      restored.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not notify or mark unread again when a settled turn receives its task summary', () => {
     const machine = new RuntimeTaskMachine(runtimeItem.address)
     machine.dispatch({
@@ -183,9 +208,11 @@ describe('stand-in notification read and delivery state', () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
   it('respects collaboration channel preferences independently of task reminders', () => {
-    const hook = renderHook(() =>
-      useStandInNotifications(inbox, source(completed(), true), 'user', true, false)
+    const hook = renderHook(
+      ({ item }) => useStandInNotifications(inbox, source(item, true), 'user', true, false),
+      { initialProps: { item: runtimeItem } }
     )
+    hook.rerender({ item: completed() })
     expect(hook.result.current.unreadCount).toBe(1)
     expect(send).not.toHaveBeenCalled()
     hook.unmount()
@@ -195,8 +222,18 @@ describe('stand-in notification read and delivery state', () => {
     expect(disabled.result.current.items[0].payload.standIn).toBeUndefined()
   })
   it('does not send desktop alerts while the same execution is visible', () => {
-    const visible = { ...source(completed(), true), currentAddress: runtimeItem.address }
-    renderHook(() => useStandInNotifications(inbox, visible, 'user', true, true))
+    const hook = renderHook(
+      ({ item }) =>
+        useStandInNotifications(
+          inbox,
+          { ...source(item, true), currentAddress: runtimeItem.address },
+          'user',
+          true,
+          true
+        ),
+      { initialProps: { item: runtimeItem } }
+    )
+    hook.rerender({ item: completed() })
     expect(send).not.toHaveBeenCalled()
   })
   it('remains bounded when more than 1000 executions are available', () => {
