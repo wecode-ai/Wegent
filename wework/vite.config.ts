@@ -17,6 +17,17 @@ function normalizeBackendUrl(value: string): string {
   return url.toString().replace(/\/$/, '')
 }
 
+function discoverNodeTestScripts(directory: string): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const entryPath = path.join(directory, entry.name)
+    if (entry.isDirectory()) return discoverNodeTestScripts(entryPath)
+    if (!entry.isFile() || !entry.name.endsWith('.test.mjs')) return []
+    if (!fs.readFileSync(entryPath, 'utf8').includes("from 'node:test'")) return []
+    return [path.relative(__dirname, entryPath).replaceAll('\\', '/')]
+  })
+}
+
+const nodeTestScripts = discoverNodeTestScripts(path.resolve(__dirname, './scripts'))
 const backendProxyTarget = normalizeBackendUrl(
   process.env.VITE_WEGENT_BACKEND_URL || 'http://localhost:8000'
 )
@@ -259,6 +270,7 @@ export default defineConfig({
     maxWorkers: 2,
     exclude: [
       ...configDefaults.exclude,
+      ...nodeTestScripts,
       'dsh/**/*.test.mjs',
       'e2e/**',
       'electron/**',
