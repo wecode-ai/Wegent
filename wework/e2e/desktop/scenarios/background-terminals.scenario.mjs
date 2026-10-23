@@ -82,7 +82,18 @@ async function verifyTerminalHistory(control, timeoutMs) {
     pages += 1
   }
   await control.command('waitFor', tree, { text: `${MARKERS[0]}_TICK_12` })
-  const lines = (await control.command('getText', `${tree} > div`)).split('\n')
+  const settleDeadline = Date.now() + timeoutMs
+  let lines = []
+  while (Date.now() < settleDeadline) {
+    lines = (await control.command('getText', `${tree} > div`)).split('\n')
+    if (
+      Array.from({ length: 12 }, (_, index) => index + 1).every(tick =>
+        lines.includes(`${MARKERS[0]}_TICK_${tick}`)
+      )
+    )
+      break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
   for (let tick = 1; tick <= 12; tick += 1)
     assert.ok(lines.includes(`${MARKERS[0]}_TICK_${tick}`), `Missing terminal output tick ${tick}`)
   for (let page = 0; page <= pages; page += 1) {
