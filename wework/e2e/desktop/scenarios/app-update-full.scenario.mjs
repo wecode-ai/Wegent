@@ -13,7 +13,12 @@ const UPDATE_CHANNEL = 'stable'
 // slower than a single host request instead of completing near-instantly.
 const HOST_ZIP_RESPONSE_DELAY_MS = 6_000
 
-export async function createDesktopScenario({ homePath, resultDir, workbenchReadyTimeoutMs }) {
+export async function createDesktopScenario({
+  homePath,
+  resultDir,
+  workbenchReadyTimeoutMs,
+  electronUserDataDirectory,
+}) {
   assert.equal(process.platform, 'darwin', 'App full update E2E requires macOS')
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
   const resourcesRoot = resolve(appBinary, '..', '..', 'Resources')
@@ -167,6 +172,29 @@ export async function createDesktopScenario({ homePath, resultDir, workbenchRead
       assert.equal(progress.totalBytes, targetZipBytes.length)
       assert.equal(progress.mode, undefined)
       assert.equal(progress.reason, undefined)
+      const state = JSON.parse(
+        await readFile(join(electronUserDataDirectory, 'managed-components', 'state.json'), 'utf8')
+      )
+      assert.equal(
+        state.pending.appVersion,
+        targetVersion,
+        'Components must be staged for the new app version'
+      )
+      for (const [id, component] of Object.entries(state.pending.components)) {
+        const cached = join(
+          electronUserDataDirectory,
+          'managed-components',
+          'blobs',
+          id,
+          component.archiveSha256,
+          component.entryPath
+        )
+        assert.equal(
+          await hashComponentPath(cached),
+          component.contentSha256,
+          `The pending ${id} component must be usable without the original app bundle`
+        )
+      }
     },
 
     async cleanup() {
