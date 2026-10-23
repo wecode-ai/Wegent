@@ -7,6 +7,54 @@ fn role(id: &str) -> Value {
 }
 
 #[test]
+fn stored_settings_follow_the_owning_executor_after_its_device_identity_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut value = store.personal_stand_in(7, "mac").unwrap();
+    value["roles"] = json!([role("development"), role("review")]);
+    let saved = store.save_personal_stand_in(7, "mac", value).unwrap();
+
+    let mut expected = saved.clone();
+    expected["executionDeviceId"] = json!("new-mac");
+    for role in expected["roles"].as_array_mut().unwrap() {
+        role["executionDeviceId"] = json!("new-mac");
+    }
+    let loaded = store.personal_stand_in(7, "new-mac").unwrap();
+    assert_eq!(loaded, expected);
+    assert!(store.save_personal_stand_in(7, "new-mac", saved).is_err());
+    let updated = store.save_personal_stand_in(7, "new-mac", loaded).unwrap();
+    assert_eq!(updated["executionDeviceId"], "new-mac");
+    assert_eq!(
+        updated["roles"][0]["enabledAfter"],
+        expected["roles"][0]["enabledAfter"]
+    );
+}
+
+#[test]
+fn scheduler_rebinds_stored_settings_without_waiting_for_the_settings_page() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut value = store.personal_stand_in(7, "mac").unwrap();
+    value["roles"] = json!([role("review")]);
+    let saved = store.save_personal_stand_in(7, "mac", value).unwrap();
+
+    let scheduled = store.all_personal_stand_ins("new-mac").unwrap();
+    assert_eq!(scheduled.len(), 1);
+    assert_eq!(scheduled[0]["executionDeviceId"], "new-mac");
+    assert_eq!(scheduled[0]["roles"][0]["executionDeviceId"], "new-mac");
+    assert_eq!(
+        scheduled[0]["roles"][0]["collaboration"],
+        saved["roles"][0]["collaboration"]
+    );
+    assert_eq!(
+        scheduled[0]["roles"][0]["enabledAfter"],
+        saved["roles"][0]["enabledAfter"]
+    );
+    assert_eq!(store.personal_stand_in(7, "").unwrap(), scheduled[0]);
+    assert_eq!(store.all_personal_stand_ins("new-mac").unwrap(), scheduled);
+}
+
+#[test]
 fn personal_roles_cover_existing_and_future_projects_and_respect_exclusions() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

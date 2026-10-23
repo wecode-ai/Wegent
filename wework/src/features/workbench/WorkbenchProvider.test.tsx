@@ -16162,6 +16162,90 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(listRuntimeWork).toHaveBeenCalledTimes(callsBeforeUpdate)
   })
 
+  test('preserves supervisor events received during a task snapshot request', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const listRuntimeWork = vi.fn().mockResolvedValue(createRuntimeWork())
+    const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeTopLevelStreamLifecycleProbe />
+        <RuntimePaneSendProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() => expect(streamHandlers.onRuntimeSupervisorUpdated).toBeDefined())
+    const callsBeforeSnapshot = listRuntimeWork.mock.calls.length
+    const pendingSnapshot = deferred<RuntimeWorkListResponse>()
+    listRuntimeWork.mockReturnValueOnce(pendingSnapshot.promise)
+    act(() => {
+      streamHandlers.onRuntimeGoalUpdated?.({
+        taskId: 'runtime-a',
+        deviceId: 'device-1',
+        goal: null,
+      })
+    })
+
+    await waitFor(() =>
+      expect(listRuntimeWork.mock.calls.length).toBeGreaterThan(callsBeforeSnapshot)
+    )
+
+    act(() => {
+      streamHandlers.onRuntimeSupervisorUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'supervisor-state-1',
+        deviceId: 'device-1',
+        supervisor: {
+          mode: 'auto',
+          status: 'active',
+          instructions: 'Keep the task focused',
+          modelSelection: {
+            modelName: 'supervisor-model',
+            modelType: 'public',
+          },
+          intervalSeconds: 30,
+          lastEvaluatedAt: 1786557741000,
+          lastContentHash: 'latest',
+          lastError: null,
+          suggestions: [],
+        },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-a-supervisor-last-evaluated')).toHaveTextContent(
+        '1786557741000'
+      )
+    )
+    await act(async () => {
+      const staleWork = createRuntimeWork()
+      staleWork.projects[0].deviceWorkspaces[0].tasks[0].supervisor = {
+        mode: 'auto',
+        status: 'checking',
+        instructions: 'Keep the task focused',
+        intervalSeconds: 30,
+        lastEvaluatedAt: 1,
+        suggestions: [],
+      }
+      pendingSnapshot.resolve(staleWork)
+      await pendingSnapshot.promise
+    })
+    expect(screen.getByTestId('runtime-a-supervisor-last-evaluated')).toHaveTextContent(
+      '1786557741000'
+    )
+  })
+
   test('hides the runtime goal when the settled task reports the goal complete', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {

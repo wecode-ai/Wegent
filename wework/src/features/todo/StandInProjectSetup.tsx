@@ -1,12 +1,16 @@
 import type { CollaborationProject } from '@wegent/collaboration'
 import { ArrowUpRight, Bot, ChevronDown } from 'lucide-react'
-import { standInRoleName, type StandInRole, type PersonalStandInAgent } from '@/api/personalStandIn'
+import {
+  roleIncludesProject,
+  standInRoleName,
+  type StandInRole,
+  type PersonalStandInAgent,
+} from '@/api/personalStandIn'
 import type { StandInProjectAgentChoice } from './useStandInProjectAgents'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function StandInProjectSetup({
   project,
-  projects,
   roles,
   projectRoleId,
   saving,
@@ -18,7 +22,6 @@ export function StandInProjectSetup({
   onOpenSettings,
 }: {
   project: CollaborationProject
-  projects: CollaborationProject[]
   roles: StandInRole[]
   projectRoleId: string
   saving: boolean
@@ -30,6 +33,12 @@ export function StandInProjectSetup({
   onOpenSettings?(): void
 }) {
   const { t } = useTranslation('common')
+  const enabled =
+    role.enabled &&
+    roleIncludesProject(role, {
+      id: project.id,
+      store: project.project_store === 'local' ? 'local' : 'cloud',
+    })
   return (
     <div className="space-y-4" data-testid="stand-in-project-setup">
       <label className="block space-y-2">
@@ -57,12 +66,7 @@ export function StandInProjectSetup({
               )
               .map(row => (
                 <option key={row.id} value={row.id}>
-                  {standInRoleName(
-                    row,
-                    roles.indexOf(row),
-                    projects,
-                    t('standIn.personal.default_role')
-                  )}
+                  {standInRoleName(row, roles.indexOf(row), t('standIn.personal.default_role'))}
                 </option>
               ))}
             <option value="__new">{t('standIn.personal.new_project_stand_in')}</option>
@@ -99,8 +103,21 @@ export function StandInProjectSetup({
                 </>
               )}
               <dt className="text-text-muted">{t('standIn.personal.automatic_summary')}</dt>
-              <dd>{t(role.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}</dd>
+              <dd>{t(enabled ? 'standIn.auto_on' : 'standIn.auto_off')}</dd>
             </dl>
+            {!enabled && (
+              <p
+                data-testid="stand-in-project-enable-help"
+                className="mt-3 text-xs text-text-muted"
+              >
+                {t('standIn.personal.enable_and_use_help')}
+              </p>
+            )}
+            {enabled && (
+              <p className="mt-3 text-xs text-text-muted">
+                {t('standIn.personal.disable_project_help')}
+              </p>
+            )}
           </div>
           {onOpenSettings && (
             <div className="text-xs text-text-muted">

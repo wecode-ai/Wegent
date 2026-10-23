@@ -18,7 +18,7 @@ vi.mock('./StandInComposer', () => ({
 vi.mock('./StandInRequirements', () => ({ StandInRequirements: () => <div /> }))
 
 function fixture() {
-  const settings: PersonalStandInSettings = {
+  let settings: PersonalStandInSettings = {
     userId: 7,
     executionDeviceId: 'mac',
     version: 1,
@@ -33,10 +33,11 @@ function fixture() {
     tags: [],
   } as unknown as CollaborationProject
   const personalGet = vi.fn(async () => settings)
-  const personalSave = vi.fn(async (_user: number, value: PersonalStandInSettings) => ({
-    ...value,
-    version: 2,
-  }))
+  const personalSave = vi.fn(async (_user: number, value: PersonalStandInSettings) => {
+    settings = { ...value, version: 2 }
+    publishPersonalStandIn(settings)
+    return settings
+  })
   const props = {
     api: { projects: { list: vi.fn(async () => [project]) } } as unknown as SharedWorkspaceApi,
     project,
@@ -69,13 +70,15 @@ describe('Project personal stand-in entry', () => {
     expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument()
   })
 
-  it('keeps edits until explicit save and closes the modal after a successful connection save', async () => {
+  it('enables the selected stand-in, connects the project and updates the badge after explicit save', async () => {
     const { props, personalSave } = fixture()
     const onSaved = vi.fn()
     const user = userEvent.setup()
     render(<StandInPopover {...props} onSaved={onSaved} />)
     await user.click(screen.getByTestId('stand-in-open'))
     await user.selectOptions(await screen.findByTestId('stand-in-project-select'), 'default')
+    expect(screen.getByTestId('stand-in-save')).toHaveTextContent('开启并用于此项目')
+    expect(screen.getByTestId('stand-in-project-enable-help')).toHaveTextContent('其他项目')
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() => expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument())
@@ -85,6 +88,7 @@ describe('Project personal stand-in entry', () => {
       expect.objectContaining({
         roles: [
           expect.objectContaining({
+            enabled: true,
             collaboration: expect.objectContaining({
               enabled: true,
               allProjects: false,
@@ -92,8 +96,23 @@ describe('Project personal stand-in entry', () => {
             }),
           }),
         ],
-      })
+      }),
+      'mac'
     )
+    expect(screen.getByTestId('stand-in-enabled')).toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-open'))
+    expect(await screen.findByTestId('stand-in-project-summary')).toHaveTextContent('已开启')
+    expect(screen.getByTestId('stand-in-save')).toHaveTextContent('停用于此项目')
+    expect(screen.queryByRole('button', { name: '开启并用于此项目' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument())
+    expect(personalSave.mock.calls[1][1].roles[0].enabled).toBe(true)
+    expect(personalSave.mock.calls[1][1].roles[0].collaboration.projects).toEqual([])
+    expect(screen.queryByTestId('stand-in-enabled')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-open'))
+    expect(await screen.findByTestId('stand-in-project-summary')).toHaveTextContent('未开启')
+    expect(screen.getByTestId('stand-in-save')).toHaveTextContent('开启并用于此项目')
+    expect(screen.queryByRole('button', { name: '停用于此项目' })).not.toBeInTheDocument()
   })
 
   it('requires explicit discard when Escape closes a dirty personal configuration', async () => {
