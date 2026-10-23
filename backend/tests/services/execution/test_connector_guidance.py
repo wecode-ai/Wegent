@@ -171,6 +171,7 @@ def test_link_rules_forbid_deriving_a_web_url_from_a_deep_link() -> None:
     """DingTalk report links only work inside the client session."""
     assert "redirect_url" in connector_guidance.CONNECTOR_LINK_RULES
     assert "web version" in connector_guidance.CONNECTOR_LINK_RULES
+    assert "signs in" in connector_guidance.CONNECTOR_LINK_RULES
 
 
 def test_connector_guidance_travels_with_the_user_turn(

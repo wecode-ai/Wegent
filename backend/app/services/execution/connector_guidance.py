@@ -135,11 +135,12 @@ def build_connector_authorization_prompt(
 CONNECTOR_LINK_RULES = """## Connector tool links
 
 - Present a link exactly as the connector tool returned it, character for character.
-- Never derive another URL from it. Decoding a deep link (for example the
-  `redirect_url` parameter of a `dingtalk://` link) produces an in-app page that
-  needs the client session and fails in a browser.
-- If the returned link uses an app scheme, say it opens in that app instead of
-  offering a "web version" you constructed.
+- Never derive another URL from it and never offer a "web version". Decoding a
+  deep link (for example the `redirect_url` parameter of a `dingtalk://` link)
+  yields an in-app page that needs the client session; it renders blank or fails
+  in a browser even after the user signs in.
+- If the user asks for a web link, answer that the upstream only publishes the
+  in-app link and repeat the tool's link unchanged.
 """.rstrip()
 
 
