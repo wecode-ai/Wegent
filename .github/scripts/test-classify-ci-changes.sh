@@ -1754,18 +1754,15 @@ for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
 done
 
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
-node --input-type=module - "$wework_workflow" "$desktop_classifier" <<'NODE'
+desktop_budget_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" --all)"
+node --input-type=module - "$wework_workflow" "$desktop_budget_output" <<'NODE'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-const [workflowPath, classifierPath] = process.argv.slice(2)
+const [workflowPath, classifierOutput] = process.argv.slice(2)
 const workflow = readFileSync(workflowPath, 'utf8')
 const outputs = Object.fromEntries(
-  execFileSync('bash', [classifierPath, '--all'], {
-    encoding: 'utf8',
-    env: { ...process.env, GITHUB_OUTPUT: '/dev/stdout' },
-  }).trim().split('\n').map(line => {
+  classifierOutput.trim().split('\n').map(line => {
     const separator = line.indexOf('=')
     return [line.slice(0, separator), line.slice(separator + 1)]
   })
