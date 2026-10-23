@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { createXtermWebLinksAddon } from './xtermLinks'
+import { observeTerminalDiagnostics, traceTerminal } from '@/e2e/terminal-diagnostics'
 
 export function BackgroundTerminalPanel({
   terminal,
@@ -42,6 +43,7 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    const disposeDiagnostics = observeTerminalDiagnostics(xterm)
     const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
     resourceRef.current = { terminal: xterm, fit, output: '' }
     const observer = new ResizeObserver(() => {
@@ -52,6 +54,7 @@ export function BackgroundTerminalPanel({
       observer.disconnect()
       disposeTheme()
       resourceRef.current = null
+      disposeDiagnostics()
       xterm.dispose()
     }
   }, [hasOutput, terminal?.id, appearance.codeFont, appearance.codeFontSize])
@@ -61,8 +64,18 @@ export function BackgroundTerminalPanel({
     if (!resource) return
     if (output.startsWith(resource.output)) {
       const delta = output.slice(resource.output.length)
-      if (delta.length > 0) resource.terminal.write(delta)
+      if (delta.length > 0) {
+        traceTerminal(resource.terminal, 'append', {
+          oldLength: resource.output.length,
+          nextLength: output.length,
+        })
+        resource.terminal.write(delta)
+      }
     } else {
+      traceTerminal(resource.terminal, 'reset', {
+        oldLength: resource.output.length,
+        nextLength: output.length,
+      })
       resource.terminal.reset()
       resource.terminal.write(output)
     }
