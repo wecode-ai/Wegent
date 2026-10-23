@@ -1,14 +1,8 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
-import { watch } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test, expect, vi } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
-
-vi.mock('node:fs', async importOriginal => {
-  const filesystem = await importOriginal()
-  return { ...filesystem, watch: vi.fn(filesystem.watch) }
-})
 
 test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
   'builds changes under %s, recovers from failure, and ignores output',
@@ -30,21 +24,24 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     })
     let change
     const close = vi.fn()
-    vi.mocked(watch).mockImplementationOnce((_directory, _options, listener) => {
+    const watch = vi.fn((_directory, _options, listener) => {
       change = listener
       return { on: vi.fn(), close }
     })
     // Exercise debounce and filtering independently of native event delivery latency.
     vi.useFakeTimers()
-    const watcher = await watchDevelopmentBuild({
-      directories: [root],
-      files: [],
-      ignored: [output],
-      build,
-      onError,
-      debounceMs: 20,
-    })
+    let watcher
     try {
+      watcher = await watchDevelopmentBuild({
+        directories: [root],
+        files: [],
+        ignored: [output],
+        build,
+        onError,
+        debounceMs: 20,
+        watch,
+      })
+      expect(watch).toHaveBeenCalledWith(root, { recursive: true }, expect.any(Function))
       expect(published).toBe('one')
       await writeFile(source, 'invalid')
       change('change', 'entry.js')
@@ -62,11 +59,11 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       await vi.advanceTimersByTimeAsync(20)
       expect(build).toHaveBeenCalledTimes(3)
     } finally {
-      await watcher.close()
-      expect(close).toHaveBeenCalledOnce()
+      await watcher?.close()
       vi.useRealTimers()
       await rm(temporary, { recursive: true, force: true })
     }
+    expect(close).toHaveBeenCalledOnce()
   }
 )
 

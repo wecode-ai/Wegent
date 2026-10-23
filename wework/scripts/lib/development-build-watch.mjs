@@ -1,4 +1,4 @@
-import { existsSync, watch } from 'node:fs'
+import { existsSync, watch as nativeWatch } from 'node:fs'
 import path from 'node:path'
 
 /** Serialize fresh builds so emitted asset references never cross build generations. */
@@ -9,6 +9,7 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
+  watch = nativeWatch,
 }) {
   const watchers = []
   let closed = false
