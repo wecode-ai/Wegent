@@ -18,6 +18,7 @@ import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
+import { stripConnectorAuthMarkers } from '@/lib/connectorAuthMarkers'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { SandboxedHtmlFrame } from '@/components/common/SandboxedHtmlFrame'
 
@@ -638,8 +639,15 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
 }: EnhancedMarkdownProps) {
+  // Connector skills end a turn with `connector_auth_required`/`connectorSlug`
+  // markers for the client's authorization card; they must never be rendered.
+  const visibleSource = useMemo(() => stripConnectorAuthMarkers(source), [source])
+
   // Extract frontmatter before processing
-  const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
+  const { frontmatter, body } = useMemo(
+    () => extractFrontmatter(visibleSource),
+    [visibleSource]
+  )
 
   const contentParts = useMemo(() => {
     const rawParts = splitArtifactBlocks(body)

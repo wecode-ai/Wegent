@@ -2,10 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  connectorAuthSlug,
-  stripConnectorAuthMarkers,
-} from '@/features/tasks/components/message/connectorAuthMarkers'
+import { connectorAuthSlug, stripConnectorAuthMarkers } from '@/lib/connectorAuthMarkers'
 
 describe('stripConnectorAuthMarkers', () => {
   test('removes trailing markers printed on the last line', () => {
