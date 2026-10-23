@@ -80,10 +80,13 @@ export async function verifyTerminalHistory(control, timeoutMs) {
   let pages = 0
   while (position > 1) {
     await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
-    await control.command('waitFor', `${firstRow}:not([aria-posinset="${position}"])`, {
-      timeoutMs,
-    })
-    const next = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
+    const deadline = Date.now() + timeoutMs
+    let next
+    do {
+      next = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
+      if (Number.isSafeInteger(next) && next > 0 && next < position) break
+      await new Promise(resolve => setTimeout(resolve, 50))
+    } while (Date.now() < deadline)
     assert.ok(
       Number.isSafeInteger(next) && next > 0 && next < position,
       `Native page-up did not move backwards: ${position} -> ${next}`
