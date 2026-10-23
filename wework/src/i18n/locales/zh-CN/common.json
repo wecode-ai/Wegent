@@ -5255,6 +5255,7 @@
     "saving": "保存中…",
     "loading": "加载中…",
     "reload": "重新加载",
+    "executor_update_required": "{{device}} 的 Wework 版本过旧，暂时无法读取该设备的替身设置。请在该设备上更新并重新打开 Wework 后重试。",
     "saved": "替身设置已保存",
     "enabled": "我的替身 · 自动处理已开启",
     "project_enabled": "自动处理已开启",

@@ -197,7 +197,10 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
         `${ACTIVE} [data-testid="send-message-button"]:not([disabled])`
       )
       await capture('reply-06-edited-draft.png')
-      await control.command('nativePress', INPUT, { key: 'Enter' })
+      // Programmatic text insertion can leave the first native Enter consumed
+      // by IME composition protection. Use the explicit send action here; the
+      // dedicated send-key scenario covers keyboard submission.
+      await control.command('click', `${ACTIVE} [data-testid="send-message-button"]`)
       await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
         text: '迁移完成，任务仍在运行。',
         timeoutMs: 30000,

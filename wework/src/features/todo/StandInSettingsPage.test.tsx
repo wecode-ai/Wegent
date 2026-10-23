@@ -530,4 +530,33 @@ describe('Personal stand-in settings', () => {
     expect(await screen.findByTestId('stand-in-agent')).toBeInTheDocument()
     await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
   })
+
+  it('explains an outdated Executor instead of exposing the raw RPC error', async () => {
+    const { props, personalGet } = fixture()
+    personalGet.mockRejectedValueOnce(
+      new Error('runtime_rpc_failed: Unsupported runtime RPC method: runtime.stand_in.personal.get')
+    )
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+
+    const error = await screen.findByRole('alert')
+    expect(error).toHaveTextContent('Mac 的 Wework 版本过旧')
+    expect(error).not.toHaveTextContent('runtime.stand_in.personal.get')
+
+    await user.click(screen.getByTestId('stand-in-reload'))
+    expect(await screen.findByTestId('stand-in-agent')).toBeInTheDocument()
+  })
+
+  it('identifies the remote device whose runtime is outdated', async () => {
+    const { props, personalGet } = fixture()
+    props.devices.push({ id: 2, device_id: 'remote', name: 'Remote', status: 'online' })
+    personalGet.mockRejectedValueOnce(
+      new Error('runtime_rpc_failed: Unsupported runtime RPC method: runtime.stand_in.personal.get')
+    )
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+
+    const error = await screen.findByRole('alert')
+    expect(error).toHaveTextContent('Remote 的 Wework 版本过旧')
+    expect(error).not.toHaveTextContent('当前设备')
+  })
 })

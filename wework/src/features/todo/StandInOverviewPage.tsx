@@ -7,6 +7,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { StandInSettingsPage } from './StandInSettingsPage'
+import { standInDeviceLabel, standInErrorMessage } from './standInErrors'
 import { StandInIcon } from '@wegent/collaboration'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
@@ -19,6 +20,13 @@ export function StandInOverviewPage({
   const workbench = useContext(WorkbenchContext)
   const state = usePersonalStandIn(props.services, props.userId, undefined, false)
   const { saved, setDraft } = state
+  const errorMessage =
+    state.error &&
+    standInErrorMessage(
+      state.error,
+      standInDeviceLabel(props.devices, state.loadDeviceId || state.currentDeviceId),
+      t
+    )
   const [editing, setEditing] = useState(false)
   const [openError, setOpenError] = useState<string | null>(null)
   useEffect(() => {
@@ -92,9 +100,9 @@ export function StandInOverviewPage({
           <p role="status" className="text-text-muted">
             {t('standIn.loading')}
           </p>
-        ) : state.error ? (
+        ) : errorMessage ? (
           <div role="alert" className="text-sm text-error">
-            <p>{state.error}</p>
+            <p>{errorMessage}</p>
             <button
               type="button"
               data-testid="stand-in-overview-retry"
