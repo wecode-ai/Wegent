@@ -410,9 +410,7 @@ async def build_execution_request(
             if connector_section:
                 # The list depends on this message and resumed sessions keep
                 # their first system prompt, so deliver it with the turn.
-                request.prompt = append_turn_guidance(
-                    request.prompt, connector_section
-                )
+                request.prompt = append_turn_guidance(request.prompt, connector_section)
         apply_execution_guidance(request, sections)
         return request
 
