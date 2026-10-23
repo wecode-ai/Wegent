@@ -1019,6 +1019,9 @@ classify_wework_path() {
         "$path" == wework/src/api/hybrid/hybridServices* ]]; then
         select_target "core:background-terminals"
       fi
+      if [[ "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:stand-in-assignment-notifications"
+      fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"
       fi

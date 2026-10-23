@@ -72,7 +72,7 @@ async fn cached_selection_failure_does_not_block_later_cloud_notifications() {
         json!({"id":"later","assignee_user_id":7,"tags":["docs"],"human_task_binding":{"humanAssignmentId":"later-human","assignmentId":"assignment"}}),
     ].iter().enumerate() {
         let error = handler
-            .start_cloud_stand_in_with_roles(&configs, &issue)
+            .start_cloud_stand_in_with_roles(&configs, issue)
             .await.unwrap_err();
         if index == 0 {
             assert_eq!(error.code, "stand_in_selection_failed");

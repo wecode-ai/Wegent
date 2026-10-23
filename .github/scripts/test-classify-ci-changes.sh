@@ -477,6 +477,17 @@ for terminal_wiring_path in \
   fi
 done
 
+for assignment_trigger_path in \
+  wework/src/api/hybrid/hybridServices.ts \
+  executor/src/runtime_work/handler/stand_in_events.rs; do
+  assignment_trigger_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$assignment_trigger_path")"
+  if [[ "$assignment_trigger_output" != *"stand-in-assignment-notifications"* ]]; then
+    printf 'Assignment trigger changes must select notification coverage: %s\n%s\n' \
+      "$assignment_trigger_path" "$assignment_trigger_output" >&2
+    exit 1
+  fi
+done
+
 assert_desktop_case "cloud catalog recovery changes select the real backend checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
