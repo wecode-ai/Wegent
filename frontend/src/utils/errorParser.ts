@@ -28,6 +28,7 @@ export type ErrorType =
   | 'model_protocol_error'
   | 'invalid_role'
   | 'permission_denied'
+  | 'history_restore_failed'
   | 'generic_error'
 
 export interface ParsedError {
@@ -58,6 +59,7 @@ const VALID_BACKEND_TYPES = new Set<string>([
   'model_protocol_error',
   'invalid_role',
   'permission_denied',
+  'history_restore_failed',
   'generic_error',
 ])
 
@@ -82,6 +84,7 @@ const BACKEND_TYPE_MAP: Record<string, ErrorType> = {
   model_protocol_error: 'model_protocol_error',
   invalid_role: 'invalid_role',
   permission_denied: 'permission_denied',
+  history_restore_failed: 'history_restore_failed',
   generic_error: 'generic_error',
 }
 
@@ -370,6 +373,8 @@ export function getErrorDisplayMessage(
       return t('errors.invalid_role')
     case 'permission_denied':
       return t('errors.permission_denied')
+    case 'history_restore_failed':
+      return t('errors.history_restore_failed')
     default:
       return t('errors.generic_error')
   }

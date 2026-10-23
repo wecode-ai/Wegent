@@ -225,6 +225,15 @@ describe('errorParser', () => {
         expect(result.type).toBe('llm_error')
         expect(result.retryable).toBe(true)
       })
+
+      it('should accept history restoration failures explicitly', () => {
+        const result = parseError(
+          'Conversation history could not be restored. Please try again.',
+          'history_restore_failed'
+        )
+        expect(result.type).toBe('history_restore_failed')
+        expect(result.retryable).toBe(true)
+      })
     })
 
     describe('generic errors', () => {

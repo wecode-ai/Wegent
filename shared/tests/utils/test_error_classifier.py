@@ -14,3 +14,10 @@ def test_classify_error_keeps_connection_interrupt_as_network_error():
         classify_error("peer closed connection without sending complete message body")
         == "network_error"
     )
+
+
+def test_classify_error_marks_history_restore_failure():
+    class HistoryRestoreError(RuntimeError):
+        pass
+
+    assert classify_error(HistoryRestoreError()) == "history_restore_failed"
