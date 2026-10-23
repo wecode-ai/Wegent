@@ -181,6 +181,9 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
                 turn["items"].as_array_mut().unwrap().push(item);
             }
             Some("turnStarted") | Some("turnCompleted") => {
+                if entry["type"] == "turnCompleted" {
+                    turn["timelineCompleted"] = json!(true);
+                }
                 if entry["type"] == "turnStarted" {
                     turn["ownsUserPresentation"] = json!(true);
                 }
@@ -241,6 +244,17 @@ mod tests {
         assert_eq!(turns[0]["items"][1]["position"], 4945);
         assert_eq!(turns[0]["completedAt"], 123);
         assert_eq!(turns[0]["itemsView"], "summary");
+        assert_eq!(turns[0]["timelineCompleted"], true);
+        let earlier = timeline_turns(
+            &json!({"data":[
+                {"type":"turnStarted","position":1,"turnId":"turn"},
+                {"type":"item","position":2,"turnId":"turn","item":{"id":"earlier"}}
+            ]}),
+            turns,
+        )
+        .unwrap();
+        assert_eq!(earlier[0]["timelineCompleted"], true);
+        assert_eq!(earlier[0]["status"], "completed");
     }
 
     #[test]

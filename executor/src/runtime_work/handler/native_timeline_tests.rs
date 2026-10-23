@@ -3,6 +3,76 @@
 
 use super::*;
 
+#[tokio::test]
+async fn native_timeline_keeps_an_active_open_turn_running_without_unpersisted_items() {
+    for completed_item in [false, true] {
+        let (mut handler, root) = native_handler(if completed_item {
+            "native-open-persisted-item"
+        } else {
+            "native-open-empty-buffer"
+        });
+        fs::write(
+            root.join("thread_turns_list.json"),
+            json!({"data":[
+                {"id":"current","status":"interrupted","items":[]}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_timeline_list.json"),
+            json!({"data":[
+            {"type":"turnStarted","position":1,"turnId":"current"},
+            {"type":"item","position":2,"turnId":"current","item":{
+                "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+            }}
+        ],"nextCursor":null})
+            .to_string(),
+        )
+        .unwrap();
+        handler.begin_active_codex_transcript("task-1", "thread-1", "current");
+        if completed_item {
+            handler.record_active_codex_transcript_item("task-1", "current", &json!({
+                "method":"item/completed","params":{"item":{
+                    "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+                }}
+            }));
+        }
+        let response = read_and_stop(&mut handler).await.unwrap();
+        assert_eq!(response["turns"][0]["status"], "streaming");
+        assert_eq!(response["running"], true);
+        assert!(response["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message["stoppedNotice"] != true));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn native_timeline_completion_boundary_wins_over_the_active_execution_buffer() {
+    for (native_status, status) in [("completed", "done"), ("interrupted", "cancelled")] {
+        let (mut handler, root) = native_handler(&format!("native-terminal-{status}"));
+        fs::write(
+            root.join("thread_timeline_list.json"),
+            json!({"data":[
+            {"type":"turnStarted","position":1,"turnId":"current"},
+            {"type":"item","position":2,"turnId":"current","item":{
+                "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
+            }},
+            {"type":"turnCompleted","position":3,"turnId":"current","status":native_status}
+        ],"nextCursor":null})
+            .to_string(),
+        )
+        .unwrap();
+        handler.begin_active_codex_transcript("task-1", "thread-1", "current");
+        let response = read_and_stop(&mut handler).await.unwrap();
+        assert_eq!(response["turns"][0]["status"], status);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 fn native_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     let (mut handler, root) = isolated_runtime_work_handler(label);
     let mut link =

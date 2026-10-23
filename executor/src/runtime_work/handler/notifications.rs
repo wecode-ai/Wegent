@@ -250,7 +250,7 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .ok()
             .and_then(|items| items.get(local_task_id).cloned());
-        let Some(active) = active.filter(|active| !active.items.is_empty()) else {
+        let Some(active) = active else {
             return;
         };
         let positioned = thread["timeline"] == true;
@@ -259,9 +259,6 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(|item| !positioned || item["lifecycleCompleted"] != true)
             .collect::<Vec<_>>();
-        if active_items.is_empty() {
-            return;
-        }
         let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) else {
             return;
         };
@@ -269,8 +266,14 @@ impl RuntimeWorkRpcHandler {
             .iter_mut()
             .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
         {
-            if !positioned {
+            // Turn-list status can synthesize interruption without a terminal boundary.
+            // Execution identity remains authoritative for this open turn even when
+            // every observed item has already been persisted.
+            if !positioned || turn["timelineCompleted"] != true {
                 turn["status"] = json!("inProgress");
+                turn["completedAt"] = Value::Null;
+                turn["durationMs"] = Value::Null;
+                turn["error"] = Value::Null;
             }
             let active_items = active_items
                 .into_iter()
@@ -290,6 +293,9 @@ impl RuntimeWorkRpcHandler {
                 })
                 .collect();
             merge_codex_turn_items(turn, active_items);
+            return;
+        }
+        if active_items.is_empty() {
             return;
         }
         turns.push(json!({

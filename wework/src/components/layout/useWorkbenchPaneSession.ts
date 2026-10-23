@@ -786,11 +786,6 @@ export function useWorkbenchPaneSession({
             address: runtimeAddressDebug(address),
             key: loadKey,
             transcriptCount: transcript.messages.length,
-            snapshotTurns: transcript.turns.map(turn => ({
-              id: turn.id,
-              status: turn.status,
-              itemIds: turn.items.map(item => item.id),
-            })),
             seededCount: seededMessages.length,
             resetSource: transcript.messages.length > 0 ? 'transcript' : 'seed',
             nextMessages: summarizeWorkbenchMessages(nextMessages),

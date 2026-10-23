@@ -12,9 +12,17 @@ pub(super) fn install_native_history(
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     fs::create_dir_all(root).unwrap();
+    let terminal_boundary = |turn: &Value| {
+        matches!(
+            turn["status"].as_str(),
+            Some("completed" | "interrupted" | "failed")
+        )
+    };
     let item_count: usize = turns
         .iter()
-        .map(|turn| 1 + turn["items"].as_array().unwrap().len())
+        .map(|turn| {
+            1 + turn["items"].as_array().unwrap().len() + usize::from(terminal_boundary(turn))
+        })
         .sum();
     let padding = if next_cursor.is_some() {
         500usize.saturating_sub(item_count)
@@ -31,6 +39,13 @@ pub(super) fn install_native_history(
             entries.push(
                 json!({"type":"item","position":entries.len(),"turnId":turn["id"],"item":item}),
             );
+        }
+        if terminal_boundary(&turn) {
+            entries.push(json!({
+                "type":"turnCompleted","position":entries.len(),"turnId":turn["id"],
+                "status":turn["status"],"completedAt":turn["completedAt"],
+                "durationMs":turn["durationMs"],"error":turn["error"]
+            }));
         }
         turn["items"] = json!([]);
         metadata.insert(0, turn);
