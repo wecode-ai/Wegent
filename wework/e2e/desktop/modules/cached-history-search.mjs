@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import {
+  TERMINAL_ANALYSIS_PROJECTION,
   USER_HISTORY_PROJECTION,
   waitForHighlightedHistoryMatch,
   waitForHistorySearchCount,
@@ -35,6 +36,7 @@ const OLD_VISIBLE_MARKERS = [
   GROUP_SECOND_QUERY,
   USER_HISTORY_PROJECTION.plan.visibleText,
   USER_HISTORY_PROJECTION.commentedReply.query,
+  TERMINAL_ANALYSIS_PROJECTION.query,
 ]
 const LAST_ANSWER = 'Cached search answer 119'
 const FIND = '[data-testid="conversation-find-input"]'
@@ -96,6 +98,18 @@ const CASES = [
   {
     query: DUPLICATE_QUERY,
     matches: [{ name: 'duplicate', index: 0, text: DUPLICATE_QUERY }],
+  },
+  { query: TERMINAL_ANALYSIS_PROJECTION.cancelled.content, matches: [] },
+  { query: TERMINAL_ANALYSIS_PROJECTION.failed.content, matches: [] },
+  {
+    query: TERMINAL_ANALYSIS_PROJECTION.query,
+    matches: ['cancelled', 'failed'].map(status => ({
+      name: `analysis-${status}`,
+      index: 0,
+      text: TERMINAL_ANALYSIS_PROJECTION[status].visibleText,
+      narrative: true,
+      occurrence: 0,
+    })),
   },
 ]
 
@@ -176,6 +190,22 @@ export function createCachedHistoryTask(source) {
       },
     ],
   })
+  for (const status of ['cancelled', 'failed']) {
+    const { content, visibleText } = TERMINAL_ANALYSIS_PROJECTION[status]
+    append(`analysis-${status}`, 0, content, {
+      status,
+      ...(status === 'failed' ? { error: content } : {}),
+      blocks: [
+        {
+          id: `${itemId(`analysis-${status}`, 0)}-block`,
+          type: 'text',
+          content: visibleText,
+          status: 'done',
+          createdAt: 1_792_454_400_000 + messages.length * 1000,
+        },
+      ],
+    })
+  }
   question('unpaired-group', 0, 'First unmatched grouped question?')
   tools('unpaired-group', 60)
   question('unpaired-group', 61, `${UNPAIRED_QUESTION_QUERY}?`)
@@ -230,7 +260,10 @@ export async function verifyCachedHistorySearch(
     assert.equal(result.totalMatches, matches.length)
     assert.deepEqual(
       result.matches.map(match => match.itemId),
-      matches.map(match => itemId(match.name, match.index)),
+      matches.map(match => {
+        const id = itemId(match.name, match.index)
+        return match.narrative ? `${id}-block` : id
+      }),
       'Cached search must exclude pure terminal placeholders and retain meaningful segments'
     )
     assert.ok(result.matches.every(match => match.cursor.startsWith('wework-cached-search:')))
@@ -258,7 +291,9 @@ export async function verifyCachedHistorySearch(
         ? 'user-message-question-reply'
         : match.userMessage
           ? 'user-message-content'
-          : 'assistant-message-content'
+          : match.narrative
+            ? 'process-text-block'
+            : 'assistant-message-content'
       const content = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${messageId}"] [data-testid="${target}"]`
       await waitForHighlightedHistoryMatch(
         control,

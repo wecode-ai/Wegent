@@ -12,6 +12,35 @@ const PARTIAL = 'The operation was interrupted after useful output'
 const PLUGIN_QUERY = 'WEWORK_E2E_PLUGIN_HISTORY_BODY'
 const DUPLICATE_QUERY = 'WEWORK_E2E_DUPLICATE_HISTORY_BODY'
 const LONG_TURN_QUERY = 'WEWORK_E2E_LONG_TURN_HISTORY_BODY'
+const ANALYSIS_QUERY = 'WEWORK_E2E_TERMINAL_ANALYSIS_BODY'
+export const TERMINAL_ANALYSIS_PROJECTION = {
+  query: ANALYSIS_QUERY,
+  cancelled: {
+    content: 'aborted',
+    visibleText: `${ANALYSIS_QUERY} useful cancelled output`,
+  },
+  failed: {
+    content: 'API error: WEWORK_E2E_TERMINAL_ANALYSIS_ERROR_BODY',
+    visibleText: `${ANALYSIS_QUERY} useful failed output`,
+  },
+}
+const ANALYSIS_TURNS = [
+  {
+    index: 38,
+    status: 'interrupted',
+    text: TERMINAL_ANALYSIS_PROJECTION.cancelled.content,
+    narrativeText: TERMINAL_ANALYSIS_PROJECTION.cancelled.visibleText,
+    phase: 'final_answer',
+  },
+  {
+    index: 39,
+    status: 'failed',
+    text: TERMINAL_ANALYSIS_PROJECTION.failed.content,
+    narrativeText: TERMINAL_ANALYSIS_PROJECTION.failed.visibleText,
+    phase: 'final_answer',
+    error: { message: TERMINAL_ANALYSIS_PROJECTION.failed.content },
+  },
+]
 const ASYNC_QUESTION_TURN = 15
 const ASYNC_REPLY_TURN = 16
 const ASYNC_QUESTION_QUERY = 'WEWORK_E2E_ASYNC_QUESTION_ONLY'
@@ -100,6 +129,7 @@ const TURNS = [
   { index: 46, status: 'completed', text: DUPLICATE_QUERY, phase: 'final_answer' },
   { index: 47, status: 'completed', text: LONG_TURN_QUERY, phase: 'final_answer' },
   { index: 48, status: 'completed', text: LONG_TURN_QUERY, phase: 'final_answer' },
+  ...ANALYSIS_TURNS,
 ]
 export const TERMINAL_HISTORY_SEARCH_CASES = [
   // Search this old question before any context browsing can load its source card.
@@ -130,6 +160,17 @@ export const TERMINAL_HISTORY_SEARCH_CASES = [
         userReply: true,
       },
     ],
+  },
+  { query: TERMINAL_ANALYSIS_PROJECTION.cancelled.content, matches: [] },
+  { query: TERMINAL_ANALYSIS_PROJECTION.failed.content, matches: [] },
+  {
+    query: ANALYSIS_QUERY,
+    matches: ANALYSIS_TURNS.map(turn => ({
+      ...turn,
+      text: turn.narrativeText,
+      narrative: true,
+      occurrence: 0,
+    })),
   },
   { query: 'interrupted', matches: [TURNS[2], TURNS[3]] },
   { query: ERROR_MARKER, matches: [TURNS[4]] },
@@ -171,6 +212,7 @@ export async function assertAsyncHistoryUnloaded(control) {
     ASYNC_RAW_ANSWER_QUERY,
     USER_HISTORY_PROJECTION.plan.visibleText,
     USER_HISTORY_PROJECTION.commentedReply.query,
+    ANALYSIS_QUERY,
   ]) {
     assert.equal(
       initialText.includes(marker),
@@ -184,6 +226,12 @@ export async function assertAsyncHistoryUnloaded(control) {
 export function terminalHistoryAssistantParts(index, fallbackText) {
   const terminal = terminalHistoryTurn(index)
   const text = terminal?.text ?? fallbackText
+  if (terminal?.narrativeText) {
+    return [
+      { text: terminal.narrativeText, phase: 'analysis' },
+      { text, phase: terminal.phase },
+    ]
+  }
   if (index === ASYNC_QUESTION_TURN) {
     return [
       {

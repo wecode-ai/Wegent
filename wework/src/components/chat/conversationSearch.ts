@@ -58,7 +58,9 @@ export function conversationSearchText(
   const sources =
     message.role === 'user'
       ? [getUserMessageTextContent(message.content)]
-      : getAssistantSearchTextSources(message).map(stripUnsupportedContentReferenceCitations)
+      : getAssistantSearchTextSources(message)
+          .filter(Boolean)
+          .map(stripUnsupportedContentReferenceCitations)
   return sources.map(text => nodeText(parser.parse(text))).join('\n')
 }
 
@@ -112,13 +114,15 @@ function searchUnits(message: WorkbenchMessage, text?: string): SearchUnit[] | n
   if (!message.runtimeDisplayItems?.length || message.role !== 'assistant') return null
   const cached = searchUnitsByMessage.get(message)
   if (cached !== undefined) return cached
-  const { blocks: displayBlocks } = getAssistantSearchPresentation(message)
+  const { content: visibleContent, blocks: displayBlocks } = getAssistantSearchPresentation(message)
   const blocks = new Map(displayBlocks.map(block => [block.id, block]))
   const units = message.runtimeDisplayItems.flatMap<SearchUnit>(item => {
     const block = blocks.get(item.id)
     const source =
       item.type === 'assistant_text'
-        ? stripPluginWorkspaceResultMarkers(item.content)
+        ? visibleContent
+          ? stripPluginWorkspaceResultMarkers(item.content)
+          : ''
         : block?.type === 'text'
           ? block.content
           : ''
