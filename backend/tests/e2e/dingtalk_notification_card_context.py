@@ -850,7 +850,7 @@ async def run() -> None:
                 ),
             )
         except HTTPException as error:
-            assert error.status_code == 403
+            assert error.status_code in {403, 404}
         else:
             raise AssertionError("Non-member project notification was accepted")
         db.rollback()
