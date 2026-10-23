@@ -156,7 +156,7 @@ function reconcileRuntimeGoal(
   next: RuntimeGoal | null
 ): RuntimeGoal | null {
   if (!next || !current) return next
-  // A pending Goal uses the renderer clock, not the native Goal's revision clock.
+  // Native Goals replace optimistic drafts even when their timestamps are rounded to seconds.
   if (current.threadId === 'pending' && next.threadId !== 'pending') return next
   return next.updatedAt < current.updatedAt ? current : next
 }

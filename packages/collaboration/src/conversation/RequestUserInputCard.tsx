@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import {
   ChevronDown,
@@ -45,6 +45,7 @@ function RequestUserInputForm({
   onIgnore,
 }: RequestUserInputCardProps) {
   const { t } = useConversationTranslation();
+  const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
   const submitInFlightRef = useRef(false);
   const questions = useMemo(
@@ -65,13 +66,6 @@ function RequestUserInputForm({
   );
   const [submitted, setSubmitted] = useState(false);
   const isDisabled = disabled || submitted;
-  const customQuestionIds = new Set(
-    questions
-      .filter(
-        (question) => question.allowCustom && question.options.length === 0,
-      )
-      .map((question) => question.id),
-  );
 
   useEffect(() => {
     formRef.current?.focus({ preventScroll: true });
@@ -210,18 +204,20 @@ function RequestUserInputForm({
         className="scrollbar-soft min-h-0 flex-1 overflow-y-auto pr-1"
       >
         <div className="flex flex-col gap-1.5">
-          {questions.map((question) => (
+          {questions.map((question, questionIndex) => (
             <div key={question.id} className="min-w-0">
               {question.header ? (
                 <div className="mb-1 text-sm font-medium leading-5 text-text-primary">
                   {question.header}
                 </div>
               ) : null}
-              {!customQuestionIds.has(question.id) ? (
-                <div className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary">
-                  {question.question}
-                </div>
-              ) : null}
+              <div
+                id={`${formId}-${questionIndex}`}
+                data-testid={`request-user-input-question-${question.id}`}
+                className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary"
+              >
+                {question.question}
+              </div>
               {question.options.length > 0 ? (
                 <div
                   className={cn(
@@ -284,6 +280,7 @@ function RequestUserInputForm({
                   </span>
                   <input
                     data-testid={`request-user-input-custom-${question.id}`}
+                    aria-labelledby={`${formId}-${questionIndex}`}
                     value={selectedAnswers[question.id] ?? ""}
                     disabled={isDisabled}
                     onChange={(event) => {
@@ -294,10 +291,7 @@ function RequestUserInputForm({
                       }));
                     }}
                     className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm font-medium leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
-                    placeholder={
-                      question.question ||
-                      t("request_user_input.custom_placeholder")
-                    }
+                    placeholder={t("request_user_input.custom_placeholder")}
                   />
                 </div>
               ) : null}
