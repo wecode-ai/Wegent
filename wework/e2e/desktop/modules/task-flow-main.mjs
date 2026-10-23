@@ -3665,7 +3665,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         await sendPrompt(
           control,
           ACTIVE_COMPOSER_SELECTOR,
-          `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+          `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`,
+          { assertDraftBeforeSubmit: true }
         )
         await control.awaitScenarioRequestCount(
           'turn_navigation',

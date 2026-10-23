@@ -3,6 +3,7 @@ import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import {
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
@@ -89,6 +90,7 @@ beforeEach(() => {
       selectedModelOptions: { reasoning: 'high' },
       models: [],
       setInputForScope: mocks.setInput,
+      addExistingAttachmentForScope: vi.fn(),
       resetAttachmentsForScope: mocks.resetAttachments,
       setComposerErrorForScope: mocks.setError,
     },
@@ -109,8 +111,13 @@ afterEach(() => {
 
 async function renderSession(currentRuntimeTask: RuntimeTaskAddress | null = address) {
   const hook = renderHook(
-    () => useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false }),
+    (props: { currentRuntimeTask: RuntimeTaskAddress | null } = { currentRuntimeTask }) =>
+      useWorkbenchPaneSession({
+        currentRuntimeTask: props.currentRuntimeTask,
+        debugSnapshotEnabled: false,
+      }),
     {
+      initialProps: { currentRuntimeTask },
       wrapper: ({ children }: { children: ReactNode }) =>
         createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
     }
@@ -127,6 +134,142 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+describe('composer draft while a send acknowledgement is pending', () => {
+  test.each([
+    { hasCodeComments: false, nextDraft: 'The next turn' },
+    { hasCodeComments: true, nextDraft: 'The next turn' },
+    { hasCodeComments: false, nextDraft: draft },
+    { hasCodeComments: true, nextDraft: draft },
+  ])(
+    'preserves the next published draft after acceptance ($hasCodeComments, $nextDraft)',
+    async ({ hasCodeComments, nextDraft }) => {
+      let acceptSend: (accepted: boolean) => void = () => undefined
+      mocks.send.mockImplementation(() => new Promise<boolean>(resolve => (acceptSend = resolve)))
+      const { result } = await renderSession()
+      if (!hasCodeComments) act(() => result.current.clearCodeComments())
+      let submission: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      act(() => {
+        // BufferedChatInput clears immediately, then publishes the user's next draft.
+        result.current.setInput('')
+        result.current.setInput(nextDraft)
+      })
+      mocks.setInput.mockClear()
+      await act(async () => {
+        acceptSend(true)
+        expect(await submission).toBe(true)
+      })
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test('still clears an unchanged draft after an accepted direct send', async () => {
+    const { result } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    await act(async () => {
+      expect(await result.current.send(draft)).toBe(true)
+    })
+    expect(mocks.setInput).toHaveBeenLastCalledWith(scopeKey, '')
+  })
+
+  test('preserves an externally replaced draft after an accepted send', async () => {
+    let acceptSend: (accepted: boolean) => void = () => undefined
+    mocks.send.mockImplementation(() => new Promise<boolean>(resolve => (acceptSend = resolve)))
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let submission: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    const context = mocks.context.projectChat as { inputByScope: Record<string, string> }
+    context.inputByScope = { [scopeKey]: 'Externally restored draft' }
+    rerender()
+    await act(async () => {
+      acceptSend(true)
+      expect(await submission).toBe(true)
+    })
+    expect(result.current.input).toBe('Externally restored draft')
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test('does not clear another scope after the active task changes', async () => {
+    let acceptSend: (accepted: boolean) => void = () => undefined
+    mocks.send.mockImplementation(() => new Promise<boolean>(resolve => (acceptSend = resolve)))
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let submission: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+    await act(async () => {
+      acceptSend(true)
+      await submission
+    })
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test('does not clear a draft after a rejected direct send', async () => {
+    mocks.send.mockResolvedValue(false)
+    const { result } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    await act(async () => {
+      expect(await result.current.send(draft)).toBe(false)
+    })
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test.each([false, true])(
+    'preserves the next draft while a busy send resolves a conversation mention (code comments=%s)',
+    async hasCodeComments => {
+      const { result } = await renderSession()
+      if (!hasCodeComments) act(() => result.current.clearCodeComments())
+      act(() => lifecycleStore.turnStarted(address, 'running-turn'))
+      let releaseMention: () => void = () => undefined
+      const loadTranscript = mocks.context.loadRuntimeTranscriptForPane as ReturnType<typeof vi.fn>
+      loadTranscript.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseMention = () => resolve({ messages: [], turns: [] })
+          })
+      )
+      const reference = createConversationMentionReference('Referenced conversation', {
+        ...address,
+        taskId: 'reference-task',
+      })
+      let submission: Promise<boolean>
+      act(() => {
+        submission = result.current.send(`Use ${reference}`)
+      })
+      await waitFor(() =>
+        expect(loadTranscript).toHaveBeenLastCalledWith(
+          expect.objectContaining({ taskId: 'reference-task' }),
+          expect.objectContaining({ conversationContextOnly: true })
+        )
+      )
+      act(() => {
+        result.current.setInput('')
+        result.current.setInput('The next turn')
+      })
+      mocks.setInput.mockClear()
+      await act(async () => {
+        releaseMention()
+        expect(await submission).toBe(true)
+      })
+      expect(mocks.setInput).not.toHaveBeenCalled()
+      expect(mocks.send).not.toHaveBeenCalled()
+      const queued = getRuntimeConversationQueuedMessages(address)
+      expect(queued).toHaveLength(1)
+      expect(queued[0].displayContent ?? queued[0].content).toBe(`Use ${reference}`)
+    }
+  )
+})
 
 describe('pane continuation without composer submission', () => {
   test.each([

@@ -8,6 +8,7 @@ export { runtimeTurnNavigationLoadOptions } from '@wegent/chat-core/runtime-tran
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useId,
   useMemo,
   useRef,
@@ -311,9 +312,16 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, projectChat]
   )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
+  const inputRevisionRef = useRef(0)
+  useLayoutEffect(() => {
+    inputRevisionRef.current += 1
+  }, [input, inputScopeKey])
   const setInputForScope = projectChat.setInputForScope
   const scopedSetInput = useCallback(
-    (value: string) => setInputForScope(inputScopeKey, value),
+    (value: string) => {
+      inputRevisionRef.current += 1
+      setInputForScope(inputScopeKey, value)
+    },
     [inputScopeKey, setInputForScope]
   )
   const [localError, setLocalError] = useState<string | null>(null)
@@ -1823,6 +1831,11 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
+        const submittedInputRevision = inputRevisionRef.current
+        const clearSubmittedInput = () => {
+          // The composer can already contain the next draft when this send settles.
+          if (inputRevisionRef.current === submittedInputRevision) setInput('')
+        }
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
         const paneIsBusy = readCurrentPaneBusy()
@@ -1881,7 +1894,7 @@ export function useWorkbenchPaneSession({
                 setError(response.error || i18n.t('workbench.goal_set_failed'))
                 return false
               }
-              setInput('')
+              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, response.goal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
@@ -1912,7 +1925,7 @@ export function useWorkbenchPaneSession({
               retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
             }
             if (result.accepted) {
-              setInput('')
+              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setCodeCommentContexts([])
@@ -1976,7 +1989,7 @@ export function useWorkbenchPaneSession({
             },
           })
           if (sent) {
-            setInput('')
+            clearSubmittedInput()
             if (!isRuntimeTaskAddress(sent)) {
               appendLocalUserMessage(submittedInput, currentAttachments, {
                 runtimeGoalRequest: true,
@@ -2021,7 +2034,7 @@ export function useWorkbenchPaneSession({
             const compacted = await compactRuntimePaneTask(currentRuntimeTask, {
               onError: setError,
             })
-            if (compacted) setInput('')
+            if (compacted) clearSubmittedInput()
             return compacted
           }
         }
@@ -2071,7 +2084,7 @@ export function useWorkbenchPaneSession({
           effectiveSubmittedInput ||
           (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
         if (!currentRuntimeTask) {
-          setInput('')
+          clearSubmittedInput()
           resetAttachments()
           let errorScopeKey = inputScopeKey
           let submissionScopeKey = inputScopeKey
@@ -2201,13 +2214,13 @@ export function useWorkbenchPaneSession({
                 currentAttachments.forEach(addExistingAttachment)
                 setCodeCommentContexts(codeCommentContexts)
               } else {
-                setInput('')
+                clearSubmittedInput()
                 clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
               }
               return sent
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
-            setInput('')
+            clearSubmittedInput()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             if (options.guideWhenBusy) {
               await sendQueuedMessageAsGuidance(queuedMessage, true)
@@ -2228,7 +2241,7 @@ export function useWorkbenchPaneSession({
             retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
           }
           if (result.accepted) {
-            setInput('')
+            clearSubmittedInput()
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
@@ -2241,7 +2254,7 @@ export function useWorkbenchPaneSession({
               queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
-            setInput('')
+            clearSubmittedInput()
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
@@ -2269,12 +2282,12 @@ export function useWorkbenchPaneSession({
             if (!sent) {
               currentAttachments.forEach(addExistingAttachment)
             } else {
-              setInput('')
+              clearSubmittedInput()
             }
             return sent
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
-          setInput('')
+          clearSubmittedInput()
           if (options.guideWhenBusy) {
             await sendQueuedMessageAsGuidance(queuedMessage, true)
           }
@@ -2294,7 +2307,7 @@ export function useWorkbenchPaneSession({
           retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
         }
         if (result.accepted) {
-          setInput('')
+          clearSubmittedInput()
           setCodeCommentContexts([])
         } else if (isRuntimeTaskBusyError(sendError)) {
           const lifecycleAfterSend = currentRuntimeTask
@@ -2306,7 +2319,7 @@ export function useWorkbenchPaneSession({
             queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
-          setInput('')
+          clearSubmittedInput()
         } else {
           currentAttachments.forEach(addExistingAttachment)
           setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
