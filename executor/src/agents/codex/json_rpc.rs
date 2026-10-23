@@ -198,10 +198,27 @@ impl JsonRpcConnection {
                         )
                         .await?;
                         recovering_goal = true;
-                        (
-                            "thread/goal/set",
-                            super::overload_recovery::goal_resume_params(&goal, &current)?,
-                        )
+                        let Some(params) =
+                            super::overload_recovery::goal_resume_params(&goal, &current)?
+                        else {
+                            super::overload_recovery::sync_goal_snapshot(
+                                state,
+                                notifications.as_ref(),
+                                goal["threadId"]
+                                    .as_str()
+                                    .ok_or("Stopped goal has no thread ID")?,
+                                &current,
+                            );
+                            if !state.goal_is_active() {
+                                return Ok(ExecutionOutcome::Cancelled {
+                                    message: "Goal changed during model overload recovery"
+                                        .to_owned(),
+                                });
+                            }
+                            waiting_for_initial_progress = true;
+                            continue;
+                        };
+                        ("thread/goal/set", params)
                     } else {
                         recovering_goal = false;
                         ("turn/start", overload_continuation_params.clone())

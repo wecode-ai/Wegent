@@ -162,12 +162,15 @@ fn overload_recovery_does_not_restore_a_goal_after_user_mutation() {
 fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff() {
     let expected = blocked_goal(json!("failed-turn"))["params"]["goal"].clone();
     assert_eq!(
-        goal_resume_params(&expected, &json!({"goal": expected})).unwrap(),
+        goal_resume_params(&expected, &json!({"goal": expected}))
+            .unwrap()
+            .unwrap(),
         json!({
             "threadId": "root-thread", "status": "active", "origin": "automatic",
         })
     );
     for (field, value) in [
+        ("status", json!("active")),
         ("status", json!("paused")),
         ("status", json!("complete")),
         ("objective", json!("A different task")),
@@ -177,12 +180,13 @@ fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff(
     ] {
         let mut current = expected.clone();
         current[field] = value;
-        assert_eq!(
-            goal_resume_params(&expected, &json!({"goal": current})).unwrap_err(),
-            CODEX_APP_SERVER_TURN_CANCELLED
-        );
+        assert!(goal_resume_params(&expected, &json!({"goal": current}))
+            .unwrap()
+            .is_none());
     }
-    assert!(goal_resume_params(&expected, &json!({"goal": null})).is_err());
+    assert!(goal_resume_params(&expected, &json!({"goal": null}))
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -566,5 +570,69 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         resume["params"],
         json!({"threadId": "root-thread", "status": "active", "origin": "automatic"})
     );
+    assert!(child.wait().await.unwrap().success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_native_reader_settles_goal_mutation_without_stop_button_request() {
+    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
+    use std::process::Stdio;
+    let stopped = blocked_goal(json!("failed-turn"));
+    let mut paused = stopped["params"]["goal"].clone();
+    paused["status"] = json!("paused");
+    let script = format!(
+        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{stopped}' '{error}' '{failed}'
+IFS= read -r goal_get
+printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
+"#,
+        error = overload_error(),
+        failed = completed("failed"),
+    );
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        2,
+    );
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = state();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        rpc.read_turn(
+            1,
+            &mut state,
+            super::super::json_rpc::TurnReadOptions {
+                overload_turn_recovering: None,
+                overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
+                notifications: Some(notify_tx),
+                request_user_input_answers: None,
+                auto_approve_mcp_tool_calls: false,
+                defer_interactive_forms: false,
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(outcome, ExecutionOutcome::Cancelled { .. }));
+    assert_eq!(
+        state.goal_status_snapshot(),
+        (true, Some("paused".to_owned()))
+    );
+    let mut last_goal = None;
+    while let Ok(message) = notify_rx.try_recv() {
+        if message["method"] == "thread/goal/updated" {
+            last_goal = Some(message["params"]["goal"].clone());
+        }
+    }
+    assert_eq!(last_goal, Some(paused));
     assert!(child.wait().await.unwrap().success());
 }

@@ -97,7 +97,8 @@ export function createDesktopScenario(options) {
       }
       let address
       try {
-        for (const action of ['continue', 'paused', 'clear']) {
+        for (const action of ['continue', 'resume', 'paused', 'clear']) {
+          const continuing = action === 'continue' || action === 'resume'
           reset()
           await control.command('click', '[data-testid="new-chat-button"]')
           const workspace = join(options.workspacePath, `goal-overload-${action}`)
@@ -119,7 +120,9 @@ export function createDesktopScenario(options) {
           address = stopped.workbench.currentRuntimeTask
           const before = (await rpc('runtime.tasks.goal.get', { address })).goal
           assert.equal(before.status, 'blocked')
-          if (action === 'continue') {
+          if (continuing) {
+            if (action === 'resume')
+              await rpc('runtime.tasks.goal.set', { address, status: 'active' })
             await waitForWorkbenchDebugState(
               control,
               snapshot =>
@@ -159,7 +162,7 @@ export function createDesktopScenario(options) {
             snapshot => snapshot.pane?.status?.isBusy === false,
             'The recovered or stopped Goal did not settle'
           )
-          if (action !== 'continue') {
+          if (!continuing) {
             // The model backoff is five seconds. Observe beyond its deadline to
             // prove a user mutation cannot be undone by the pending recovery.
             await new Promise(resolve => setTimeout(resolve, 5500))
@@ -167,7 +170,7 @@ export function createDesktopScenario(options) {
             const goal = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(goal?.status ?? null, action === 'clear' ? null : action)
           }
-          if (action === 'continue') {
+          if (continuing) {
             const readyCount = control.readyCount
             await control.command('reloadMainWindow', 'body')
             await control.awaitReadyAfter(readyCount)

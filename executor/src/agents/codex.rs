@@ -2633,12 +2633,18 @@ async fn read_shared_turn_notifications(
                             let current = client
                                 .request("thread/goal/get", json!({"threadId": thread_id}))
                                 .await?;
-                            let params = overload_recovery::goal_resume_params(&goal, &current)?;
-                            client.request("thread/goal/set", params).await
+                            match overload_recovery::goal_resume_params(&goal, &current)? {
+                                Some(params) => client
+                                    .request("thread/goal/set", params)
+                                    .await
+                                    .map(|response| (response, true)),
+                                None => Ok((current, false)),
+                            }
                         } else {
                             client
                                 .request("turn/start", options.overload_continuation_params.clone())
                                 .await
+                                .map(|response| (response, true))
                         }
                     };
                     let start = timeout_at(startup_deadline, continuation);
@@ -2654,7 +2660,7 @@ async fn read_shared_turn_notifications(
                     } else {
                         start.await
                     };
-                    let response = match response {
+                    let (response, restarted) = match response {
                         Ok(response) => response?,
                         Err(_) => {
                             return Err(recover_stalled_shared_turn(
@@ -2666,7 +2672,17 @@ async fn read_shared_turn_notifications(
                         }
                     };
                     if restoring_goal {
-                        sync_goal_status_from_response(state, &response);
+                        overload_recovery::sync_goal_snapshot(
+                            state,
+                            options.notifications.as_ref(),
+                            thread_id,
+                            &response,
+                        );
+                        if !restarted && !state.goal_is_active() {
+                            return Ok(ExecutionOutcome::Cancelled {
+                                message: "Goal changed during model overload recovery".to_owned(),
+                            });
+                        }
                         // Activating an idle Goal starts its native continuation.
                         // Do not race it with a second turn/start request.
                         options.wait_for_goal_continuation = state.goal_is_active();

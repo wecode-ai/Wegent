@@ -134,17 +134,42 @@ impl OverloadRecovery {
     }
 }
 
-pub(super) fn goal_resume_params(expected: &Value, response: &Value) -> Result<Value, String> {
+pub(super) fn goal_resume_params(
+    expected: &Value,
+    response: &Value,
+) -> Result<Option<Value>, String> {
     // Re-read after backoff: never resurrect a deleted, paused, replaced, or
     // otherwise edited goal. Preserve its objective, budget, and accounting.
     if response.get("goal") != Some(expected) {
-        return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+        return Ok(None);
     }
-    Ok(json!({
+    Ok(Some(json!({
         "threadId": expected.get("threadId").ok_or("Stopped goal has no thread ID")?,
         "status": "active",
         "origin": "automatic",
-    }))
+    })))
+}
+
+pub(super) fn sync_goal_snapshot(
+    state: &mut CodexRunState,
+    notifications: Option<&super::CodexNotificationSender>,
+    thread_id: &str,
+    response: &Value,
+) {
+    super::sync_goal_status_from_response(state, response);
+    // A changed Goal ends recovery before queued notifications can be drained.
+    // Publish the authoritative snapshot so the task and composer settle together.
+    if let Some(sender) = notifications {
+        let goal = response.get("goal").cloned().unwrap_or(Value::Null);
+        let method = if goal.is_null() {
+            "thread/goal/cleared"
+        } else {
+            "thread/goal/updated"
+        };
+        let _ = sender.send(json!({"method": method, "params": {
+            "threadId": thread_id, "turnId": null, "goal": goal,
+        }}));
+    }
 }
 
 #[cfg(test)]
