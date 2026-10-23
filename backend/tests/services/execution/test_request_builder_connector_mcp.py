@@ -235,3 +235,61 @@ def test_coding_shells_keep_their_local_proxy(monkeypatch) -> None:
     )
 
     assert servers == []
+
+
+def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> None:
+    """Cloud Claude Code/Codex tasks have no local proxy to fall back on."""
+    builder = TaskRequestBuilder(MagicMock())
+    monkeypatch.setattr(
+        TaskRequestBuilder,
+        "_user_has_callable_connectors",
+        lambda self, user: False,
+    )
+    monkeypatch.setattr(
+        TaskRequestBuilder,
+        "_authorized_lazy_connector_apps",
+        lambda self, user: [
+            SimpleNamespace(slug="dingding_log", keywords=["钉钉日志", "dingding log"])
+        ],
+    )
+    bot_config: dict = {"shell_type": "ClaudeCode", "mcp_servers": []}
+
+    builder._attach_connector_mcp_for_coding_shell(
+        bot_config,
+        user=SimpleNamespace(id=6),
+        auth_token="task-token",
+        message="钉钉日志",
+    )
+
+    servers = bot_config["mcp_servers"]
+    assert [server["name"] for server in servers] == ["wegent-connector-dingding_log"]
+    assert servers[0]["type"] == "http"
+    assert servers[0]["url"] == "${{backend_url}}/mcp/connectors/sse"
+    assert servers[0]["headers"] == {
+        "Authorization": "Bearer ${{task_token}}",
+        "X-Connector-App": "dingding_log",
+    }
+
+
+def test_coding_shell_skips_unmatched_lazy_apps(monkeypatch) -> None:
+    """Lazy apps stay out of a coding shell until the message asks for them."""
+    builder = TaskRequestBuilder(MagicMock())
+    monkeypatch.setattr(
+        TaskRequestBuilder,
+        "_user_has_callable_connectors",
+        lambda self, user: False,
+    )
+    monkeypatch.setattr(
+        TaskRequestBuilder,
+        "_authorized_lazy_connector_apps",
+        lambda self, user: [
+            SimpleNamespace(slug="dingding_log", keywords=["钉钉日志"])
+        ],
+    )
+    bot_config: dict = {"shell_type": "ClaudeCode", "mcp_servers": []}
+
+    builder._attach_connector_mcp_for_coding_shell(
+        bot_config, user=SimpleNamespace(id=6), auth_token="t", message="写周报"
+    )
+
+    assert bot_config["mcp_servers"] == []
