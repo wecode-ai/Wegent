@@ -68,6 +68,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
@@ -91,7 +93,22 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
+        run: |
+          set -o pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
+          echo 'uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v --junitxml=../.ci-artifacts/backend-tests/results.xml' > ../.ci-artifacts/backend-tests/command.txt
+          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v \
+            --junitxml=../.ci-artifacts/backend-tests/results.xml \
+            2>&1 | tee ../.ci-artifacts/backend-tests/pytest.log
+
+      - name: Upload backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence
+          path: .ci-artifacts/backend-tests/
+          if-no-files-found: error
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -112,6 +129,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Configure backend Rust target directory
         run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
@@ -130,7 +149,20 @@ jobs:
 
       - name: Run Rust backend tests
         working-directory: backend-rs
-        run: cargo test --locked
+        run: |
+          set -o pipefail
+          mkdir -p ../.ci-artifacts/backend-rs-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
+          echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
+          cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Upload Rust backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-rs-test-evidence
+          path: .ci-artifacts/backend-rs-tests/
+          if-no-files-found: error
 
       - name: Check Rust backend lints
         working-directory: backend-rs

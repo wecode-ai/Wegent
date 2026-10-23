@@ -1,6 +1,6 @@
 # Requests matching an active rule are handled by Rust; all other requests
-# are forwarded to the Python backend. This cutover adds ten verified GET APIs
-# to the five existing rules. Other migration candidates remain commented out.
+# are forwarded to the Python backend. Knowledge APIs stay Python-owned;
+# their Rust handlers remain registered without active cutover rules.
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/me/available-channels"
@@ -19,9 +19,9 @@
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases"
-[[routes]]
-methods = ["GET"]
-path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
 [[routes]]
 methods = ["GET"]
 path = "/api/users/me"
@@ -59,9 +59,9 @@ path = "/api/runtime-work/im-notifications"
 [[routes]]
 methods = ["PUT"]
 path = "/api/runtime-work/im-notifications/presence"
-[[routes]]
-methods = ["GET"]
-path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/auth/login"
@@ -97,9 +97,9 @@ path = "/api/v1/cloud-projects/:project_id/execution-environments"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/chat-agents"
-[[routes]]
-methods = ["GET"]
-path = "/api/knowledge/documents"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge/documents"
 [[routes]]
 methods = ["GET"]
 path = "/api/quota/*path"
@@ -399,9 +399,9 @@ path = "/api/work-queues/messages/unread-count"
 [[routes]]
 methods = ["GET"]
 path = "/api/apps/installed"
-[[routes]]
-methods = ["GET"]
-path = "/api/knowledge/documents/:document_id/content"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge/documents/:document_id/content"
 [[routes]]
 methods = ["GET"]
 path = "/api/resource-library/listings"
@@ -730,9 +730,9 @@ path = "/api/internal/api-keys/lookup" # app/api/endpoints/internal/api_keys.py:
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/multimodal-default-prompts" # app/api/endpoints/knowledge.py:425
-[[routes]]
-methods = ["GET"]
-path = "/api/knowledge-bases/:kb_id/documents/:doc_id/detail" # app/api/endpoints/knowledge.py:1840
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:kb_id/documents/:doc_id/detail" # app/api/endpoints/knowledge.py:1840
 # Deferred: document lists must retain external-source metadata.
 #[[routes]]
 #methods = ["GET"]
@@ -743,9 +743,9 @@ path = "/api/knowledge-bases/:kb_id/documents/:doc_id/detail" # app/api/endpoint
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/knowledge-bases/:knowledge_base_id/documents/external-import-status" # app/api/endpoints/knowledge.py:998
-[[routes]]
-methods = ["GET"]
-path = "/api/knowledge-bases/:knowledge_base_id/folders" # app/api/endpoints/knowledge.py:1431
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/:knowledge_base_id/folders" # app/api/endpoints/knowledge.py:1431
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/knowledge-documents/batch/delete" # app/api/endpoints/knowledge.py:1344
@@ -782,9 +782,9 @@ path = "/api/knowledge-bases/:knowledge_base_id/folders" # app/api/endpoints/kno
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/interactive-form-question/sse" # app/mcp_server/server.py:1032
-[[routes]]
-methods = ["GET"]
-path = "/api/mcp/knowledge-external/documents/:document_id/file" # app/mcp_server/external_knowledge_app.py:59
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/mcp/knowledge-external/documents/:document_id/file" # app/mcp_server/external_knowledge_app.py:59
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/mcp/knowledge-external/sse" # app/mcp_server/server.py:1032
@@ -842,9 +842,9 @@ path = "/api/resource-library/users/me/published" # app/api/endpoints/resource_l
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/retrievers/storage-types/retrieval-methods" # app/api/endpoints/adapter/retrievers.py:42
-[[routes]]
-methods = ["GET"]
-path = "/api/share/KnowledgeBase/:resource_id/my-permission" # app/api/endpoints/share.py:539
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/share/KnowledgeBase/:resource_id/my-permission" # app/api/endpoints/share.py:539
 [[routes]]
 methods = ["GET"]
 path = "/api/shells/unified" # app/api/endpoints/adapter/shells.py:197
@@ -988,9 +988,9 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/wework-transcripts/:transcript_id/segments" # app/api/endpoints/wework_transcripts.py:179
-[[routes]]
-methods = ["GET"]
-path = "/api/wiki/connections" # app/api/endpoints/external_wiki.py:224
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/wiki/connections" # app/api/endpoints/external_wiki.py:224
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/wizard/test-prompt/stream" # app/api/endpoints/wizard.py:1381
