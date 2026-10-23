@@ -371,12 +371,11 @@ export class CoreDshPluginManager {
 
   private async readRuntimePackage(name: string): Promise<PackageManifest | null> {
     const require = createRequire(await realpath(this.options.dshEntry))
-    try {
-      return (await readJson(require.resolve(`${name}/package.json`))) as PackageManifest | null
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND') return null
-      throw error
+    for (const directory of require.resolve.paths(name) ?? []) {
+      const manifest = await readJson(join(directory, ...name.split('/'), 'package.json'))
+      if (manifest) return manifest as PackageManifest
     }
+    return null
   }
 
   private packageRoot(name: string): string {

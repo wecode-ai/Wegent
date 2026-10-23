@@ -1,7 +1,7 @@
 window.__ModuleLoader__.load({
   id: '@wegent/dsh-voice-input',
   factory: require => {
-    const { createElement: h, useEffect, useMemo, useState } = require('react')
+    const { createElement: h, useEffect, useMemo, useRef, useState } = require('react')
     const { Button, Modal } = require('@deepseek-ai/dsh-client-ui-primitives')
     const BUNDLE = '@deepseek-ai/dsh-experimental-voice-input-bundle'
     const OPEN_SETTINGS = 'wework:voice-input:settings'
@@ -46,10 +46,20 @@ window.__ModuleLoader__.load({
     }
 
     function composerComponent(OfficialVoiceInput) {
-      return function VoiceInput({ disabled, captureInsertion, ...props }) {
+      return function VoiceInput({ disabled, captureInsertion, sessionId, ...props }) {
+        const sessionRef = useRef({ id: sessionId })
+        if (sessionRef.current.id !== sessionId) sessionRef.current = { id: sessionId }
         const inputActions = useMemo(
           () => ({
-            captureInsertion: () => captureInsertion?.(),
+            captureInsertion: () => {
+              const insertion = captureInsertion?.()
+              if (!insertion) return null
+              const session = sessionRef.current
+              return {
+                insertText: text =>
+                  sessionRef.current === session ? insertion.insertText(text) : false,
+              }
+            },
             insertText: (text, insertion) => insertion?.insertText(text) ?? false,
           }),
           [captureInsertion]
@@ -59,6 +69,7 @@ window.__ModuleLoader__.load({
           { 'data-testid': 'composer-voice-input', className: 'flex min-w-0 items-center' },
           h(OfficialVoiceInput, {
             ...props,
+            sessionId,
             inputActions,
             locked: disabled || !captureInsertion,
             onActiveChange: noop,

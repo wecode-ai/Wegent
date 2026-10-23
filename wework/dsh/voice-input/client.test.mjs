@@ -9,6 +9,8 @@ async function fixture() {
   const listeners = new Map()
   const cleanups = []
   const contributions = []
+  const refs = []
+  let hookIndex = 0
   const ctx = {
     effect(factory) {
       cleanups.push(factory())
@@ -51,6 +53,7 @@ async function fixture() {
       : {
           createElement: (component, props, ...children) => ({ component, props, children }),
           useMemo: fn => fn(),
+          useRef: value => (refs[hookIndex++] ??= { current: value }),
         }
   )
   plugin.apply(ctx)
@@ -58,8 +61,33 @@ async function fixture() {
     entries.set(name, value)
     for (const listener of listeners.get(name) ?? []) listener()
   }
-  return { ctx, entries, listeners, cleanups, contributions, publish }
+  function renderComposer(props) {
+    hookIndex = 0
+    return entries.get('wework.composer.action')[0].component(props).children[0].props
+  }
+  return { ctx, entries, listeners, cleanups, contributions, publish, renderComposer }
 }
+
+test('invalidates captured insertions across session changes, including returning to the same session', async () => {
+  const f = await fixture()
+  f.publish('conversation.input.activity', [{ component() {}, locale: 'voice-input', options: {} }])
+  const inserted = []
+  const captureInsertion = () => ({ insertText: text => (inserted.push(text), true) })
+  const initial = f.renderComposer({ sessionId: 'a', captureInsertion })
+  const sameSession = initial.inputActions.captureInsertion()
+  const stale = initial.inputActions.captureInsertion()
+  f.renderComposer({ sessionId: 'a', captureInsertion })
+  assert.equal(initial.inputActions.insertText('same session', sameSession), true)
+  f.renderComposer({ sessionId: 'b', captureInsertion })
+  assert.equal(initial.inputActions.insertText('wrong session', stale), false)
+  const returned = f.renderComposer({ sessionId: 'a', captureInsertion })
+  assert.equal(initial.inputActions.insertText('stale after return', stale), false)
+  assert.equal(
+    returned.inputActions.insertText('new capture', returned.inputActions.captureInsertion()),
+    true
+  )
+  assert.deepEqual(inserted, ['same session', 'new capture'])
+})
 
 test('reuses official voice components, locale and injected readiness without copying behavior', async () => {
   const f = await fixture()
