@@ -21,6 +21,7 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { getProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
@@ -57,7 +58,11 @@ import {
   type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
-import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
+import {
+  getDesktopE2ERuntimeConfig,
+  loadDesktopE2ERuntimeConfig,
+  type DesktopE2ERuntimeConfig,
+} from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
@@ -403,95 +408,78 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-async function seedDesktopE2ECloudConnection(): Promise<void> {
-  const runtimeConfig = getDesktopE2ERuntimeConfig()
-  const backendUrl =
-    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
-  if (!backendUrl) return
-  const modelServerUrl =
-    runtimeConfig.modelServerUrl ??
-    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
-    backendUrl
+function seedDesktopE2ELocalModels(
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  modelServerUrl: string
+): boolean {
+  const seedLocalModels =
+    runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
+  if (!seedLocalModels) return false
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
-  const config = normalizeCloudBackendUrl(backendUrl)
-  const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
-  const response = await fetch(`${config.apiBaseUrl}/users/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(10000),
-  })
-  if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
-  const user = await response.json()
-  saveStoredCloudConnection({
-    ...config,
-    webUrl: config.backendUrl,
-    user,
-    connectedAt: new Date().toISOString(),
-  })
-  const localModels =
-    (runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true')
-      ? [
-          {
-            id: 'desktop-e2e-responses',
-            displayName: 'Desktop E2E Responses',
-            modelId: 'desktop-e2e-responses-model',
-            apiFormat: 'openai-responses' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/responses',
-          },
-          {
-            id: 'desktop-e2e-chat',
-            displayName: 'Desktop E2E Chat',
-            modelId: 'desktop-e2e-chat-model',
-            apiFormat: 'openai-chat-completions' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/chat/completions',
-          },
-          {
-            id: 'desktop-e2e-anthropic',
-            displayName: 'Desktop E2E Anthropic',
-            modelId: 'desktop-e2e-anthropic-model',
-            apiFormat: 'anthropic-messages' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/messages',
-          },
-          {
-            id: 'desktop-e2e-luna-overseas',
-            displayName: 'GPT 5.6 Luna (海外)',
-            modelId: 'gpt-5.6-luna',
-            apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
-            requestPath: '/v1/responses',
-          },
-          // The vision proxy must be saved before the primary model that references it.
-          {
-            id: 'desktop-e2e-vision',
-            providerProfileId: 'kimi' as const,
-            displayName: 'Desktop E2E Vision',
-            modelId: 'kimi-k3',
-            apiFormat: 'openai-chat-completions' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/chat/completions',
-            catalogReady: true,
-          },
-          {
-            id: 'desktop-e2e-vision-main',
-            providerProfileId: 'deepseek' as const,
-            displayName: 'Desktop E2E DeepSeek Pro Vision Main',
-            modelId: 'deepseek-v4-pro',
-            apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
-            requestPath: '/v1/responses',
-            contextWindow: 1_048_576,
-            webSearchMode: 'live' as const,
-            codexCatalogModelId: 'wework-deepseek-v4-pro',
-            visionModelConfigId: 'desktop-e2e-vision',
-            catalogReady: true,
-          },
-        ]
-      : []
+  const localModels = [
+    {
+      id: 'desktop-e2e-responses',
+      displayName: 'Desktop E2E Responses',
+      modelId: 'desktop-e2e-responses-model',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/responses',
+    },
+    {
+      id: 'desktop-e2e-chat',
+      displayName: 'Desktop E2E Chat',
+      modelId: 'desktop-e2e-chat-model',
+      apiFormat: 'openai-chat-completions' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/chat/completions',
+    },
+    {
+      id: 'desktop-e2e-anthropic',
+      displayName: 'Desktop E2E Anthropic',
+      modelId: 'desktop-e2e-anthropic-model',
+      apiFormat: 'anthropic-messages' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/messages',
+    },
+    {
+      id: 'desktop-e2e-luna-overseas',
+      displayName: 'GPT 5.6 Luna (海外)',
+      modelId: 'gpt-5.6-luna',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'custom' as const,
+      requestPath: '/v1/responses',
+    },
+    // The vision proxy must be saved before the primary model that references it.
+    {
+      id: 'desktop-e2e-vision',
+      providerProfileId: 'kimi' as const,
+      displayName: 'Desktop E2E Vision',
+      modelId: 'kimi-k3',
+      apiFormat: 'openai-chat-completions' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/chat/completions',
+      catalogReady: true,
+    },
+    {
+      id: 'desktop-e2e-vision-main',
+      providerProfileId: 'deepseek' as const,
+      displayName: 'Desktop E2E DeepSeek Pro Vision Main',
+      modelId: 'deepseek-v4-pro',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'custom' as const,
+      requestPath: '/v1/responses',
+      contextWindow: 1_048_576,
+      webSearchMode: 'live' as const,
+      codexCatalogModelId: 'wework-deepseek-v4-pro',
+      visionModelConfigId: 'desktop-e2e-vision',
+      catalogReady: true,
+    },
+  ]
+  const providerOwnedModelIds = new Set(getProviderModelConfigs().map(model => model.id))
   for (const model of localModels) {
+    if (providerOwnedModelIds.has(model.id)) continue
     saveLocalModelConfig({
       catalogReady: localModelsCatalogReady,
       ...model,
@@ -507,6 +495,43 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
       options: {},
     },
   })
+  return true
+}
+
+async function seedDesktopE2ECloudConnection(): Promise<void> {
+  const runtimeConfig = getDesktopE2ERuntimeConfig()
+  const backendUrl =
+    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+  const modelServerUrl =
+    runtimeConfig.modelServerUrl ??
+    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
+    backendUrl
+  const seededLocalModels = modelServerUrl
+    ? seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
+    : false
+  if (!backendUrl) return
+  const config = normalizeCloudBackendUrl(backendUrl)
+  const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/users/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!response.ok) throw new Error(`E2E cloud identity returned ${response.status}`)
+    const user = await response.json()
+    saveStoredCloudConnection({
+      ...config,
+      webUrl: config.backendUrl,
+      user,
+      connectedAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    if (!seededLocalModels) throw error
+    console.warn(
+      '[Wework] E2E cloud identity unavailable; continuing with local model fixtures.',
+      error
+    )
+  }
 }
 
 export async function installWeworkAutomationBridge(

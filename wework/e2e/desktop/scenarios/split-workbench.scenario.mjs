@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
@@ -697,6 +698,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
       await verifyMultilineComposerCaret(control, captureScreenshot)
+      await selectE2EModel(
+        control,
+        'local-model:desktop-e2e-responses',
+        'Desktop E2E Responses',
+        ACTIVE_SURFACE
+      )
       const firstTaskRow = await createTask(control, FIRST_PROMPT, taskTimeoutMs)
       const firstTaskId = firstTaskRow.replace('runtime-local-task-row-', '')
       const completedTaskSnapshot = await waitForWorkbenchDebugState(
