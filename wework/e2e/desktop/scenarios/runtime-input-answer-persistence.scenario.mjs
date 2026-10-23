@@ -65,15 +65,17 @@ function hasAcceptedQuestionAnswer(messages) {
   return messages.some(message =>
     (message.blocks ?? []).some(block => {
       const payload = block?.renderPayload
+      const response =
+        payload?.response ??
+        payload?.requestUserInputResponse ??
+        payload?.request_user_input_response
+      const audienceAnswers = response?.answers?.audience?.answers
       return (
         payload?.kind === 'request_user_input' &&
         Array.isArray(payload.questions) &&
         payload.questions.length > 0 &&
-        Boolean(
-          payload.response ??
-          payload.requestUserInputResponse ??
-          payload.request_user_input_response
-        )
+        Array.isArray(audienceAnswers) &&
+        audienceAnswers.includes('owner')
       )
     })
   )
