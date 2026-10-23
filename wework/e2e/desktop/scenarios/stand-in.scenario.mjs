@@ -339,6 +339,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         `${MARKER} 保留草稿`
       )
       await discardStandInDraft(control)
+      // Personal settings close independently of the project board. Re-enter
+      // the fixture project before using its project-scoped stand-in control.
+      await control.command(
+        'click',
+        `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+      )
+      await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-agent"]'), '')

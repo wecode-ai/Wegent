@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, type APIRequestContext, type TestInfo } from '@playwright/test'
+import { prepareArtifactDeviceUser } from './artifact-device-user'
 
 const execFileAsync = promisify(execFile)
 const repository = resolve(__dirname, '../../..')
@@ -80,10 +81,15 @@ export async function startArtifactDevice(
     await access(executable, constants.X_OK)
   const root = await mkdtemp(join(tmpdir(), 'wegent-artifact-e2e-'))
   await mkdir(join(root, 'home'))
+  const identity = await prepareArtifactDeviceUser(root).catch(async error => {
+    await rm(root, { recursive: true })
+    throw error
+  })
   const log = createWriteStream(testInfo.outputPath(`${id}.log`))
   const child = spawn(binary, [], {
     cwd: root,
     detached: true,
+    ...identity,
     env: {
       ...process.env,
       PATH: `${dirname(claude)}${delimiter}${process.env.PATH}`,
