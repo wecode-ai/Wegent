@@ -791,7 +791,7 @@ export function createLocalWorkspaceApi(
       list: projects,
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
-        const { includeDefaultAgent = true, ...projectInput } = input
+        const { includeDefaultAgent = false, ...projectInput } = input
         const project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
           await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {

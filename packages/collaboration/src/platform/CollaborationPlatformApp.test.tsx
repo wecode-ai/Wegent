@@ -1928,7 +1928,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
-  it("defaults to the local Agent and lets the user remove and add it again", async () => {
+  it("starts without Agents and lets the user add the local Agent manually", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
       initialProjects: [],
@@ -1974,10 +1974,10 @@ describe("CollaborationPlatformApp real component flow", () => {
     await chooseBlankProjectCreation();
     expect(container.textContent).toContain("项目协作者");
     expect(container.textContent).toContain("我");
-    expect(container.textContent).toContain("当前设备智能体");
+    expect(container.textContent).not.toContain("当前设备智能体");
     expect(
       container.querySelector('[aria-label="取消 当前设备智能体"]'),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(container.textContent).not.toContain("小组负责人");
     expect(
       container.querySelector(
@@ -1985,12 +1985,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       ),
     ).toBeNull();
     expect(container.textContent).not.toContain(environment.name);
-    await click(
-      container.querySelector<HTMLButtonElement>(
-        '[aria-label="取消 当前设备智能体"]',
-      )!,
-    );
-    expect(container.textContent).not.toContain("当前设备智能体");
     await click(byTestId("collaboration-project-create-add-collaborator"));
     expect(
       document.body.querySelector(
@@ -2020,7 +2014,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
-  it("defaults to and creates the current-device Agent for a cloud project without an existing binding", async () => {
+  it("creates a cloud project without automatically adding the current-device Agent", async () => {
     const currentDeviceAgent: CollaborationOwnedAgent = {
       ...agent,
       id: "cloud-workspace-current-device-agent",
@@ -2058,10 +2052,10 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
 
     await chooseBlankProjectCreation("collaboration-workspace-project-create");
-    expect(container.textContent).toContain("当前设备智能体");
+    expect(container.textContent).not.toContain("当前设备智能体");
     expect(
       container.querySelector('[aria-label="取消 当前设备智能体"]'),
-    ).not.toBeNull();
+    ).toBeNull();
 
     await change(
       byTestId("collaboration-project-name-input") as HTMLInputElement,
@@ -2069,71 +2063,77 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     await click(byTestId("collaboration-project-create-confirm"));
 
-    expect(api.agents.create).toHaveBeenCalledWith(project.id, {
-      name: "current-device-agent",
-      displayName: "当前设备智能体",
-      runtime: "codex",
-      model: null,
-    });
-  });
-
-  it("does not include the default local Agent after the user removes it", async () => {
-    const defaultAgent: CollaborationOwnedAgent = {
-      ...agent,
-      id: "default-local-agent",
-      team_id: undefined,
-      name: "当前设备智能体",
-      location: "local",
-      owner_id: localWorkspace.id,
-      owner_name: localWorkspace.name,
-      project_binding_input: {
-        name: "current-device-agent",
-        displayName: "当前设备智能体",
-        runtime: "codex",
-        model: null,
-      },
-    };
-    const { api } = createApi({
-      initialWorkspaces: [localWorkspace],
-      initialProjects: [],
-      initialResources: {
-        agents: [defaultAgent],
-        execution_environments: [],
-      },
-    });
-    api.resources!.list = vi.fn(async () => ({
-      agents: [defaultAgent],
-      execution_environments: [],
-    }));
-
-    await render(
-      <PlatformHarness
-        api={api}
-        capabilities={{
-          automation: false,
-          dingtalkAitable: false,
-          workspaceLocations: ["local"],
-        }}
-        start={{ ...initialLocation, collaborationDomain: "local" }}
-      />,
-    );
-    await chooseBlankProjectCreation();
-    await click(
-      container.querySelector<HTMLButtonElement>(
-        '[aria-label="取消 当前设备智能体"]',
-      )!,
-    );
-    await change(
-      byTestId("collaboration-project-name-input") as HTMLInputElement,
-      project.name,
-    );
-    await click(byTestId("collaboration-project-create-confirm"));
-
-    expect(api.projects.create).toHaveBeenCalledWith(
-      expect.objectContaining({ includeDefaultAgent: false }),
-    );
     expect(api.agents.create).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "does not include an unselected local Agent (removed after selection: %s)",
+    async (removeAfterSelection) => {
+      const defaultAgent: CollaborationOwnedAgent = {
+        ...agent,
+        id: "default-local-agent",
+        team_id: undefined,
+        name: "当前设备智能体",
+        location: "local",
+        owner_id: localWorkspace.id,
+        owner_name: localWorkspace.name,
+        project_binding_input: {
+          name: "current-device-agent",
+          displayName: "当前设备智能体",
+          runtime: "codex",
+          model: null,
+        },
+      };
+      const { api } = createApi({
+        initialWorkspaces: [localWorkspace],
+        initialProjects: [],
+        initialResources: {
+          agents: [defaultAgent],
+          execution_environments: [],
+        },
+      });
+      api.resources!.list = vi.fn(async () => ({
+        agents: [defaultAgent],
+        execution_environments: [],
+      }));
+
+      await render(
+        <PlatformHarness
+          api={api}
+          capabilities={{
+            automation: false,
+            dingtalkAitable: false,
+            workspaceLocations: ["local"],
+          }}
+          start={{ ...initialLocation, collaborationDomain: "local" }}
+        />,
+      );
+      await chooseBlankProjectCreation();
+      if (removeAfterSelection) {
+        await click(byTestId("collaboration-project-create-add-collaborator"));
+        await click(
+          portalByTestId(
+            `collaboration-project-create-agent-${defaultAgent.id}`,
+          ),
+        );
+        await click(
+          container.querySelector<HTMLButtonElement>(
+            '[aria-label="取消 当前设备智能体"]',
+          )!,
+        );
+      }
+      await change(
+        byTestId("collaboration-project-name-input") as HTMLInputElement,
+        project.name,
+      );
+      await click(byTestId("collaboration-project-create-confirm"));
+
+      expect(api.projects.create).toHaveBeenCalledWith(
+        expect.objectContaining({ includeDefaultAgent: false }),
+      );
+      expect(api.agents.create).not.toHaveBeenCalled();
+    },
+  );
 
   it("recommends a group for two Agents and shows the working lead after applying AI division", async () => {
     vi.useFakeTimers();
@@ -2409,7 +2409,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toContain("负责人 · 仅协调");
   });
 
-  it("selects only the default local Agent when project resources finish loading", async () => {
+  it("keeps Agents unselected when project resources finish loading", async () => {
     const existingAgent: CollaborationOwnedAgent = {
       ...agent,
       id: "existing-local-agent",
@@ -2461,10 +2461,10 @@ describe("CollaborationPlatformApp real component flow", () => {
     await flush();
 
     expect(container.textContent).not.toContain(existingAgent.name);
-    expect(container.textContent).toContain(defaultAgent.name);
+    expect(container.textContent).not.toContain(defaultAgent.name);
     expect(
       container.querySelector(`[aria-label="取消 ${defaultAgent.name}"]`),
-    ).not.toBeNull();
+    ).toBeNull();
     await click(byTestId("collaboration-project-create-add-collaborator"));
     expect(document.body.textContent).toContain(existingAgent.name);
     expect(
