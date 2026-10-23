@@ -160,6 +160,104 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
+  test.each([true, false])(
+    'keeps content added while an accepted send is pending (code comments=%s)',
+    async withCodeComments => {
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+      let acknowledgeSend!: (accepted: boolean) => void
+      mocks.send.mockImplementationOnce(
+        () =>
+          new Promise<boolean>(resolve => {
+            acknowledgeSend = resolve
+          })
+      )
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      const nextComment = { ...codeComment, id: 'next-turn-comment' }
+      act(() => result.current.addCodeComment(nextComment))
+      // Attachments are consumed before dispatch, never by a late acknowledgment.
+      expect(mocks.resetAttachments).toHaveBeenCalledOnce()
+      mocks.resetAttachments.mockClear()
+      await act(async () => {
+        acknowledgeSend(true)
+        expect(await submission).toBe(true)
+      })
+      expect(result.current.codeCommentContexts).toEqual([nextComment])
+      expect(mocks.resetAttachments).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each(['rejected', 'thrown'] as const)(
+    'preserves newer text when a new-pane send is %s',
+    async outcome => {
+      let rejectSend!: (cause: Error) => void
+      let resolveSend!: (accepted: boolean) => void
+      mocks.context.sendCurrentInput = vi.fn(
+        () =>
+          new Promise<boolean>((resolve, reject) => {
+            resolveSend = resolve
+            rejectSend = reject
+          })
+      )
+      const { result } = await renderSession(null)
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+      act(() => result.current.setInput('Next follow-up'))
+      mocks.setInput.mockClear()
+      await act(async () => {
+        if (outcome === 'thrown') {
+          const rejected = expect(submission).rejects.toThrow('Send failed')
+          rejectSend(new Error('Send failed'))
+          await rejected
+        } else {
+          resolveSend(false)
+          expect(await submission).toBe(false)
+        }
+      })
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([true, false])(
+    'restores a rejected new goal only without newer edits (edited=%s)',
+    async edited => {
+      let rejectGoal!: (accepted: boolean) => void
+      mocks.context.sendCurrentInput = vi.fn(
+        () =>
+          new Promise<boolean>(resolve => {
+            rejectGoal = resolve
+          })
+      )
+      const projectChat = mocks.context.projectChat as Record<string, unknown>
+      projectChat.setSelectedModelOption = vi.fn()
+      const { result } = await renderSession(null)
+      act(() => result.current.clearCodeComments())
+      await act(async () => {
+        await result.current.setCurrentGoal()
+      })
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+      if (edited) act(() => result.current.setInput('Next goal draft'))
+      mocks.setInput.mockClear()
+      await act(async () => {
+        rejectGoal(false)
+        expect(await submission).toBe(false)
+      })
+      if (edited) expect(mocks.setInput).not.toHaveBeenCalled()
+      else expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+    }
+  )
+
   test('clears the submitted draft when no newer edit has occurred', async () => {
     const { result } = await renderSession()
     act(() => result.current.clearCodeComments())
