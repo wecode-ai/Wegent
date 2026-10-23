@@ -52,6 +52,15 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
+function lastUserMessageBody(body) {
+  const input = Array.isArray(body.input) ? body.input : []
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    if (input[index]?.role === 'user') return JSON.stringify(input[index])
+  }
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  return messages.length > 0 ? JSON.stringify(messages.at(-1)) : ''
+}
+
 async function waitForCount(control, selector, expected, message, timeoutMs) {
   const startedAt = Date.now()
   let latest = null
@@ -176,8 +185,10 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       return false
     }
     const body = await readJson(request)
-    if (handleEmptyReplyPrediction(body, response)) return true
-    if (!JSON.stringify(body).includes(PROMPT)) return false
+    if (!lastUserMessageBody(body).includes(PROMPT)) {
+      if (handleEmptyReplyPrediction(body, response)) return true
+      return false
+    }
     modelRequestCount += 1
     const responseId = `wework-input-answer-${modelRequestCount}-${Date.now()}`
     if (currentTurnHasToolOutput(body, TOOL_CALL_ID)) {
