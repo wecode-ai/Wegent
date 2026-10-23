@@ -1,8 +1,14 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
+import { watch } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test, expect, vi } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
+
+vi.mock('node:fs', async importOriginal => {
+  const filesystem = await importOriginal()
+  return { ...filesystem, watch: vi.fn(filesystem.watch) }
+})
 
 test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
   'builds changes under %s, recovers from failure, and ignores output',
@@ -22,6 +28,14 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       published = snapshot
       await writeFile(path.join(output, 'bundle.js'), snapshot)
     })
+    let change
+    const close = vi.fn()
+    vi.mocked(watch).mockImplementationOnce((_directory, _options, listener) => {
+      change = listener
+      return { on: vi.fn(), close }
+    })
+    // Exercise debounce and filtering independently of native event delivery latency.
+    vi.useFakeTimers()
     const watcher = await watchDevelopmentBuild({
       directories: [root],
       files: [],
@@ -33,13 +47,24 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     try {
       expect(published).toBe('one')
       await writeFile(source, 'invalid')
-      await expect.poll(() => onError.mock.calls.length).toBe(1)
+      change('change', 'entry.js')
+      await vi.advanceTimersByTimeAsync(20)
+      await expect(build.mock.results.at(-1).value).rejects.toThrow('compile failed')
+      expect(onError).toHaveBeenCalledOnce()
       expect(published).toBe('one')
       await writeFile(source, 'two')
-      await expect.poll(() => published).toBe('two')
+      change('change', 'entry.js')
+      await vi.advanceTimersByTimeAsync(20)
+      await build.mock.results.at(-1).value
+      expect(published).toBe('two')
+      for (const filename of ['output/bundle.js', 'dist/bundle.js', '.git/index', 'node_modules/a'])
+        change('change', filename)
+      await vi.advanceTimersByTimeAsync(20)
       expect(build).toHaveBeenCalledTimes(3)
     } finally {
       await watcher.close()
+      expect(close).toHaveBeenCalledOnce()
+      vi.useRealTimers()
       await rm(temporary, { recursive: true, force: true })
     }
   }
