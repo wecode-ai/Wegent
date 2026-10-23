@@ -350,6 +350,7 @@ export function PluginsWorkspace({
   const [isDeletingPersonalPlugin, setIsDeletingPersonalPlugin] = useState(false)
   const [pendingLocalConnectorAuth, setPendingLocalConnectorAuth] = useState<{
     target: LocalConnectorAuthTarget
+    purpose: 'install' | 'manage'
     title: string
     description?: string
     resolve: () => void
@@ -847,7 +848,10 @@ export function PluginsWorkspace({
           items: nextItems,
           installed: nextInstalledRaw,
           installingIds: installingMarketplacePluginIdsRef.current,
-          authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+          authPluginKey:
+            pendingLocalConnectorAuthRef.current?.purpose === 'install'
+              ? pendingLocalConnectorAuthRef.current.target.pluginKey
+              : null,
         })
         const nextInstalled = heldBack.installed
         setInstalledPlugins(previous =>
@@ -2539,12 +2543,14 @@ export function PluginsWorkspace({
 
   const promptLocalConnectorAuth = (input: {
     target: LocalConnectorAuthTarget
+    purpose: 'install' | 'manage'
     title: string
     description?: string
   }) =>
     new Promise<void>((resolve, reject) => {
       setPendingLocalConnectorAuth({
         target: input.target,
+        purpose: input.purpose,
         title: input.title,
         description: input.description,
         resolve,
@@ -2634,6 +2640,7 @@ export function PluginsWorkspace({
       try {
         await promptLocalConnectorAuth({
           target,
+          purpose: 'install',
           title: isLocalBrowserConnector(connector)
             ? t('workbench.plugins_local_browser_install_title', {
                 defaultValue: `授权 ${displayName}`,
@@ -2782,6 +2789,7 @@ export function PluginsWorkspace({
       try {
         await promptLocalConnectorAuth({
           target,
+          purpose: 'manage',
           description: localConnector.description || undefined,
           title: githubCli
             ? t('workbench.github_cli_login_title')
@@ -3097,7 +3105,10 @@ export function PluginsWorkspace({
         items: retained.items,
         installed: retained.installed,
         installingIds: installingMarketplacePluginIdsRef.current,
-        authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+        authPluginKey:
+          pendingLocalConnectorAuthRef.current?.purpose === 'install'
+            ? pendingLocalConnectorAuthRef.current.target.pluginKey
+            : null,
       })
       const nextInstalled = heldBack.installed
       const mergedItems = heldBack.items
@@ -3328,7 +3339,10 @@ export function PluginsWorkspace({
         items: retained.items,
         installed: retained.installed,
         installingIds: installingMarketplacePluginIdsRef.current,
-        authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+        authPluginKey:
+          pendingLocalConnectorAuthRef.current?.purpose === 'install'
+            ? pendingLocalConnectorAuthRef.current.target.pluginKey
+            : null,
       })
       const nextInstalled = heldBack.installed
       const mergedItems = heldBack.items
@@ -3457,7 +3471,10 @@ export function PluginsWorkspace({
             items: retained.items,
             installed: retained.installed,
             installingIds: installingMarketplacePluginIdsRef.current,
-            authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+            authPluginKey:
+              pendingLocalConnectorAuthRef.current?.purpose === 'install'
+                ? pendingLocalConnectorAuthRef.current.target.pluginKey
+                : null,
           })
           const nextInstalled = heldBack.installed
           const mergedItems = heldBack.items

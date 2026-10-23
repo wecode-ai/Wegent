@@ -94,6 +94,10 @@ export async function verifyGithubManageConnectionConsent(control, previousSlug,
     await control.command('waitFor', '[data-testid="plugin-github-cli-auth-dialog"]', {
       visible: false,
     })
+    await control.command('waitFor', manage, { text: '登录', visible: true, enabled: true })
+    await control.command('waitFor', `[data-testid="plugin-detail-toggle-${id}"]`, {
+      text: '立即对话',
+    })
   }
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', '[data-testid="plugins-search-input"]')

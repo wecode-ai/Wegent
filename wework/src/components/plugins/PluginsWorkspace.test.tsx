@@ -29,6 +29,7 @@ import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
+import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -3421,6 +3422,20 @@ describe('PluginsWorkspace', () => {
     if (clickManage)
       await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:github'))
   }
+
+  test('keeps an installed GitHub plugin installed when inventory refreshes during login consent', async () => {
+    await openGithubConnection(async () => ({ status: 'need_login' }))
+    expect(await screen.findByTestId('plugin-github-cli-auth-dialog')).toBeInTheDocument()
+    await act(async () => {
+      window.dispatchEvent(new Event(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT))
+    })
+    await userEvent.click(screen.getByTestId('connector-auth-cancel'))
+    await waitFor(() => {
+      const manage = screen.getByTestId('plugin-connection-manage-connector:github')
+      expect(manage).toHaveTextContent('登录')
+      expect(manage).toBeEnabled()
+    })
+  })
 
   test('uses the shared logout row for an already connected GitHub CLI account', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
