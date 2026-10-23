@@ -1,8 +1,8 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
-import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
+import { newStandInRole, publishPersonalStandIn, type StandInRole } from '@/api/personalStandIn'
 import type { StandInInboxWork } from '@/api/standIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -79,6 +79,24 @@ it('opens the selected stand-in from the overview list', async () => {
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
   await user.click(screen.getByTestId('stand-in-settings-open'))
   expect(await screen.findByRole('combobox', { name: '当前分身' })).toHaveValue('second')
+})
+
+it('keeps the active conversation mounted while settings reload', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  let resolve!: (value: typeof settings) => void
+  const pending = new Promise<typeof settings>(done => {
+    resolve = done
+  })
+  render(<StandInOverviewPage {...props} />)
+  const conversation = await screen.findByTestId('identity-conversation')
+  vi.mocked(api.personalGet).mockReturnValueOnce(pending)
+  act(() => publishPersonalStandIn(settings))
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  await act(async () => resolve(settings))
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
 
 it('hides empty message associations while preserving existing execution history', async () => {

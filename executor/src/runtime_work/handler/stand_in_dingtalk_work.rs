@@ -30,17 +30,17 @@ impl RuntimeWorkRpcHandler {
             .filter_map(|message| message["recordId"].as_str().map(str::to_owned))
             .collect::<Vec<_>>();
         let client_id = dingtalk_client_id(id, &ids);
-        if let Some(link) = self.local_task_link(id) {
-            if crate::runtime_work::runtime_handle_messages::user_message_presentations(&link)
+        let accepted = self.local_task_link(id).is_some_and(|link| {
+            crate::runtime_work::runtime_handle_messages::user_message_presentations(&link)
                 .iter()
                 .any(|message| message["clientUserMessageId"] == client_id)
-            {
-                // Runtime already accepted this durable message. Never replay its effects.
-                store
-                    .update_stand_in_dispatch(user, id, &ids, "sent", None)
-                    .map_err(settings_error)?;
-                *work = store.stand_in_work(user, id).map_err(settings_error)?;
-            }
+        });
+        if accepted {
+            // Runtime already accepted this durable message. Never replay its effects.
+            store
+                .update_stand_in_dispatch(user, id, &ids, "sent", None)
+                .map_err(settings_error)?;
+            *work = store.stand_in_work(user, id).map_err(settings_error)?;
         } else if !self.is_busy_local_task(id) {
             // Runtime persists the task before launching it; no task or queued run means no acceptance.
             store
@@ -408,6 +408,18 @@ mod tests {
             .unwrap();
         assert_eq!(work["status"], "sending");
         drop(guard);
+        handler
+            .reconcile_dingtalk_dispatch(&store, 7, &mut work)
+            .unwrap();
+        assert_eq!(work["status"], "failed");
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.clone(),
+            ..Default::default()
+        });
+        store
+            .update_stand_in_dispatch(7, &id, &ids, "sending", None)
+            .unwrap();
+        work = store.stand_in_work(7, &id).unwrap();
         handler
             .reconcile_dingtalk_dispatch(&store, 7, &mut work)
             .unwrap();

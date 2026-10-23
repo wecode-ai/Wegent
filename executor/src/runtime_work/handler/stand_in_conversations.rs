@@ -62,24 +62,6 @@ impl RuntimeWorkRpcHandler {
         // Serialize creation, not individual turns; ordinary Runtime owns turn queuing.
         let gate = self.task_send_gate(&format!("stand-in-conversation:{task_id}"));
         let _guard = gate.lock().await;
-        if self.local_task_link(&task_id).is_some() {
-            let link = self.local_task_link(&task_id).unwrap();
-            let mut request = runtime_event_request_from_link(&link);
-            request.prompt = json!(message);
-            self.apply_backend_connection(&mut request);
-            let result = self
-                .send_message(json!({"taskId":task_id,"message":message,"queueIfBusy":true,"executionRequest":request}))
-                .await?;
-            if result["success"] == false {
-                return Err(AppIpcError::new(
-                    "stand_in_send_failed",
-                    result["error"]
-                        .as_str()
-                        .unwrap_or("Message was not accepted"),
-                ));
-            }
-            return Ok(json!({"deviceId":self.device_id,"taskId":task_id}));
-        }
         let title = role
             .and_then(|role| role["name"].as_str())
             .filter(|name| !name.is_empty())
@@ -150,7 +132,12 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_default();
         prepared["executionRequest"]["system_prompt"] =
             json!(format!("{system}\n\n{instructions}"));
-        let result = self.create_task(prepared).await?;
+        let result = if self.local_task_link(&task_id).is_some() {
+            prepared["queueIfBusy"] = json!(true);
+            self.send_message(prepared).await?
+        } else {
+            self.create_task(prepared).await?
+        };
         if result["success"] == false {
             return Err(AppIpcError::new(
                 "stand_in_start_failed",

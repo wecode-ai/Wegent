@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -21,7 +23,12 @@ const ROLE = 'identity-reviewer'
 const PROPOSE = 'IDENTITY_CREATE_REVIEW_ROLE'
 const FOLLOWUP = 'IDENTITY_FOLLOW_UP'
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let draft
   let sentProposal = false
   const requests = []
@@ -174,6 +181,66 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       assert.equal(identity.task.taskId, `stand-in-chat-${USER}-primary`)
       assert.equal(identity.task.runtimeHandle.modelSelection.options.codexProviderId, 'wework-e2e')
       assert.ok(requests.includes('followup'))
+      const selection = identity.task.runtimeHandle.modelSelection
+      const clientId = 'identity-create-race-message'
+      const attachmentPath = join(workspacePath, 'README.md')
+      await requestExecutor(
+        control,
+        'runtime.stand_in.conversation',
+        {
+          userId: USER,
+          message: `${FOLLOWUP} creation race`,
+          options: {
+            modelId: selection.modelName,
+            modelType: selection.modelType,
+            modelOptions: { ...selection.options, reasoning_effort: 'low' },
+            clientUserMessageId: clientId,
+            attachments: [
+              {
+                id: -1,
+                filename: 'README.md',
+                local_path: attachmentPath,
+                file_size: (await stat(attachmentPath)).size,
+                mime_type: 'text/markdown',
+                status: 'ready',
+                file_extension: 'md',
+                created_at: new Date().toISOString(),
+              },
+            ],
+          },
+        },
+        uiTimeoutMs
+      )
+      const continued = await requestExecutor(
+        control,
+        'runtime.tasks.get',
+        {
+          taskId: identity.task.taskId,
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        continued.task.runtimeHandle.modelSelection.options.codexProviderId,
+        'wework-e2e'
+      )
+      assert.equal(continued.task.runtimeHandle.modelSelection.options.reasoning_effort, 'low')
+      await control.command('waitFor', `${CHAT} [data-testid="user-message-content"]`, {
+        text: `${FOLLOWUP} creation race`,
+      })
+      const transcript = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        {
+          taskId: identity.task.taskId,
+          limit: 20,
+        },
+        uiTimeoutMs
+      )
+      const presentation = transcript.messages.find(
+        message => message.clientUserMessageId === clientId
+      )
+      assert.ok(presentation, 'The existing-link create path must preserve message identity')
+      assert.equal(presentation.attachments[0].filename, 'README.md')
     },
     diagnostics() {
       return { sentProposal, requests }

@@ -1752,7 +1752,10 @@ fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&
     }
 }
 
-fn project_space_resume_thread_id(thread_plan: &CodexThreadPlan) -> Option<&str> {
+fn config_reload_resume_thread_id<'a>(
+    thread_plan: &'a CodexThreadPlan,
+    request: &ExecutionRequest,
+) -> Option<&'a str> {
     let CodexThreadStart::Request {
         operation: "thread/resume",
         params,
@@ -1769,7 +1772,7 @@ fn project_space_resume_thread_id(thread_plan: &CodexThreadPlan) -> Option<&str>
                     .keys()
                     .any(|key| key.starts_with("mcp_servers.wework_space."))
             });
-    has_project_space_config
+    (has_project_space_config || crate::runtime_work::stand_in_requires_confirmation(request))
         .then(|| params.get("threadId").and_then(Value::as_str))
         .flatten()
 }
@@ -1870,7 +1873,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        if let Some(thread_id) = project_space_resume_thread_id(&thread_plan) {
+        if let Some(thread_id) = config_reload_resume_thread_id(&thread_plan, request) {
             client.release_thread_subscription(thread_id).await?;
         }
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {

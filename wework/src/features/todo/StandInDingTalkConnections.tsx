@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInDingTalkConnection } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -34,13 +34,16 @@ export function StandInDingTalkConnections({
   const [searched, setSearched] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const rows = role.dingtalk ?? []
+  const searchSequence = useRef(0)
   const search = async (cursor?: string) => {
     if (busy || !query.trim()) return
+    const sequence = ++searchSequence.current
     setBusy(true)
     setError(null)
     setSearched(false)
     try {
       const result = await api.searchDingTalk(deviceId, kind, query.trim(), cursor)
+      if (sequence !== searchSequence.current) return
       setResults(previous =>
         cursor
           ? [
@@ -60,7 +63,7 @@ export function StandInDingTalkConnections({
       setNextCursor(result.hasMore ? result.nextCursor : undefined)
       setSearched(true)
     } catch (cause) {
-      setError(String(cause))
+      if (sequence === searchSequence.current) setError(String(cause))
     } finally {
       setBusy(false)
     }
@@ -135,6 +138,7 @@ export function StandInDingTalkConnections({
               value={kind}
               disabled={busy}
               onChange={event => {
+                searchSequence.current += 1
                 setKind(event.target.value as 'group' | 'direct')
                 setResults([])
                 setNextCursor(undefined)
@@ -150,6 +154,7 @@ export function StandInDingTalkConnections({
               data-testid="stand-in-dingtalk-query"
               value={query}
               onChange={event => {
+                searchSequence.current += 1
                 setQuery(event.target.value)
                 setResults([])
                 setNextCursor(undefined)

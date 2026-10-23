@@ -230,7 +230,7 @@ export function StandInOverviewPage({
             {t(role ? 'standIn.workspace.role_profile' : 'standIn.workspace.primary_profile')}
           </button>
         </header>
-        {state.loading ? (
+        {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-muted">
             {t('standIn.loading')}
           </p>

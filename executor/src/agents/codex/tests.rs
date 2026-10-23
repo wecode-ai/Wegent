@@ -3793,6 +3793,41 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 }
 
 #[test]
+fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
+    let mut request = ExecutionRequest::default();
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        Some("existing"),
+        &request,
+        &CodexLaunchConfig::default(),
+    );
+    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    for identity in ["stand_in", "stand_in_identity"] {
+        request.extra.insert(
+            "origin".into(),
+            json!({"initiatedBy":identity,"askBeforeAct":true}),
+        );
+        assert_eq!(
+            config_reload_resume_thread_id(&plan, &request),
+            Some("existing")
+        );
+    }
+    request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(false);
+    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    let direct = codex_thread_plan(
+        Some("existing"),
+        None,
+        None,
+        None,
+        &request,
+        &CodexLaunchConfig::default(),
+    );
+    assert_eq!(config_reload_resume_thread_id(&direct, &request), None);
+}
+
+#[test]
 fn codex_thread_plan_starts_new_thread_without_identifiers() {
     let plan = codex_thread_plan(
         None,
