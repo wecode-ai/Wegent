@@ -20,6 +20,7 @@ import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRe
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
@@ -408,7 +409,15 @@ vi.mock('@/features/workbench/runtimePaneStatus', () => ({
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   abortRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationTurnIds: () => new Set<string>(),
-  reconcileRuntimeConversationSnapshot: () => mocks.conversationMessages,
+  reconcileRuntimeConversationSnapshot: (
+    _address: RuntimeTaskAddress,
+    turns: RuntimeConversationTurn[]
+  ) => [
+    ...turns.flatMap(turn =>
+      turn.items.flatMap(item => (item.type === 'user_message' ? [item.message] : []))
+    ),
+    ...mocks.conversationMessages,
+  ],
   appendAcceptedRuntimeConversationMessage: (_address: RuntimeTaskAddress, message: unknown) => [
     message,
   ],
@@ -575,6 +584,23 @@ describe('TemporaryChatPanel', () => {
   })
 
   it('loads earlier pages, keeps messages on failure and retries the same cursor', async () => {
+    const olderTurn: RuntimeConversationTurn = {
+      id: 'older-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'older',
+          type: 'user_message',
+          message: {
+            id: 'older',
+            role: 'user',
+            content: 'Earlier question',
+            status: 'done',
+            createdAt: '',
+          },
+        },
+      ],
+    }
     mocks.conversationMessages = [
       {
         id: 'latest',
@@ -587,7 +613,7 @@ describe('TemporaryChatPanel', () => {
     mocks.loadRuntimeTranscriptForPane
       .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
       .mockRejectedValueOnce(new Error('Transfer interrupted'))
-      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: null })
+      .mockResolvedValueOnce({ messages: [], turns: [olderTurn], beforeCursor: null })
     render(
       <TemporaryChatPanel
         currentProject={null}
@@ -602,14 +628,6 @@ describe('TemporaryChatPanel', () => {
       'Transfer interrupted'
     )
     expect(screen.getByText('Latest reply')).toBeInTheDocument()
-    const older = {
-      id: 'older',
-      role: 'user' as const,
-      content: 'Earlier question',
-      status: 'done' as const,
-      createdAt: '',
-    }
-    mocks.conversationMessages = [older, ...mocks.conversationMessages]
     await userEvent.click(screen.getByTestId('mock-retry-history'))
     expect(await screen.findByText('Earlier question')).toBeInTheDocument()
     expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()

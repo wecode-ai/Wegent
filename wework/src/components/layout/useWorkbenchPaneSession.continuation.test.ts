@@ -62,7 +62,7 @@ let lifecycleStore: RuntimeTaskLifecycleStore
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.send.mockResolvedValue(true)
+  mocks.send.mockReset().mockResolvedValue(true)
   mocks.guide.mockResolvedValue({ sent: true, turnId: 'answer-turn' })
   mocks.cancel.mockResolvedValue(true)
   lifecycleStore = new RuntimeTaskLifecycleStore('pane-continuation-test')
@@ -129,6 +129,105 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
 }
 
 describe('pane continuation without composer submission', () => {
+  test.each(
+    [false, true].flatMap(codeComments =>
+      [draft, 'Next draft'].map(nextDraft => ({ codeComments, nextDraft }))
+    )
+  )(
+    'preserves a newer draft when an earlier send completes ($nextDraft, codeComments=$codeComments)',
+    async ({ codeComments, nextDraft }) => {
+      let finishSend!: (accepted: boolean) => void
+      mocks.send.mockReturnValueOnce(
+        new Promise<boolean>(resolve => {
+          finishSend = resolve
+        })
+      )
+      const { result } = await renderSession()
+      if (!codeComments) act(() => result.current.clearCodeComments())
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+
+      // The buffered composer clears on submit, then publishes the next draft.
+      act(() => {
+        result.current.setInput('')
+        result.current.setInput(nextDraft)
+      })
+      mocks.setInput.mockClear()
+      await act(async () => {
+        finishSend(true)
+        expect(await submission).toBe(true)
+      })
+
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([false, true])(
+    'clears the submitted draft when no newer edit exists (codeComments=%s)',
+    async codeComments => {
+      const { result } = await renderSession()
+      if (!codeComments) act(() => result.current.clearCodeComments())
+
+      await act(async () => {
+        expect(await result.current.send(draft)).toBe(true)
+      })
+
+      expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, '')
+    }
+  )
+
+  test('preserves an externally replaced draft when an earlier send completes', async () => {
+    let finishSend!: (accepted: boolean) => void
+    mocks.send.mockReturnValueOnce(
+      new Promise<boolean>(resolve => {
+        finishSend = resolve
+      })
+    )
+    const { result, rerender } = await renderSession()
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+    const context = mocks.context.projectChat as { inputByScope: Record<string, string> }
+    context.inputByScope = { [scopeKey]: 'Programmatically replaced draft' }
+    rerender()
+
+    await act(async () => {
+      finishSend(true)
+      expect(await submission).toBe(true)
+    })
+
+    expect(result.current.input).toBe('Programmatically replaced draft')
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test('does not clear a shared draft after the submitting pane unmounts', async () => {
+    let finishSend!: (accepted: boolean) => void
+    mocks.send.mockReturnValueOnce(
+      new Promise<boolean>(resolve => {
+        finishSend = resolve
+      })
+    )
+    const { result, unmount } = await renderSession()
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+    unmount()
+
+    await act(async () => {
+      finishSend(true)
+      expect(await submission).toBe(true)
+    })
+
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
   test.each([
     { running: false, accepted: true },
     { running: false, accepted: false },

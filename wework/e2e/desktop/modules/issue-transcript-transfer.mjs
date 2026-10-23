@@ -132,7 +132,7 @@ export async function verifyIssueTranscriptTransfer({
   let snapshotId
   let totalBytes
   for (;;) {
-    const response = await request('/api/v1/runtime-work/transcript', {
+    const response = await request('/api/runtime-work/transcript', {
       ...query,
       ...(offset ? { transcriptTransfer: { snapshotId, offset } } : {}),
     })
