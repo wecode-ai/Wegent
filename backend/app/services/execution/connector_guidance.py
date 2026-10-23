@@ -132,12 +132,30 @@ def build_connector_authorization_prompt(
     return "\n".join(lines)
 
 
+CONNECTOR_LINK_RULES = """## Connector tool links
+
+- Present a link exactly as the connector tool returned it, character for character.
+- Never derive another URL from it. Decoding a deep link (for example the
+  `redirect_url` parameter of a `dingtalk://` link) produces an in-app page that
+  needs the client session and fails in a browser.
+- If the returned link uses an app scheme, say it opens in that app instead of
+  offering a "web version" you constructed.
+""".rstrip()
+
+
+def _is_in_use(app: ConnectorApp, mention: str) -> bool:
+    """Whether this turn's tool surface exposes the app."""
+    if app.tool_loading_mode == "static":
+        return True
+    return _matches_mention(app, mention) or _matches_keywords(app, mention)
+
+
 def build_connector_guidance_section(
     db: Session, user: User, *, mention: str = ""
 ) -> str:
     """Return the guidance section for the user's connector apps."""
     try:
-        _, pending = connector_apps_by_state(db, user)
+        available, pending = connector_apps_by_state(db, user)
     except Exception:  # Guidance must never block task execution.
         logger.exception(
             "[ConnectorGuidance] failed to resolve apps user_id=%s", user.id
@@ -149,21 +167,25 @@ def build_connector_guidance_section(
     selected = [
         app
         for app in pending
-        if not _has_personal_mcp_config(user, app)
-        and (
-            app.tool_loading_mode == "static"
-            or _matches_mention(app, mention)
-            or _matches_keywords(app, mention)
-        )
+        if not _has_personal_mcp_config(user, app) and _is_in_use(app, mention)
     ]
-    if not selected:
+    in_use = [app for app in available if _is_in_use(app, mention)]
+
+    sections: list[str] = []
+    if selected:
+        sections.append(build_connector_authorization_prompt(selected))
+    if in_use:
+        # Authorized apps still need a rule against inventing alternative links.
+        sections.append(CONNECTOR_LINK_RULES)
+    if not sections:
         return ""
     logger.info(
-        "[ConnectorGuidance] user_id=%s pending=%s",
+        "[ConnectorGuidance] user_id=%s pending=%s in_use=%s",
         user.id,
         [app.slug for app in selected],
+        [app.slug for app in in_use],
     )
-    return build_connector_authorization_prompt(selected)
+    return "\n\n".join(sections)
 
 
 def append_turn_guidance(prompt: Union[str, list], section: str) -> Union[str, list]:

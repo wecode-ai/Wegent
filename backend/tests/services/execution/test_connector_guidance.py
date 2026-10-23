@@ -85,7 +85,7 @@ def test_guidance_links_open_the_authorization_dialog(
     assert "Authorized and ready" not in section
 
 
-def test_guidance_is_skipped_when_every_app_is_connected(
+def test_connected_apps_get_link_rules_without_an_authorization_prompt(
     test_db: Session, test_admin_user: User, test_user: User
 ) -> None:
     _create_app(test_db, test_admin_user, slug="connected-app")
@@ -95,10 +95,11 @@ def test_guidance_is_skipped_when_every_app_is_connected(
         test_db, test_user, mention="connected-app app"
     )
 
-    assert section == ""
+    assert "connector-oauth" not in section
+    assert section == connector_guidance.CONNECTOR_LINK_RULES
 
 
-def test_lazy_apps_stay_out_of_the_global_guidance(
+def test_lazy_apps_stay_out_of_the_guidance_until_the_message_asks_for_them(
     test_db: Session, test_admin_user: User, test_user: User
 ) -> None:
     _create_app(
@@ -109,11 +110,39 @@ def test_lazy_apps_stay_out_of_the_global_guidance(
         tool_loading_mode="lazy",
     )
 
-    section = connector_guidance.build_connector_guidance_section(
+    unmatched = connector_guidance.build_connector_guidance_section(
+        test_db, test_user, mention="unrelated work"
+    )
+    matched = connector_guidance.build_connector_guidance_section(
         test_db, test_user, mention="lazy-app app"
     )
 
-    assert section == ""
+    assert unmatched == ""
+    assert matched == connector_guidance.CONNECTOR_LINK_RULES
+
+
+def test_authorized_app_adds_link_rules_and_still_keeps_pending_links(
+    test_db: Session, test_admin_user: User, test_user: User
+) -> None:
+    """A turn that uses one app and needs another must carry both sections."""
+    _create_app(test_db, test_admin_user, slug="ready-app")
+    _create_app(test_db, test_admin_user, slug="pending-app")
+    _connect(test_db, "ready-app", test_user.id)
+
+    section = connector_guidance.build_connector_guidance_section(
+        test_db, test_user, mention="ready-app and pending-app"
+    )
+
+    assert section.startswith("## Connector apps")
+    assert "wegent://modal/connector-oauth?slug=pending-app" in section
+    assert "connector-oauth?slug=ready-app" not in section
+    assert section.endswith(connector_guidance.CONNECTOR_LINK_RULES)
+
+
+def test_link_rules_forbid_deriving_a_web_url_from_a_deep_link() -> None:
+    """DingTalk report links only work inside the client session."""
+    assert "redirect_url" in connector_guidance.CONNECTOR_LINK_RULES
+    assert "web version" in connector_guidance.CONNECTOR_LINK_RULES
 
 
 def test_connector_guidance_travels_with_the_user_turn(
