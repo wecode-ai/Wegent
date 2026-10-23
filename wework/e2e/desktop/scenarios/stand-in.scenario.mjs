@@ -227,7 +227,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       assert.equal(
         await control.command(
           'getElementCount',
-          '[data-testid="stand-in-open"] svg[data-state="enabled"] circle'
+          '[data-testid="stand-in-open"] svg[data-state="enabled"] > use, [data-testid="stand-in-open"] svg[data-state="enabled"] .stand-in-icon-shadow > use'
         ),
         '2'
       )
