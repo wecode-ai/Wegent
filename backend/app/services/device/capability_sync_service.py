@@ -33,6 +33,7 @@ from app.services.device.plugin_sync_protocol import (
 )
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
+from app.services.plugin_write_errors import PluginWriteError
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +315,14 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             if not result.acknowledged:
                 return result
 
-            latest = await asyncio.to_thread(load_payload)
+            try:
+                latest = await asyncio.to_thread(load_payload)
+            except PluginWriteError:
+                # A concurrent plugin writer holds the account lease and will
+                # deliver its own newer snapshot, so the acknowledged snapshot
+                # stands; the deferred write is reported when this response is
+                # recorded.
+                return result
             if capability_snapshot(latest) == capability_snapshot(payload) and not any(
                 item.status == "superseded" for item in result.plugins
             ):

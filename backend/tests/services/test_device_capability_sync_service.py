@@ -15,6 +15,7 @@ from app.services.device.capability_sync_service import (
     capability_snapshot,
 )
 from app.services.device.runtime_route import RuntimeRoute
+from app.services.plugin_write_errors import PluginWriteError
 
 
 class FakeSio:
@@ -474,6 +475,29 @@ async def test_sync_latest_device_capabilities_does_not_retry_transport_failure(
 
     assert result.acknowledged is False
     assert result.success is False
+    assert dispatch.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_sync_latest_device_capabilities_keeps_ack_when_reload_is_contended():
+    service = DeviceCapabilitySyncService()
+    payload = {"mode": "replace", "skills": [], "plugins": [], "mcps": []}
+    load_payload = Mock(side_effect=[payload, PluginWriteError("plugin_write_busy")])
+    acknowledged = DeviceCapabilitySyncResult(
+        device_id="device-1",
+        success=True,
+        acknowledged=True,
+    )
+    dispatch = AsyncMock(return_value=acknowledged)
+    service.sync_device_payload = dispatch
+
+    result = await service.sync_latest_device_capabilities(
+        user_id=7,
+        device_id="device-1",
+        load_payload=load_payload,
+    )
+
+    assert result is acknowledged
     assert dispatch.await_count == 1
 
 

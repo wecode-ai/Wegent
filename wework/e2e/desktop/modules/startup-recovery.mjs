@@ -43,7 +43,9 @@ export async function verifyStartupRecovery({ appBinary, resultDir, electronRoot
     try {
       evidence = JSON.parse(await readFile(join(root, 'evidence.json'), 'utf8'))
     } catch (error) {
-      if (error.code !== 'ENOENT') throw error
+      // Keep polling while the child is mid-write: a missing file or a
+      // partially written JSON payload both mean the evidence is not ready.
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
     }
     if (evidence) {
       assert.equal(evidence.error, undefined, evidence.error)
