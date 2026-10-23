@@ -35,6 +35,10 @@ import {
 } from './native-terminal-diagnostics'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
+  getDesktopControlDiagnostics,
+  recordDesktopControlPhase,
+} from './desktop-control-diagnostics'
+import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
   startConversationDiagnosticCapture,
@@ -3059,6 +3063,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
@@ -3328,11 +3333,13 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
-  const pollForCommand = () =>
-    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
+  const pollForCommand = () => {
+    recordDesktopControlPhase('poll-started')
+    return fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
       cache: 'no-store',
       headers: desktopControlHeaders(),
     })
+  }
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
@@ -3347,6 +3354,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   while (true) {
     try {
       const response = await commandRequest
+      recordDesktopControlPhase('poll-headers-received')
       if (response.status === 204) {
         commandRequest = pollForCommand()
         continue
@@ -3355,7 +3363,9 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      recordDesktopControlPhase('command-decoded', command)
       await postDesktopControlStarted(url, command, clientId)
+      recordDesktopControlPhase('start-acknowledged', command)
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3368,8 +3378,10 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           error: error instanceof Error ? error.message : String(error),
         }
       }
+      recordDesktopControlPhase('action-completed', command)
       try {
         await postDesktopControlResult(url, result)
+        recordDesktopControlPhase('result-acknowledged', command)
       } catch (error) {
         console.error('[Wework] Desktop E2E result acknowledgement failed:', {
           commandId: command.id,
@@ -3405,6 +3417,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       commandRequest = pollForCommand()
     } catch (error) {
+      recordDesktopControlPhase('client-error')
       console.error('[Wework] Desktop E2E control client failed:', error)
       await waitForDesktopControlTick()
       commandRequest = pollForCommand()

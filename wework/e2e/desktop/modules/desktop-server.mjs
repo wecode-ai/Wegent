@@ -1283,11 +1283,15 @@ class DesktopE2EServer {
     if (commandIndex < 0) return false
 
     const { command } = this.commandQueue[commandIndex]
-    this.commandHistory.push({
+    const diagnostic = {
       ...command,
       clientId,
       queuedAt: this.commandResults.get(command.id)?.queuedAt,
       deliveredAt: new Date().toISOString(),
+    }
+    this.commandHistory.push(diagnostic)
+    response.once('finish', () => {
+      diagnostic.responseFinishedAt = new Date().toISOString()
     })
     json(response, 200, command)
     return true

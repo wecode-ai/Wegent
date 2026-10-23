@@ -66,7 +66,13 @@ test('delivers the runner wait budget to the renderer and preserves explicit bud
     await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true, value: 'ready' })
     assert.equal(await result, 'ready')
     const diagnostic = control.commandHistory.find(entry => entry.id === command.id)
-    for (const field of ['queuedAt', 'deliveredAt', 'startedAt', 'resultReceivedAt']) {
+    for (const field of [
+      'queuedAt',
+      'deliveredAt',
+      'responseFinishedAt',
+      'startedAt',
+      'resultReceivedAt',
+    ]) {
       assert.ok(Number.isFinite(Date.parse(diagnostic[field])), `Missing ${field}`)
     }
     assert.ok(Date.parse(diagnostic.queuedAt) <= Date.parse(diagnostic.deliveredAt))

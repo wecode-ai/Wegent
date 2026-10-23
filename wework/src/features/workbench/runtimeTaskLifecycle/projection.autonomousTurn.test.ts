@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
-import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
+import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import { updateRuntimeWorkTask } from '../workbenchRuntimeHelpers'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { isRuntimeTaskConfirmedActive, isRuntimeTaskExecutionRunning } from './projection'
 
@@ -24,7 +25,7 @@ const correction: RuntimeTaskSummary = {
   status: 'running',
   threadStatus: 'active',
   turnStatus: 'inProgress',
-  // Wire summaries omit the prior completion while the executor retains it internally.
+  // Explicit null clears prior completion in clients that merge task summaries.
   completedAt: null,
   updatedAt: 1792773818072,
 }
@@ -47,6 +48,32 @@ test('projects a supervisor correction as running before its held model response
     canSend: false,
   })
   expect(store.getTask(address)?.task?.completedAt).toBeNull()
+})
+
+test('keeps completion cleared when a running summary round-trips through the work list cache', () => {
+  const store = new RuntimeTaskLifecycleStore('supervisor-correction-cache')
+  const work: RuntimeWorkListResponse = {
+    projects: [],
+    chats: [
+      {
+        deviceId: address.deviceId,
+        workspacePath: '/workspace',
+        available: true,
+        tasks: [completed],
+      },
+    ],
+    totalTasks: 1,
+  }
+  store.syncRuntimeWork(work)
+  store.syncRuntimeTask(address, correction)
+
+  const updated = updateRuntimeWorkTask(work, address, correction)!
+  store.syncRuntimeWork(updated)
+
+  expect(updated.chats[0].tasks[0].completedAt).toBeNull()
+  expect(isRuntimeTaskConfirmedActive(updated.chats[0].tasks[0])).toBe(true)
+  expect(store.getTask(address)?.task?.completedAt).toBeNull()
+  expect(store.getTask(address)?.derived.isRunning).toBe(true)
 })
 
 test.each([completedAt - 1, completedAt, completedAt + 1000])(
