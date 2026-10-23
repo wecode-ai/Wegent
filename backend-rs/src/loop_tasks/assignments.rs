@@ -243,7 +243,7 @@ async fn provider_get(state: &AppState, item_id: &str, user_id: i32) -> Result<(
 }
 
 /// `_get_issue` -> `_request`: one provider issue by number.
-async fn get_issue(
+pub(crate) async fn get_issue(
     state: &AppState,
     project: &ProjectRow,
     number: i64,

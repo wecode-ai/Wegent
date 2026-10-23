@@ -1931,6 +1931,9 @@ export function WorkbenchProvider({
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
+  const stableSearchRuntimeTranscriptForPane = useStableEvent(
+    runtimeTasks.searchRuntimeTranscriptForPane
+  )
   const resolveRuntimeContextUsage = useCallback(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
       const taskSelection =
@@ -2848,6 +2851,7 @@ export function WorkbenchProvider({
       reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
+      searchRuntimeTranscriptForPane: stableSearchRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
       renameRuntimeTask: stableRenameRuntimeTask,
       archiveRuntimeTask: stableArchiveRuntimeTask,
@@ -2956,6 +2960,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentDiff,
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
+      stableSearchRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,

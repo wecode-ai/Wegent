@@ -1787,6 +1787,7 @@
     "scroll_to_bottom": "下拉到底",
     "loading_conversation": "正在加载会话...",
     "load_older_messages": "加载更早记录",
+    "load_newer_messages": "加载后续记录",
     "loading_older_messages": "正在加载...",
     "empty_conversation_title": "开始新的对话",
     "empty_conversation_description": "在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。",

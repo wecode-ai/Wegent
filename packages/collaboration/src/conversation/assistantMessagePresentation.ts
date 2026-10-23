@@ -114,7 +114,7 @@ export function isCancelledAssistantMessage(
   return message.runtimeStatus === "cancelled";
 }
 
-export function isCancelledPlaceholderContent(content: string): boolean {
+function isCancelledPlaceholderContent(content: string): boolean {
   return ["interrupted", "cancelled", "canceled", "aborted"].includes(
     content.trim().toLowerCase(),
   );
@@ -138,6 +138,21 @@ export function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   if (content === error) return true;
 
   return RAW_FAILED_MESSAGE_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+/** Applies the same prose visibility rules to rendering and search projection. */
+export function getAssistantContentPresentation(message: WorkbenchMessage): {
+  content: string;
+  hidden: boolean;
+} {
+  const hidden =
+    shouldHideFailedAssistantContent(message) ||
+    (isCancelledAssistantMessage(message) &&
+      isCancelledPlaceholderContent(message.content));
+  return {
+    content: hidden ? "" : stripPluginWorkspaceResultMarkers(message.content),
+    hidden,
+  };
 }
 
 export function getDisplayProcessingBlocks(
@@ -173,18 +188,25 @@ export function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   );
 }
 
+/** Preserves block identity after applying the assistant's visible-content rules. */
+export function getAssistantSearchPresentation(message: WorkbenchMessage): {
+  content: string;
+  blocks: ProcessingBlock[];
+} {
+  const { content } = getAssistantContentPresentation(message);
+  const blocks = getDisplayProcessingBlocks(
+    message.blocks,
+    isCancelledAssistantMessage(message),
+    content,
+  );
+  return { content, blocks };
+}
+
 /** Returns only message prose in the same order as the rendered assistant timeline. */
 export function getAssistantSearchTextSources(
   message: WorkbenchMessage,
 ): string[] {
-  const cancelled = isCancelledAssistantMessage(message);
-  const hidden =
-    shouldHideFailedAssistantContent(message) ||
-    (cancelled && isCancelledPlaceholderContent(message.content));
-  const content = hidden
-    ? ""
-    : stripPluginWorkspaceResultMarkers(message.content);
-  const blocks = getDisplayProcessingBlocks(message.blocks, cancelled, content);
+  const { content, blocks } = getAssistantSearchPresentation(message);
   const segments = getOrderedRuntimeDisplaySegments(
     message.runtimeDisplayItems,
     blocks,

@@ -19,6 +19,9 @@ mod execution_timestamp_tests;
 #[path = "task_lookup_tests.rs"]
 mod task_lookup_tests;
 
+#[path = "transcript_turn_status_tests.rs"]
+mod transcript_turn_status_tests;
+
 /// Restores one environment variable when a test finishes.
 struct ScalarEnv {
     key: &'static str,

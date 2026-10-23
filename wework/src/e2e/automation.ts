@@ -2426,6 +2426,33 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getConversationSearchHighlightMetrics': {
+      const containers = findDesktopControlElements(command.selector).filter(
+        element => element.textContent?.trim() === command.text
+      )
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      const needle = query.trim().toLowerCase()
+      const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
+      const ranges = Array.from(highlights)
+        .filter(([name]) => /^conversation-search-.+-active$/.test(name))
+        .flatMap(([, highlight]) => Array.from(highlight))
+        .flatMap(range => {
+          const container = containers.find(
+            element =>
+              element.contains(range.startContainer) && element.contains(range.endContainer)
+          )
+          if (range.collapsed || !container) return []
+          const prefix = range.cloneRange()
+          prefix.selectNodeContents(container)
+          prefix.setEnd(range.startContainer, range.startOffset)
+          const occurrence = needle ? prefix.toString().toLowerCase().split(needle).length - 1 : 0
+          const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
+          return [{ text: range.toString(), occurrence, top, bottom, left, right, width, height }]
+        })
+      return JSON.stringify({ query, ranges })
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {

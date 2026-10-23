@@ -505,11 +505,19 @@ pub struct LoopItemRepository<'a, M> {
 /// their `resource_type` guards (execution bindings, collaborator rows, and
 /// owned chat agents).
 fn visible_item_filter_sql(user_id: i32, default_security: &str) -> String {
+    let related = related_item_filter_sql(user_id);
     format!(
         " AND (coalesce(CASE JSON_EXTRACT(loop_items.metadata, '$.\"security_level\"') \
          WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, \
          '$.\"security_level\"')) END, '{default_security}') = 'open' \
-         OR loop_items.created_by_user_id = {user_id} \
+         OR {related})"
+    )
+}
+
+/// Shared single-table-inheritance predicate for an Issue's related users.
+fn related_item_filter_sql(user_id: i32) -> String {
+    format!(
+        "loop_items.created_by_user_id = {user_id} \
          OR loop_items.assignee_user_id = {user_id} \
          OR loop_items.id IN (SELECT loop_items.loop_item_id \n\
          FROM loop_items \n\
@@ -527,7 +535,7 @@ fn visible_item_filter_sql(user_id: i32, default_security: &str) -> String {
          AND loop_items.status = 'active' \
          AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-         AND loop_items.resource_type IN ('chat_agent')))"
+         AND loop_items.resource_type IN ('chat_agent'))"
     )
 }
 
@@ -789,21 +797,11 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .mysql
             .fetch_optional(
                 &format!(
-                    "SELECT loop_items.id AS loop_items_id \nFROM loop_items \n\
-                     WHERE loop_items.id = '{item_id}' AND (loop_items.created_by_user_id = {user_id} \
-                     OR loop_items.assignee_user_id = {user_id} \
-                     OR loop_items.id IN (SELECT loop_items.loop_item_id FROM loop_items \
-                         WHERE loop_items.task_user_id = {user_id} \
-                         AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
-                             ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))) \
-                     OR loop_items.id IN (SELECT loop_item_collaborators.loop_item_id FROM loop_item_collaborators \
-                         WHERE loop_item_collaborators.user_id = {user_id}) \
-                     OR loop_items.assignee_agent_id IN (SELECT loop_items.id FROM loop_items \
-                         WHERE loop_items.created_by_user_id = {user_id} AND loop_items.status = 'active' \
-                         AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
-                             ('1970-01-01 00:00:00', '1970-01-01 00:00:01')))) \n LIMIT 1",
+                    "SELECT loop_items.id AS loop_items_id FROM loop_items \
+                     WHERE loop_items.id = ? AND ({}) LIMIT 1",
+                    related_item_filter_sql(user_id)
                 ),
-                (),
+                (item_id,),
             )
             .await?;
         Ok(row.is_some())

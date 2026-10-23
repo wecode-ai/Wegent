@@ -509,16 +509,54 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs"
 
-assert_desktop_case "uninstall transport faults select real cloud recovery" \
+assert_desktop_case "cloud history search selects its real cloud conversation checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-11","name":"Cloud / shard 11","segments":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/cloud-history-search.mjs"
+
+assert_desktop_case "shared history search selects local and cloud conversation checkpoints" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-move-recovery"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-15","name":"Core / shard 15","segments":"running-conversation-history"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-11","name":"Cloud / shard 11","segments":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/terminal-history-search.mjs"
+
+assert_desktop_case "plugin uninstall scenario selects its independent checkpoints" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
-  "wework/e2e/desktop/modules/transport-fault-proxy.mjs" \
+  "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs"
+
+assert_desktop_case "shared transport faults select board recovery and cloud history search" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-board-move-recovery"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-11","name":"Cloud / shard 11","segments":"conversation-state"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/transport-fault-proxy.mjs"
+
+assert_desktop_case "transport fault tests select cloud recovery and history search" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-11","name":"Cloud / shard 11","segments":"conversation-state"},{"id":"cloud-16","name":"Cloud / shard 16","segments":"plugin-uninstall-lost-response,plugin-uninstall-unknown-result"},{"id":"cloud-19","name":"Cloud / shard 19","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race"},{"id":"cloud-20","name":"Cloud / shard 20","segments":"plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/scripts/plugin-fault-proxy.test.mjs"
 
 for uninstall_path in \

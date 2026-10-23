@@ -6877,3 +6877,6 @@ fn extract_text(item: &Value) -> Option<String> {
 #[cfg(test)]
 #[path = "codex/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::environment::LaunchEnvironment;

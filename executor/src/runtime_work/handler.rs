@@ -147,6 +147,7 @@ mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_search;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -1123,6 +1124,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.search" => self.search_transcript(payload).await,
             "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
             "runtime.tasks.transcript.export" => self.export_transcript_segment(payload).await,
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,

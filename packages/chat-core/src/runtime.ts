@@ -174,6 +174,27 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   navigationOnly?: boolean;
 }
 
+export interface RuntimeTranscriptSearchRequest extends RuntimeTaskAddress {
+  query: string;
+  limit?: number;
+}
+
+export interface RuntimeTranscriptSearchMatch {
+  messageId?: string;
+  itemId?: string;
+  turnId?: string;
+  /** Question labels required to resolve this reply's visible occurrences. */
+  replyQuestions?: string[];
+  occurrence: number;
+  cursor: string;
+}
+
+export interface RuntimeTranscriptSearchResponse {
+  matches: RuntimeTranscriptSearchMatch[];
+  totalMatches: number;
+  isCapped: boolean;
+}
+
 export interface RuntimeTokenUsageBreakdown {
   totalTokens: number;
   inputTokens: number;

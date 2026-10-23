@@ -291,16 +291,19 @@ pub(super) fn push_user_message_once(
 }
 
 pub(crate) fn normalized_user_request_content(content: &str) -> String {
+    visible_user_request_content(content)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn visible_user_request_content(content: &str) -> &str {
     let request_content = content
         .find(CODEX_REQUEST_MARKER)
         .map(|index| &content[index + CODEX_REQUEST_MARKER.len()..])
         .filter(|request| !request.trim().is_empty())
         .unwrap_or(content);
-    let visible_content = strip_leading_application_context(request_content);
-    visible_content
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    strip_leading_application_context(request_content)
 }
 
 fn strip_leading_application_context(content: &str) -> &str {

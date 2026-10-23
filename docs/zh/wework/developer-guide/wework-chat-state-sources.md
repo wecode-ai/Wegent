@@ -316,6 +316,16 @@ Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示�
 
 这条链路必须同时覆盖组件竞态测试和真实桌面场景：保持一个任务运行，在已完成任务与运行中任务之间快速切换，切回后确认已完成任务的所有历史轮次仍然可见。
 
+## 会话内查找的可见正文
+
+查找的 item 单位与 occurrence 必须来自实际展示的正文。合法的
+`[WEGENT_PLUGIN_RESULT]` 行在展示和 item 定位前使用同一解析器移除；无效标记仍作为普通正文保留。
+
+缓存搜索的命中页和前后上下文页先按 `limit` 选择消息窗口，再扩展为所有涉及
+canonical turn 的完整连续区间。交错 turn 继续扩展到边界稳定，游标使用最终首尾消息。
+这样失败、取消、guidance 分段和正文去重始终基于完整投影，翻页不会改变已有命中的身份或可见性。
+查找上下文仍与原会话缓存隔离，退出后恢复原阅读状态。
+
 ## 长输出内存边界
 
 Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React state 中。`WorkbenchMessage.content`、thinking/text/plan block 的 `content`、tool block 的 `toolOutput` 都必须通过统一的预览窗口进入 `messages`：

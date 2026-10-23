@@ -383,6 +383,20 @@ The pane may therefore skip restoration only when both the loaded key and the di
 
 Cover this path with both a component race test and a real desktop scenario: keep one task running, switch rapidly between it and a completed task, then verify that every historical turn in the completed task remains visible after switching back.
 
+## Visible Text for Conversation Find
+
+Search item units and occurrences must use the text actually displayed. Display and
+item resolution strip valid `[WEGENT_PLUGIN_RESULT]` lines with the same parser;
+invalid markers remain ordinary text.
+
+Cached match and context pages first select a message window using `limit`, then
+expand it to the complete contiguous interval of every included canonical turn.
+Interleaved turns expand the interval until its boundaries stabilize; cursors use
+the final first and last messages. Failure, cancellation, guidance segments and
+text deduplication therefore use complete projections, so pagination preserves
+existing match identities and visibility. Search context stays separate from the
+original conversation cache and closing find restores its reading state.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:

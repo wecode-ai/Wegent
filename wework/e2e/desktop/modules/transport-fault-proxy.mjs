@@ -41,7 +41,7 @@ export class TransportFaultProxy {
     // Retain no headers, tokens, request bodies or device query strings.
     const entry = { method: request.method, path: url.pathname, unscoped: !url.search }
     this.requests.push(entry)
-    const fault = this.rule(entry)
+    const fault = this.rule(entry, request)
     entry.fault = fault
     if (fault === 'hold-request') {
       request.resume()
@@ -50,15 +50,10 @@ export class TransportFaultProxy {
     }
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
-      if (fault === 'hold-response' || fault === 'drop-response') {
+      if (fault === 'hold-response') {
         const chunks = []
         incoming.on('data', chunk => chunks.push(chunk))
         incoming.once('end', () => {
-          if (fault === 'drop-response') {
-            response.destroy()
-            entry.dropped = true
-            return
-          }
           entry.release = () =>
             new Promise(resolve => {
               response.once('finish', resolve)
@@ -67,6 +62,18 @@ export class TransportFaultProxy {
               entry.released = true
             })
           entry.committedResponseHeld = true
+        })
+        return
+      }
+      if (fault === 'drop-response') {
+        // Commit the real headers so Chromium cannot replay a pre-response disconnect.
+        response.writeHead(incoming.statusCode, incoming.headers)
+        response.flushHeaders()
+        incoming.resume()
+        incoming.once('end', () => {
+          entry.committedResponseDropped = true
+          entry.dropped = true
+          response.destroy()
         })
         return
       }

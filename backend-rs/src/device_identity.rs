@@ -52,6 +52,8 @@ struct DeviceSpec {
     device_id: Option<String>,
     #[serde(default, rename = "appDeviceId")]
     app_device_id: Option<String>,
+    #[serde(default, rename = "runtimeInstanceId")]
+    runtime_instance_id: Option<String>,
     #[serde(default, rename = "cloudConfig")]
     cloud_config: Option<CloudConfig>,
 }
@@ -63,6 +65,21 @@ struct CloudConfig {
 }
 
 impl DeviceKindRow {
+    /// `remote_control_is_enabled`: unknown explicit types never gain controls.
+    pub(crate) fn remote_control_enabled(&self) -> bool {
+        match self
+            .json
+            .get("spec")
+            .and_then(|spec| spec.get("deviceType"))
+        {
+            None => true,
+            Some(serde_json::Value::String(kind)) => {
+                matches!(kind.as_str(), "local" | "cloud" | "remote")
+            }
+            Some(_) => false,
+        }
+    }
+
     /// `device.json.get("spec", {})` parsed into the typed projection.
     fn spec(&self) -> DeviceSpec {
         self.json
@@ -241,11 +258,7 @@ fn unambiguous_device_identity_ids(devices: &[DeviceKindRow], device_id: &str) -
 }
 
 /// Source `app/services/device/runtime_route.py::RuntimeRouteIdentity`,
-/// reduced to the members the migrated device session endpoints consume.
-///
-/// The source identity also carries `runtime_device_id`,
-/// `runtime_instance_id`, and `app_device_id`; a consumer that needs those must
-/// extend this projection rather than re-derive the row lookup.
+/// shared by device sessions and runtime RPC dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeRouteIdentity {
     /// `logical_device_id`: the Kind `name`, or `app-record-<id>` for App
@@ -253,6 +266,10 @@ pub struct RuntimeRouteIdentity {
     pub logical_device_id: String,
     /// `device_type`: the normalized `spec.deviceType`.
     pub device_type: DeviceType,
+    /// The current Socket.IO transport route, which can differ from the Kind name.
+    pub runtime_device_id: String,
+    /// Reject an online route left behind by a different runtime installation.
+    pub runtime_instance_id: Option<String>,
 }
 
 /// Source `app/services/device/runtime_route.py::resolve_runtime_route_identity`:
@@ -278,7 +295,7 @@ where
 }
 
 /// Source `app/services/device/runtime_route.py::_identity_from_device`.
-fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> {
+pub(crate) fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> {
     // `if not runtime_device_id: return None`.
     if runtime_device_id(device).is_empty() {
         return None;
@@ -286,6 +303,12 @@ fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> 
     Some(RuntimeRouteIdentity {
         logical_device_id: record_route_id(device),
         device_type: DeviceType::from_spec(&device.spec()),
+        runtime_device_id: runtime_device_id(device),
+        runtime_instance_id: device
+            .spec()
+            .runtime_instance_id
+            .map(|id| id.trim().to_owned())
+            .filter(|id| !id.is_empty()),
     })
 }
 
@@ -717,6 +740,8 @@ mod tests {
         };
         let identity = identity_from_device(&row).expect("cloud identity");
         assert_eq!(identity.logical_device_id, "8afb8635");
+        assert_eq!(identity.runtime_device_id, "8afb8635");
+        assert_eq!(identity.runtime_instance_id, None);
         assert_eq!(identity.device_type, DeviceType::Cloud);
         assert_eq!(identity.device_type.value(), "cloud");
 
@@ -728,6 +753,7 @@ mod tests {
         };
         let identity = identity_from_device(&app).expect("app identity");
         assert_eq!(identity.logical_device_id, "app-record-268663");
+        assert_eq!(identity.runtime_device_id, "app-record-268663");
         assert_eq!(identity.device_type, DeviceType::App);
 
         // No runtime route id means no identity, like `_identity_from_device`.
