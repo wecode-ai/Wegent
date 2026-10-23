@@ -29,6 +29,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
   ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
+  ['@wegent/dsh-voice-input', 'wework-voice-input'],
 ] as const
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
@@ -46,6 +47,7 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-transcript-sync',
 ] as const
 const CORE_UI_BUNDLES = [
+  '@deepseek-ai/dsh-experimental-voice-input-bundle',
   '@wegent/dsh-conversation-export',
   '@wegent/dsh-ui-core-apps',
   '@wegent/dsh-ui-core-settings',
@@ -58,6 +60,7 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-home-developer',
   '@wegent/dsh-ui-git',
   '@wegent/dsh-ui-outputs',
+  '@wegent/dsh-voice-input',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
@@ -82,6 +85,7 @@ interface ProfileStamp extends RuntimeIdentity {
   managedPluginCopyVersion: number
   managedUiPlugins: boolean
   corePluginsFingerprint: string
+  managedBundles: readonly string[]
 }
 
 export interface BundledDshRuntime {
@@ -287,6 +291,9 @@ async function prepareProfile(options: {
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
+  const managedBundles: string[] = options.managedUiPlugins
+    ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
+    : [...CORE_HOST_BUNDLES]
   const expectedStamp: ProfileStamp = {
     managedPluginCopyVersion: 1,
     dshVersion: options.runtime.version,
@@ -294,12 +301,10 @@ async function prepareProfile(options: {
     sourceFingerprint: options.runtime.sourceFingerprint,
     managedUiPlugins: options.managedUiPlugins,
     corePluginsFingerprint: options.corePluginsFingerprint,
+    managedBundles,
   }
   const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
   const managedDependencyNames = Object.keys(managedDependencies)
-  const managedBundles: string[] = options.managedUiPlugins
-    ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
-    : [...CORE_HOST_BUNDLES]
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
@@ -315,6 +320,9 @@ async function prepareProfile(options: {
     currentManifest,
     managedDependencies
   )
+  const installationBundlesAreCurrent = managedBundles
+    .filter(name => !managedDependencyNames.includes(name))
+    .every(name => currentBundles.includes(name))
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   // Package installation replaces client files even when their bytes are unchanged.
@@ -322,7 +330,12 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
     mode: 0o600,
   })
-  if (stampIsCurrent && removedDependencies.size === 0 && coreDependenciesAreCurrent) {
+  if (
+    stampIsCurrent &&
+    removedDependencies.size === 0 &&
+    coreDependenciesAreCurrent &&
+    installationBundlesAreCurrent
+  ) {
     return
   }
 
@@ -623,7 +636,8 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
       current.managedUiPlugins === expected.managedUiPlugins &&
-      current.corePluginsFingerprint === expected.corePluginsFingerprint
+      current.corePluginsFingerprint === expected.corePluginsFingerprint &&
+      JSON.stringify(current.managedBundles) === JSON.stringify(expected.managedBundles)
     )
   } catch {
     return false

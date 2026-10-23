@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { accountCommandResult } from '../e2e/desktop/modules/account-auth-command.mjs'
 import {
-  accountCommandEvents,
-  accountCommandResult,
-} from '../e2e/desktop/modules/account-auth-command.mjs'
+  shellCommandResponse,
+  shellCommandPollResponse,
+} from '../e2e/desktop/modules/shell-command-response.mjs'
 
 test('programmatic shell calls preserve arguments and poll yielded commands', async () => {
   const request = {
@@ -18,10 +19,7 @@ test('programmatic shell calls preserve arguments and poll yielded commands', as
     ],
   }
   const command = "sh '/a path/plugin.sh'"
-  const [event] = accountCommandEvents(request, 'business', {
-    command,
-    workspacePath: '/workspace',
-  })
+  const [event] = shellCommandResponse(request, 'business', command, '/workspace')
   assert.equal(event.item.type, 'custom_tool_call')
   assert.equal(event.item.namespace, 'functions')
   assert.equal(event.item.call_id, 'business')
@@ -31,7 +29,7 @@ test('programmatic shell calls preserve arguments and poll yielded commands', as
     {
       exec_command: async args => {
         assert.deepEqual(args, { cmd: command, workdir: '/workspace', yield_time_ms: 1000 })
-        return 'Process running with session ID 123'
+        return { session_id: 123, output: '' }
       },
     },
     value => captured.push(value)
@@ -40,20 +38,20 @@ test('programmatic shell calls preserve arguments and poll yielded commands', as
     [{ type: 'custom_tool_call_output', call_id: 'business', output: captured[0] }],
     'business'
   )
-  const [poll] = accountCommandEvents(request, pending.pollId, { sessionId: pending.sessionId })
+  const [poll] = shellCommandPollResponse(request, pending.pollId, pending.sessionId)
   const pollRun = new Function('tools', 'text', `return (async () => { ${poll.item.input} })()`)
   await pollRun(
     {
       write_stdin: async args => {
         assert.equal(args.session_id, 123)
-        return 'PLUGIN_RECOVERY_OK'
+        return { exit_code: 0, output: 'PLUGIN_RECOVERY_OK' }
       },
     },
     value => captured.push(value)
   )
   assert.deepEqual(
     accountCommandResult(
-      [{ type: 'custom_tool_call_output', call_id: pending.pollId, output: captured[1] }],
+      [{ type: 'custom_tool_call_output', call_id: pending.pollId, output: captured.at(-1) }],
       'business'
     ),
     { output: 'PLUGIN_RECOVERY_OK' }
@@ -62,18 +60,12 @@ test('programmatic shell calls preserve arguments and poll yielded commands', as
 
 test('native commands keep their protocol and unsupported requests fail', () => {
   for (const name of ['exec_command', 'shell_command']) {
-    const events = accountCommandEvents({ tools: [{ name }] }, 'business', {
-      command: 'pwd',
-      workspacePath: '/workspace',
-    })
+    const events = shellCommandResponse({ tools: [{ name }] }, 'business', 'pwd', '/workspace')
     const item = events.find(event => event.type === 'response.output_item.done').item
     assert.equal(item.name, name)
     assert.equal(JSON.parse(item.arguments).workdir, '/workspace')
   }
-  assert.throws(
-    () => accountCommandEvents({}, 'business', { command: 'pwd' }),
-    /supported shell tool/
-  )
+  assert.throws(() => shellCommandResponse({}, 'business', 'pwd'), /supported shell tool/)
 })
 
 const output = (call_id, value) => ({ type: 'function_call_output', call_id, output: value })

@@ -14,7 +14,6 @@ from app.models.delivery import LoopItem, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
-from app.schemas.project_chat import ProjectChatMessageView
 from app.schemas.runtime_execution_snapshot import (
     RuntimeExecutionSnapshot,
     RuntimeExecutionTurnSnapshot,
@@ -53,47 +52,34 @@ def completed_activity_for_turn(
     )
 
 
-def restore_reconciled_execution_content(
-    db: Session, *, execution_id: int, event_name: str, payload: dict
-) -> tuple[ProjectChatMessageView, str] | None:
-    """Recover final text when a snapshot wins between event execution lookups."""
+def can_restore_reconciled_completion(
+    db: Session, *, execution: LoopItemExecution, event_name: str, payload: dict
+) -> bool:
+    """Allow final text repair after a snapshot won the terminal-state race."""
     if event_name != "response.completed":
-        return None
-    execution = (
-        db.query(LoopItemExecution)
-        .filter(LoopItemExecution.id == execution_id)
-        .populate_existing()
-        .with_for_update()
-        .one_or_none()
-    )
-    if execution is None or execution.status != "completed":
-        return None
-    sequence = payload.get("eventSeq", payload.get("event_seq"))
-    if isinstance(sequence, bool):
-        return None
+        return False
+    raw_sequence = payload.get("eventSeq", payload.get("event_seq"))
+    if isinstance(raw_sequence, bool):
+        return False
     try:
-        if int(sequence) <= execution.last_event_seq:
-            return None
+        sequence = int(raw_sequence)
     except (TypeError, ValueError):
-        return None
+        return False
+    # Keep the aggregate -> activity lock order and read the concurrent winner.
+    db.refresh(execution, with_for_update=True)
+    if execution.status != "completed" or sequence <= execution.last_event_seq:
+        return False
     activity = completed_activity_for_turn(
         db,
         device_ids=[execution.runtime_device_id],
         task_id=execution.runtime_task_id,
         turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
     )
-    metadata = (activity.metadata_json or {}) if activity is not None else {}
-    if (
-        str(metadata.get("execution_id")) != str(execution.id)
-        or "runtime_completed_at" not in metadata
-    ):
-        return None
-    return project_chat_service.project_runtime_event(
-        db,
-        device_id=execution.runtime_device_id,
-        runtime_task_id=execution.runtime_task_id,
-        event_name=event_name,
-        payload=payload,
+    return activity is not None and (
+        str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
+        and "runtime_completed_at" in (activity.metadata_json or {})
+        and activity.project_id == execution.cloud_project_id
+        and activity.task_id == execution.loop_item_id
     )
 
 

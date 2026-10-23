@@ -261,3 +261,24 @@ describe('stand-in notification read and delivery state', () => {
     expect(send).not.toHaveBeenCalled()
   })
 })
+
+it('delivers a live settlement when task discovery precedes its unread projection', () => {
+  vi.useFakeTimers()
+  try {
+    vi.setSystemTime(new Date('2026-10-23T12:00:00Z'))
+    const hook = renderHook(
+      ({ item, unread }: { item: RuntimeTaskReminderItem | null; unread: boolean }) =>
+        useStandInNotifications(inbox, item ? source(item, unread) : null, 'user', true, true),
+      { initialProps: { item: null, unread: false } }
+    )
+    vi.setSystemTime(new Date('2026-10-23T12:00:01Z'))
+    const item = completed(new Date().toISOString())
+    hook.rerender({ item, unread: false })
+    hook.rerender({ item, unread: true })
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.unreadCount).toBe(1)
+  } finally {
+    vi.useRealTimers()
+  }
+})

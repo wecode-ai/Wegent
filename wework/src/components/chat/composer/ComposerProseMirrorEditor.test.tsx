@@ -77,6 +77,30 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('inserts a delayed transcript once at the captured selection and supports undo', () => {
+    const { editorRef } = renderEditor('before ')
+    act(() => editorRef.current!.setValue('before ', 7))
+    const insertion = editorRef.current!.captureInsertion()
+    act(() => {
+      expect(insertion.insertText('语音')).toBe(true)
+    })
+    expect(editorRef.current!.getSnapshot().value).toBe('before 语音')
+    expect(insertion.insertText('duplicate')).toBe(false)
+    fireEvent.keyDown(screen.getByTestId('composer-editor'), { key: 'z', ctrlKey: true })
+    expect(editorRef.current!.getSnapshot().value).toBe('before ')
+  })
+
+  test('rejects a transcript after the draft changes even when its text is restored', () => {
+    const { editorRef } = renderEditor('original')
+    const insertion = editorRef.current!.captureInsertion()
+    act(() => {
+      editorRef.current!.setValue('changed')
+      editorRef.current!.setValue('original')
+    })
+    expect(insertion.insertText('stale')).toBe(false)
+    expect(editorRef.current!.getSnapshot().value).toBe('original')
+  })
+
   test.each([
     '~/worksapce/skills/test-skill/SKILL.md',
     '/tmp/skills/test-skill/SKILL.md',

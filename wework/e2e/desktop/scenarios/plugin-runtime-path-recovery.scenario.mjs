@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { lstat, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { accountCommandEvents, accountCommandResult } from '../modules/account-auth-command.mjs'
+import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
 import {
   verifyPluginEnabledState,
@@ -31,11 +31,14 @@ import {
 import {
   assistantMessage,
   readRequestBody,
-  requestAdvertisesProgrammaticExec,
-  requestAdvertisesShellTool,
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import {
+  requestAdvertisesShellCommand,
+  shellCommandPollResponse,
+  shellCommandResponse,
+} from '../modules/shell-command-response.mjs'
 import {
   closeComposerPluginPicker,
   openComposerPluginPicker,
@@ -501,26 +504,21 @@ export async function createDesktopScenario({
       const result = activeCall ? accountCommandResult(body.input, activeCall.id) : null
       let events
       if (result?.sessionId) {
-        events = accountCommandEvents(body, result.pollId, {
-          sessionId: result.sessionId,
-        })
+        events = shellCommandPollResponse(body, result.pollId, result.sessionId)
       } else if (result) {
         activeCall.output = result.output
         assert.ok(result.output.includes(activeCall.expected), 'Real plugin command failed')
         events = [assistantMessage(`${activeCall.id} completed`)]
-      } else if (
-        activeCall &&
-        (requestAdvertisesShellTool(body) || requestAdvertisesProgrammaticExec(body)) &&
-        JSON.stringify(body.input ?? '').includes(activeCall.prompt)
-      ) {
+      } else if (activeCall && JSON.stringify(body.input ?? '').includes(activeCall.prompt)) {
+        assert.ok(
+          requestAdvertisesShellCommand(body),
+          'Real Codex did not advertise shell execution'
+        )
         assert.ok(
           requestContainsSkillLocator(body, activeCall.skillPath, activeCall.skillName),
           'Real Codex did not discover the selected plugin skill from the recovered runtime'
         )
-        events = accountCommandEvents(body, activeCall.id, {
-          command: activeCall.command,
-          workspacePath,
-        })
+        events = shellCommandResponse(body, activeCall.id, activeCall.command, workspacePath)
       } else {
         // Temporary diagnostics: record why a request missed the fixture branches.
         const diagnostic = {
