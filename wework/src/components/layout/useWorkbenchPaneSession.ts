@@ -364,8 +364,12 @@ export function useWorkbenchPaneSession({
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
       // Native cleanup clears the entire page; retain an edited annotation batch.
+      const submittedAnnotations = contexts.filter(isBrowserAnnotationContext)
+      const currentAnnotations = codeCommentContextsRef.current.filter(isBrowserAnnotationContext)
       const preserveAnnotations =
-        reason === 'send_success' && codeCommentContextsRef.current !== contexts
+        reason === 'send_success' &&
+        (submittedAnnotations.length !== currentAnnotations.length ||
+          currentAnnotations.some(context => !submittedAnnotations.includes(context)))
       setCodeCommentContexts(current =>
         current.filter(
           context =>
