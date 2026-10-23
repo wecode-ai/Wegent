@@ -53,47 +53,70 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
       assert.equal(fs.lstatSync(logs).isSymbolicLink(), true);
       app.releaseSingleInstanceLock();
       fs.unlinkSync(logs);
+      const deviceChanged = input.state.startsWith('changed-device-');
+      const state = input.state.replace(/^changed-device-/, '');
       let retainedTarget = target;
-      if (input.state === 'empty-source' || input.state === 'nonempty-source') {
+      if (state === 'empty-source' || state === 'nonempty-source') {
         fs.mkdirSync(logs);
-        if (input.state === 'nonempty-source')
+        if (state === 'nonempty-source')
           fs.writeFileSync(path.join(logs, 'new.log'), 'new-logs');
-      } else if (input.state === 'invalid-journal') {
+      } else if (state === 'missing-parent') {
+        fs.rmdirSync(path.dirname(logs));
+      } else if (state === 'invalid-journal') {
         const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
         journal.source += '-unexpected';
         fs.writeFileSync(journalPath, JSON.stringify(journal));
-      } else if (input.state === 'replaced-target') {
+      } else if (state === 'replaced-target' || state === 'redirected-target') {
         retainedTarget += '.backup';
         fs.renameSync(target, retainedTarget);
-        fs.mkdirSync(target);
-        fs.writeFileSync(path.join(target, 'replacement.log'), 'replacement-logs');
+        if (state === 'redirected-target') fs.symlinkSync(retainedTarget, target, 'junction');
+        else {
+          fs.mkdirSync(target);
+          fs.writeFileSync(path.join(target, 'replacement.log'), 'replacement-logs');
+        }
+      }
+      if (deviceChanged) {
+        const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+        journal.device = (BigInt(journal.device) + 1n).toString();
+        fs.writeFileSync(journalPath, JSON.stringify(journal));
       }
       const journalBefore = fs.readFileSync(journalPath, 'utf8');
       const identityBefore = fs.statSync(retainedTarget, { bigint: true });
-      const recovers = input.state === 'missing-bridge' || input.state === 'empty-source';
+      const targetIdentityBefore = fs.lstatSync(target, { bigint: true });
+      const recovers = ['missing-bridge', 'empty-source', 'missing-parent'].includes(state);
       if (recovers) {
-        const recovered = await initializeWorkbenchDesktopData(options);
-        assert.deepEqual(recovered, initial);
-        assert.equal(app.isReady(), false, 'Log recovery must finish before Electron ready');
-        assert.equal(fs.lstatSync(logs).isSymbolicLink(), true);
-        assert.equal(fs.realpathSync(logs), fs.realpathSync(target));
-        // Exercise Electron only after recovery: this API recreates missing log directories.
-        assert.equal(app.getPath('logs'), logs);
-        assert.equal(fs.readFileSync(path.join(app.getPath('logs'), 'retained.log'), 'utf8'), 'original-logs');
-        app.releaseSingleInstanceLock();
+        for (let launch = 0; launch < 2; launch++) {
+          const recovered = await initializeWorkbenchDesktopData(options);
+          assert.deepEqual(recovered, initial);
+          assert.equal(app.isReady(), false, 'Log recovery must finish before Electron ready');
+          assert.equal(fs.lstatSync(logs).isSymbolicLink(), true);
+          assert.equal(fs.realpathSync(logs), fs.realpathSync(target));
+          assert.equal(fs.statSync(target, { bigint: true }).ino, identityBefore.ino);
+          assert.equal(fs.readFileSync(journalPath, 'utf8'), journalBefore);
+          // Exercise Electron only after recovery: this API recreates missing log directories.
+          assert.equal(app.getPath('logs'), logs);
+          assert.equal(fs.readFileSync(path.join(app.getPath('logs'), 'retained.log'), 'utf8'), 'original-logs');
+          assert.equal(fs.readFileSync(path.join(initial.userData, 'preferences.json'), 'utf8'), 'original-preferences');
+          app.releaseSingleInstanceLock();
+        }
       } else {
         await assert.rejects(initializeWorkbenchDesktopData(options));
-        if (input.state === 'nonempty-source') {
+        if (state === 'nonempty-source') {
           assert.equal(fs.lstatSync(logs).isDirectory(), true);
           assert.equal(fs.readFileSync(path.join(logs, 'new.log'), 'utf8'), 'new-logs');
         }
-        if (input.state === 'replaced-target')
+        if (state === 'replaced-target')
           assert.equal(fs.readFileSync(path.join(target, 'replacement.log'), 'utf8'), 'replacement-logs');
+        if (state === 'redirected-target') {
+          assert.equal(fs.lstatSync(target).isSymbolicLink(), true);
+          assert.equal(fs.realpathSync(target), fs.realpathSync(retainedTarget));
+        }
       }
       assert.equal(fs.readFileSync(path.join(retainedTarget, 'retained.log'), 'utf8'), 'original-logs');
       const identityAfter = fs.statSync(retainedTarget, { bigint: true });
       assert.equal(identityAfter.dev, identityBefore.dev);
       assert.equal(identityAfter.ino, identityBefore.ino);
+      assert.equal(fs.lstatSync(target, { bigint: true }).ino, targetIdentityBefore.ino);
       assert.equal(fs.readFileSync(journalPath, 'utf8'), journalBefore);
       assert.equal(fs.readFileSync(path.join(initial.userData, 'preferences.json'), 'utf8'), 'original-preferences');
       process.stdout.write(JSON.stringify({ state: input.state, recovered: recovers,
@@ -109,6 +132,11 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
     'nonempty-source',
     'invalid-journal',
     'replaced-target',
+    'changed-device-missing-bridge',
+    'changed-device-empty-source',
+    'changed-device-missing-parent',
+    'changed-device-replaced-target',
+    'changed-device-redirected-target',
   ]
   const evidence = []
   for (const state of states) {
@@ -127,7 +155,12 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
     )
     const result = JSON.parse(stdout)
     assert.equal(result.state, state)
-    assert.equal(result.recovered, state === 'missing-bridge' || state === 'empty-source')
+    assert.equal(
+      result.recovered,
+      ['missing-bridge', 'empty-source', 'missing-parent'].includes(
+        state.replace(/^changed-device-/, '')
+      )
+    )
     assert.equal(result.journalPreserved, true)
     assert.equal(result.logIdentityPreserved, true)
     assert.equal(result.logsPreserved, true)

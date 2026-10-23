@@ -1448,7 +1448,7 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           node wework/e2e/desktop/run-checkpoints.mjs \
-            --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+            --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design,workbench-mode
 
       - name: Save shared Wework Electron build dependencies
         if: steps.macos-build.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'

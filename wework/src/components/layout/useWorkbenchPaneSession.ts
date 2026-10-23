@@ -311,6 +311,17 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, projectChat]
   )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
+  const draftOwnershipRef = useRef({ scopeKey: inputScopeKey, value: input, revision: 0 })
+  if (
+    draftOwnershipRef.current.scopeKey !== inputScopeKey ||
+    draftOwnershipRef.current.value !== input
+  ) {
+    draftOwnershipRef.current = {
+      scopeKey: inputScopeKey,
+      value: input,
+      revision: draftOwnershipRef.current.revision + 1,
+    }
+  }
   const setInputForScope = projectChat.setInputForScope
   const scopedSetInput = useCallback(
     (value: string) => setInputForScope(inputScopeKey, value),
@@ -341,8 +352,13 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, setErrorForScope]
   )
   const clearError = useCallback(() => setError(null), [setError])
+  const markDraftEdited = useCallback(() => {
+    draftOwnershipRef.current.revision += 1
+    clearError()
+  }, [clearError])
   const setInput = useCallback(
     (value: string) => {
+      draftOwnershipRef.current.revision += 1
       scopedSetInput(value)
     },
     [scopedSetInput]
@@ -1822,6 +1838,19 @@ export function useWorkbenchPaneSession({
   const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<boolean> =
     useCallback(
       async (inputOverride, options = {}) => {
+        const submittedDraftOwnership = {
+          scopeKey: inputScopeKey,
+          revision: draftOwnershipRef.current.revision,
+        }
+        const clearSubmittedInput = () => {
+          const current = draftOwnershipRef.current
+          if (
+            current.scopeKey === submittedDraftOwnership.scopeKey &&
+            current.revision === submittedDraftOwnership.revision
+          ) {
+            setInput('')
+          }
+        }
         const submittedInput = (inputOverride ?? input).trim()
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
@@ -1881,7 +1910,7 @@ export function useWorkbenchPaneSession({
                 setError(response.error || i18n.t('workbench.goal_set_failed'))
                 return false
               }
-              setInput('')
+              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, response.goal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
@@ -1894,7 +1923,7 @@ export function useWorkbenchPaneSession({
               initialGoal,
             }
             if (paneIsBusy) {
-              setInput('')
+              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
@@ -1912,7 +1941,7 @@ export function useWorkbenchPaneSession({
               retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
             }
             if (result.accepted) {
-              setInput('')
+              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setCodeCommentContexts([])
@@ -1925,7 +1954,7 @@ export function useWorkbenchPaneSession({
 
           const draftGoal = createPendingRuntimeGoal(submittedInput)
           const initialGoal = runtimeGoalCreateInput(draftGoal)
-          setInput('')
+          clearSubmittedInput()
           setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
           setGoalDraftActive(false)
           const optimisticMessage = createRuntimeUserMessage(submittedInput, currentAttachments, {
@@ -1976,7 +2005,7 @@ export function useWorkbenchPaneSession({
             },
           })
           if (sent) {
-            setInput('')
+            clearSubmittedInput()
             if (!isRuntimeTaskAddress(sent)) {
               appendLocalUserMessage(submittedInput, currentAttachments, {
                 runtimeGoalRequest: true,
@@ -2021,7 +2050,7 @@ export function useWorkbenchPaneSession({
             const compacted = await compactRuntimePaneTask(currentRuntimeTask, {
               onError: setError,
             })
-            if (compacted) setInput('')
+            if (compacted) clearSubmittedInput()
             return compacted
           }
         }
@@ -2071,7 +2100,7 @@ export function useWorkbenchPaneSession({
           effectiveSubmittedInput ||
           (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
         if (!currentRuntimeTask) {
-          setInput('')
+          clearSubmittedInput()
           resetAttachments()
           let errorScopeKey = inputScopeKey
           let submissionScopeKey = inputScopeKey
@@ -2201,13 +2230,13 @@ export function useWorkbenchPaneSession({
                 currentAttachments.forEach(addExistingAttachment)
                 setCodeCommentContexts(codeCommentContexts)
               } else {
-                setInput('')
+                clearSubmittedInput()
                 clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
               }
               return sent
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
-            setInput('')
+            clearSubmittedInput()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             if (options.guideWhenBusy) {
               await sendQueuedMessageAsGuidance(queuedMessage, true)
@@ -2228,7 +2257,7 @@ export function useWorkbenchPaneSession({
             retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
           }
           if (result.accepted) {
-            setInput('')
+            clearSubmittedInput()
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
@@ -2241,7 +2270,7 @@ export function useWorkbenchPaneSession({
               queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
-            setInput('')
+            clearSubmittedInput()
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
@@ -2269,12 +2298,12 @@ export function useWorkbenchPaneSession({
             if (!sent) {
               currentAttachments.forEach(addExistingAttachment)
             } else {
-              setInput('')
+              clearSubmittedInput()
             }
             return sent
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
-          setInput('')
+          clearSubmittedInput()
           if (options.guideWhenBusy) {
             await sendQueuedMessageAsGuidance(queuedMessage, true)
           }
@@ -2294,7 +2323,7 @@ export function useWorkbenchPaneSession({
           retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
         }
         if (result.accepted) {
-          setInput('')
+          clearSubmittedInput()
           setCodeCommentContexts([])
         } else if (isRuntimeTaskBusyError(sendError)) {
           const lifecycleAfterSend = currentRuntimeTask
@@ -2306,7 +2335,7 @@ export function useWorkbenchPaneSession({
             queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
-          setInput('')
+          clearSubmittedInput()
         } else {
           currentAttachments.forEach(addExistingAttachment)
           setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
@@ -3063,6 +3092,7 @@ export function useWorkbenchPaneSession({
     browserAnnotationCommand,
     input,
     setInput,
+    markDraftEdited,
     error,
     setError,
     clearError,

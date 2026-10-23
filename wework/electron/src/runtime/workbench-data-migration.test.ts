@@ -109,6 +109,32 @@ test('accepts a completed directory bridge after the device number changes', () 
   expect(fs.readFileSync(join(options.target, 'tasks.sqlite'), 'utf8')).toBe('original')
 })
 
+test.each(['directory', 'file'])('device changes do not relax default %s recovery', type => {
+  const options = entry()
+  const path = type === 'directory' ? join(options.source, 'tasks.sqlite') : options.source
+  write(path, 'original')
+  migrateWorkbenchDataEntry(options)
+  fs.unlinkSync(options.source)
+  const journal = JSON.parse(fs.readFileSync(options.journal, 'utf8'))
+  journal.device = (BigInt(journal.device) + 1n).toString()
+  // An interrupted file migration must also retain its strict identity check.
+  delete journal.completed
+  fs.writeFileSync(options.journal, JSON.stringify(journal))
+  const before = fs.readFileSync(options.journal, 'utf8')
+
+  recoverWorkbenchDataBridge(options)
+  if (type === 'file') recoverWorkbenchDataBridge(options, { allowDirectoryDeviceChange: true })
+
+  expect(fs.existsSync(options.source)).toBe(false)
+  expect(fs.readFileSync(options.journal, 'utf8')).toBe(before)
+  expect(
+    fs.readFileSync(
+      type === 'directory' ? join(options.target, 'tasks.sqlite') : options.target,
+      'utf8'
+    )
+  ).toBe('original')
+})
+
 test('empty-directory recovery rejects an ancestor alias into the migration target', () => {
   const options = entry()
   fs.mkdirSync(options.source, { recursive: true })

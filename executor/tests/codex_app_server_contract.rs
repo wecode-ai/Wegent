@@ -34,6 +34,10 @@ macro_rules! shared_runtime_tests {
     };
 }
 
+#[cfg(unix)]
+#[path = "codex_app_server_contract/config_write_lifecycle.rs"]
+mod config_write_lifecycle;
+
 shared_runtime_tests! {
 async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let _lock = env_lock().await;
@@ -974,8 +978,9 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     let fake_codex = write_fake_codex_with_pending_request(&request_marker);
     let client = CodexAppServerClient::new(fake_codex.display().to_string());
     let request_client = client.clone();
+    // Ordinary reads remain interruptible by a forced restart.
     let pending_request =
-        tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
+        tokio::spawn(async move { request_client.request("config/read", json!({})).await });
 
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -1003,8 +1008,9 @@ async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     let fake_codex = write_fake_codex_with_pending_request(&request_marker);
     let client = CodexAppServerClient::new(fake_codex.display().to_string());
     let request_client = client.clone();
+    // Ordinary reads remain interruptible when the runtime proxy changes.
     let pending_request =
-        tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
+        tokio::spawn(async move { request_client.request("config/read", json!({})).await });
 
     wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -1486,7 +1492,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"initialized"'*)
       ;;
-    *'"method":"plugin/list"'*)
+    *'"method":"config/read"'*)
       touch __REQUEST_MARKER__
       sleep 30
       ;;

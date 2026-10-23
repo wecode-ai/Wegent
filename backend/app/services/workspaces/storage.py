@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -148,32 +147,38 @@ def ensure_resource_grant(
         "entity_type": WORKSPACE_ENTITY_TYPE,
         "entity_id": str(workspace_id),
     }
-    updates = {
+    values = {
+        **identity,
         "role": role.value,
         "status": MemberStatus.APPROVED.value,
         "invited_by_user_id": added_by_user_id,
-        "updated_at": func.now(),
+        "requested_at": datetime.utcnow(),
     }
-    # Insert before locking: absent-row locking reads can deadlock independent
-    # grants through InnoDB gap locks. The unique identity also restores inactive
-    # grants atomically without replacing their audit history.
     db.flush()
-    if db.get_bind().dialect.name == "mysql":
-        statement = mysql_insert(ResourceMember).values(**identity, **updates)
-        statement = statement.on_duplicate_key_update(**updates)
+    # Ensure the unique row exists before locking it. Locking a missing identity
+    # would gap-lock unrelated grants on MySQL; existing audit metadata stays intact.
+    dialect = db.get_bind().dialect.name
+    if dialect == "mysql":
+        statement = mysql_insert(ResourceMember).values(**values)
+        statement = statement.on_duplicate_key_update(id=ResourceMember.id)
+    elif dialect == "sqlite":
+        statement = sqlite_insert(ResourceMember).values(**values)
+        statement = statement.on_conflict_do_nothing(index_elements=list(identity))
     else:
-        statement = sqlite_insert(ResourceMember).values(**identity, **updates)
-        statement = statement.on_conflict_do_update(
-            index_elements=list(identity), set_=updates
-        )
+        raise NotImplementedError(f"Unsupported resource grant dialect: {dialect}")
     db.execute(statement)
-    return (
+    grant = (
         db.query(ResourceMember)
         .filter_by(**identity)
-        .with_for_update()
         .populate_existing()
+        .with_for_update()
         .one()
     )
+    grant.role = role.value
+    grant.status = MemberStatus.APPROVED.value
+    grant.invited_by_user_id = added_by_user_id
+    db.flush()
+    return grant
 
 
 def workspace_id_for_project(db: Session, project_id: int | str) -> int | None:

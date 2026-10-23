@@ -1,12 +1,9 @@
 import {
-  processingBlocks,
-  assistantTextContent,
+  resolveRuntimeTurnThinkingContent,
   preserveProcessingBlockTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
-
-import { getLatestThinkingContent } from "./workbench-message-reducer";
 
 import type {
   ProcessingBlock,
@@ -35,9 +32,10 @@ export function mergeRuntimeConversationTurn(
         );
   const preserveLocalFailure =
     local.status === "failed" && Boolean(local.error) && !snapshot.error;
-  const preserveStreamingThinking =
-    snapshot.status === "streaming" &&
-    assistantTextContent(local.items) === assistantTextContent(snapshot.items);
+  const status =
+    preserveLocalTerminal || preserveLocalFailure
+      ? local.status
+      : snapshot.status;
   return {
     ...local,
     ...snapshot,
@@ -57,10 +55,7 @@ export function mergeRuntimeConversationTurn(
       snapshot.fileChanges.status === "active"
         ? local.fileChanges
         : (snapshot.fileChanges ?? local.fileChanges),
-    status:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.status
-        : snapshot.status,
+    status,
     // Preserve higher-precision live timestamps when reading native history.
     startedAt: local.startedAt ?? snapshot.startedAt,
     durationMs:
@@ -86,11 +81,10 @@ export function mergeRuntimeConversationTurn(
     stoppedNotice: preserveLocalTerminal
       ? local.stoppedNotice
       : snapshot.stoppedNotice,
-    streamingThinkingContent: preserveLocalTerminal
-      ? undefined
-      : preserveStreamingThinking
-        ? getLatestThinkingContent(processingBlocks(items))
-        : snapshot.streamingThinkingContent,
+    streamingThinkingContent: resolveRuntimeTurnThinkingContent({
+      items,
+      status,
+    }),
   };
 }
 

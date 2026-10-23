@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { createServer as createTcpServer } from 'node:net'
 import { tmpdir } from 'node:os'
 
 import {
@@ -81,9 +82,9 @@ async function waitForMysqlReady(connectionOptions, mysqlProcess, logPath) {
   throw new Error(`Timed out waiting for MySQL readiness: ${String(lastError)}`)
 }
 
-async function waitForProcessUrl(url, child, message) {
+async function waitForProcessUrl(url, child, message, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
   const startedAt = Date.now()
-  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
         `${message}; process exited with ${child.exitCode ?? child.signalCode ?? 'unknown status'}`
@@ -98,6 +99,41 @@ async function waitForProcessUrl(url, child, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
   }
   throw new Error(message)
+}
+
+async function waitForUvicornReady(
+  child,
+  logPath,
+  { fromOffset = 0, timeoutMs = WORKBENCH_READY_TIMEOUT_MS } = {}
+) {
+  const startedAt = Date.now()
+  const pattern = /Uvicorn running on http:\/\/127\.0\.0\.1:(\d+)\s/
+  const content = await waitForLogPattern(logPath, pattern, { child, fromOffset, timeoutMs })
+  const port = Number(content.slice(fromOffset).match(pattern)[1])
+  assert.ok(port > 0 && port <= 65535, `Uvicorn did not report a bound TCP port: ${port}`)
+  await waitForProcessUrl(
+    `http://127.0.0.1:${port}/api/docs`,
+    child,
+    `Real cloud Python backend did not start; see ${logPath}`,
+    Math.max(0, timeoutMs - (Date.now() - startedAt))
+  )
+  return port
+}
+
+async function withBackendGatewayPortLease(port, action) {
+  // Prevent Python's port-zero allocation from taking the gateway's stable public port.
+  const lease = createTcpServer(socket => socket.destroy())
+  await new Promise((resolve, reject) => {
+    lease.once('error', reject)
+    lease.listen(port, '127.0.0.1', resolve)
+  })
+  try {
+    return await action(lease.address().port)
+  } finally {
+    await new Promise((resolve, reject) => {
+      lease.close(error => (error ? reject(error) : resolve()))
+    })
+  }
 }
 
 async function startMysqlServer(logPath) {
@@ -350,11 +386,8 @@ class RealCloudEnvironment {
     this.pluginAutoUpdateFixtures = []
   }
 
-  async reserveBackendPorts() {
+  async reserveBackendPort() {
     this.backendPort = await reservePort()
-    do {
-      this.pythonBackendPort = await reservePort()
-    } while (this.pythonBackendPort === this.backendPort)
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
     this.socketUrl = `http://localhost:${this.backendPort}`
   }
@@ -391,7 +424,7 @@ class RealCloudEnvironment {
     this.databaseName = mysqlServer.databaseName
     this.databaseUrl = mysqlServer.databaseUrl
 
-    await this.reserveBackendPorts()
+    await this.reserveBackendPort()
 
     const backendEnv = {
       ...process.env,
@@ -460,11 +493,11 @@ class RealCloudEnvironment {
       const existingLog = await readFile(this.backendLogPath, 'utf8').catch(() => '')
       const fromOffset = existingLog.length
       if (attempt > 1) {
-        await this.reserveBackendPorts()
+        await this.reserveBackendPort()
         this.updateBackendEndpointEnv()
         await appendFile(
           this.backendLogPath,
-          `Backend start attempt ${attempt} on gateway ${this.backendPort} and Python ${this.pythonBackendPort}\n`
+          `Backend start attempt ${attempt} on gateway ${this.backendPort}\n`
         )
       }
       try {
@@ -485,38 +518,41 @@ class RealCloudEnvironment {
   }
 
   async launchBackendAttempt(rustLogDirectory) {
-    this.pythonBackend = spawn(
-      'uv',
-      [
-        'run',
-        'python',
-        '-u',
-        '-m',
-        'uvicorn',
-        'app.main:app',
-        '--host',
-        '127.0.0.1',
-        '--port',
-        String(this.pythonBackendPort),
-      ],
-      {
-        cwd: join(repoDir, 'backend'),
-        env: this.backendEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      }
-    )
-    await Promise.all([
-      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
-    ])
-    await waitForProcessUrl(
-      `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
-      this.pythonBackend,
-      `Real cloud Python backend did not start; see ${this.backendLogPath}`
-    )
+    const fromOffset = (await readFile(this.backendLogPath, 'utf8').catch(() => '')).length
+    const backendRsBinary = await withBackendGatewayPortLease(this.backendPort, async () => {
+      this.pythonBackend = spawn(
+        'uv',
+        [
+          'run',
+          'python',
+          '-u',
+          '-m',
+          'uvicorn',
+          'app.main:app',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          '0',
+          '--timeout-keep-alive',
+          '2400',
+        ],
+        {
+          cwd: join(repoDir, 'backend'),
+          env: this.backendEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+        }
+      )
+      await Promise.all([
+        appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
+        appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
+      ])
+      this.pythonBackendPort = await waitForUvicornReady(this.pythonBackend, this.backendLogPath, {
+        fromOffset,
+      })
+      return resolveBackendRsBinary()
+    })
 
-    const backendRsBinary = await resolveBackendRsBinary()
     this.rustBackend = spawn(backendRsBinary, [], {
       cwd: join(repoDir, 'backend-rs'),
       env: {
@@ -528,7 +564,12 @@ class RealCloudEnvironment {
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         BREEZE_LOG_DIR: rustLogDirectory,
-        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug`,
+        RUST_LOG: [
+          this.backendEnv.RUST_LOG?.trim() || 'info',
+          'brz_http_gateway::proxy=debug',
+          'hyper::proto::h1::dispatch=debug',
+          'hyper::proto::h1::conn=debug',
+        ].join(','),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
@@ -1758,4 +1799,6 @@ export {
   RealCloudEnvironment,
   startRedisServer,
   verifyLocalExecutorUsesCloudSocketUrl,
+  waitForUvicornReady,
+  withBackendGatewayPortLease,
 }

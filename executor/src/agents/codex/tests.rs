@@ -116,15 +116,16 @@ async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
     client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
     let mut child = spawn_idle_app_server_child();
     let stdin = child.stdin.take().expect("the child should expose stdin");
-    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let pending = Arc::new(PendingCodexRequests::default());
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
+        config_diagnostics: None,
         stdin: Arc::new(Mutex::new(stdin)),
         pending: Arc::clone(&pending),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
     });
-    let cleanup_gate = pending.lock().await;
+    let cleanup_gate = pending.hold_entries().await;
     let restarting_client = client.clone();
     let (started_tx, started_rx) = oneshot::channel();
     let restart = tokio::spawn(async move {
@@ -154,8 +155,9 @@ async fn terminating_shared_app_servers_releases_every_registered_process() {
     let state = shared_codex_app_server_state("codex-app-server-termination-test");
     state.lock().await.process = Some(CodexAppServerProcess {
         child,
+        config_diagnostics: None,
         stdin: Arc::new(Mutex::new(stdin)),
-        pending: Arc::new(Mutex::new(HashMap::new())),
+        pending: Arc::new(PendingCodexRequests::default()),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
     });

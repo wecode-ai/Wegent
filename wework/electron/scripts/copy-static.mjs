@@ -23,6 +23,12 @@ await cp(
 )
 await mkdir(resolve(root, 'dist/cli'), { recursive: true })
 await cp(resolve(root, 'src/cli/wework-cli.mjs'), resolve(root, 'dist/cli/wework-cli.mjs'))
+await mkdir(resolve(root, 'dist/runtime'), { recursive: true })
+await cp(
+  resolve(root, 'src/runtime/component-content-hash.mjs'),
+  resolve(root, 'dist/runtime/component-content-hash.mjs')
+)
+await rm(resolve(root, 'dist/runtime/component-content-hash.js'), { force: true })
 const internalSurfaceManifest = resolve(root, '../wecode/electron/isolated-surfaces.json')
 const packagedSurfaceManifest = resolve(root, 'dist/isolated-surfaces.json')
 await rm(packagedSurfaceManifest, { force: true })

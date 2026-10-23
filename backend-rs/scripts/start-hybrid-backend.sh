@@ -225,9 +225,9 @@ fi
 echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 (
     cd "$BACKEND_DIR"
-    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
-    # upstream sockets alive beyond the longest CI job so its pooled client
-    # cannot reuse a socket that Uvicorn expired during the run.
+    # Hyper's client pool rejects idle connections after 90 seconds on checkout.
+    # Keep the upstream's 2400-second idle lifetime longer so Uvicorn does not
+    # close a connection that the gateway can still select for a request.
     exec "$PYTHON_UVICORN" app.main:app \
         --reload \
         --reload-dir . \

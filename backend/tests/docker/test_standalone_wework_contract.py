@@ -104,6 +104,32 @@ def test_standalone_runtime_prepares_persistent_codex_home() -> None:
     assert 'mkdir -p "$CODEX_HOME"' in start_script
 
 
+def test_python_upstream_keep_alive_matches_all_hybrid_launchers() -> None:
+    """Every launch path must keep Python connections beyond the gateway's 90s pool."""
+    commands: list[list[str]] = []
+    for path in (
+        STANDALONE_START,
+        REPO_ROOT / "backend-rs/scripts/start-hybrid-backend.sh",
+    ):
+        source = path.read_text(encoding="utf-8")
+        command = re.search(r"app\.main:app \\\n(?:.*\\\n)*[^\n]*", source)
+        assert command is not None, path
+        commands.append(shlex.split(command.group().replace("\\\n", " ")))
+    cloud_source = (
+        (REPO_ROOT / "wework/e2e/desktop/modules/cloud-environment.mjs")
+        .read_text(encoding="utf-8")
+        .split("async launchBackendAttempt(", maxsplit=1)[1]
+    )
+    cloud_command = re.search(r"'uv',\s*(\[[\s\S]*?\])", cloud_source)
+    assert cloud_command is not None
+    commands.append(re.findall(r"'([^']*)'", cloud_command[1]))
+
+    for arguments in commands:
+        assert "app.main:app" in arguments
+        assert arguments.count("--timeout-keep-alive") == 1
+        assert arguments[arguments.index("--timeout-keep-alive") + 1] == "2400"
+
+
 def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     """Startup should launch a real executor registered through the device WebSocket."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")

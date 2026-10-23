@@ -33,12 +33,16 @@ function stat(path: string): fs.BigIntStats | undefined {
   }
 }
 
-function owns(path: string, journal: FileIdentity & { directory?: boolean }): boolean {
+function owns(
+  path: string,
+  journal: FileIdentity & { directory?: boolean },
+  allowDeviceChange = false
+): boolean {
   const entry = stat(path)
   return (
     !!entry &&
     (journal.directory ? entry.isDirectory() : entry.isFile()) &&
-    entry.dev.toString() === journal.device &&
+    (allowDeviceChange || entry.dev.toString() === journal.device) &&
     entry.ino.toString() === journal.inode
   )
 }
@@ -135,10 +139,16 @@ function refreshMutableFileBridge(options: EntryMigration, journal: Journal): bo
 // symlink is exclusive: concurrent startup cannot overwrite an existing entry.
 export function recoverWorkbenchDataBridge(
   options: EntryMigration,
-  recovery: { replaceEmptyDirectory?: boolean } = {}
+  recovery: { replaceEmptyDirectory?: boolean; allowDirectoryDeviceChange?: boolean } = {}
 ): void {
   const journal = readJournal(options)
-  if (!journal || (!owns(options.target, journal) && !(journal.completed && !journal.directory)))
+  if (!journal) return
+  // A remount can change st_dev while the migrated log directory retains its inode.
+  // Only opted-in directory recovery may relax the device check; files stay strict.
+  if (
+    !owns(options.target, journal, journal.directory && recovery.allowDirectoryDeviceChange) &&
+    !(journal.completed && !journal.directory)
+  )
     return
   const original = stat(options.source)
   if (original) {

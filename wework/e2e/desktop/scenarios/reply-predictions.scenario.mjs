@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { waitForSnapshot } from '../modules/conversation-layout.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
@@ -13,6 +15,30 @@ const SUGGESTION = '请按这个方案迁移，并配置后续启动入口，不
 const EDITED = '请先迁移当前进程，并验证任务仍在运行。'
 const MODEL_SELECT = '[data-testid="reply-prediction-model"]'
 const CONVERSATION_MODEL = 'gpt-5.6-luna'
+
+async function readPredictionSource(control, timeoutMs) {
+  const { location } = JSON.parse(await control.command('snapshot', 'body'))
+  const { searchParams } = new URL(location)
+  const deviceId = searchParams.get('deviceId')
+  const taskId = searchParams.get('taskId')
+  assert.ok(deviceId && taskId, 'The prediction source route is missing')
+  const state = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.deviceId === deviceId &&
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId,
+    'The prediction source address did not match the selected conversation',
+    timeoutMs
+  )
+  const address = state.workbench.currentRuntimeTask
+  const { task } = await requestExecutor(control, 'runtime.tasks.get', { address }, timeoutMs)
+  assert.equal(task?.taskId, taskId, 'The owning executor returned a different prediction source')
+  assert.ok(
+    typeof task.threadId === 'string' && task.threadId.trim(),
+    'The prediction source thread is missing'
+  )
+  return { deviceId, taskId, threadId: task.threadId }
+}
 
 function complete(response, text) {
   const id = `reply-prediction-${Date.now()}`
@@ -38,7 +64,7 @@ function complete(response, text) {
   )
 }
 
-export function createDesktopScenario({ captureScreenshot, workspacePath }) {
+export function createDesktopScenario({ captureScreenshot, workspacePath, uiTimeoutMs }) {
   let active = false
   let normalRequests = 0
   let predictionRequests = 0
@@ -116,6 +142,40 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       await capture('reply-03-original-request.png')
       await control.command('press', INPUT, { key: 'Enter' })
       await control.command('waitFor', PENDING, { text: '正在生成建议' })
+      await waitForSnapshot(
+        control,
+        () => predictionRequests > 0,
+        'The prediction request did not reach the held model fixture',
+        uiTimeoutMs
+      )
+      await capture('reply-03b-generating-suggestion.png')
+      const beforeRefresh = await readPredictionSource(control, uiTimeoutMs)
+      await control.command('clickWhenEnabled', '[data-testid="conversation-rename-button"]')
+      await control.command('waitFor', '[data-testid="conversation-rename-input"]', {
+        visible: true,
+      })
+      await control.command('fill', '[data-testid="conversation-rename-input"]', {
+        value: '回复建议元数据刷新验证',
+      })
+      await control.command('nativePress', '[data-testid="conversation-rename-input"]', {
+        key: 'Enter',
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('conversation-rename-input'),
+        'Task metadata refresh did not finish before the held prediction was released'
+      )
+      const afterRefresh = await readPredictionSource(control, uiTimeoutMs)
+      assert.ok(
+        beforeRefresh?.taskId && beforeRefresh?.threadId,
+        'The prediction source task is missing'
+      )
+      assert.deepEqual(
+        [afterRefresh?.deviceId, afterRefresh?.taskId, afterRefresh?.threadId],
+        [beforeRefresh.deviceId, beforeRefresh.taskId, beforeRefresh.threadId],
+        'Refreshing task metadata changed the prediction source conversation'
+      )
+      assert.equal(predictionRequests, 1, 'Task metadata refresh regenerated the held prediction')
       await control.command('fill', INPUT, { value: '生成时我也能输入' })
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       // Predictions abort after 30 seconds. Release the held response before
@@ -123,6 +183,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath }) {
       releasePrediction()
       await control.command('fill', INPUT, { value: '' })
       await control.command('waitFor', GHOST, { text: SUGGESTION, timeoutMs: 30000 })
+      assert.equal(predictionRequests, 1, 'Clearing the draft regenerated the held prediction')
       assert.equal(Number(await control.command('getElementCount', PENDING)), 0)
       assert.equal(await control.command('getValue', INPUT), '')
       assert.equal(normalRequests, 1)

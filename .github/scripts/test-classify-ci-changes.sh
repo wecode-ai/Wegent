@@ -995,15 +995,33 @@ assert_desktop_case "collaboration executor runtime changes retain full coverage
   "$full_desktop_expected" \
   "executor/src/runtime_work/handler/claude_turns.rs"
 
-assert_desktop_case "workbench mode changes select their desktop regression" \
-  'wework_desktop_e2e=true
+workbench_migration_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-16","name":"Core / shard 16","segments":"workbench-mode"}]}
 wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=true'
+
+assert_desktop_case "workbench mode changes select Core and macOS regression" \
+  "$workbench_migration_expected" \
   "wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs" \
   "wework/electron/src/runtime/workbench-mode.ts" \
   "wework/src/features/workbench-mode/workbenchMode.ts"
+
+for migration_path in \
+  wework/e2e/desktop/modules/workbench-log-startup.mjs \
+  wework/e2e/desktop/modules/workbench-schema-compatibility.mjs \
+  wework/e2e/desktop/modules/workbench-home-migration.mjs \
+  wework/electron/src/runtime/workbench-data-migration.ts \
+  wework/electron/src/runtime/workbench-data-migration.test.ts \
+  wework/electron/src/runtime/workbench-desktop-data.ts \
+  wework/electron/src/runtime/workbench-desktop-startup.ts \
+  wework/electron/src/runtime/workbench-desktop-startup.test.ts \
+  wework/electron/src/runtime/workbench-executor-data.ts \
+  wework/electron/src/host/app-update-cache.ts; do
+  assert_desktop_case "migration changes select Core and macOS coverage: $migration_path" \
+    "$workbench_migration_expected" "$migration_path"
+done
 
 assert_desktop_case "Codex account login scenario selects its desktop regression" \
   'wework_desktop_e2e=true
@@ -2042,6 +2060,13 @@ fi
 wework_memory_job="$(
   sed -n '/^  wework-desktop-memory-e2e:/,$p' "$wework_workflow"
 )"
+if [[ "$wework_memory_job" != *"runs-on: macos-14"* ]] ||
+  [[ "$wework_memory_job" != *"needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true'"* ]] ||
+  [[ "$wework_memory_job" != *"--parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design,workbench-mode"* ]]; then
+  printf 'macOS desktop CI must run the workbench-mode checkpoint for migration changes\n' >&2
+  exit 1
+fi
+
 if [[ "$wework_memory_job" != *"pnpm-store-v2-"* ]] ||
   [[ "$wework_memory_job" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
   [[ "$wework_memory_job" != *"pnpm install --frozen-lockfile"* ]] ||

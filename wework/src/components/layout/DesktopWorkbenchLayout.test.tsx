@@ -1697,6 +1697,7 @@ describe('DesktopWorkbenchLayout', () => {
         error: state.error,
       },
     } as unknown as WorkbenchPaneContextValue
+    const clearError = vi.fn()
     const paneSession = {
       scopeKey: projectChat.scopeKey,
       attachments: projectChat.attachments,
@@ -1711,7 +1712,8 @@ describe('DesktopWorkbenchLayout', () => {
       input: String(state.input ?? ''),
       setInput: props.onInputChange ?? baseProps.onInputChange,
       setError: vi.fn(),
-      clearError: vi.fn(),
+      clearError,
+      markDraftEdited: vi.fn(() => clearError()),
       sending: Boolean(state.isSending),
       waitingForAssistant: Boolean(props.isAwaitingAssistantStart),
       status: createPaneStatus({

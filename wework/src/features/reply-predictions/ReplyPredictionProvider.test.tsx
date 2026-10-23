@@ -4,7 +4,12 @@ import {
   ComposerPredictionContext,
   ComposerPredictionPendingContext,
 } from '@wegent/collaboration/composer'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  getConversationDiagnosticsSnapshot,
+  resetConversationDiagnosticsForTest,
+  startConversationDiagnosticCapture,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -108,6 +113,87 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  afterEach(() => resetConversationDiagnosticsForTest())
+
+  it('keeps a pending prediction when refreshed model fields are reordered', async () => {
+    startConversationDiagnosticCapture()
+    let resolve!: (value: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const original = {
+      ...source,
+      modelSelection: {
+        modelName: 'session-model',
+        modelType: 'runtime' as const,
+        options: { speed: 'standard', reasoning: 'low' },
+      },
+    }
+    const { rerender, unmount } = render(fixture(predict, original))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    rerender(
+      fixture(predict, {
+        ...original,
+        modelSelection: {
+          options: { reasoning: 'low', speed: 'standard' },
+          modelType: 'runtime',
+          modelName: 'session-model',
+        },
+      })
+    )
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    const events = getConversationDiagnosticsSnapshot()!.events
+    expect(events.filter(event => event.name === 'reply-prediction-effect-start')).toHaveLength(1)
+    expect(events.some(event => event.name === 'reply-prediction-effect-cleanup')).toBe(false)
+    expect(events.some(event => event.name === 'reply-prediction-abort')).toBe(false)
+    resolve({ suggestion: '当前建议' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('当前建议'))
+    expect(predict).toHaveBeenCalledTimes(1)
+    unmount()
+    expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({ unmounted: true }),
+      })
+    )
+  })
+
+  it('distinguishes busy transitions from API and service replacement', async () => {
+    startConversationDiagnosticCapture()
+    const predict = vi.fn<Predict>(() => new Promise(() => {}))
+    const { rerender } = render(fixture(predict))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+    rerender(fixture(predict, { ...source, busy: true }))
+    expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({
+          busyChanged: true,
+          keyChanged: false,
+          serviceChanged: false,
+        }),
+      })
+    )
+    const replacement = vi.fn<Predict>(() => new Promise(() => {}))
+    rerender(fixture(replacement))
+    await waitFor(() => expect(replacement).toHaveBeenCalledTimes(1))
+    expect(getConversationDiagnosticsSnapshot()!.events).toContainEqual(
+      expect.objectContaining({
+        name: 'reply-prediction-effect-cleanup',
+        details: expect.objectContaining({
+          apiChanged: true,
+          serviceChanged: true,
+          busyChanged: true,
+          keyChanged: false,
+        }),
+      })
+    )
+  })
+
   it.each([
     { workspaceKind: 'chat' },
     { projectSession: { projectId: 'project-1', issueId: 'issue-1' } },

@@ -53,6 +53,11 @@ import {
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  currentRuntimeTaskFromDebugSnapshot,
+  reloadMainWindow,
+  waitForWorkbenchDebugState,
+} from './workspace-flows.mjs'
 
 export function createStreamingToolChecks({
   uiTimeoutMs,
@@ -650,6 +655,42 @@ export function createStreamingToolChecks({
       timeoutMs: modelResponseTimeoutMs,
     })
     await capture(control, 'streaming-text-01-live-reasoning-summary.png')
+    const hasRuntimeTaskAddress = snapshot => {
+      const task = currentRuntimeTaskFromDebugSnapshot(snapshot)
+      return Boolean(task?.deviceId && task?.taskId)
+    }
+    const beforeReload = currentRuntimeTaskFromDebugSnapshot(
+      await waitForWorkbenchDebugState(
+        control,
+        hasRuntimeTaskAddress,
+        'The live reasoning summary has no runtime task address',
+        uiTimeoutMs
+      )
+    )
+    await reloadMainWindow(control, 'The reasoning summary window did not reconnect after reload')
+    const afterReload = currentRuntimeTaskFromDebugSnapshot(
+      await waitForWorkbenchDebugState(
+        control,
+        hasRuntimeTaskAddress,
+        'The reloaded reasoning summary has no runtime task address',
+        uiTimeoutMs
+      )
+    )
+    assert.deepEqual(
+      [afterReload.deviceId, afterReload.taskId],
+      [beforeReload.deviceId, beforeReload.taskId],
+      'Reload changed the task owning the held reasoning summary'
+    )
+    await control.command('waitFor', TOOL_THINKING_INDICATOR_SELECTOR, {
+      text: `正在思考 · ${REASONING_PREVIEW}`,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getText', TOOL_THINKING_INDICATOR_SELECTOR),
+      `正在思考 · ${REASONING_PREVIEW}`,
+      'The reloaded task did not restore the held reasoning summary'
+    )
+    await capture(control, 'streaming-text-01b-reloaded-reasoning-summary.png')
     releaseToolCompletion()
     await toolFinalTextStarted
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {

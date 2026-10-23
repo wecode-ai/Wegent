@@ -356,6 +356,7 @@ uvicorn app.main:app \
     --host 127.0.0.1 \
     --port "$PYTHON_UPSTREAM_PORT" \
     --workers 1 \
+    --timeout-keep-alive 2400 \
     --timeout-graceful-shutdown "${GRACEFUL_SHUTDOWN_TIMEOUT:-600}" &
 PYTHON_BACKEND_PID=$!
 wait_for_http "Python Backend" "http://127.0.0.1:${PYTHON_UPSTREAM_PORT}/health" 60 "$PYTHON_BACKEND_PID" true

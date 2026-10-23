@@ -152,6 +152,75 @@ describe('reply prediction service', () => {
     expect(predict).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps equivalent nested model selections pending and restores their shared cache', async () => {
+    let resolve!: (value: { suggestion: string }) => void
+    const predict = vi.fn<(data: { signal?: AbortSignal }) => Promise<{ suggestion: string }>>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const original = {
+      ...source(),
+      modelSelection: {
+        modelName: 'session-model',
+        modelType: 'runtime' as const,
+        options: { speed: 'standard', reasoning: 'low' },
+      },
+    }
+    const refreshed = {
+      ...original,
+      modelSelection: {
+        options: { reasoning: 'low', speed: 'standard' },
+        modelType: 'runtime' as const,
+        modelName: 'session-model',
+      },
+    }
+    const service = new ReplyPredictionService({ predict })
+    const first = service.request(original)
+    const second = service.request(refreshed)
+
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    resolve({ suggestion: '保留当前建议' })
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(firstResult?.text).toBe('保留当前建议')
+    expect(secondResult?.text).toBe(firstResult?.text)
+    expect((await new ReplyPredictionService({ predict }).request(refreshed))?.text).toBe(
+      '保留当前建议'
+    )
+    expect(predict).toHaveBeenCalledTimes(1)
+    firstResult!.onAccept()
+    expect(await new ReplyPredictionService({ predict }).request(refreshed)).toBeNull()
+    expect(predict).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves absent, empty and null model fields in prediction identity', () => {
+    const withoutSelection = replyPredictionKey(source())
+    expect(replyPredictionKey({ ...source(), modelSelection: undefined })).toBe(withoutSelection)
+    expect(replyPredictionKey({ ...source(), modelSelection: null })).toBe(withoutSelection)
+    const selected = { ...source(), modelSelection: { modelName: 'session-model' } }
+    const selectedKey = replyPredictionKey(selected)
+    expect(
+      replyPredictionKey({
+        ...selected,
+        modelSelection: { ...selected.modelSelection, modelType: undefined, options: undefined },
+      })
+    ).toBe(selectedKey)
+    expect(
+      replyPredictionKey({
+        ...selected,
+        modelSelection: { ...selected.modelSelection, modelType: null },
+      })
+    ).not.toBe(selectedKey)
+    expect(
+      replyPredictionKey({
+        ...selected,
+        modelSelection: { ...selected.modelSelection, options: {} },
+      })
+    ).not.toBe(selectedKey)
+  })
+
   it('aborts a superseded turn and ignores its late result', async () => {
     const resolvers: Array<(value: { suggestion: string | null }) => void> = []
     const predict = vi.fn<

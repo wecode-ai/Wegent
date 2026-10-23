@@ -1,3 +1,5 @@
+import { getLatestThinkingContent } from "./workbench-message-reducer";
+
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -11,10 +13,23 @@ export function processingBlocks(
 ): ProcessingBlock[] {
   return items.flatMap((item) => (item.type === "block" ? [item.block] : []));
 }
-export function assistantTextContent(items: RuntimeConversationItem[]): string {
-  return items
-    .flatMap((item) => (item.type === "assistant_text" ? [item.content] : []))
-    .join("\n\n");
+export function resolveRuntimeTurnThinkingContent({
+  items,
+  status,
+}: Pick<RuntimeConversationTurn, "items" | "status">): string | undefined {
+  if (status !== "streaming") return undefined;
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.type === "assistant_text" && item.content) return undefined;
+    if (item.type !== "block") continue;
+    if (item.block.type === "text" || item.block.type === "plan")
+      return undefined;
+    if (item.block.type === "thinking" || item.block.type === "tool") {
+      return getLatestThinkingContent(processingBlocks(items));
+    }
+  }
+  return undefined;
 }
 export function preserveProcessingBlockTiming(
   previous: ProcessingBlock,

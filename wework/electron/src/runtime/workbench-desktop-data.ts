@@ -47,7 +47,10 @@ export function migrateWorkbenchDesktopData(options: {
   } else {
     const logMigration = desktopDataMigration(options.logs, desktop, 'electron-logs')
     mkdirSync(dirname(options.logs), { recursive: true, mode: 0o700 })
-    recoverWorkbenchDataBridge(logMigration, { replaceEmptyDirectory: true })
+    recoverWorkbenchDataBridge(logMigration, {
+      replaceEmptyDirectory: true,
+      allowDirectoryDeviceChange: true,
+    })
     mkdirSync(options.logs, { recursive: true, mode: 0o700 })
     migrateWorkbenchDataEntry(logMigration)
     logs = logMigration.target

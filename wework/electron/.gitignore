@@ -8,3 +8,4 @@ release-online-update/
 release-minio/
 resources/
 .package-staging/
+.process-explorer-staging/
