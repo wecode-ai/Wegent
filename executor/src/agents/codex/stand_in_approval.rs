@@ -1,5 +1,5 @@
 //! Enforce stand-in write confirmation for home, CLI and thread MCP configurations.
-use super::{toml_json_value, toml_key_path, toml_value, ExecutionRequest};
+use super::{config_override_entry, toml_json_value, toml_key_path, toml_value, ExecutionRequest};
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fs, path::Path};
 
@@ -32,8 +32,15 @@ pub(super) fn stand_in_mcp_approval_overrides(
             .iter()
             .map(|(key, value)| format!("{key}={}", toml_json_value(value))),
     );
-    let values = std::iter::once(home_config)
-        .chain(entries.filter_map(|entry| toml_edit::de::from_str::<Value>(&entry).ok()));
+    let launch_values = entries
+        .map(|entry| {
+            let (key, value) = config_override_entry(&entry)
+                .ok_or_else(|| "Invalid Codex MCP configuration override".to_owned())?;
+            toml_edit::de::from_str::<Value>(&format!("{key}={}", toml_json_value(&value)))
+                .map_err(|_| "Invalid Codex MCP configuration override key".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let values = std::iter::once(home_config).chain(launch_values);
     for value in values {
         for (name, config) in value["mcp_servers"].as_object().into_iter().flatten() {
             let tools = servers.entry(name.clone()).or_default();
@@ -78,6 +85,44 @@ pub(super) fn stand_in_mcp_approval_overrides(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn raw_string_cli_approvals_and_quoted_dotted_keys_are_enforced() {
+        let root = tempfile::tempdir().unwrap();
+        let overrides = vec![
+            "mcp_servers.\"remote.service\".tools.\"send.message\".approval_mode=approve".into(),
+        ];
+        let result = stand_in_mcp_approval_overrides(
+            &ExecutionRequest::default(),
+            root.path(),
+            &overrides,
+            &Map::new(),
+        )
+        .unwrap();
+        assert!(result.contains(
+            &"mcp_servers.\"remote.service\".tools.\"send.message\".approval_mode=\"writes\""
+                .into()
+        ));
+    }
+
+    #[test]
+    fn malformed_cli_overrides_fail_closed_without_echoing_values() {
+        let root = tempfile::tempdir().unwrap();
+        for entry in [
+            "synthetic-secret",
+            "=synthetic-secret",
+            "mcp_servers..tools=synthetic-secret",
+        ] {
+            let error = stand_in_mcp_approval_overrides(
+                &ExecutionRequest::default(),
+                root.path(),
+                &[entry.into()],
+                &Map::new(),
+            )
+            .unwrap_err();
+            assert!(!error.contains("synthetic-secret"));
+        }
+    }
 
     #[test]
     fn home_and_launch_tool_policies_are_all_overridden() {
