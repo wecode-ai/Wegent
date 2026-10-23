@@ -204,7 +204,7 @@ function RequestUserInputForm({
         className="scrollbar-soft min-h-0 flex-1 overflow-y-auto pr-1"
       >
         <div className="flex flex-col gap-1.5">
-          {questions.map((question) => (
+          {questions.map((question, questionIndex) => (
             <div key={question.id} className="min-w-0">
               {question.header ? (
                 <div className="mb-1 text-sm font-medium leading-5 text-text-primary">
@@ -212,7 +212,7 @@ function RequestUserInputForm({
                 </div>
               ) : null}
               <div
-                id={`${formId}-${question.id}`}
+                id={`${formId}-${questionIndex}`}
                 data-testid={`request-user-input-question-${question.id}`}
                 className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary"
               >
@@ -280,7 +280,7 @@ function RequestUserInputForm({
                   </span>
                   <input
                     data-testid={`request-user-input-custom-${question.id}`}
-                    aria-labelledby={`${formId}-${question.id}`}
+                    aria-labelledby={`${formId}-${questionIndex}`}
                     value={selectedAnswers[question.id] ?? ""}
                     disabled={isDisabled}
                     onChange={(event) => {

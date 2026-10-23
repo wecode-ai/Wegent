@@ -137,6 +137,29 @@ const payload = {
 }
 
 describe('RequestUserInputCard', () => {
+  test('labels answer fields independently of protocol IDs and other mounted cards', async () => {
+    const onSubmit = vi.fn()
+    const question = { id: 'next step', question: '接下来做什么？' }
+    render(
+      <>
+        <RequestUserInputCard
+          payload={{ kind: 'request_user_input', questions: [question] }}
+          onSubmit={onSubmit}
+        />
+        <RequestUserInputCard payload={{ kind: 'request_user_input', questions: [question] }} />
+      </>
+    )
+    const answers = screen.getAllByRole('textbox', { name: question.question })
+    expect(answers).toHaveLength(2)
+    expect(answers[0].getAttribute('aria-labelledby')).not.toBe(
+      answers[1].getAttribute('aria-labelledby')
+    )
+    const user = userEvent.setup()
+    await user.type(answers[0], '继续')
+    await user.click(screen.getAllByTestId('request-user-input-submit-button')[0])
+    expect(onSubmit.mock.calls[0][0].answers).toEqual({ 'next step': { answers: ['继续'] } })
+  })
+
   test.each([false, true])(
     'keeps long free-text questions outside the answer field (compact=%s)',
     async compact => {
