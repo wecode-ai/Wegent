@@ -29,6 +29,7 @@ import {
   matrixToolCompletion,
   matrixToolPreamble,
   matrixToolPrompt,
+  mcpToolRequestEvents,
   namespacedFunctionCall,
   parseTelemetryPayload,
   readRawRequestBody,
@@ -170,7 +171,6 @@ import {
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
-  MCP_ELICITATION_NAMESPACE,
   MCP_ELICITATION_PROMPT,
   MCP_ELICITATION_SEARCH_ID,
   MCP_ELICITATION_TOOL_NAME,
@@ -298,6 +298,7 @@ const EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID =
 const EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID = 'wework-embedded-browser-bridge-collision-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
+  'decodeImage',
   'getAttribute',
   'getElementCount',
   'getTerminalText',
@@ -3989,50 +3990,31 @@ class DesktopE2EServer {
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
-      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
       const requestText = JSON.stringify(body)
-
-      if (requestNumber === 1) {
+      assert.ok(
+        requestText.includes(MCP_ELICITATION_PROMPT),
+        'The real Codex request did not contain the MCP elicitation prompt'
+      )
+      if (requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID)) {
         assert.ok(
-          requestText.includes(MCP_ELICITATION_PROMPT),
-          'The real Codex request did not contain the MCP elicitation prompt'
+          requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
+          'The MCP server did not return the accepted audience marker to the model'
         )
-        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
         this.writeSse(response, [
           responseCreated(responseId),
-          ...toolSearchResponseEvents(MCP_ELICITATION_SEARCH_ID, search),
+          assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
           responseCompleted(responseId),
         ])
         return
       }
-
-      if (requestNumber === 2) {
-        const tool = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {})
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...namespacedFunctionCall(
-            MCP_ELICITATION_CALL_ID,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      assert.equal(requestNumber, 3, `Unexpected MCP elicitation request ${requestNumber}`)
-      assert.ok(
-        requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
-        'The MCP server did not return the accepted audience marker to the model'
-      )
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+        ...mcpToolRequestEvents(body, {
+          toolName: MCP_ELICITATION_TOOL_NAME,
+          argumentsValue: {},
+          searchCallId: MCP_ELICITATION_SEARCH_ID,
+          toolCallId: MCP_ELICITATION_CALL_ID,
+        }).events,
         responseCompleted(responseId),
       ])
       return

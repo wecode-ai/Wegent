@@ -1239,25 +1239,18 @@ class ProjectChatService:
         data = data if isinstance(data, dict) else {}
         if event_name == "response.completed":
             from app.services.project_chat.execution_snapshot import (
-                completed_activity_for_turn,
+                restore_completed_turn_content,
             )
 
-            completed = completed_activity_for_turn(
+            restored = restore_completed_turn_content(
                 db,
                 device_ids=identities,
                 task_id=runtime_task_id,
-                turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+                payload=payload,
+                owner_user_id=owner_user_id,
             )
-            if completed is not None:
-                # History reports outcomes without text. A delayed final event
-                # must still save its full content without replaying workflow.
-                content = self._project_chat_final_text(data, payload)
-                if content is not None:
-                    completed.content = content
-                    self._index_activity_change_requests(db, completed)
-                self._commit(db)
-                db.refresh(completed)
-                return self.to_view(completed, db=db), "snapshot"
+            if restored.handled:
+                return restored.projection
         row = self._streaming_activity_for_runtime(
             db, device_id, runtime_task_id, device_ids=identities
         )

@@ -79,3 +79,53 @@ for (const verifyAccept of [false, true]) {
     }
   )
 }
+
+test(
+  'real MCP fixture supports sequential elicitations with unique request ids',
+  { timeout: 10_000 },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-mcp-consent-repeat-'))
+    const evidencePath = join(directory, 'evidence.jsonl')
+    const server = spawn(
+      process.execPath,
+      [
+        fileURLToPath(new URL('../e2e/utils/mcp-elicitation-server.mjs', import.meta.url)),
+        evidencePath,
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    )
+    const lines = createInterface({ input: server.stdout })[Symbol.asyncIterator]()
+    t.after(async () => {
+      server.kill()
+      await rm(directory, { recursive: true, force: true })
+    })
+    const send = message =>
+      server.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+    const receive = async () => {
+      const next = await lines.next()
+      assert.equal(next.done, false, 'MCP fixture exited before responding')
+      return JSON.parse(next.value)
+    }
+
+    send({ id: 1, method: 'initialize', params: {} })
+    await receive()
+    send({ id: 2, method: 'tools/list' })
+    const tool = (await receive()).result.tools[0].name
+    const elicitationIds = []
+    for (const callId of [3, 4]) {
+      send({ id: callId, method: 'tools/call', params: { name: tool, arguments: {} } })
+      const url = await receive()
+      assert.equal(url.params.mode, 'url')
+      elicitationIds.push(url.id)
+      send({ id: url.id, result: { action: 'cancel' } })
+      const form = await receive()
+      assert.equal(form.params.mode, 'form')
+      elicitationIds.push(form.id)
+      send({ id: form.id, result: { action: 'accept', content: { audience: 'owner' } } })
+      const complete = await receive()
+      assert.equal(complete.id, callId)
+      assert.equal(complete.result.isError, false)
+    }
+    assert.equal(new Set(elicitationIds).size, elicitationIds.length)
+  }
+)

@@ -29,6 +29,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { decodeDesktopControlImage } from './desktop-control-image'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getConversationDiagnosticsSnapshot,
@@ -44,12 +45,16 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
+  awaitLocalExecutorRequestHoldForE2E,
   failNextLocalExecutorRequestForE2E,
   ensureBundledPluginInstalled,
   getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
+  getLocalExecutorRequestHoldSnapshotForE2E,
   getLocalExecutorStatus,
+  holdLocalExecutorRequestsForE2E,
   readLocalExecutorLog,
+  releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
@@ -2018,6 +2023,34 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
       return ''
     }
+    case 'holdLocalExecutorRequests': {
+      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        phase?: 'before-dispatch' | 'after-response'
+      }
+      if (!method) throw new Error('holdLocalExecutorRequests requires a method')
+      holdLocalExecutorRequestsForE2E(method, phase)
+      return ''
+    }
+    case 'awaitLocalExecutorRequestHold':
+      await awaitLocalExecutorRequestHoldForE2E()
+      return JSON.stringify(getLocalExecutorRequestHoldSnapshotForE2E())
+    case 'getLocalExecutorRequestHoldSnapshot':
+      return JSON.stringify(getLocalExecutorRequestHoldSnapshotForE2E())
+    case 'releaseLocalExecutorRequestHold':
+      return String(releaseLocalExecutorRequestHoldForE2E())
+    case 'failNextLocalExecutorRequest': {
+      const { method, message } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        message?: string
+      }
+      if (!method) throw new Error('failNextLocalExecutorRequest requires a method')
+      void failNextLocalExecutorRequestForE2E(
+        method,
+        message ?? 'Desktop E2E intentional local executor failure'
+      )
+      return ''
+    }
     case 'clearRuntimeGoalDirectly':
       return JSON.stringify(
         await requestLocalExecutor('runtime.tasks.goal.clear', JSON.parse(command.value ?? '{}'))
@@ -2476,6 +2509,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'decodeImage': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      return JSON.stringify(await decodeDesktopControlImage(element))
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {

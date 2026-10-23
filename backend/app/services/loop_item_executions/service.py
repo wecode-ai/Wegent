@@ -2931,6 +2931,29 @@ class LoopItemExecutionService:
         return None
 
     @staticmethod
+    def _bind_activity_runtime_turn(
+        db: Session,
+        execution: LoopItemExecution,
+        payload: dict,
+    ) -> None:
+        """Bind the current Runtime turn so later snapshots match exactly."""
+
+        raw_turn_id = payload.get("subtaskId") or payload.get("subtask_id")
+        if not isinstance(raw_turn_id, str):
+            return
+        turn_id = raw_turn_id.strip()
+        if not turn_id:
+            return
+        activity = LoopItemExecutionService._linked_activity(db, execution)
+        if activity is None or activity.status not in {"pending", "streaming"}:
+            return
+        metadata = dict(activity.metadata_json or {})
+        if metadata.get("runtime_turn_id") == turn_id:
+            return
+        metadata["runtime_turn_id"] = turn_id
+        activity.metadata_json = metadata
+
+    @staticmethod
     def _is_subagent_activity(activity: ProjectChatMessage) -> bool:
         metadata = (
             activity.metadata_json if isinstance(activity.metadata_json, dict) else {}
@@ -3234,6 +3257,8 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
+        if event_name == "response.created":
+            self._bind_activity_runtime_turn(db, row, payload)
         db.commit()
         db.refresh(row)
         return row
@@ -4351,6 +4376,7 @@ class LoopItemExecutionService:
                 db,
                 execution_id=row.id,
                 note="Runtime reconciled",
+                content="",
                 expected_status=row.status,
                 expected_version=row.version,
             )

@@ -10,10 +10,9 @@ if (!evidencePath) {
 }
 
 const TOOL_NAME = 'confirm_inner_site_access'
-const ELICITATION_ID = 'wework-e2e-elicitation-1'
-const URL_ELICITATION_ID = 'wework-e2e-url-elicitation-1'
-const URL_ACCEPT_ELICITATION_ID = 'wework-e2e-url-elicitation-2'
-const pendingToolCalls = new Map()
+const pendingUrlElicitations = new Map()
+const pendingFormElicitations = new Map()
+let elicitationSequence = 0
 
 function send(message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
@@ -40,9 +39,9 @@ function sendUrlElicitation(id, message) {
   })
 }
 
-function sendElicitation() {
+function sendElicitation(id) {
   send({
-    id: ELICITATION_ID,
+    id,
     method: 'elicitation/create',
     params: {
       mode: 'form',
@@ -64,31 +63,28 @@ function sendElicitation() {
   })
 }
 
-async function completeElicitation(result) {
+async function completeElicitation(callId, result) {
   await appendFile(
     evidencePath,
     `${JSON.stringify({ event: 'elicitation_result', result })}\n`,
     'utf8'
   )
-  for (const [callId] of pendingToolCalls) {
-    pendingToolCalls.delete(callId)
-    const audience = result?.content?.audience
-    const accepted = result?.action === 'accept' && audience === 'owner'
-    respond(callId, {
-      content: [
-        {
-          type: 'text',
-          text: accepted
-            ? 'E2E_MCP_ELICITATION_ACCEPTED:owner'
-            : `E2E_MCP_ELICITATION_REJECTED:${String(result?.action ?? 'unknown')}`,
-        },
-      ],
-      structuredContent: accepted
-        ? { audience, marker: 'E2E_MCP_ELICITATION_ACCEPTED:owner' }
-        : { action: result?.action ?? 'unknown' },
-      isError: !accepted,
-    })
-  }
+  const audience = result?.content?.audience
+  const accepted = result?.action === 'accept' && audience === 'owner'
+  respond(callId, {
+    content: [
+      {
+        type: 'text',
+        text: accepted
+          ? 'E2E_MCP_ELICITATION_ACCEPTED:owner'
+          : `E2E_MCP_ELICITATION_REJECTED:${String(result?.action ?? 'unknown')}`,
+      },
+    ],
+    structuredContent: accepted
+      ? { audience, marker: 'E2E_MCP_ELICITATION_ACCEPTED:owner' }
+      : { action: result?.action ?? 'unknown' },
+    isError: !accepted,
+  })
 }
 
 const input = readline.createInterface({
@@ -107,11 +103,10 @@ input.on('line', async line => {
   }
   if (message === null || typeof message !== 'object' || Array.isArray(message)) return
 
-  if (
-    [URL_ELICITATION_ID, URL_ACCEPT_ELICITATION_ID].includes(message.id) &&
-    ('result' in message || 'error' in message)
-  ) {
-    const expected = message.id === URL_ELICITATION_ID ? 'cancel' : 'accept'
+  const urlElicitation = pendingUrlElicitations.get(message.id)
+  if (urlElicitation && ('result' in message || 'error' in message)) {
+    pendingUrlElicitations.delete(message.id)
+    const expected = urlElicitation.step === 'first' ? 'cancel' : 'accept'
     if (message.error || message.result?.action !== expected) {
       throw new Error('The URL authorization regression returned an unexpected action')
     }
@@ -120,21 +115,27 @@ input.on('line', async line => {
       `${JSON.stringify({ event: 'url_elicitation_result', result: message.result })}\n`,
       'utf8'
     )
-    if (expected === 'cancel' && verifyUrlAccept) {
-      sendUrlElicitation(
-        URL_ACCEPT_ELICITATION_ID,
-        'E2E browser authorization: explicitly open to continue'
-      )
+    if (urlElicitation.step === 'first' && verifyUrlAccept) {
+      const acceptId = `${urlElicitation.urlId}-accept`
+      pendingUrlElicitations.set(acceptId, {
+        ...urlElicitation,
+        step: 'accept',
+        urlId: acceptId,
+      })
+      sendUrlElicitation(acceptId, 'E2E browser authorization: explicitly open to continue')
     } else {
-      sendElicitation()
+      pendingFormElicitations.set(urlElicitation.formId, urlElicitation.callId)
+      sendElicitation(urlElicitation.formId)
     }
     return
   }
 
-  if (message.id === ELICITATION_ID && ('result' in message || 'error' in message)) {
+  const callId = pendingFormElicitations.get(message.id)
+  if (callId && ('result' in message || 'error' in message)) {
+    pendingFormElicitations.delete(message.id)
     try {
       if (message.error) throw new Error(JSON.stringify(message.error))
-      await completeElicitation(message.result)
+      await completeElicitation(callId, message.result)
     } catch (error) {
       console.error(`[mcp-elicitation] Failed to complete elicitation: ${String(error)}`)
       process.exitCode = 1
@@ -168,11 +169,11 @@ input.on('line', async line => {
       respondError(message.id, -32601, `Unknown tool: ${String(message.params?.name)}`)
       return
     }
-    pendingToolCalls.set(message.id, true)
-    sendUrlElicitation(
-      URL_ELICITATION_ID,
-      'E2E browser authorization: cancel before explicitly opening'
-    )
+    elicitationSequence += 1
+    const urlId = `wework-e2e-url-elicitation-${elicitationSequence}`
+    const formId = `wework-e2e-elicitation-${elicitationSequence}`
+    pendingUrlElicitations.set(urlId, { callId: message.id, formId, step: 'first', urlId })
+    sendUrlElicitation(urlId, 'E2E browser authorization: cancel before explicitly opening')
     return
   }
   respondError(message.id, -32601, `Unknown method: ${String(message.method)}`)
