@@ -231,7 +231,7 @@ the `store` mode that only wraps the original bytes. Formal Release E2E reads
 the ZIP summary and rejects an uncompressed host update artifact. Complete
 installers always contain every component for first-time offline installation.
 
-The client accepts only a component manifest that exactly matches the running
+The client accepts only a component manifest that exactly matches the target
 Electron application version, channel, platform, and architecture. A
 manifest's `downloadUrl` may point to a version Release, a shared dependency
 Release, or independent object storage; it does not need to share the rolling
