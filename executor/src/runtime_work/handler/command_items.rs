@@ -17,31 +17,6 @@ pub(super) fn merge_codex_command_item(existing: &Value, mut incoming: Value) ->
     incoming
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn positioned_history_excludes_completed_items_outside_its_page() {
-        let mut turn = json!({"itemsPositioned":true,"items":[
-            {"id":"new","type":"agentMessage","text":"Native output","position":4945}
-        ]});
-        merge_codex_turn_items(
-            &mut turn,
-            vec![
-                json!({"id":"old","type":"agentMessage","text":"Old output","lifecycleCompleted":true}),
-                json!({"id":"new","type":"agentMessage","text":"Stale cache","lifecycleCompleted":true}),
-                json!({"id":"live","type":"agentMessage","text":"Still streaming","lifecycleCompleted":false}),
-            ],
-        );
-        assert_eq!(turn["items"].as_array().unwrap().len(), 2);
-        assert_eq!(turn["items"][0]["text"], "Native output");
-        assert_eq!(turn["items"][0]["position"], 4945);
-        assert_eq!(turn["items"][1]["id"], "live");
-        assert!(turn["items"][1].get("position").is_none());
-    }
-}
-
 pub(super) fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {
     let Some(turn_object) = turn.as_object_mut() else {
         return;
@@ -90,4 +65,29 @@ pub(super) fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>)
     turn_object
         .entry("itemsView".to_owned())
         .or_insert_with(|| Value::String("full".to_owned()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positioned_history_excludes_completed_items_outside_its_page() {
+        let mut turn = json!({"itemsPositioned":true,"items":[
+            {"id":"new","type":"agentMessage","text":"Native output","position":4945}
+        ]});
+        merge_codex_turn_items(
+            &mut turn,
+            vec![
+                json!({"id":"old","type":"agentMessage","text":"Old output","lifecycleCompleted":true}),
+                json!({"id":"new","type":"agentMessage","text":"Stale cache","lifecycleCompleted":true}),
+                json!({"id":"live","type":"agentMessage","text":"Still streaming","lifecycleCompleted":false}),
+            ],
+        );
+        assert_eq!(turn["items"].as_array().unwrap().len(), 2);
+        assert_eq!(turn["items"][0]["text"], "Native output");
+        assert_eq!(turn["items"][0]["position"], 4945);
+        assert_eq!(turn["items"][1]["id"], "live");
+        assert!(turn["items"][1].get("position").is_none());
+    }
 }

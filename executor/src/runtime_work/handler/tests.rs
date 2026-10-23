@@ -2104,7 +2104,7 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
 
 #[tokio::test]
 async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes() {
-    let (handler, root) = isolated_runtime_work_handler("automatic-continuation-cache");
+    let (mut handler, root) = isolated_runtime_work_handler("automatic-continuation-cache");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -2162,6 +2162,24 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         }),
     );
 
+    let cached = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert!(cached
+        .iter()
+        .any(|message| message["content"] == "Initial goal turn complete"));
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![
+            json!({"id":"turn-initial","status":"completed","items":[
+                {"id":"user-1","type":"userMessage","content":[{"type":"inputText","text":"Keep the goal active"}]},
+                {"id":"message-initial","type":"agentMessage","phase":"final_answer","text":"Initial goal turn complete"}
+            ]}),
+            json!({"id":"turn-continuation","status":"inProgress","items":[
+                {"id":"message-continuation","type":"agentMessage","phase":"commentary","text":"Automatic continuation running"}
+            ]}),
+        ],
+        None,
+    );
     let transcript = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
@@ -2184,6 +2202,11 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         transcript["messages"][2]["blocks"][0]["content"],
         "Automatic continuation running"
     );
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
     let _ = fs::remove_dir_all(root);
 }
 
