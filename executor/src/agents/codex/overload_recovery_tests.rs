@@ -549,6 +549,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
                 notifications: Some(notify_tx),
@@ -623,6 +624,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
                 notifications: Some(notify_tx),

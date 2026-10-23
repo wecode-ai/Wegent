@@ -1,5 +1,5 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
-import { createElement, type ReactNode } from 'react'
+import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
@@ -110,10 +110,16 @@ afterEach(() => {
 
 async function renderSession(currentRuntimeTask: RuntimeTaskAddress | null = address) {
   const hook = renderHook(
-    () => useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false }),
+    ({ currentRuntimeTask }) =>
+      useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false }),
     {
+      initialProps: { currentRuntimeTask },
       wrapper: ({ children }: { children: ReactNode }) =>
-        createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+        createElement(
+          StrictMode,
+          null,
+          createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children })
+        ),
     }
   )
   await waitFor(() => expect(hook.result.current.transcriptLoading).toBe(false))
@@ -128,6 +134,87 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+describe('composer draft ownership during delayed send acknowledgment', () => {
+  test.each([false, true])(
+    'clears an unchanged submitted draft after acceptance (code comments=%s)',
+    async withCodeComments => {
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+
+      await act(async () => expect(await result.current.send(draft)).toBe(true))
+
+      expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(scopeKey, '')
+    }
+  )
+
+  test.each([
+    { withCodeComments: false, nextDraft: 'A newer follow-up' },
+    { withCodeComments: false, nextDraft: draft },
+    { withCodeComments: true, nextDraft: 'A newer follow-up' },
+  ])(
+    'preserves a newer draft after acceptance (code comments=$withCodeComments, draft=$nextDraft)',
+    async ({ withCodeComments, nextDraft }) => {
+      let acknowledge!: (accepted: boolean) => void
+      mocks.send.mockReturnValue(new Promise<boolean>(resolve => (acknowledge = resolve)))
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+      let sending!: Promise<boolean>
+      act(() => {
+        sending = result.current.send(draft)
+        // BufferedChatInput clears synchronously, before the runtime acknowledges.
+        result.current.setInput('')
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      act(() => result.current.setInput(nextDraft))
+      mocks.setInput.mockClear()
+
+      await act(async () => {
+        acknowledge(true)
+        expect(await sending).toBe(true)
+      })
+
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test('does not clear again when submission context resolves after the buffered clear', async () => {
+    const { result } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    // DesktopWorkbenchMain captures send, then awaits prepareSubmission. In the
+    // meantime BufferedChatInput clears and may hold an unflushed new draft.
+    const sendAfterPreparingContext = result.current.send
+    act(() => result.current.setInput(''))
+    mocks.setInput.mockClear()
+
+    await act(async () => expect(await sendAfterPreparingContext(draft)).toBe(true))
+
+    expect(mocks.send).toHaveBeenCalledOnce()
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test('invalidates a pending clear when leaving and returning to its composer scope', async () => {
+    let acknowledge!: (accepted: boolean) => void
+    mocks.send.mockReturnValue(new Promise<boolean>(resolve => (acknowledge = resolve)))
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+    rerender({ currentRuntimeTask: address })
+    mocks.setInput.mockClear()
+
+    await act(async () => {
+      acknowledge(true)
+      expect(await sending).toBe(true)
+    })
+
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+})
 
 describe('pane continuation without composer submission', () => {
   test('keeps a new turn interactive when the runtime reuses a previously answered request ID', async () => {
@@ -358,7 +445,7 @@ describe('pane continuation without composer submission', () => {
     const { result, rerender, unmount } = await renderSession()
 
     await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(true))
-    rerender()
+    rerender({ currentRuntimeTask: address })
 
     expect(result.current.queuedMessages).toMatchObject([
       { content: continuation, status: 'queued' },
