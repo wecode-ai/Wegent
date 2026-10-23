@@ -222,6 +222,9 @@ export function createDesktopScenario({
         )
         await control.command('click', '[data-testid="wework-notifications-button"]')
         await selectCollaborationProjectView(control, CONTENT, 'board')
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-board-toolbar"]`, {
+          timeoutMs: uiTimeoutMs,
+        })
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           requirements: false,
         })
