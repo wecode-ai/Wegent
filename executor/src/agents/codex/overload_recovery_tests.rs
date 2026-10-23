@@ -53,6 +53,7 @@ fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
         let RecoveryAction::Retry {
             delay,
             notification,
+            ..
         } = recovery.observe(&completed("failed"), &state)
         else {
             panic!("settled overload should retry");
@@ -94,6 +95,94 @@ fn overload_recovery_accepts_structured_completion_without_error_notification() 
             message: "Selected model is at capacity. Please try a different model.".to_owned()
         }
     );
+}
+
+fn blocked_goal(turn_id: Value) -> Value {
+    json!({"method": "thread/goal/updated", "params": {
+        "threadId": "root-thread", "turnId": turn_id,
+        "goal": {
+            "threadId": "root-thread", "objective": "Finish the original task",
+            "status": "blocked", "tokenBudget": 10000,
+            "tokensUsed": 123, "timeUsedSeconds": 45,
+            "createdAt": 1, "updatedAt": 2
+        }
+    }})
+}
+
+#[test]
+fn overload_recovery_restores_only_the_goal_stopped_by_the_failed_turn() {
+    for turn_id in [json!("failed-turn"), json!("other-turn"), Value::Null] {
+        let mut recovery = OverloadRecovery::default();
+        let update = blocked_goal(turn_id.clone());
+        recovery.observe(&update, &state());
+        recovery.observe(&overload_error(), &state());
+        let RecoveryAction::Retry { goal, .. } = recovery.observe(&completed("failed"), &state())
+        else {
+            panic!("overload should retry");
+        };
+        assert_eq!(
+            goal,
+            (turn_id == "failed-turn").then(|| update["params"]["goal"].clone())
+        );
+    }
+}
+
+#[test]
+fn overload_recovery_does_not_restore_a_goal_after_user_mutation() {
+    let stopped = blocked_goal(json!("failed-turn"));
+    for status in [
+        "active",
+        "paused",
+        "blocked",
+        "complete",
+        "usageLimited",
+        "budgetLimited",
+        "cleared",
+    ] {
+        let mut recovery = OverloadRecovery::default();
+        recovery.observe(&stopped, &state());
+        let mut mutation = blocked_goal(Value::Null);
+        mutation["params"]["goal"]["status"] = json!(status);
+        if status == "cleared" {
+            mutation["method"] = json!("thread/goal/cleared");
+        }
+        recovery.observe(&mutation, &state());
+        recovery.observe(&overload_error(), &state());
+        assert!(
+            matches!(
+                recovery.observe(&completed("failed"), &state()),
+                RecoveryAction::Forward
+            ),
+            "retried after {status}"
+        );
+    }
+}
+
+#[test]
+fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff() {
+    let expected = blocked_goal(json!("failed-turn"))["params"]["goal"].clone();
+    assert_eq!(
+        goal_resume_params(&expected, &json!({"goal": expected})).unwrap(),
+        json!({
+            "threadId": "root-thread", "status": "active", "origin": "automatic",
+        })
+    );
+    for (field, value) in [
+        ("status", json!("paused")),
+        ("status", json!("complete")),
+        ("objective", json!("A different task")),
+        ("tokenBudget", json!(20000)),
+        ("updatedAt", json!(3)),
+        ("createdAt", json!(3)),
+    ] {
+        let mut current = expected.clone();
+        current[field] = value;
+        assert_eq!(
+            goal_resume_params(&expected, &json!({"goal": current})).unwrap_err(),
+            CODEX_APP_SERVER_TURN_CANCELLED
+        );
+    }
+    assert!(goal_resume_params(&expected, &json!({"goal": null})).is_err());
 }
 
 #[test]
@@ -390,5 +479,92 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         ("root-thread".to_owned(), "failed-turn".to_owned())
     );
     assert!(recovery_rx.try_recv().is_err());
+    assert!(child.wait().await.unwrap().success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_native_reader_restores_goal_and_waits_for_automatic_continuation() {
+    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
+    use std::process::Stdio;
+    let stopped = blocked_goal(json!("failed-turn"));
+    let mut active = stopped.clone();
+    active["params"]["turnId"] = Value::Null;
+    active["params"]["goal"]["status"] = json!("active");
+    let mut complete = active.clone();
+    complete["params"]["goal"]["status"] = json!("complete");
+    let script = format!(
+        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{stopped}' '{error}' '{failed}'
+IFS= read -r goal_get
+printf '%s\n' '{{"id":2,"result":{{"goal":{goal}}}}}'
+IFS= read -r goal_set
+printf '%s\n' "{{\"method\":\"test/resume\",\"params\":$goal_set}}" '{{"id":3,"result":{{"goal":{active_goal}}}}}' '{active}'
+printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn"}}}}}}'
+printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"root-thread","turnId":"recovered-turn","delta":"first turn"}}}}'
+printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn","status":"completed"}}}}}}'
+printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"goal-continuation"}}}}}}'
+printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"root-thread","turnId":"goal-continuation","delta":"goal finished"}}}}' '{complete}'
+printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","turn":{{"id":"goal-continuation","status":"completed"}}}}}}'
+"#,
+        error = overload_error(),
+        failed = completed("failed"),
+        goal = stopped["params"]["goal"],
+        active_goal = active["params"]["goal"],
+    );
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        2,
+    );
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = state();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        rpc.read_turn(
+            1,
+            &mut state,
+            super::super::json_rpc::TurnReadOptions {
+                overload_turn_recovering: None,
+                overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
+                notifications: Some(notify_tx),
+                request_user_input_answers: None,
+                auto_approve_mcp_tool_calls: false,
+                defer_interactive_forms: false,
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "goal finished".to_owned()
+        }
+    );
+    assert_eq!(
+        state.goal_status_snapshot(),
+        (true, Some("complete".to_owned()))
+    );
+    let mut resume = None;
+    while let Ok(message) = notify_rx.try_recv() {
+        if message["method"] == "test/resume" {
+            resume = Some(message["params"].clone());
+        }
+    }
+    let resume = resume.expect("Goal was never resumed");
+    assert_eq!(resume["method"], "thread/goal/set");
+    assert_eq!(
+        resume["params"],
+        json!({"threadId": "root-thread", "status": "active", "origin": "automatic"})
+    );
     assert!(child.wait().await.unwrap().success());
 }

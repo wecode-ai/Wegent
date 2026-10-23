@@ -2608,6 +2608,7 @@ async fn read_shared_turn_notifications(
                 overload_recovery::RecoveryAction::Retry {
                     delay,
                     notification,
+                    goal,
                 } => {
                     if let Some(callback) = options.overload_turn_recovering.as_ref() {
                         if let Some(turn_id) = notification_turn_id.as_deref() {
@@ -2626,10 +2627,21 @@ async fn read_shared_turn_notifications(
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
-                    let start = timeout_at(
-                        startup_deadline,
-                        client.request("turn/start", options.overload_continuation_params.clone()),
-                    );
+                    let restoring_goal = goal.is_some();
+                    let continuation = async {
+                        if let Some(goal) = goal {
+                            let current = client
+                                .request("thread/goal/get", json!({"threadId": thread_id}))
+                                .await?;
+                            let params = overload_recovery::goal_resume_params(&goal, &current)?;
+                            client.request("thread/goal/set", params).await
+                        } else {
+                            client
+                                .request("turn/start", options.overload_continuation_params.clone())
+                                .await
+                        }
+                    };
+                    let start = timeout_at(startup_deadline, continuation);
                     let response = if let Some(cancel_rx) = options.cancellation.as_mut() {
                         tokio::select! {
                             biased;
@@ -2653,7 +2665,15 @@ async fn read_shared_turn_notifications(
                             .await)
                         }
                     };
-                    options.active_turn_id = turn_start_response_id(&response);
+                    if restoring_goal {
+                        sync_goal_status_from_response(state, &response);
+                        // Activating an idle Goal starts its native continuation.
+                        // Do not race it with a second turn/start request.
+                        options.wait_for_goal_continuation = state.goal_is_active();
+                    } else {
+                        options.active_turn_id = turn_start_response_id(&response);
+                    }
+
                     options.expected_client_user_message_id = None;
                     if let (Some(callback), Some(turn_id)) = (
                         options.active_turn_started.as_ref(),
