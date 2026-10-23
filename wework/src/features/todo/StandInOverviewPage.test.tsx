@@ -10,6 +10,12 @@ import { runtimeItem } from '@/features/notifications/standInNotifications.fixtu
 import '@/i18n'
 import { StandInOverviewPage } from './StandInOverviewPage'
 
+vi.mock('./StandInConversation', () => ({
+  StandInConversation: ({ roleId }: { roleId?: string }) => (
+    <div data-testid="identity-conversation">{roleId ?? 'primary'}</div>
+  ),
+}))
+
 function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   const personalAgents = vi.fn(async () => [])
   const personalSave = vi.fn(async (_user, value) => value)
@@ -30,6 +36,8 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
           autoSelect: false,
           roles,
         })),
+        inbox: vi.fn(async () => ({ items: [], sourceErrors: [] })),
+        proposal: vi.fn(async () => null),
         personalSave,
         personalAgents,
       },
@@ -54,7 +62,7 @@ it('lists existing stand-ins without execution history and keeps project names s
   expect(within(row).getByText('Downloads')).toBeInTheDocument()
   expect(row).toHaveTextContent('已连接 1 个项目')
   expect(row).toHaveTextContent('未开启')
-  expect(screen.getByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
+  expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
 })
 
 it('opens the selected stand-in from the overview list', async () => {
@@ -64,20 +72,25 @@ it('opens the selected stand-in from the overview list', async () => {
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
   await user.click(await screen.findByTestId('stand-in-overview-role-second'))
+  expect(await screen.findByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
+  expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-role-chat'))
+  expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
+  await user.click(screen.getByTestId('stand-in-settings-open'))
   expect(await screen.findByRole('combobox', { name: '当前分身' })).toHaveValue('second')
 })
 
-it('shows state and work history first, and opens settings only after an explicit action', async () => {
+it('starts in the primary conversation and opens its editable profile explicitly', async () => {
   const { props, personalAgents, personalSave } = fixture()
   const user = userEvent.setup()
   render(<StandInOverviewPage {...props} />)
-  expect(await screen.findByTestId('stand-in-overview-status')).toHaveTextContent('未开启')
-  expect(screen.getByTestId('stand-in-activity')).toHaveTextContent('尚无处理记录')
+  expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
+  expect(screen.queryByTestId('stand-in-activity')).not.toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
   expect(personalAgents).not.toHaveBeenCalled()
   await user.click(screen.getByTestId('stand-in-settings-open'))
-  expect(await screen.findByTestId('stand-in-agent')).toBeInTheDocument()
-  await user.click(screen.getByTestId('stand-in-cancel'))
+  expect(await screen.findByTestId('stand-in-primary-profile')).toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-cancel'))
   expect(await screen.findByTestId('stand-in-overview')).toBeInTheDocument()
   expect(personalSave).not.toHaveBeenCalled()
 })
@@ -108,10 +121,14 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
       <StandInOverviewPage {...props} onOpenTask={onOpenTask} />
     </WorkbenchContext.Provider>
   )
+  await user.click(await screen.findByTestId('stand-in-overview-role-default'))
   const group = await screen.findByTestId('stand-in-activity-project')
-  expect(group).toHaveTextContent('Example project')
+  expect(group).toHaveTextContent('Project')
   expect(group).toHaveTextContent('已完成')
   expect(screen.queryByText('Ordinary task')).not.toBeInTheDocument()
   await user.click(within(group).getByTestId('stand-in-activity-task-task'))
+  expect(onOpenTask).not.toHaveBeenCalled()
+  expect(screen.getByTestId('stand-in-work-preview')).toHaveTextContent('Review')
+  await user.click(screen.getByTestId('stand-in-preview-open'))
   expect(onOpenTask).toHaveBeenCalledWith(runtimeItem.address)
 })

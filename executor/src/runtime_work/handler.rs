@@ -144,6 +144,9 @@ mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_conversations;
+mod stand_in_dingtalk_work;
+mod stand_in_ingress;
 mod stand_in_workspace;
 mod supervisor;
 mod system;
@@ -1120,6 +1123,15 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.personal.get" => self.personal_stand_in_settings(payload, false),
             "runtime.stand_in.personal.agents" => self.personal_stand_in_agents(payload).await,
             "runtime.stand_in.personal.save" => self.personal_stand_in_settings(payload, true),
+            "runtime.stand_in.conversation" => self.stand_in_conversation(payload).await,
+            "runtime.stand_in.proposal.get" => self.stand_in_proposal(payload, false),
+            "runtime.stand_in.proposal.resolve" => self.stand_in_proposal(payload, true),
+            "runtime.stand_in.dingtalk.search" => super::dingtalk::search(&payload).await,
+            "runtime.stand_in.work.list" => self.list_dingtalk_stand_in_work(payload),
+            "runtime.stand_in.work.messages" => self.dingtalk_stand_in_messages(payload),
+            "runtime.stand_in.work.run" => self.run_dingtalk_stand_in_work(payload).await,
+            "runtime.stand_in.work.adjust" => self.adjust_dingtalk_stand_in_work(payload),
+            "runtime.stand_in.source.retry" => self.retry_dingtalk_source(payload),
             "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
             "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
             "runtime.stand_in.run" => self.run_stand_in(payload).await,

@@ -11,6 +11,7 @@ mod codex_transcript_page;
 mod codex_user_input;
 mod collaboration_projects;
 mod connectors;
+pub(crate) mod dingtalk;
 mod events;
 pub mod fork_transfer;
 mod handler;
@@ -28,6 +29,7 @@ pub(crate) use transcript::codex_file_change_content;
 mod transcript_page;
 mod transcript_transport;
 mod util;
+pub(crate) use util::stand_in_requires_confirmation;
 mod worktrees;
 
 pub use codex_global_state::run_project_state_query;

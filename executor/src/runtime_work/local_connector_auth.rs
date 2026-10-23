@@ -55,6 +55,65 @@ static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>
 
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 
+pub(crate) async fn dingtalk_command(args: &[String]) -> Result<Value, AppIpcError> {
+    let (_, spec) = resolve_request(&json!({"pluginKey":"dingtalk","connectorSlug":"dingtalk"}))?;
+    let tool = resolve_auth_tool(spec.tool.as_ref(), false)
+        .await?
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "local_auth_tool_missing",
+                "The DingTalk plugin must declare its DWS tool",
+            )
+        })?;
+    let mut command = Command::new(tool);
+    crate::process::hide_windows_console(&mut command);
+    let output = tokio::time::timeout(
+        Duration::from_secs(40),
+        command
+            .args(args)
+            .args(["--format", "json"])
+            .envs(crate::plugin_account_auth::broker::environment())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| AppIpcError::new("dingtalk_timeout", "DingTalk request timed out"))?
+    .map_err(|error| AppIpcError::new("dingtalk_unavailable", error.to_string()))?;
+    if output.stdout.len() > 8 * 1024 * 1024 {
+        return Err(AppIpcError::new(
+            "dingtalk_response_invalid",
+            "DingTalk response exceeded the size limit",
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+        AppIpcError::new("dingtalk_response_invalid", "DingTalk did not return JSON")
+    })?;
+    if !output.status.success() || value["success"] == false || value["ok"] == false {
+        let code = value["error"]["code"]
+            .as_str()
+            .or_else(|| value["errorCode"].as_str())
+            .or_else(|| value["code"].as_str())
+            .unwrap_or("dingtalk_request_failed");
+        if matches!(
+            code,
+            "need_login" | "AUTH_REQUIRED" | "connector_auth_required" | "NOT_LOGGED_IN"
+        ) {
+            return Err(AppIpcError::new(
+                "connector_auth_required",
+                "pluginKey=dingtalk connectorSlug=dingtalk",
+            ));
+        }
+        return Err(AppIpcError::new(
+            "dingtalk_request_failed",
+            format!("DingTalk request failed ({code})"),
+        ));
+    }
+    Ok(value)
+}
+
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     if github_cli::is_target(&payload) {
         return github_cli::health().await;

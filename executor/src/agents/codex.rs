@@ -2041,6 +2041,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 overload_turn_recovering,
                 wait_for_goal_continuation,
                 auto_approve_mcp_tool_calls,
+                stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(request),
             },
         )
         .await;
@@ -2331,6 +2332,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 request_user_input_answers,
                 auto_approve_mcp_tool_calls,
                 defer_interactive_forms,
+                stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
+                    request,
+                ),
             },
         );
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
@@ -2401,6 +2405,7 @@ struct SharedTurnNotificationOptions {
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
     wait_for_goal_continuation: bool,
     auto_approve_mcp_tool_calls: bool,
+    stand_in_single_approval: bool,
 }
 
 async fn read_shared_turn_notifications(
@@ -2708,6 +2713,10 @@ async fn read_shared_turn_notifications(
                     continue;
                 }
             }
+        }
+        let mut message = message;
+        if options.stand_in_single_approval {
+            restrict_stand_in_approval(&mut message);
         }
         let auto_approve_mcp_tool_call =
             options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
@@ -3084,6 +3093,15 @@ fn spawn_shared_approval_response(
 
 const CODEX_APPROVAL_QUESTION_ID: &str = "__codex_approval";
 
+fn restrict_stand_in_approval(message: &mut Value) {
+    if message["method"]
+        .as_str()
+        .is_some_and(is_codex_approval_request_method)
+    {
+        message["params"]["standInSingleApproval"] = json!(true);
+    }
+}
+
 fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, String> {
     let answer = response
         .get("answers")
@@ -3093,6 +3111,13 @@ fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, Str
         .and_then(|answers| answers.first())
         .and_then(Value::as_str)
         .unwrap_or("decline");
+    let answer = if message_params(message)["standInSingleApproval"] == true
+        && !matches!(answer, "allow_once" | "cancel" | "decline")
+    {
+        "decline"
+    } else {
+        answer
+    };
     let method = message
         .get("method")
         .and_then(Value::as_str)
@@ -3897,12 +3922,74 @@ fn build_codex_launch_config_with_route_scope(
         )?;
     launch_config.config_overrides.extend(request_mcp_overrides);
     launch_config.env.extend(request_mcp_environment);
+    if crate::runtime_work::stand_in_requires_confirmation(request) {
+        let approvals = stand_in_mcp_approval_overrides(
+            request,
+            &launch_config.config_overrides,
+            &launch_config.thread_config,
+        );
+        launch_config.config_overrides.extend(approvals);
+    }
 
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         configure_text_generation(&mut launch_config);
     }
 
     Ok(launch_config)
+}
+
+fn stand_in_mcp_approval_overrides(
+    request: &ExecutionRequest,
+    overrides: &[String],
+    thread_config: &Map<String, Value>,
+) -> Vec<String> {
+    let mut servers = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    let entries = overrides.iter().cloned().chain(
+        thread_config
+            .iter()
+            .map(|(key, value)| format!("{key}={}", toml_json_value(value))),
+    );
+    for entry in entries {
+        let Ok(value) = toml_edit::de::from_str::<Value>(&entry) else {
+            continue;
+        };
+        for (name, config) in value["mcp_servers"].as_object().into_iter().flatten() {
+            let tools = servers.entry(name.clone()).or_default();
+            tools.extend(
+                config["tools"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(name, _)| name.clone()),
+            );
+        }
+    }
+    let mut result = Vec::new();
+    for (name, tools) in servers {
+        let mode = if name == crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
+            && request
+                .extra
+                .get("origin")
+                .is_some_and(|origin| origin["type"] == "stand_in_identity")
+        {
+            "approve"
+        } else {
+            "writes"
+        };
+        result.push(format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", &name, "default_tools_approval_mode"]),
+            toml_value(mode)
+        ));
+        for tool in tools {
+            result.push(format!(
+                "{}={}",
+                toml_key_path(&["mcp_servers", &name, "tools", &tool, "approval_mode"]),
+                toml_value(mode)
+            ));
+        }
+    }
+    result
 }
 
 fn build_codex_launch_config_for_prepared_request(
@@ -5076,6 +5163,13 @@ fn managed_wework_mcp_config_overrides(
             &mut overrides,
         );
     }
+    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
+        append_managed_mcp_config(
+            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+            config,
+            &mut overrides,
+        );
+    }
     if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
         return Ok((overrides, env));
     }
@@ -5810,6 +5904,9 @@ pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
+    if crate::runtime_work::stand_in_requires_confirmation(request) {
+        return json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}});
+    }
     match codex_runtime_permission_profile(request) {
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => json!({
             "granular": {
@@ -5829,6 +5926,9 @@ fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
 }
 
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
+    if crate::runtime_work::stand_in_requires_confirmation(request) {
+        return CODEX_READ_ONLY_PERMISSION_PROFILE;
+    }
     match request
         .extra
         .get("runtime_permission_profile")

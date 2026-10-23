@@ -1682,6 +1682,50 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async inbox(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).inbox(userId, deviceId)
+      },
+      async workMessages(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
+      },
+      async runWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
+      },
+      async adjustMessage(userId, deviceId, workId, messageId, targetWorkId) {
+        return (await standInApiForDevice(deviceId)).adjustMessage(
+          userId,
+          deviceId,
+          workId,
+          messageId,
+          targetWorkId
+        )
+      },
+      async retrySource(userId, deviceId, source) {
+        return (await standInApiForDevice(deviceId)).retrySource(userId, deviceId, source)
+      },
+      async searchDingTalk(deviceId, kind, query, cursor) {
+        return (await standInApiForDevice(deviceId)).searchDingTalk(deviceId, kind, query, cursor)
+      },
+      async conversation(userId, deviceId, message, roleId, options) {
+        return (await standInApiForDevice(deviceId)).conversation(
+          userId,
+          deviceId,
+          message,
+          roleId,
+          options
+        )
+      },
+      async proposal(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
+      },
+      async resolveProposal(userId, deviceId, proposalId, accept) {
+        return (await standInApiForDevice(deviceId)).resolveProposal(
+          userId,
+          deviceId,
+          proposalId,
+          accept
+        )
+      },
       async personalAgents(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
       },

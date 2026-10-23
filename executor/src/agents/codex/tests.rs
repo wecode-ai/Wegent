@@ -7,6 +7,55 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
+    let mut message = json!({"id":1,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["touch"]}}]}});
+    restrict_stand_in_approval(&mut message);
+    for answer in [
+        "allow_session",
+        "allow_execpolicy:2",
+        "apply_network_policy:0",
+    ] {
+        let result = codex_approval_result(
+            &message,
+            &json!({"answers":{"__codex_approval":{"answers":[answer]}}}),
+        )
+        .unwrap();
+        assert_eq!(result["decision"], "decline");
+    }
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({"answers":{"__codex_approval":{"answers":["allow_once"]}}})
+        )
+        .unwrap()["decision"],
+        "accept"
+    );
+}
+
+#[test]
+fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
+    let request = serde_json::from_value(
+        json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true}}),
+    )
+    .unwrap();
+    let overrides = vec![
+        "mcp_servers.business.default_tools_approval_mode=\"approve\"".into(),
+        "mcp_servers.business.tools.send.approval_mode=\"approve\"".into(),
+        "mcp_servers.wework_stand_in.url=\"http://127.0.0.1/stand-in/mcp\"".into(),
+    ];
+    let result = stand_in_mcp_approval_overrides(&request, &overrides, &Map::new());
+    assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+    assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
+    assert!(result
+        .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"writes\"".into()));
+    let identity = serde_json::from_value(json!({"origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true}})).unwrap();
+    let result = stand_in_mcp_approval_overrides(&identity, &overrides, &Map::new());
+    assert!(result
+        .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"approve\"".into()));
+    assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+}
+
+#[test]
 fn named_home_rpc_clients_preserve_process_isolation() {
     let _environment = environment::LaunchEnvironment::new();
     let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());

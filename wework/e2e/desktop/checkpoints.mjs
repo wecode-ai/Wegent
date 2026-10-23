@@ -14,6 +14,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-action-confirmation',
+  'stand-in-identities',
   'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',

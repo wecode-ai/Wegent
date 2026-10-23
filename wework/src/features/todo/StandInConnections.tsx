@@ -1,9 +1,10 @@
 import { Folder, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInProjectRef, StandInRole } from '@/api/personalStandIn'
-import { roleIncludesProject } from '@/api/personalStandIn'
+import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
+import { StandInHandlingSelect } from './StandInHandlingSelect'
 
 export function StandInConnections({
   role,
@@ -102,30 +103,51 @@ export function StandInConnections({
                       role.agentProject.store)
               )
               .map(project => (
-                <label
+                <div
                   key={`${project.project_store}:${project.id}`}
                   className={`flex min-h-11 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
                 >
-                  <input
-                    type="checkbox"
-                    className="accent-text-primary"
-                    data-testid={`stand-in-connect-project-${project.id}`}
-                    aria-label={project.name}
-                    checked={roleIncludesProject(role, ref(project))}
-                    disabled={
-                      disabled || Boolean(role.agentProject && role.agentProject.id !== project.id)
-                    }
-                    onChange={event => toggleProject(project, event.target.checked)}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  <span className="text-xs text-text-muted">
-                    {t(
-                      project.project_store === 'local'
-                        ? 'standIn.personal.local'
-                        : 'standIn.personal.cloud'
-                    )}
-                  </span>
-                </label>
+                  <label className="flex min-w-0 flex-1 items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="accent-text-primary"
+                      data-testid={`stand-in-connect-project-${project.id}`}
+                      aria-label={project.name}
+                      checked={roleIncludesProject(role, ref(project))}
+                      disabled={
+                        disabled ||
+                        Boolean(role.agentProject && role.agentProject.id !== project.id)
+                      }
+                      onChange={event => toggleProject(project, event.target.checked)}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    <span className="text-xs text-text-muted">
+                      {t(
+                        project.project_store === 'local'
+                          ? 'standIn.personal.local'
+                          : 'standIn.personal.cloud'
+                      )}
+                    </span>
+                  </label>
+                  {roleIncludesProject(role, ref(project)) && (
+                    <StandInHandlingSelect
+                      policy={standInPolicy(role, ref(project))}
+                      disabled={disabled}
+                      label={t('standIn.workspace.handling_for', { name: project.name })}
+                      testId={`stand-in-project-policy-${project.id}`}
+                      onChange={policy =>
+                        setSource({
+                          projectPolicies: [
+                            ...(source.projectPolicies ?? []).filter(
+                              row => row.id !== project.id || row.store !== ref(project).store
+                            ),
+                            { ...ref(project), policy },
+                          ],
+                        })
+                      }
+                    />
+                  )}
+                </div>
               ))}
             {!projects.length && <p className="py-3 text-text-muted">{t('standIn.no_projects')}</p>}
           </div>
