@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, execFile, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { constants, createWriteStream } from 'node:fs'
 import { access, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { expect, type APIRequestContext, type TestInfo } from '@playwright/test'
 import { prepareArtifactDeviceUser } from './artifact-device-user'
 
-const execFileAsync = promisify(execFile)
+export { artifactDatabaseState } from './artifact-database-state'
+
 const repository = resolve(__dirname, '../../..')
 export const artifactApiUrl = process.env.E2E_API_URL || 'http://localhost:8000'
 export const artifactModelUrl =
@@ -197,31 +197,4 @@ export async function startArtifactDevice(
     await close()
     throw error
   }
-}
-
-export async function artifactDatabaseState(data: {
-  operation: 'inspect' | 'rebind'
-  task_id: number
-  context_id: number
-  user_id: number
-  expected_device_id: string
-  replacement_device_id?: string
-}): Promise<{
-  executor_name: string
-  source: { executor_name: string }
-  binary_size: number
-  image_base64: string
-  extracted_text: string
-}> {
-  if (!process.env.DATABASE_URL)
-    throw new Error('Artifact E2E requires the isolated service DATABASE_URL')
-  const result = await execFileAsync(
-    'uv',
-    ['run', 'python', join(repository, 'backend/tests/e2e/artifact_task_state.py')],
-    {
-      cwd: join(repository, 'backend'),
-      env: { ...process.env, WEGENT_ARTIFACT_E2E_REQUEST: JSON.stringify(data) },
-    }
-  )
-  return JSON.parse(result.stdout)
 }
