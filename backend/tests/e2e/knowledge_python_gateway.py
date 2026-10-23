@@ -5,6 +5,10 @@
 """真实混合网关知识库回迁契约；由 GitHub CI 启动真实服务后执行。
 
 Run with ``uv run --no-sync python tests/e2e/knowledge_python_gateway.py``.
+The CI workflow must provide E2E_TEST_SHA (the verified checkout SHA),
+E2E_REPORT_DIR, E2E_API_URL, WEGENT_HYBRID_STATE_FILE and E2E_PYTHON_LOG,
+along with the real MySQL, Redis and file-storage configuration.
+Missing prerequisites fail explicitly; report SHAs have no placeholder fallback.
 Only fixture records are inserted directly. Every observed product operation,
 including authentication, upload and MCP tool calls, uses the public gateway.
 Do not run through the unit-test conftest, which installs service doubles.

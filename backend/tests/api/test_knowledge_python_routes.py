@@ -4,6 +4,7 @@
 
 """Contracts for restored Python routes through the registered API application."""
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.wiki.service import WikiConnectionService
 
 SESSION_ROUTES = [
     "/api/knowledge-bases/{knowledge_base_id}/document-protection",
@@ -35,6 +37,27 @@ OPEN_ROUTES = [
     "/api/knowledge/documents",
     "/api/knowledge/documents/{document_id}/content",
 ]
+
+
+def test_wiki_connection_database_read_runs_outside_event_loop(
+    test_client, test_token, monkeypatch
+):
+    """Keep synchronous SQLAlchemy reads off the ASGI event loop."""
+    list_connections = WikiConnectionService.list_connections
+
+    def read_connections(db, user):
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        return list_connections(db, user)
+
+    monkeypatch.setattr(
+        WikiConnectionService, "list_connections", staticmethod(read_connections)
+    )
+    response = test_client.get(
+        "/api/wiki/connections", headers={"Authorization": f"Bearer {test_token}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["connections"] == []
 
 
 def _dependencies(dependant):
