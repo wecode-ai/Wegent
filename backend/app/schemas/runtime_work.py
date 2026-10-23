@@ -188,6 +188,7 @@ class NormalizedRuntimeMessage(BaseModel):
     client_user_message_id: Optional[str] = Field(
         default=None, alias="clientUserMessageId"
     )
+    runtime_guidance: Optional[bool] = Field(default=None, alias="runtimeGuidance")
     turn_id: Optional[str] = Field(default=None, alias="turnId")
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""

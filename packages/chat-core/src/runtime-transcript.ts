@@ -196,6 +196,8 @@ export function runtimeMessageToWorkbenchMessage(
     source,
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),
+    runtimeGuidance:
+      message.runtimeGuidance ?? message.runtime_guidance ?? undefined,
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: normalizeTurnFileChanges(
       message.fileChanges ?? message.file_changes,

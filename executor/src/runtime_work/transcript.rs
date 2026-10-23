@@ -369,7 +369,10 @@ impl<'a> TurnTranscriptProjector<'a> {
             &mut self.seen_user_messages,
         );
         if pushed_user {
-            if let Some(message) = self.messages.last() {
+            if let Some(message) = self.messages.last_mut() {
+                if is_guidance {
+                    message["runtimeGuidance"] = json!(true);
+                }
                 self.normalized_items.push(json!({
                     "id": item_id(item, "user"), "type": "user_message", "message": message,
                 }));

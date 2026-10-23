@@ -321,3 +321,10 @@ def test_runtime_task_create_rejects_invalid_supervisor_interval() -> None:
                 "intervalSeconds": 15,
             },
         )
+
+
+def test_transcript_message_preserves_guidance_boundary():
+    from app.schemas.runtime_work import NormalizedRuntimeMessage
+
+    message = NormalizedRuntimeMessage(id="guidance", role="user", runtimeGuidance=True)
+    assert message.model_dump(by_alias=True)["runtimeGuidance"] is True

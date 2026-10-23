@@ -27,6 +27,56 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("retains observed child reasoning when a native parent snapshot omits it", () => {
+    const reasoning = {
+      id: "child-reasoning",
+      subtaskId: "turn",
+      type: "thinking" as const,
+      content: "Observed child reasoning",
+      status: "done" as const,
+      createdAt: 1,
+    };
+    const command = {
+      id: "child-command",
+      subtaskId: "turn",
+      type: "tool" as const,
+      toolName: "exec_command",
+      status: "done" as const,
+      createdAt: 2,
+    };
+    const parent = (
+      children: (typeof reasoning | typeof command)[],
+      agentThreadId = "child-thread",
+    ): RuntimeConversationItem => ({
+      id: "parent",
+      position: 10,
+      type: "block",
+      block: {
+        id: "parent",
+        subtaskId: "turn",
+        type: "subagent",
+        agentThreadId,
+        status: "streaming",
+        createdAt: 1,
+        children,
+      },
+    });
+    const merged = mergeRuntimeConversationTurns(
+      [turn([parent([reasoning, command])])],
+      [turn([parent([command])])],
+    );
+    expect(merged[0].items[0]).toMatchObject({
+      block: { children: [reasoning, command] },
+    });
+    const changedChild = mergeRuntimeConversationTurns(
+      [turn([parent([reasoning])])],
+      [turn([parent([command], "another-child")])],
+    );
+    expect(changedChild[0].items[0]).toMatchObject({
+      block: { agentThreadId: "another-child", children: [command] },
+    });
+  });
+
   it("keeps the legacy display adapter when a page carries assistant output without native turns", () => {
     const page = projectRuntimePaneTranscript({
       runtime: "codex",

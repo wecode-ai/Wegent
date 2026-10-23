@@ -22,7 +22,7 @@ Persisted items use native positions; unpositioned runtime items retain their ob
 
 ## Ownership and synchronization
 
-Native normalization produces turns/items and presentation messages in one pass. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
+Native normalization produces turns/items and presentation messages in one pass. Native positions order items; explicit user boundaries group their presentation. The initial ordinary prompt owns the same reply as pre-prompt context compaction, while runtimeGuidance establishes another display segment. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
 
 Edit/retry supersession markers filter native turns before normalization so both projections agree. Metadata reads reuse the existing startup retry only for explicit not-ready protocol errors; permanent errors still propagate to the caller.
 

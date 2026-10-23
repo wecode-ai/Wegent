@@ -58,6 +58,8 @@ export interface NormalizedRuntimeMessage {
   completed_at?: string | number | null;
   stoppedNotice?: boolean | null;
   stopped_notice?: boolean | null;
+  runtimeGuidance?: boolean | null;
+  runtime_guidance?: boolean | null;
   runtimeGoalRequest?: boolean | null;
   runtime_goal_request?: boolean | null;
   source?: RuntimeMessageSource | null;

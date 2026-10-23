@@ -798,7 +798,7 @@ fn native_page_user_presentations(mut presentations: Vec<Value>, thread: &Value)
 fn bind_native_user_presentations(messages: &mut [Value], presentations: &[Value]) {
     for index in 0..messages.len() {
         let message = &messages[index];
-        if message["role"] != "user" {
+        if message["role"] != "user" || message.get("clientUserMessageId").is_some() {
             continue;
         }
         let turn_id = &message["turnId"];
@@ -810,30 +810,6 @@ fn bind_native_user_presentations(messages: &mut [Value], presentations: &[Value
             .iter()
             .filter(|presentation| &presentation["turnId"] == turn_id)
             .collect::<Vec<_>>();
-        log_executor_event(
-            "runtime transcript user identity",
-            &[
-                ("turn_id", turn_id.as_str().unwrap_or_default().to_owned()),
-                ("native_id", string_field(message, "id").unwrap_or_default()),
-                (
-                    "native_client_id",
-                    string_field(message, "clientUserMessageId").unwrap_or_default(),
-                ),
-                ("user_count", users.to_string()),
-                ("owner_count", owners.len().to_string()),
-                (
-                    "owner_client_ids",
-                    owners
-                        .iter()
-                        .filter_map(|owner| string_field(owner, "clientUserMessageId"))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-            ],
-        );
-        if message.get("clientUserMessageId").is_some() {
-            continue;
-        }
         if users == 1 && owners.len() == 1 {
             if let Some(id) = owners[0].get("clientUserMessageId") {
                 messages[index]["clientUserMessageId"] = id.clone();

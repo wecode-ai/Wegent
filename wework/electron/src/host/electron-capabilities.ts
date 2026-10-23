@@ -720,6 +720,7 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.focusMainWindow', async () => {
+    console.log('[desktop-e2e-native-focus]', { stage: 'started', at: Date.now() })
     await e2eHost.focusMainWindow()
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
@@ -727,6 +728,7 @@ export function createElectronCapabilityRouter(
     target.focus()
     const primaryContents = e2eHost.captureTarget('main')
     if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
+    console.log('[desktop-e2e-native-focus]', { stage: 'completed', at: Date.now() })
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')

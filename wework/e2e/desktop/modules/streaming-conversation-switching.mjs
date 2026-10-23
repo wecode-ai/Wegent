@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -119,6 +120,14 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
         )
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: SUFFIX.trim() })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.pane?.currentRuntimeTask?.taskId === address.taskId &&
+            snapshot.pane?.transcript?.loading === false &&
+            snapshot.pane?.transcript?.hasMoreBefore === true,
+          'The restored native history page did not finish loading'
+        )
         const messages = JSON.parse(
           await control.command('getRuntimeConversationMessages', 'body', {
             value: JSON.stringify(address),

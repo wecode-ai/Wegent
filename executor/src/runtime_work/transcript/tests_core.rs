@@ -1481,3 +1481,36 @@ fn canonical_turn_retains_artifacts_from_segments_before_guidance() {
         "src/one.rs"
     );
 }
+
+#[test]
+fn canonical_user_boundary_distinguishes_guidance_from_pre_prompt_processing() {
+    let projection = project_transcript(
+        &json!({"turns":[{
+            "id":"turn-1","status":"completed","items":[
+                {"id":"compact","type":"contextCompaction"},
+                {"id":"user","type":"userMessage","content":[{"type":"inputText","text":"Prompt"}]},
+                {"id":"progress","type":"agentMessage","phase":"commentary","text":"Working"},
+                {"id":"guidance","type":"userMessage","content":[{"type":"inputText","text":"Guide"}]},
+                {"id":"final","type":"agentMessage","phase":"final_answer","text":"Done"}
+            ]
+        }]}),
+        "device-1",
+        false,
+    );
+    let users = projection.turns[0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "user_message")
+        .collect::<Vec<_>>();
+    assert_ne!(users[0]["message"]["runtimeGuidance"], true);
+    assert_eq!(users[1]["message"]["runtimeGuidance"], true);
+    assert!(projection.turns[0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(
+            |item| item.pointer("/block/tool_name").and_then(Value::as_str)
+                != Some("conversation_guidance")
+        ));
+}

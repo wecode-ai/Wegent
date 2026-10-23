@@ -6,7 +6,10 @@ import {
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
 
-import { getLatestThinkingContent } from "./workbench-message-reducer";
+import {
+  getLatestThinkingContent,
+  nestWorkbenchProcessingBlocks,
+} from "./workbench-message-reducer";
 
 import type {
   ProcessingBlock,
@@ -569,10 +572,25 @@ export function mergeRuntimeConversationItem(
     return { ...snapshot, message: { ...local.message, ...snapshot.message } };
   }
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
-  const snapshotBlock = preserveToolOutput(
+  let snapshotBlock = preserveToolOutput(
     local.block,
     preserveRequestUserInputResponse(local.block, snapshot.block),
   );
+
+  if (
+    local.block.type === "subagent" &&
+    snapshotBlock.type === "subagent" &&
+    !(
+      local.block.agentThreadId &&
+      snapshotBlock.agentThreadId &&
+      local.block.agentThreadId !== snapshotBlock.agentThreadId
+    )
+  ) {
+    snapshotBlock = nestWorkbenchProcessingBlocks([
+      local.block,
+      snapshotBlock,
+    ])[0];
+  }
 
   if (
     preserveLocalTerminal &&
