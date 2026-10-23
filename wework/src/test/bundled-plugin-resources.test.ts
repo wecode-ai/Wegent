@@ -370,6 +370,9 @@ describe('bundled plugin resources', () => {
       )
       expect(workflow).not.toContain('"$RELEASE_KIND" == "component"')
       expect(workflow).toContain('Release $RELEASE_TAG is already published. Use a new version.')
+      expect(workflow.indexOf('- name: Validate release target')).toBeLessThan(
+        workflow.indexOf('- name: Commit Wework version files')
+      )
       expect(workflow).toMatch(
         /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
       )

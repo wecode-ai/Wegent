@@ -139,8 +139,15 @@ export async function createDesktopScenario({
         undefined,
         'Startup staged a same-version component update'
       )
-      const check = JSON.parse(await control.command('checkForAppUpdate', 'body'))
-      assert.equal(check, null, 'A same-version release must not be offered as an app update')
+      if (process.platform === 'linux') {
+        await assert.rejects(
+          control.command('checkForAppUpdate', 'body'),
+          /Wework updater is not available on Linux/
+        )
+      } else {
+        const check = JSON.parse(await control.command('checkForAppUpdate', 'body'))
+        assert.equal(check, null, 'A same-version release must not be offered as an app update')
+      }
       assert.equal(
         requests.some(path => path.startsWith('/components-')),
         false,

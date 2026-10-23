@@ -103,6 +103,20 @@ jobs:
           RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
         run: node wework/scripts/plan-desktop-release.mjs
 
+      - name: Validate release target
+        if: steps.version.outputs.publish_release == 'true' && steps.plan.outputs.kind != 'none'
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "::error::Release $RELEASE_TAG is already published. Use a new version."
+              exit 1
+            fi
+          fi
+
       - name: Commit Wework version files
         id: version-files
         env:
@@ -155,10 +169,6 @@ jobs:
           notes="$(mktemp)"
           node wework/scripts/generate-release-notes.mjs > "$notes"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
-              echo "::error::Release $RELEASE_TAG is already published. Use a new version."
-              exit 1
-            fi
             gh release edit "$RELEASE_TAG" \
               --target "$RELEASE_SHA" \
               --title "$title" \
