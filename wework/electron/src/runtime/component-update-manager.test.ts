@@ -91,7 +91,7 @@ describe('ComponentUpdateManager', () => {
       const update = await createExecutorUpdate(fixture.root, 'executor-v2')
       const fetch = componentFetch(update.manifest, update.assetName, update.archive)
       const initial = createManager(fixture, fetch)
-      await initial.stageAvailableUpdate()
+      await initial.stageUpdateForApp(appVersion, 'beta')
       await initial.prepareStartup()
       const statePath = join(fixture.data, 'managed-components', 'state.json')
       const before = await readFile(statePath, 'utf8')
@@ -118,7 +118,7 @@ describe('ComponentUpdateManager', () => {
       checked.push(content)
       if (content === 'executor-incompatible') throw new Error('incompatible Workbench schema')
     })
-    await manager.stageAvailableUpdate()
+    await manager.stageUpdateForApp(appVersion, 'beta')
     const statePath = join(fixture.data, 'managed-components', 'state.json')
     const before = await readFile(statePath, 'utf8')
     const paths = await manager.prepareStartup()
@@ -177,7 +177,7 @@ describe('ComponentUpdateManager', () => {
     const fetch: typeof globalThis.fetch = async input =>
       componentFetch(update.manifest, update.assetName, update.archive)(input)
     const installed = createManager(fixture, fetch)
-    await installed.stageAvailableUpdate()
+    await installed.stageUpdateForApp(appVersion, 'beta')
     const active = await installed.prepareStartup()
     await installed.confirmStartup()
     await writeFile(active.executor, 'corrupt executor')
@@ -189,7 +189,7 @@ describe('ComponentUpdateManager', () => {
     )
 
     update = await createExecutorUpdate(fixture.root, 'executor-v3')
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     const staged = JSON.parse(await readFile(statePath, 'utf8'))
     expect(staged.current).toEqual(before.current)
     expect(staged.pending.components.executor.contentSha256).toBe(
@@ -228,7 +228,7 @@ describe('ComponentUpdateManager', () => {
     const fetch = componentFetch(update.manifest, update.assetName, update.archive)
     const manager = createManager(fixture, fetch)
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     const activated = await manager.prepareStartup()
     expect(await readFile(activated.executor, 'utf8')).toBe('executor-v2')
     expect(activated.contentSha256.executor).toBe(update.manifest.components.executor.contentSha256)
@@ -248,7 +248,7 @@ describe('ComponentUpdateManager', () => {
     const fetch = componentFetch(update.manifest, update.assetName, update.archive, requests)
     const manager = createManager(fixture, fetch)
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     const activated = await manager.prepareStartup()
 
     expect(requests).toEqual([
@@ -273,7 +273,7 @@ describe('ComponentUpdateManager', () => {
       const update = await createExecutorUpdate(fixture.root, 'executor-v2')
       const fetch = componentFetch(update.manifest, update.assetName, update.archive)
       const manager = createManager(fixture, fetch)
-      await manager.stageAvailableUpdate()
+      await manager.stageUpdateForApp(appVersion, 'beta')
       if (phase === 'confirmed') {
         await manager.prepareStartup()
         await manager.confirmStartup()
@@ -315,7 +315,7 @@ describe('ComponentUpdateManager', () => {
         componentFetch(update.manifest, update.assetName, update.archive, requests)
       )
 
-      expect(await manager.stageAvailableUpdate()).toBe(true)
+      expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
 
       expect(requests).toEqual([
         `${updateBaseUrl}/components-beta-macos-arm64.json`,
@@ -371,7 +371,7 @@ describe('ComponentUpdateManager', () => {
     )
   })
 
-  test('ignores a component manifest for a future app during background checks', async () => {
+  test('rejects a component manifest that does not match the requested app version', async () => {
     const fixture = await createFixture()
     const update = await createExecutorUpdate(fixture.root, 'executor-v2', '1.2.3-beta.5')
     const manager = createManager(
@@ -379,7 +379,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    await expect(manager.stageAvailableUpdate()).resolves.toBe(false)
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).rejects.toThrow()
   })
 
   test('downloads a changed component outside the manifest origin and path', async () => {
@@ -391,7 +391,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
   })
 
@@ -405,7 +405,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive, requests)
     )
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     expect(requests).toContain(`${updateBaseUrl}/${update.assetName}`)
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe(
       'executor-rebuilt'
@@ -420,7 +420,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     const activated = await manager.prepareStartup()
 
     expect(await readFile(activated.codex, 'utf8')).toBe('codex-v2')
@@ -437,7 +437,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     const activated = await manager.prepareStartup()
 
     expect(activated.codex).toBe(
@@ -453,12 +453,12 @@ describe('ComponentUpdateManager', () => {
     const fetch: typeof globalThis.fetch = async input =>
       componentFetch(activeUpdate.manifest, activeUpdate.assetName, activeUpdate.archive)(input)
     const manager = createManager(fixture, fetch)
-    await manager.stageAvailableUpdate()
+    await manager.stageUpdateForApp(appVersion, 'beta')
     await manager.prepareStartup()
     await manager.confirmStartup()
 
     activeUpdate = await createExecutorUpdate(fixture.root, 'executor-v3')
-    await manager.stageAvailableUpdate()
+    await manager.stageUpdateForApp(appVersion, 'beta')
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v3')
     expect(await manager.rollbackStartup()).toBe(true)
 
@@ -470,7 +470,7 @@ describe('ComponentUpdateManager', () => {
     const update = await createExecutorUpdate(fixture.root, 'executor-v2')
     const fetch = componentFetch(update.manifest, update.assetName, update.archive)
     const manager = createManager(fixture, fetch)
-    await manager.stageAvailableUpdate()
+    await manager.stageUpdateForApp(appVersion, 'beta')
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
 
     const restarted = createManager(fixture, fetch)
@@ -494,7 +494,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     const paths = await manager.prepareStartup()
     await expect(
       readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'code.js'), 'utf8')
@@ -518,7 +518,7 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    await expect(manager.stageAvailableUpdate()).rejects.toThrow(
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).rejects.toThrow(
       'Extracted component checksum mismatch: weworkCorePlugins'
     )
     await expect(
@@ -529,7 +529,7 @@ describe('ComponentUpdateManager', () => {
     ).toEqual([])
 
     update.manifest.components.weworkCorePlugins.contentSha256 = correct
-    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await manager.stageUpdateForApp(appVersion, 'beta')).toBe(true)
     await manager.prepareStartup()
     await manager.confirmStartup()
   })
@@ -541,7 +541,9 @@ describe('ComponentUpdateManager', () => {
     const fetch = componentFetch(update.manifest, update.assetName, corrupt)
     const manager = createManager(fixture, fetch)
 
-    await expect(manager.stageAvailableUpdate()).rejects.toThrow('archive size mismatch')
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).rejects.toThrow(
+      'archive size mismatch'
+    )
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v1')
   })
 
@@ -572,7 +574,7 @@ describe('ComponentUpdateManager', () => {
       },
     })
 
-    await expect(manager.stageAvailableUpdate()).resolves.toBe(true)
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).resolves.toBe(true)
 
     expect(assetRequests).toBe(3)
     expect(logs.filter(event => event.event === 'component-download-retry')).toHaveLength(2)
@@ -602,7 +604,7 @@ describe('ComponentUpdateManager', () => {
       },
     })
 
-    await expect(manager.stageAvailableUpdate()).resolves.toBe(true)
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).resolves.toBe(true)
 
     expect(assetRequests).toBe(3)
     expect(logs.filter(event => event.event === 'component-download-retry')).toHaveLength(2)
@@ -628,7 +630,9 @@ describe('ComponentUpdateManager', () => {
       },
     })
 
-    await expect(manager.stageAvailableUpdate()).rejects.toThrow('archive size mismatch')
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).rejects.toThrow(
+      'archive size mismatch'
+    )
     expect(assetRequests).toBe(1)
   })
 })
@@ -1008,9 +1012,7 @@ test('shares a staging task and bounds component downloads to three while report
     return new Response(new Uint8Array(bytes))
   })
   const reports: number[] = []
-  const first = manager.stageUpdateForApp(appVersion, 'beta', false, p =>
-    reports.push(p.downloadedBytes)
-  )
+  const first = manager.stageUpdateForApp(appVersion, 'beta', p => reports.push(p.downloadedBytes))
   const duplicate = manager.stageUpdateForApp(appVersion, 'beta')
   await Promise.all([first, duplicate])
   expect(maximum).toBe(3)
