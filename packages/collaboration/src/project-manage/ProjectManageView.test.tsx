@@ -111,6 +111,7 @@ import { createCollaborationTranslator } from '../i18n'
 import { ProjectManageView } from './ProjectManageView'
 import { ProjectMembersSection } from './ProjectMembersSection'
 import { ProjectTagsSection } from './ProjectManageSections'
+import type { ProjectBoardViews } from '../project-board/projectBoardViews'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -240,6 +241,92 @@ async function flushPromises() {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('project tag view integration', () => {
+  beforeEach(() => hookRuntime.reset())
+  const boardViews: ProjectBoardViews = {
+    schema_version: 1,
+    views: [
+      {
+        id: 'mixed',
+        name: '测试视图',
+        columns: [
+          { id: 'inbox', type: 'status', value: 'inbox' },
+          { id: 'test', type: 'tag', value: '测试' },
+        ],
+        filter: { tags: ['需求'] },
+      },
+    ],
+  }
+
+  it.each(['rename', 'delete'] as const)(
+    'discovers unused view tags and updates their references on %s',
+    async action => {
+      const api = createApi()
+      const host = createHost()
+      host.renderActionMenu = vi.fn(() => null)
+      let current = { ...project('project-a', 'private'), tags: ['bug'], board_views: boardViews }
+      const onUpdated = vi.fn(updated => {
+        current = updated
+      })
+      vi.mocked(api.updateProject).mockImplementation(async (_id, values) => ({
+        ...current,
+        ...values,
+        version: values.version + 1,
+      }))
+      let tree = renderView(api, host, current, onUpdated)
+      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+        currentTarget: { open: true },
+      })
+      renderView(api, host, current, onUpdated)
+      await flushPromises()
+      tree = renderView(api, host, current, onUpdated)
+      for (const tag of ['bug', '测试', '需求'])
+        expect(findByTestId(tree, `cloud-project-tag-${tag}`)).not.toBeNull()
+      expect(api.updateProject).not.toHaveBeenCalled()
+      const menu = vi
+        .mocked(host.renderActionMenu)
+        .mock.calls.flatMap(([options]) => options.items)
+        .find(item => item.testId === `cloud-project-tag-${action}-测试`)!
+      if (action === 'rename') {
+        menu.onSelect()
+        tree = renderView(api, host, current, onUpdated)
+        findByTestId(tree, 'cloud-project-tag-rename-input-测试').props.onChange({
+          target: { value: '验证' },
+        })
+        tree = renderView(api, host, current, onUpdated)
+        findByTestId(tree, 'cloud-project-tag-rename-input-测试').props.onKeyDown({ key: 'Enter' })
+      } else {
+        await menu.onSelect()
+      }
+      await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
+      expect(api.updateItem).not.toHaveBeenCalled()
+      expect(api.updateProject).toHaveBeenCalledWith('project-a', {
+        version: 1,
+        tags: ['bug'],
+        board_views: {
+          ...boardViews,
+          views: [
+            {
+              ...boardViews.views[0],
+              columns:
+                action === 'rename'
+                  ? [
+                      boardViews.views[0].columns[0],
+                      { ...boardViews.views[0].columns[1], value: '验证' },
+                    ]
+                  : [boardViews.views[0].columns[0]],
+              filter: { tags: ['需求'] },
+            },
+          ],
+        },
+      })
+      tree = renderView(api, host, current, onUpdated)
+      expect(findByTestId(tree, 'cloud-project-tag-测试')).toBeNull()
+      expect(findByTestId(tree, 'cloud-project-tag-需求')).not.toBeNull()
+    }
+  )
+})
 
 describe('ProjectManageView project scope', () => {
   beforeEach(() => {

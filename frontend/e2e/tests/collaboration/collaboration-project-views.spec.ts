@@ -18,6 +18,25 @@ interface ScheduledProject {
   title: string
 }
 
+async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
+  const card = page
+    .getByTestId(`cloud-todo-column-${source}`)
+    .getByTestId(`cloud-todo-card-${issueId}`)
+  const lane = page.getByTestId(`cloud-todo-column-dropzone-${target}-content`)
+  await card.scrollIntoViewIfNeeded()
+  await lane.scrollIntoViewIfNeeded()
+  const from = await card.boundingBox()
+  const to = await lane.boundingBox()
+  expect(from).not.toBeNull()
+  expect(to).not.toBeNull()
+  await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from!.x + from!.width / 2 + 10, from!.y + from!.height / 2, { steps: 3 })
+  await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
+  await page.mouse.move(to!.x + to!.width / 2, to!.y + Math.min(40, to!.height / 2), { steps: 10 })
+  await page.mouse.up()
+}
+
 const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
   scheduledProject: async ({ page, request }, use) => {
     await page.goto('/collaboration')
@@ -89,6 +108,57 @@ const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
 })
 
 projectTest.setTimeout(120_000)
+
+projectTest(
+  'rejected robot starts preserve the board and detail status',
+  async ({ page, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const agent = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/chat-agents`, {
+      method: 'POST',
+      body: {
+        name: 'Runner authorization regression',
+        runtime: 'codex',
+        execution_policy: { mode: 'project_pool' },
+        model_policy: { mode: 'user_select' },
+        workspace_binding: { type: 'standalone' },
+      },
+    })
+    // A completed, assigned Issue is valid without starting a run.
+    const created = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Start without a runner', status: 'completed', assignee_agent_id: agent.id },
+    })
+    const inbox = await webApi<Resource>(page, `/api/v1/loop-items/${created.id}`, {
+      method: 'PATCH',
+      body: { version: created.version, status: 'inbox' },
+    })
+    await page.goto(path)
+    await dragIssueToLane(page, created.id, 'inbox', 'in_progress')
+    await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(
+      '机器人没有符合配置且获项目授权的执行环境'
+    )
+    await expect(
+      page.getByTestId('cloud-todo-column-inbox').getByTestId(`cloud-todo-card-${created.id}`)
+    ).toBeVisible()
+    const persisted = await webApi<Resource & { status: string }>(
+      page,
+      `/api/v1/loop-items/${created.id}`
+    )
+    expect({ status: persisted.status, version: persisted.version }).toEqual({
+      status: 'inbox',
+      version: inbox.version,
+    })
+    await page.reload()
+    await page
+      .getByTestId('cloud-todo-column-inbox')
+      .getByTestId(`cloud-todo-card-${created.id}`)
+      .click()
+    await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save-error')).toContainText('项目授权')
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+  }
+)
 
 projectTest(
   'expands linked task history in a bounded scroll area',
@@ -724,6 +794,172 @@ for (const view of ['calendar', 'gantt'] as const) {
     }
   )
 }
+
+projectTest(
+  'saves mixed lanes and preserves status, tags and Issues through drag and deletion',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const issuePath = `/api/v1/loop-items/${issueId}`
+    const issue = await webApi<{ version: number }>(page, issuePath)
+    await webApi(page, issuePath, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed', tags: ['shared'] },
+    })
+    await page.goto(path)
+    const toolbar = page.getByTestId('cloud-board-toolbar')
+    const actions = toolbar.getByTestId('cloud-board-view-actions')
+    const viewPicker = actions.getByTestId('board-view-picker')
+    await expect(viewPicker).toBeVisible()
+    await expect(actions.getByTestId('cloud-board-focus-running')).toBeVisible()
+    const pickerBox = await viewPicker.boundingBox()
+    const searchBox = await toolbar.getByTestId('cloud-board-search').boundingBox()
+    expect(pickerBox).not.toBeNull()
+    expect(searchBox).not.toBeNull()
+    expect(
+      Math.abs(pickerBox!.y + pickerBox!.height / 2 - searchBox!.y - searchBox!.height / 2)
+    ).toBeLessThanOrEqual(1)
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-new').click()
+    await page.getByTestId('board-view-name').fill('Mixed regression')
+    for (let index = 0; index < 4; index += 1)
+      await page.getByTestId('board-view-lane-remove-0').click()
+    for (const [index, tag] of [
+      [1, 'alpha'],
+      [2, 'beta'],
+    ] as const) {
+      await page.getByTestId('board-view-add-lane').click()
+      await page.getByTestId(`board-view-lane-value-${index}`).click()
+      await page.getByTestId(`board-view-lane-value-${index}-search`).fill(tag)
+      await page.getByTestId(`board-view-lane-value-${index}-create`).click()
+    }
+    await page.getByTestId('board-view-add-lane').click()
+    await page.getByTestId('board-view-lane-type-3').selectOption('status')
+    await page.getByTestId('board-view-lane-value-3').selectOption('pending')
+    await page.getByTestId('board-view-add-lane').click()
+    await page.getByTestId('board-view-lane-type-4').selectOption('status')
+    await page.getByTestId('board-view-lane-value-4').selectOption('in_progress')
+    await page.getByTestId('board-view-set-default').check()
+    await page.getByTestId('board-view-save').click()
+    await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
+    const saved = await webApi<{
+      board_views: {
+        default_view_id: string
+        views: Array<{ id: string; columns: Array<{ id: string }> }>
+      }
+    }>(page, `/api/v1/cloud-projects/${projectId}`)
+    const view = saved.board_views.views[0]
+    expect(saved.board_views.default_view_id).toBe(view.id)
+    await expect(page.getByTestId('board-view-navigation').getByRole('button')).toHaveCount(1)
+    const [done, alpha, beta, pending] = view.columns.map(column => column.id)
+    const workingLane = page.getByTestId(`cloud-todo-column-${view.columns[4].id}`)
+    const focusToggle = actions.getByTestId('cloud-board-focus-running')
+    await expect(focusToggle).toBeVisible()
+    await focusToggle.click()
+    await expect(workingLane).toHaveClass(/w-\[480px\]/)
+    await expect(page.getByTestId(`cloud-todo-column-${alpha}`)).toHaveClass(/w-\[292px\]/)
+    await focusToggle.click()
+    await expect(workingLane).toHaveClass(/w-\[292px\]/)
+    await expect(page.getByTestId('collaboration-board-settings')).toHaveCount(0)
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-edit').click()
+    await expect(page.getByTestId('board-view-name')).toHaveValue('Mixed regression')
+    await expect(page.getByTestId('board-view-lane-value-1')).toHaveText('alpha')
+    await expect(page.getByTestId('board-view-lane-value-2')).toHaveText('beta')
+    await expect(page.getByTestId('board-view-set-default')).toBeChecked()
+    await expect(page.getByTestId(`board-view-preview-${alpha}`)).toContainText('alpha')
+    await expect(page.getByTestId('cloud-board-display-menu')).toBeVisible()
+    await page.getByTestId('cloud-board-display-menu').click()
+    await expect(
+      page.getByTestId('board-view-editor').getByTestId('cloud-project-card-display-settings')
+    ).toBeVisible()
+    await page.getByTestId('cloud-project-card-display-settings').press('Escape')
+    await expect(page.getByTestId('cloud-project-card-display-settings')).toHaveCount(0)
+    await expect(page.getByTestId('board-view-editor')).toBeVisible()
+    await page.getByTestId('board-view-lane-value-0').scrollIntoViewIfNeeded()
+    for (const index of [0, 1]) {
+      const field = page.getByTestId(`board-view-lane-value-${index}`)
+      const arrow = index === 0 ? field.locator('..').locator('svg') : field.locator('svg')
+      const fieldBox = await field.boundingBox()
+      const arrowBox = await arrow.boundingBox()
+      expect(fieldBox).not.toBeNull()
+      expect(arrowBox).not.toBeNull()
+      expect(
+        Math.abs(arrowBox!.y + arrowBox!.height / 2 - fieldBox!.y - fieldBox!.height / 2)
+      ).toBeLessThanOrEqual(1)
+      const rightInset = fieldBox!.x + fieldBox!.width - arrowBox!.x - arrowBox!.width
+      expect(rightInset).toBeGreaterThanOrEqual(12)
+      expect(rightInset).toBeLessThanOrEqual(13)
+    }
+    await page.getByTestId('board-view-lane-value-1').click()
+    await expect(page.getByTestId('board-view-lane-value-1-search')).toHaveValue('')
+    await expect(page.getByTestId('board-view-lane-value-1-option-alpha')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await expect(page.getByTestId('board-view-lane-value-1-option-beta')).toBeDisabled()
+    await expect(page.getByTestId('board-view-lane-value-1-option-shared')).toBeVisible()
+    const triggerBounds = await page.getByTestId('board-view-lane-value-1').boundingBox()
+    const popupBounds = await page.getByTestId('board-view-lane-value-1-popover').boundingBox()
+    expect(triggerBounds).not.toBeNull()
+    expect(popupBounds).not.toBeNull()
+    const gap = Math.min(
+      Math.abs(popupBounds!.y - triggerBounds!.y - triggerBounds!.height),
+      Math.abs(triggerBounds!.y - popupBounds!.y - popupBounds!.height)
+    )
+    expect(gap).toBeGreaterThanOrEqual(3)
+    expect(gap).toBeLessThanOrEqual(5)
+    await page.getByTestId('board-view-lane-value-1-search').press('Escape')
+    await expect(page.getByTestId('board-view-editor')).toBeVisible()
+    await expect(page.getByTestId('project-board-settings-dialog')).toHaveCount(0)
+    await page.getByTestId('board-view-cancel').click()
+    await page.goto(`${path}?view=manage&section=project`)
+    await page.getByTestId('cloud-project-manage-tags-toggle').click()
+    for (const tag of ['shared', 'alpha', 'beta'])
+      await expect(page.getByTestId(`cloud-project-tag-${tag}`)).toBeVisible()
+    await page.goto(path)
+    await expect(page.getByTestId('board-view-picker')).toContainText('Mixed regression')
+    await expect(page.getByTestId('collaboration-board').locator('p[role="status"]')).toHaveCount(0)
+    const expectItem = async (status: string, tags: string[]) =>
+      expect
+        .poll(async () => {
+          const item = await webApi<{ status: string; tags: string[] }>(page, issuePath)
+          return { status: item.status, tags: item.tags }
+        })
+        .toEqual({ status, tags })
+    const card = (lane: string) =>
+      page.getByTestId(`cloud-todo-column-${lane}`).getByTestId(`cloud-todo-card-${issueId}`)
+    await dragIssueToLane(page, issueId, done, alpha)
+    await expectItem('completed', ['shared', 'alpha'])
+    await expect(card(done)).toBeVisible()
+    await expect(card(alpha)).toBeVisible()
+    await expect(page.getByTestId('board-drop-feedback')).toBeVisible()
+    await expect(card(alpha).getByTestId(`cloud-todo-card-status-${issueId}`)).toContainText(
+      /已完成|Done|Completed/
+    )
+    await dragIssueToLane(page, issueId, alpha, beta)
+    await expectItem('completed', ['shared', 'beta'])
+    await expect(card(alpha)).toHaveCount(0)
+    await dragIssueToLane(page, issueId, beta, pending)
+    await expectItem('pending', ['shared', 'beta'])
+    await expect(card(beta)).toBeVisible()
+    await expect(card(pending)).toBeVisible()
+    await dragIssueToLane(page, issueId, pending, done)
+    await expectItem('completed', ['shared', 'beta'])
+    await page.reload()
+    await expect(page.getByTestId('board-view-picker')).toContainText('Mixed regression')
+    await expect(card(done)).toBeVisible()
+    await expect(card(beta)).toBeVisible()
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-edit').click()
+    await page.getByTestId('board-view-delete').click()
+    await page.getByTestId('board-view-delete').click()
+    await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
+    await page.getByTestId('board-view-picker').click()
+    await expect(page.getByTestId(`board-view-${view.id}`)).toHaveCount(0)
+    await expect(page.getByTestId('board-view-default')).toContainText('默认')
+    await expectItem('completed', ['shared', 'beta'])
+  }
+)
 
 test('removes My Work and Run Center from navigation and their former URLs', async ({ page }) => {
   await page.goto('/collaboration')

@@ -9,6 +9,8 @@ export const executionEnvironmentMessages: Record<
   Readonly<Record<string, string>>
 > = {
   'zh-CN': {
+    'todo.runner_environment_not_authorized':
+      '机器人没有符合配置且获项目授权的执行环境。请在项目设置中检查执行环境授权，并检查机器人的环境选择。',
     'todo.device_catalog_local_failed': '本地设备加载失败',
     'todo.device_catalog_cloud_failed': '云端设备加载失败',
     'todo.device_catalog_loading_more': '正在加载其他设备…',
@@ -118,6 +120,8 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_permission_denied': '没有操作权限，请联系空间或项目管理员。',
   },
   en: {
+    'todo.runner_environment_not_authorized':
+      'No project-authorized execution environment matches this agent. Check execution environment authorization in Project settings and the agent’s environment selection.',
     'todo.device_catalog_local_failed': 'Failed to load local devices',
     'todo.device_catalog_cloud_failed': 'Failed to load cloud devices',
     'todo.device_catalog_loading_more': 'Loading more devices…',

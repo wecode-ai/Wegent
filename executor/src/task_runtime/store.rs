@@ -349,6 +349,10 @@ impl LocalTaskStore {
         if let Some(board_config) = input.board_config {
             metadata["board_config"] = board_config;
         }
+        if let Some(board_views) = input.board_views {
+            super::board_views::validate_update(&metadata["board_views"], &board_views)?;
+            metadata["board_views"] = board_views;
+        }
         if let Some(card_display) = input.card_display {
             metadata["card_display"] = card_display;
         }

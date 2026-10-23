@@ -35,6 +35,7 @@ function setup(storageKey = 'test:board-sort:project-a') {
   const options = {
     createColumns: () => [pending, completed],
     defaultGroupBy: 'status' as const,
+    viewScope: 'project-a:default',
     focusStorageKey: null,
     personalGroupStorageKey: null,
     personalSortStorageKey: storageKey,
@@ -157,5 +158,24 @@ describe('project board sorting', () => {
         position: { beforeItemId: '0' },
       })
     )
+  })
+
+  it('announces a move only after persistence and keeps failed or canceled moves unhighlighted', async () => {
+    const { result, onMove, options, rerender } = setup()
+    onMove
+      .mockRejectedValueOnce(new Error('Conflict'))
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    await act(async () => result.current.moveItem('2', completed, null))
+    expect(result.current.lastMove).toBeNull()
+    expect(result.current.moveError).toBe('Conflict')
+    rerender({ ...options, viewScope: 'project-b:default' })
+    expect(result.current.moveError).toBeNull()
+    rerender(options)
+    await act(async () => result.current.moveItem('2', completed, null))
+    expect(result.current.lastMove).toBeNull()
+    await act(async () => result.current.moveItem('2', completed, null))
+    expect(result.current.lastMove).toMatchObject({ itemId: '2', columnKey: 'completed' })
+    expect(result.current.moveError).toBeNull()
   })
 })

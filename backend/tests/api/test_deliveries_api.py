@@ -23,8 +23,11 @@ from app.models.delivery import (
     Delivery,
     LoopItem,
     ProjectAutomationRun,
+    ProjectChatAgent,
     ProjectIncomingEvent,
 )
+from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -37,7 +40,11 @@ from app.services.delivery.storage import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_incoming_hooks import project_incoming_hook_service
-from tests.utils.collaboration import authorize_project
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 class FakeDeliveryStorage:
@@ -1205,7 +1212,7 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_db.commit()
     test_db.refresh(item)
 
-    refresh = MagicMock(side_effect=lambda _db, *, item, user_id: item)
+    refresh = MagicMock(side_effect=lambda _db, *, item, user_id, commit: item)
     wake = AsyncMock()
     monkeypatch.setattr(
         deliveries_endpoint.loop_item_service,
@@ -1236,6 +1243,133 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
 
     assert response.status_code == 200
     refresh.assert_called_once()
+    wake.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("change", ["status", "execution_config"])
+def test_runner_rejection_does_not_commit_issue_changes(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    change: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Keep rejected changes atomic", "status": "inbox"},
+    ).json()
+    agent = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        name="No authorized runner",
+        title="No authorized runner",
+        created_by_user_id=test_user.id,
+        status="active",
+        metadata_json={
+            "runtime": "codex",
+            "execution_policy": {"mode": "project_pool"},
+            "model_policy": {
+                "mode": "fixed",
+                "model": {
+                    "runtime": "codex",
+                    "provider": "openai",
+                    "model_id": "test-model",
+                },
+            },
+        },
+    )
+    authorize_project_agent(test_db, agent)
+    test_db.add(agent)
+    item = test_db.get(LoopItem, created["id"])
+    item.assignee_agent_id = agent.id
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=delivery_project.id,
+        agent_id=agent.id,
+        assigner_user_id=test_user.id,
+        executor_owner_user_id=test_user.id,
+        status="queued",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    execution_id = execution.id
+    before = (item.status, item.version, dict(item.metadata_json or {}))
+    wake = AsyncMock()
+    monkeypatch.setattr("app.tasks.robot_queue_tasks.consume_queues_background", wake)
+    patch = (
+        {"status": "in_progress"}
+        if change == "status"
+        else {
+            "execution_config": {
+                "agent_id": agent.id,
+                "workspace_binding": {"type": "standalone"},
+            }
+        }
+    )
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{item.id}",
+        headers=_auth(test_token),
+        json={"version": item.version, **patch},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["error_code"] == "RUNNER_ENVIRONMENT_UNAVAILABLE"
+    test_db.expire_all()
+    persisted = test_db.get(LoopItem, created["id"])
+    assert (persisted.status, persisted.version, persisted.metadata_json) == before
+    assert test_db.get(LoopItemExecution, execution_id).status == "queued"
+    wake.assert_not_awaited()
+
+    device = Kind(
+        kind="Device",
+        name=f"recovery-{uuid.uuid4().hex[:10]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "runnerCatalog": {
+                    "models": [
+                        {
+                            "runtime": "codex",
+                            "provider": "openai",
+                            "model_id": "test-model",
+                            "local_model_id": "test-model",
+                            "label": "Test model",
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.flush()
+    authorize_resource(test_db, delivery_project, device)
+    test_db.commit()
+
+    retried = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": before[1], **patch},
+    )
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["version"] == before[1] + 1
+    assert retried.json()["status"] == (
+        "in_progress" if change == "status" else "inbox"
+    )
+    test_db.expire_all()
+    assert test_db.get(LoopItemExecution, execution_id).status == "cancelled"
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter_by(loop_item_id=created["id"], status="queued")
+        .count()
+        == 1
+    )
     wake.assert_awaited_once_with()
 
 

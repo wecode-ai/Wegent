@@ -317,6 +317,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 }
 
 export interface CloudProject {
+  board_views?: import('@wegent/collaboration').ProjectBoardViews | null
   id: CloudProjectId
   workspace_id?: string | null
   workspace_access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
@@ -725,6 +726,7 @@ export function createDeliveryApi(client: HttpClient) {
         default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        board_views?: CloudProject['board_views']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']

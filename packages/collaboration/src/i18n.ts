@@ -8,6 +8,7 @@ import { projectWorkMessages } from "./controls/projectWorkMessages";
 import { conversationMessages } from "./conversation/messages";
 import { boardCardMessages } from "./issue-card/messages";
 import { boardSortMessages } from "./project-board/messages";
+import { boardViewMessages } from "./project-board/viewMessages";
 import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
@@ -1316,6 +1317,7 @@ export function createCollaborationTranslator(
       modelMessages[locale][key] ??
       boardCardMessages[locale][key] ??
       boardSortMessages[locale][key] ??
+      boardViewMessages[locale][key as keyof typeof boardViewMessages.en] ??
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??

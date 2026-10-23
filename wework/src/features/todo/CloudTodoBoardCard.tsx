@@ -69,6 +69,7 @@ function useBoardTranslate() {
 }
 
 interface CloudTodoCardContentProps {
+  statusNames?: Record<string, string>
   item: CloudLoopItem
   goalBinding?: CloudTodoBoardTaskBinding
   display: BoardCardDisplaySettings
@@ -78,6 +79,7 @@ interface CloudTodoCardContentProps {
 }
 
 export function CloudTodoCardContent({
+  statusNames,
   item,
   goalBinding,
   display,
@@ -89,7 +91,10 @@ export function CloudTodoCardContent({
       item={item}
       reference={item.id}
       display={display}
-      labels={createIssueBoardCardLabels(t)}
+      labels={{
+        ...createIssueBoardCardLabels(t),
+        ...(statusNames ? { statuses: statusNames } : {}),
+      }}
       agentNames={agentNames}
       translate={t}
       goal={
@@ -123,6 +128,7 @@ export interface CloudTodoBoardTaskBinding {
 }
 
 interface CloudTodoBoardCardProps {
+  statusNames?: Record<string, string>
   item: CloudLoopItem
   columnKey?: string
   unread?: boolean
@@ -159,6 +165,7 @@ interface CloudTodoBoardCardProps {
 }
 
 export function CloudTodoBoardCard({
+  statusNames,
   item,
   columnKey,
   unread,
@@ -237,7 +244,10 @@ export function CloudTodoBoardCard({
       unread={unread}
       reference={item.id}
       display={display}
-      labels={createIssueBoardCardLabels(t)}
+      labels={{
+        ...createIssueBoardCardLabels(t),
+        ...(statusNames ? { statuses: statusNames } : {}),
+      }}
       agentNames={agentNames}
       translate={t}
       archiveLabel={archiveLabel}

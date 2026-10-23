@@ -17,6 +17,7 @@ from pydantic import (
 
 from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
+from app.schemas.board_views import BoardViews
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 from app.schemas.types import SnowflakeId
@@ -232,6 +233,7 @@ class CloudProjectUpdate(BaseModel):
     default_issue_security: Literal["open", "related"] | None = None
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
+    board_views: BoardViews | None = None
     ai_automation: CloudProjectAiAutomation | None = None
     pull_request_automation: CloudProjectPullRequestAutomation | None = None
     workflow_definition: ProjectWorkflowDefinition | None = None
@@ -285,6 +287,7 @@ class CloudProjectResponse(BaseModel):
     board_config: CloudProjectBoardConfig = Field(
         default_factory=CloudProjectBoardConfig
     )
+    board_views: dict[str, object] | None = None
     ai_automation: CloudProjectAiAutomation = Field(
         default_factory=CloudProjectAiAutomation
     )
@@ -327,6 +330,7 @@ class CloudProjectResponse(BaseModel):
                 ),
                 "card_display": metadata.get("card_display", {}),
                 "board_config": metadata.get("board_config", {}),
+                "board_views": metadata.get("board_views"),
                 "ai_automation": metadata.get("ai_automation", {}),
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),

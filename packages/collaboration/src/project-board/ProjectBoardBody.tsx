@@ -23,6 +23,7 @@ import type {
   ProjectBoardSortLabels,
 } from "./projectBoardSorting";
 import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
+import { isExecutionBoardColumn } from "./projectBoardColumns";
 
 function classNames(
   ...values: Array<string | false | null | undefined>
@@ -54,6 +55,7 @@ export function ProjectBoardScrollArea({
 }
 
 export interface ProjectBoardColumn {
+  type?: ProjectBoardGroupBy;
   dotClass: string;
   groupValue: string;
   key: string;
@@ -97,6 +99,11 @@ export interface ProjectBoardLocalProjectOption {
 }
 
 export interface ProjectBoardBodyProps<TItem> {
+  emptyState?: ReactNode;
+  viewNavigation?: ReactNode;
+  viewNotice?: ReactNode;
+  customView?: boolean;
+  dropFeedback?: { itemId: string; columnKey: string; message: string } | null;
   activeDragItemId: string | null;
   boardError: string | null;
   boardItemsLoading: boolean;
@@ -182,6 +189,11 @@ export interface ProjectBoardBodyProps<TItem> {
 }
 
 export function ProjectBoardBody<TItem>({
+  emptyState,
+  viewNavigation,
+  viewNotice,
+  customView = false,
+  dropFeedback,
   activeDragItemId,
   boardError,
   boardItemsLoading,
@@ -229,6 +241,8 @@ export function ProjectBoardBody<TItem>({
   showSaveGlobal,
   state,
 }: ProjectBoardBodyProps<TItem>) {
+  const isExecutionColumn = (column: ProjectBoardColumn) =>
+    isExecutionBoardColumn(column, state.groupBy);
   return (
     <div
       data-board-cursor-policy="arrow"
@@ -311,7 +325,7 @@ export function ProjectBoardBody<TItem>({
               </select>
             </label>
           ) : null}
-          {renderGroupPicker(state.groupBy, state.selectGroupBy)}
+          {!customView && renderGroupPicker(state.groupBy, state.selectGroupBy)}
           <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
             <span data-testid="cloud-board-group-filter-label">
               {state.groupFilter
@@ -350,7 +364,7 @@ export function ProjectBoardBody<TItem>({
             data-testid="cloud-board-view-actions"
             className="ml-auto flex shrink-0 items-center gap-2"
           >
-            {state.groupBy === "status" ? (
+            {columns.some(isExecutionColumn) ? (
               <Tooltip
                 label={
                   state.focusExecutionColumns
@@ -384,7 +398,7 @@ export function ProjectBoardBody<TItem>({
                 </button>
               </Tooltip>
             ) : null}
-            {showSaveGlobal ? (
+            {!customView && showSaveGlobal ? (
               <button
                 type="button"
                 data-testid="cloud-board-save-global"
@@ -396,9 +410,11 @@ export function ProjectBoardBody<TItem>({
               </button>
             ) : null}
             {renderBoardSettingsAction?.()}
+            {viewNavigation}
           </div>
         </div>
       )}
+      {viewNotice}
       <nav
         data-testid="cloud-todo-board-breadcrumb"
         aria-label="任务层级"
@@ -462,57 +478,78 @@ export function ProjectBoardBody<TItem>({
             {boardError}
           </p>
         ) : null)}
-      <ProjectBoardScrollArea viewportRef={state.scrollRef}>
-        {boardItemsLoading ? (
-          renderSkeleton()
-        ) : (
-          <KanbanBoard
-            columns={columns}
-            activeDragItemId={activeDragItemId}
-            dnd={dnd}
-            dndContextProps={dndContextProps}
-            dropIdPrefix="todo-column:"
-            testIdPrefix="cloud-todo"
-            getColumnKey={(column) => column.key}
-            getColumnLabel={(column) => column.label}
-            getColumnDotClassName={(column) => column.dotClass}
-            getColumnItems={(column) => getColumnItems(column, state)}
-            getColumnWidthClassName={(column) =>
-              state.focusExecutionColumns &&
-              state.groupBy === "status" &&
-              (column.status === "in_progress" || column.status === "in_review")
-                ? "w-[480px]"
-                : "w-[292px]"
-            }
-            getColumnDragHint={getColumnDragHint}
-            renderColumnHeaderActions={(column, items) => (
-              <>
-                {renderColumnHeaderActions?.(column, items, state)}
-                {sortLabels && !isExternalBoard ? (
-                  <ProjectBoardColumnSortPicker
-                    columnKey={column.key}
-                    columnLabel={column.label}
-                    labels={sortLabels}
-                    value={state.getColumnSort(column.key)}
-                    onChange={(value) =>
-                      state.selectColumnSort(column.key, value)
-                    }
-                  />
-                ) : null}
-              </>
-            )}
-            getItemKey={getItemKey}
-            renderItem={(item, column) => renderItem(item, column, state)}
-            renderItemsFooter={renderItemsFooter}
-            getColumnEmptyState={getColumnEmptyState}
-            renderAddIcon={() => <Plus className="h-5 w-5" />}
-            renderColumnFooter={(column, items) =>
-              renderColumnFooter?.(column, items, state)
-            }
-            renderDragOverlay={renderDragOverlay}
-          />
-        )}
-      </ProjectBoardScrollArea>
+      {dropFeedback && (
+        <p
+          role="status"
+          data-testid="board-drop-feedback"
+          className="mx-6 mb-2 text-xs text-text-secondary"
+        >
+          {dropFeedback.message}
+        </p>
+      )}
+      {emptyState ?? (
+        <ProjectBoardScrollArea viewportRef={state.scrollRef}>
+          {boardItemsLoading ? (
+            renderSkeleton()
+          ) : (
+            <KanbanBoard
+              columns={columns}
+              activeDragItemId={activeDragItemId}
+              dnd={dnd}
+              dndContextProps={dndContextProps}
+              dropIdPrefix="todo-column:"
+              testIdPrefix="cloud-todo"
+              getColumnKey={(column) => column.key}
+              getColumnLabel={(column) => column.label}
+              getColumnDotClassName={(column) => column.dotClass}
+              getColumnItems={(column) => getColumnItems(column, state)}
+              getColumnWidthClassName={(column) =>
+                state.focusExecutionColumns && isExecutionColumn(column)
+                  ? "w-[480px]"
+                  : "w-[292px]"
+              }
+              getColumnDragHint={getColumnDragHint}
+              renderColumnHeaderActions={(column, items) => (
+                <>
+                  {renderColumnHeaderActions?.(column, items, state)}
+                  {sortLabels && !isExternalBoard ? (
+                    <ProjectBoardColumnSortPicker
+                      columnKey={column.key}
+                      columnLabel={column.label}
+                      labels={sortLabels}
+                      value={state.getColumnSort(column.key)}
+                      onChange={(value) =>
+                        state.selectColumnSort(column.key, value)
+                      }
+                    />
+                  ) : null}
+                </>
+              )}
+              getItemKey={getItemKey}
+              renderItem={(item, column) =>
+                dropFeedback?.itemId === getItemKey(item) &&
+                dropFeedback.columnKey === column.key ? (
+                  <div
+                    data-testid="board-drop-highlight"
+                    className="rounded-xl ring-2 ring-focus/50"
+                  >
+                    {renderItem(item, column, state)}
+                  </div>
+                ) : (
+                  renderItem(item, column, state)
+                )
+              }
+              renderItemsFooter={renderItemsFooter}
+              getColumnEmptyState={getColumnEmptyState}
+              renderAddIcon={() => <Plus className="h-5 w-5" />}
+              renderColumnFooter={(column, items) =>
+                renderColumnFooter?.(column, items, state)
+              }
+              renderDragOverlay={renderDragOverlay}
+            />
+          )}
+        </ProjectBoardScrollArea>
+      )}
     </div>
   );
 }

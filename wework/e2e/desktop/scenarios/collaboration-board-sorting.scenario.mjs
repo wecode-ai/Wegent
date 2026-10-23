@@ -141,6 +141,122 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     })
   }
 
+  async function verifySavedMixedView(control, issue) {
+    const before = (await snapshot()).items.find(item => item.id === issue.id)
+    await request(`/api/v1/loop-items/${issue.id}`, 'PATCH', {
+      version: before.version,
+      status: 'completed',
+      tags: ['shared'],
+    })
+    await reloadMainWindow(control, 'Saved view fixtures did not reload')
+    await openBoard(control)
+    await control.command('click', scoped('[data-testid="board-view-picker"]'))
+    await control.command('click', '[data-testid="board-view-new"]')
+    await control.command('fill', '[data-testid="board-view-name"]', { value: 'Mixed regression' })
+    for (let index = 0; index < 4; index += 1) {
+      await control.command('click', '[data-testid="board-view-lane-remove-0"]')
+    }
+    for (const [index, tag] of [
+      [1, 'alpha'],
+      [2, 'beta'],
+    ]) {
+      await control.command('click', '[data-testid="board-view-add-lane"]')
+      await control.command('click', `[data-testid="board-view-lane-value-${index}"]`)
+      await control.command('fill', `[data-testid="board-view-lane-value-${index}-search"]`, {
+        value: tag,
+      })
+      await control.command('click', `[data-testid="board-view-lane-value-${index}-create"]`)
+    }
+    await control.command('click', '[data-testid="board-view-add-lane"]')
+    await control.command('select', '[data-testid="board-view-lane-type-3"]', { value: 'status' })
+    await control.command('select', '[data-testid="board-view-lane-value-3"]', { value: 'pending' })
+    await control.command('click', '[data-testid="board-view-set-default"]')
+    await control.command('click', '[data-testid="board-view-save"]')
+    await control.command('waitFor', '[data-testid="board-view-editor"]', {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+    const current = await request(`/api/v1/cloud-projects/${project.id}`)
+    const view = current.board_views.views.find(view => view.name === 'Mixed regression')
+    assert.ok(view, 'The mixed view must be saved in project metadata')
+    assert.equal(current.board_views.default_view_id, view.id)
+    await control.command('click', scoped('[data-testid="board-view-picker"]'))
+    await control.command('click', '[data-testid="board-view-edit"]')
+    await control.command('waitFor', '[data-testid="board-view-editor"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="board-view-cancel"]')
+    const [done, alpha, beta, pending] = view.columns.map(column => column.id)
+    await control.command('waitFor', scoped('p[role="status"]'), {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+    const move = async (source, target) =>
+      dragBoardCard(
+        control,
+        `${laneSelector(source)} [data-testid="cloud-todo-card-${issue.id}"]`,
+        scoped(`[data-testid="cloud-todo-column-dropzone-${target}-content"]`),
+        uiTimeoutMs
+      )
+    const assertItem = async (status, tags) =>
+      waitForValue(
+        async () => {
+          const saved = (await snapshot()).items.find(item => item.id === issue.id)
+          return { status: saved.status, tags: saved.tags }
+        },
+        { status, tags },
+        'Mixed drag changed unrelated fields',
+        uiTimeoutMs
+      )
+    await move(done, alpha)
+    await assertItem('completed', ['shared', 'alpha'])
+    for (const column of [done, alpha])
+      await control.command(
+        'waitFor',
+        `${laneSelector(column)} [data-testid="cloud-todo-card-${issue.id}"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+    await control.command('waitFor', scoped('[data-testid="board-drop-feedback"]'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await move(alpha, beta)
+    await assertItem('completed', ['shared', 'beta'])
+    await control.command(
+      'waitFor',
+      `${laneSelector(alpha)} [data-testid="cloud-todo-card-${issue.id}"]`,
+      { visible: false, timeoutMs: uiTimeoutMs }
+    )
+    await move(beta, pending)
+    await assertItem('pending', ['shared', 'beta'])
+    await move(pending, done)
+    await assertItem('completed', ['shared', 'beta'])
+    await reloadMainWindow(control, 'The saved mixed view did not survive reload')
+    await openBoard(control)
+    await control.command('waitFor', scoped('[data-testid="board-view-picker"]'), {
+      text: 'Mixed regression',
+    })
+    for (const column of [done, beta])
+      await control.command(
+        'waitFor',
+        `${laneSelector(column)} [data-testid="cloud-todo-card-${issue.id}"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+    await control.command('click', scoped('[data-testid="board-view-picker"]'))
+    await control.command('click', '[data-testid="board-view-edit"]')
+    await control.command('click', '[data-testid="board-view-delete"]')
+    await control.command('click', '[data-testid="board-view-delete"]')
+    await control.command('waitFor', '[data-testid="board-view-editor"]', {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.deepEqual((await request(`/api/v1/cloud-projects/${project.id}`)).board_views.views, [])
+    assert.equal(
+      (await request(`/api/v1/cloud-projects/${project.id}`)).board_views.default_view_id,
+      'default'
+    )
+    await assertItem('completed', ['shared', 'beta'])
+  }
+
   async function verifyLocalBoard(control) {
     const name = `Local board sorting ${process.pid}`
     await selectCollaborationDomain(control, CONTENT, 'local')
@@ -446,6 +562,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         assert.deepEqual(saved.tags, ['backend', 'shared'])
         assert.equal(saved.assignee_user_id, null)
       }
+      await verifySavedMixedView(control, completedUrgent)
       await verifyLocalBoard(control)
     },
 

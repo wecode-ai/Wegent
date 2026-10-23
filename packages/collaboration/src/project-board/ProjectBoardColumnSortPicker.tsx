@@ -114,12 +114,14 @@ export function ProjectBoardColumnSortPicker({
   labels,
   value,
   onChange,
+  portalContainer,
 }: {
   columnKey: string
   columnLabel: string
   labels: ProjectBoardSortLabels
   value: ProjectBoardSort
   onChange(value: ProjectBoardSort): void
+  portalContainer?: HTMLElement | null
 }) {
   const portalTheme = useCollaborationPortalTheme()
   const titleId = useId()
@@ -159,7 +161,7 @@ export function ProjectBoardColumnSortPicker({
           </button>
         </Popover.Trigger>
       </Tooltip>
-      <Popover.Portal>
+      <Popover.Portal container={portalContainer}>
         <Popover.Content
           {...portalTheme}
           align="end"

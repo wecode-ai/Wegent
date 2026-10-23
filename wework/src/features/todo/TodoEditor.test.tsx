@@ -78,6 +78,96 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it.each(['draft', 'source'] as const)(
+    'preserves newer %s status changes when a pending save is rejected',
+    async change => {
+      const user = userEvent.setup()
+      const item = { ...baseItem, status: 'inbox' }
+      const pending = deferred<CloudLoopItem>()
+      const updateLoopItem = vi.fn(() => pending.promise)
+      const editorApi = { ...api, updateLoopItem } as never
+      const props = {
+        mode: 'edit' as const,
+        item,
+        project,
+        allItems: [item],
+        onUpdated: vi.fn(),
+        onClose: vi.fn(),
+        api: editorApi,
+        currentUserId: 1,
+      }
+      const view = render(<TodoEditor {...props} />)
+      await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
+      await user.click(screen.getByTestId('cloud-todo-save'))
+      await waitFor(() => expect(updateLoopItem).toHaveBeenCalledOnce())
+      if (change === 'draft') {
+        await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'pending')
+      } else {
+        view.rerender(<TodoEditor {...props} item={{ ...item, status: 'in_review', version: 2 }} />)
+      }
+      await act(async () => {
+        pending.reject(
+          Object.assign(new Error('No authorized environment'), {
+            detail: { error_code: 'RUNNER_ENVIRONMENT_UNAVAILABLE' },
+          })
+        )
+      })
+      expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue(
+        change === 'draft' ? 'pending' : 'in_review'
+      )
+    }
+  )
+
+  it('restores rejected status changes without discarding the content draft', async () => {
+    const user = userEvent.setup()
+    const item = { ...baseItem, status: 'inbox' }
+    const updateLoopItem = vi.fn().mockRejectedValueOnce(
+      Object.assign(new Error('No execution environment is authorized for this selection'), {
+        errorCode: 'RUNNER_ENVIRONMENT_UNAVAILABLE',
+      })
+    )
+    const onUpdated = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={onUpdated}
+        onClose={vi.fn()}
+        api={{ ...api, updateLoopItem } as never}
+        currentUserId={1}
+      />
+    )
+    await user.clear(screen.getByTestId('cloud-todo-detail-title'))
+    await user.type(screen.getByTestId('cloud-todo-detail-title'), 'Keep my draft')
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
+      '机器人没有符合配置且获项目授权的执行环境'
+    )
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Keep my draft')
+    expect(onUpdated).not.toHaveBeenCalled()
+
+    updateLoopItem.mockResolvedValueOnce({
+      ...item,
+      title: 'Keep my draft',
+      status: 'in_progress',
+      version: 2,
+    })
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_progress')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    await waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
+    expect(updateLoopItem).toHaveBeenLastCalledWith(item.id, {
+      version: 1,
+      title: 'Keep my draft',
+      status: 'in_progress',
+    })
+    expect(screen.queryByTestId('cloud-todo-save-error')).not.toBeInTheDocument()
+  })
+
   it('saves the status of a human assignment without a submission form', async () => {
     const user = userEvent.setup()
     const item = { ...baseItem, assignee_agent_id: '', assignee_user_id: 1 }
@@ -245,7 +335,7 @@ describe('TodoEditor external item sync', () => {
     )
   })
 
-  it('edits priority and tags from the more-properties menu and saves them', async () => {
+  it('offers unused view tags and saves priority and tag edits from the properties menu', async () => {
     const user = userEvent.setup()
     const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
       ...baseItem,
@@ -262,7 +352,24 @@ describe('TodoEditor external item sync', () => {
         mode="edit"
         presentation="workspace-panel"
         item={baseItem}
-        project={project}
+        project={{
+          ...project,
+          tags: ['bug'],
+          board_views: {
+            schema_version: 1,
+            views: [
+              {
+                id: 'mixed',
+                name: 'Mixed',
+                columns: [
+                  { id: 'release', type: 'tag', value: 'release' },
+                  { id: 'test', type: 'tag', value: '测试' },
+                ],
+                filter: { tags: ['需求'] },
+              },
+            ],
+          },
+        }}
         allItems={[baseItem]}
         onUpdated={vi.fn()}
         onClose={vi.fn()}
@@ -276,6 +383,8 @@ describe('TodoEditor external item sync', () => {
     const tagInput = screen.getByTestId('cloud-todo-detail-tag-input')
     await user.click(tagInput)
     expect(tagInput).toHaveFocus()
+    for (const tag of ['bug', 'release', '测试', '需求'])
+      expect(screen.getByTestId(`cloud-todo-detail-tag-suggestion-${tag}`)).toBeVisible()
     await user.type(tagInput, 'release{Enter}')
     await user.click(screen.getByTestId('cloud-todo-save'))
 

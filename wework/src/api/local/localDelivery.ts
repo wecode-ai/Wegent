@@ -281,6 +281,7 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.provider_config)
         ? (record.metadata.provider_config as CloudProject['provider_config'])
         : {},
+    board_views: record.metadata.board_views as CloudProject['board_views'],
     board_config:
       record.metadata.board_config &&
       typeof record.metadata.board_config === 'object' &&
@@ -1071,6 +1072,7 @@ export function createLocalDeliveryApi(
         description?: string
         tags?: string[]
         board_config?: CloudProject['board_config']
+        board_views?: CloudProject['board_views']
         card_display?: CloudProject['card_display']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']

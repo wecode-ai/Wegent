@@ -58,6 +58,7 @@ export interface WorkspaceProjectUpdateInput {
   defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   boardConfig?: CollaborationProject["board_config"];
+  boardViews?: CollaborationProject["board_views"];
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;

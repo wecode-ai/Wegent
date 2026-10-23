@@ -20,6 +20,7 @@ import {
   type ProjectVersionMutationQueue,
 } from './projectMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
+import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
 import type {
   ProjectManageApi,
   ProjectManageCardDisplay,
@@ -292,8 +293,8 @@ export function ProjectManageView<
   }, [api, project.id, section, setItems, tagCatalogProjectId, tagLoadFailed, tagLoadRevision])
 
   const allTags = useMemo(
-    () => Array.from(new Set([...tags, ...items.flatMap(item => item.tags ?? [])])),
-    [items, tags]
+    () => collectProjectTags({ tags, board_views: project.board_views }, items),
+    [items, tags, project.board_views]
   )
   const tagCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -309,6 +310,11 @@ export function ProjectManageView<
   ): Promise<Project> {
     return scope.mutationQueue.enqueue(
       async version => {
+        if (values.board_views && version !== project.version) {
+          throw new Error(
+            host.translate('todo.board_view_conflict', '项目已被更新，请刷新后重试。')
+          )
+        }
         const updated = await api.updateProject(scope.projectId, {
           ...values,
           version,
@@ -440,10 +446,17 @@ export function ProjectManageView<
     }
   }
 
-  async function persistTags(next: string[], scope: typeof projectScope) {
+  async function persistTags(
+    next: string[],
+    scope: typeof projectScope,
+    boardViews?: ProjectManageUpdate['board_views']
+  ) {
     dirtyRef.current.tags = true
     try {
-      const updated = await updateProject({ tags: next }, scope)
+      const updated = await updateProject(
+        { tags: next, ...(boardViews ? { board_views: boardViews } : {}) },
+        scope
+      )
       if (projectScopeRef.current !== scope) return
       setTags(updated.tags ?? next)
     } finally {
@@ -476,6 +489,7 @@ export function ProjectManageView<
     const scope = projectScopeRef.current
     setTagBusy(true)
     try {
+      const boardViews = updateBoardViewTag(project.board_views, source, target, host.translate)
       const changed = await Promise.all(
         items
           .filter(item => (item.tags ?? []).includes(source))
@@ -488,11 +502,13 @@ export function ProjectManageView<
       )
       if (projectScopeRef.current !== scope) return
       setItems(current => current.map(item => changed.find(next => next.id === item.id) ?? item))
-      if (tags.includes(source))
+      if (tags.includes(source) || boardViews) {
         await persistTags(
           tags.map(tag => (tag === source ? target : tag)),
-          scope
+          scope,
+          boardViews
         )
+      }
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       reportError(cause, host.translate('todo.rename_tag_failed', '重命名标签失败'))
@@ -502,16 +518,27 @@ export function ProjectManageView<
   }
 
   async function deleteTag(tag: string) {
+    let boardViews: ProjectManageUpdate['board_views']
+    try {
+      boardViews = updateBoardViewTag(project.board_views, tag, null, host.translate)
+    } catch (cause) {
+      reportError(cause, host.translate('todo.delete_tag_failed', '删除标签失败'))
+      return
+    }
     const count = tagCounts.get(tag) ?? 0
     if (
       !host.confirm(
         host.translate('todo.delete_tag_confirm', '删除标签“{{tag}}”{{suffix}}？', {
           tag,
-          suffix: count
-            ? host.translate('todo.delete_tag_usage_suffix', '，并从 {{count}} 个任务上移除', {
-                count,
-              })
-            : '',
+          suffix:
+            (count
+              ? host.translate('todo.delete_tag_usage_suffix', '，并从 {{count}} 个任务上移除', {
+                  count,
+                })
+              : '') +
+            (boardViews
+              ? host.translate('todo.delete_tag_view_suffix', '，并从所有视图的泳道和筛选中移除')
+              : ''),
         })
       )
     ) {
@@ -532,11 +559,13 @@ export function ProjectManageView<
       )
       if (projectScopeRef.current !== scope) return
       setItems(current => current.map(item => changed.find(next => next.id === item.id) ?? item))
-      if (tags.includes(tag))
+      if (tags.includes(tag) || boardViews) {
         await persistTags(
           tags.filter(value => value !== tag),
-          scope
+          scope,
+          boardViews
         )
+      }
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       reportError(cause, host.translate('todo.delete_tag_failed', '删除标签失败'))

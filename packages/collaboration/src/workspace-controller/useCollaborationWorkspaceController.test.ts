@@ -1269,6 +1269,32 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.reorder).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, { beforeItemId: null }])(
+    "leaves thrown update errors to the calling surface (position=%s)",
+    async (position) => {
+      const api = createApi();
+      const error = Object.assign(new Error("No authorized environment"), {
+        errorCode: "RUNNER_ENVIRONMENT_UNAVAILABLE",
+      });
+      api.issues.update = vi.fn().mockRejectedValue(error);
+      const { commands, notify } = createController(api);
+      await expect(
+        commands.updateIssue(
+          issue.id,
+          {
+            version: issue.version,
+            status: "in_progress",
+            position,
+          },
+          { throwOnError: true },
+        ),
+      ).rejects.toBe(error);
+      expect(state.error).toBeNull();
+      expect(notify).not.toHaveBeenCalled();
+      expect(state.issues).toEqual([]);
+    },
+  );
+
   it.each(
     ["update", "assign"].flatMap((kind) =>
       [false, true].map((hidden) => ({ kind, hidden })),

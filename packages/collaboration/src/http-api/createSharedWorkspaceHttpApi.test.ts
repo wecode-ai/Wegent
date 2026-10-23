@@ -373,6 +373,19 @@ describe("createSharedWorkspaceHttpApi", () => {
     });
   });
 
+  it("keeps board view documents opaque while converting their request field", () => {
+    const boardViews = {
+      schema_version: 1,
+      views: [],
+      futureField: { keepCase: true },
+      sorts: { "Lane-ABC": ["created-asc"] },
+    };
+    expect(workspaceHttpRequestBody({ boardViews, version: 2 })).toEqual({
+      board_views: boardViews,
+      version: 2,
+    });
+  });
+
   it("preserves the runner policy wire keys when reading a project Agent", async () => {
     const { transport, get } = createTransport();
     const model = {

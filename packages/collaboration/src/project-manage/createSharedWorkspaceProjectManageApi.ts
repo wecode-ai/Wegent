@@ -58,6 +58,7 @@ export function createSharedWorkspaceProjectManageApi(
         defaultIssueSecurity: values.default_issue_security,
         providerConfig: values.provider_config,
         boardConfig: values.board_config,
+        boardViews: values.board_views,
         cardDisplay: values.card_display,
       }),
   }

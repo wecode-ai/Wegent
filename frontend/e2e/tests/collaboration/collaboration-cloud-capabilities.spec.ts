@@ -951,10 +951,19 @@ test.describe('Collaboration cloud capabilities', () => {
           )
         ).board_config?.statuses.length ?? 0
       await selectCollaborationProjectView(page, 'board')
-      await page.getByTestId('collaboration-board-settings').click()
-      await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
+      await page.getByTestId('board-view-picker').click()
+      await page.getByTestId('board-view-edit').click()
+      await expect(page.getByTestId('board-view-editor')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()
       await expect(page.locator('[data-testid^="cloud-board-status-status-"]')).toHaveCount(1)
+      await page.getByTestId('cloud-board-display-menu').click()
+      const priorityDisplay = page.getByTestId('cloud-board-display-priority')
+      const previousPriorityDisplay = await priorityDisplay.getAttribute('aria-checked')
+      await priorityDisplay.click()
+      await page.getByTestId('cloud-board-display-menu').click()
+      await captureEvidence(page, 'web-10-project-manage')
+      await page.getByTestId('board-view-save').click()
+      await expect(page.getByTestId('board-view-editor')).toBeHidden()
       await expect
         .poll(async () => {
           const updated = await webApi<CloudProject>(
@@ -964,11 +973,6 @@ test.describe('Collaboration cloud capabilities', () => {
           return updated.board_config?.statuses.length
         })
         .toBe(statusCountBefore + 1)
-      await page.getByTestId('cloud-board-display-menu').click()
-      const priorityDisplay = page.getByTestId('cloud-board-display-priority')
-      const previousPriorityDisplay = await priorityDisplay.getAttribute('aria-checked')
-      await priorityDisplay.click()
-      await page.getByTestId('cloud-board-display-menu').click()
       await expect
         .poll(async () => {
           const updated = await webApi<CloudProject & { card_display: { show_priority: boolean } }>(
@@ -978,10 +982,6 @@ test.describe('Collaboration cloud capabilities', () => {
           return String(updated.card_display.show_priority)
         })
         .not.toBe(previousPriorityDisplay)
-      await captureEvidence(page, 'web-10-project-manage')
-
-      await page.getByTestId('project-board-settings-close').click()
-      await expect(page.getByTestId('project-board-settings-dialog')).toBeHidden()
       await expect(page).toHaveURL(
         new RegExp(
           `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`

@@ -54,6 +54,7 @@ export interface ProjectManageProject {
   public_access?: { role: 'Viewer' } | null
   default_issue_security?: 'open' | 'related'
   tags: string[]
+  board_views?: import('../project-board/projectBoardViews').ProjectBoardViews | null
   version: number
 }
 
@@ -83,6 +84,7 @@ export interface ProjectManageItem {
 export interface ProjectManageUpdate {
   version: number
   tags?: string[]
+  board_views?: import('../project-board/projectBoardViews').ProjectBoardViews
   membership_mode?: 'inherit' | 'restricted'
   visibility?: ProjectManageVisibility
   public_access?: { role: 'Viewer' }

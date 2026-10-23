@@ -128,6 +128,7 @@ describe('createSharedWorkspaceProjectManageApi', () => {
     await api.updateProject('project-1', {
       version: 2,
       tags: ['backend'],
+      board_views: { schema_version: 1, views: [] },
       visibility: 'public',
       provider_config: { repository: 'wecode-ai/Wegent' },
       board_config: {
@@ -150,6 +151,7 @@ describe('createSharedWorkspaceProjectManageApi', () => {
     expect(mocks.updateProject).toHaveBeenCalledWith('project-1', {
       version: 2,
       tags: ['backend'],
+      boardViews: { schema_version: 1, views: [] },
       visibility: 'public',
       providerConfig: { repository: 'wecode-ai/Wegent' },
       boardConfig: {

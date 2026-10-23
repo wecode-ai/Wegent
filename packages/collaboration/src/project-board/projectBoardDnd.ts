@@ -37,6 +37,8 @@ export function projectBoardDrop(event: Pick<DragEndEvent, "active" | "over">) {
   const id = event.over?.id;
   return {
     activeItemId: projectBoardActiveItemId(event.active),
+    sourceColumnKey:
+      (event.active.data.current?.columnKey as string | undefined) ?? null,
     beforeItemId,
     columnDropKey: beforeItemId
       ? (event.over?.data.current?.columnKey ?? null)

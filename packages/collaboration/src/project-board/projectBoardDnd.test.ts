@@ -10,7 +10,7 @@ describe("project board drop identity", () => {
     const event = {
       active: {
         id: JSON.stringify(["tag-backend", "source"]),
-        data: { current: { itemId: "source" } },
+        data: { current: { itemId: "source", columnKey: "tag-backend" } },
       },
       over: {
         id: `todo-card:${JSON.stringify(["tag-shared", "target"])}`,
@@ -19,6 +19,7 @@ describe("project board drop identity", () => {
     } as unknown as Parameters<typeof projectBoardDrop>[0];
     expect(projectBoardDrop(event)).toEqual({
       activeItemId: "source",
+      sourceColumnKey: "tag-backend",
       beforeItemId: "target",
       columnDropKey: "tag-shared",
     });

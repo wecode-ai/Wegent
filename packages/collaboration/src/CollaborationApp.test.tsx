@@ -882,6 +882,26 @@ describe("CollaborationApp API boundary", () => {
     expect(table?.props.onDelete).toBeUndefined();
   });
 
+  it("propagates failed board writes so the board never announces a successful move", async () => {
+    const host = createHost(false, "home");
+    host.location = { projectId: "project-1", issueId: null, view: "board" };
+    const controller = controllerWithProject(createProject(1));
+    controller.commands.updateIssue.mockRejectedValue(
+      new Error("Permission denied"),
+    );
+    collaborationAppMocks.useController.mockReturnValue(controller);
+    const app = CollaborationApp({ api: createApi(), host });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    await expect(
+      board!.props.onMove({ id: "issue-1", version: 1 } as CollaborationIssue, {
+        kind: "tag",
+        tags: ["frontend"],
+        optimisticItems: [],
+      }),
+    ).rejects.toThrow("Permission denied");
+  });
+
   it("wires completed Issue archiving into board, table, and detail", () => {
     const host = createHost(false, "home");
     host.location = {

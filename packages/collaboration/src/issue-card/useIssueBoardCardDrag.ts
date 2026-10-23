@@ -9,7 +9,7 @@ export function useIssueBoardCardDrag(
 ) {
   const drag = useDraggable({
     id: JSON.stringify([columnKey ?? null, id]),
-    data: { itemId: id },
+    data: { itemId: id, columnKey },
     disabled: !enabled,
   });
   const drop = useDroppable({
