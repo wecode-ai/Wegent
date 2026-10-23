@@ -966,6 +966,10 @@ export function useWorkbenchDataRefresh({
 
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
+      const supervisorBeforeRequest = findRuntimeTask(
+        localRuntimeWorkRef.current,
+        address
+      )?.supervisor
       const device = devicesRef.current.find(item => item.device_id === address.deviceId)
       const listCloudRuntimeWork =
         device && (isCloudDevice(device) || isRemoteDevice(device))
@@ -978,7 +982,14 @@ export function useWorkbenchDataRefresh({
         true
       )
       const task = findRuntimeTask(runtimeWork, address)
-      return task ? { ...task, optimistic: false } : null
+      if (!task) return null
+      const latestSupervisor = findRuntimeTask(localRuntimeWorkRef.current, address)?.supervisor
+      return {
+        ...task,
+        optimistic: false,
+        supervisor:
+          latestSupervisor !== supervisorBeforeRequest ? latestSupervisor : task.supervisor,
+      }
     },
     [applyRuntimeTaskOverrides, executorClient]
   )
