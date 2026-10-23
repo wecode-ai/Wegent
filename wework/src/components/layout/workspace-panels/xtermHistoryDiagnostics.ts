@@ -1,12 +1,14 @@
 import type { Terminal } from '@xterm/xterm'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 export function installXtermHistoryDiagnostics(terminal: Terminal, terminalId: string) {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return () => {}
 
+  let disposed = false
   const record = (phase: string) => {
+    if (disposed) return
     const buffer = terminal.buffer.active
-    console.info('[Wework][TerminalHistory]', {
-      at: new Date().toISOString(),
+    logRuntimeTaskCreateStage('terminal-history', {
       terminalId,
       phase,
       viewportY: buffer.viewportY,
@@ -28,6 +30,7 @@ export function installXtermHistoryDiagnostics(terminal: Terminal, terminalId: s
   }
   terminal.element?.addEventListener('keydown', keydown, true)
   return () => {
+    disposed = true
     scroll.dispose()
     resize.dispose()
     output.dispose()
