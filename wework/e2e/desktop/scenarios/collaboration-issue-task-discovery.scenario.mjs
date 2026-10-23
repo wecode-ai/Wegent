@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyIssueTranscriptTransfer } from '../modules/issue-transcript-transfer.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
@@ -28,6 +29,7 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   workspacePath,
   captureScreenshot,
+  codexSqliteHome,
 }) {
   let cloud
   let environment
@@ -137,6 +139,7 @@ export function createDesktopScenario({
     )
     await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    return bindings[0]
   }
   async function runLocalTask(control) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -265,7 +268,16 @@ export function createDesktopScenario({
           `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
         )
       )
-      await runAssistance(control, local)
+      const binding = await runAssistance(control, local)
+      await verifyIssueTranscriptTransfer({
+        control,
+        request,
+        fixture: local,
+        binding,
+        codexSqliteHome,
+        timeoutMs: workbenchReadyTimeoutMs,
+        scope: scoped,
+      })
       await runAssistance(control, other)
     },
     diagnostics() {

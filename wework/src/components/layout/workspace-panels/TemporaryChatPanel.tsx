@@ -51,6 +51,7 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   getRuntimeConversationTurnIds,
+  reconcileRuntimeConversationSnapshot,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
   updateRuntimeConversationBlocks,
@@ -280,6 +281,9 @@ export function TemporaryChatPanel({
   const [historyLoading, setHistoryLoading] = useState(Boolean(initialAddress && !sendEphemeral))
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [historyRevision, setHistoryRevision] = useState(0)
+  const [historyBeforeCursor, setHistoryBeforeCursor] = useState<string | null>(null)
+  const [historyLoadingMoreBefore, setHistoryLoadingMoreBefore] = useState(false)
+  const historyRequest = useRef({ loadingMore: false })
   const [sending, setSending] = useState(false)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -354,9 +358,12 @@ export function TemporaryChatPanel({
     if (!address || sendEphemeral) return
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
+    historyRequest.current = { loadingMore: false }
     const hydrationToken = beginRuntimeConversationHydration(address)
     setHistoryLoading(true)
     setHistoryError(null)
+    setHistoryBeforeCursor(null)
+    setHistoryLoadingMoreBefore(false)
     const usageRevision = contextUsageStore.getRevision()
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
@@ -365,6 +372,7 @@ export function TemporaryChatPanel({
           return
         }
         contextUsageStore.receiveTranscript(transcript.contextUsage, usageRevision)
+        setHistoryBeforeCursor(transcript.beforeCursor ?? null)
         lifecycleStore.syncTranscript(address, transcript, {
           preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
         })
@@ -386,6 +394,7 @@ export function TemporaryChatPanel({
       })
     return () => {
       cancelled = true
+      historyRequest.current = { loadingMore: false }
       abortRuntimeConversationHydration(address, hydrationToken)
     }
   }, [
@@ -396,6 +405,32 @@ export function TemporaryChatPanel({
     sendEphemeral,
     historyRevision,
   ])
+
+  const loadMoreHistory = useCallback(async () => {
+    if (!address || !historyBeforeCursor || historyRequest.current.loadingMore) return
+    const request = historyRequest.current
+    request.loadingMore = true
+    setHistoryLoadingMoreBefore(true)
+    try {
+      const transcript = await loadRuntimeTranscriptForPane(address, {
+        limit: 5,
+        beforeCursor: historyBeforeCursor,
+      })
+      if (historyRequest.current !== request) return
+      setMessages(reconcileRuntimeConversationSnapshot(address, transcript.turns))
+      setTurns(getRuntimeConversationTurns(address))
+      setHistoryBeforeCursor(transcript.beforeCursor ?? null)
+      setHistoryError(null)
+    } catch (caughtError) {
+      if (historyRequest.current !== request) return
+      setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
+    } finally {
+      if (historyRequest.current === request) {
+        request.loadingMore = false
+        setHistoryLoadingMoreBefore(false)
+      }
+    }
+  }, [address, historyBeforeCursor, loadRuntimeTranscriptForPane])
 
   useEffect(() => {
     if (!address) return
@@ -685,6 +720,7 @@ export function TemporaryChatPanel({
       queuedMessages.length,
       conversationQueue,
       sideChatProjectChat,
+      lifecycleStore,
       selectedModelFields,
       runtimeContext,
       sendQueuedMessageAsGuidance,
@@ -903,6 +939,12 @@ export function TemporaryChatPanel({
       <ScrollableMessageArea
         messages={messages}
         turns={turns}
+        loading={historyLoading || historyLoadingMoreBefore}
+        hasMoreBefore={Boolean(historyBeforeCursor)}
+        loadingMoreBefore={historyLoadingMoreBefore}
+        onLoadMoreBefore={loadMoreHistory}
+        transcriptError={messages.length ? historyError : null}
+        onRetryTranscript={loadMoreHistory}
         isWaitingForAssistant={busy}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
