@@ -22,15 +22,28 @@ export async function verifyPluginSyncDisconnect({
   apiProxy,
   packageProxy,
   executorHome,
-  localDeviceId,
+  localDeviceId: backendDeviceId,
   evidence,
   timeoutMs,
 }) {
   const slug = 'coordination-e2e-disconnect'
   const nextSkill = 'Plugin sync recovered after the real connection was interrupted'
-  const item = await installFixture(cloud, control, slug, localDeviceId, timeoutMs)
+  const executorStatus = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  const rendererDeviceId = executorStatus.deviceId?.trim()
+  assert.ok(rendererDeviceId, 'The renderer did not expose its local Executor IPC identity')
+  const backendDevice = (await cloud.devices()).find(device => device.device_id === backendDeviceId)
+  assert.equal(
+    backendDevice?.app_device_id,
+    rendererDeviceId,
+    'The backend registration must belong to the renderer local Executor'
+  )
+  evidence.push({ case: 'plugin-sync-device-identity', backendDeviceId, rendererDeviceId })
+  const item = await installFixture(cloud, control, slug, backendDeviceId, timeoutMs)
+  // Renderer single-flight keys use the IPC identity, not the backend registration ID.
   const diagnostics = async () =>
-    JSON.parse(await control.command('getPluginSyncDiagnostics', 'body', { value: localDeviceId }))
+    JSON.parse(
+      await control.command('getPluginSyncDiagnostics', 'body', { value: rendererDeviceId })
+    )
   const starts = state => state.localCatalogReads.filter(read => read.phase === 'started')
   const installedVersion = async () => {
     const plugin = await materializedPlugin(executorHome, item.installedId)
