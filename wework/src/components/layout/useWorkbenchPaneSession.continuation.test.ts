@@ -128,6 +128,48 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
 
+describe('composer draft ownership during submission', () => {
+  test.each([false, true])(
+    'preserves a newer draft when an earlier send is accepted (code comments=%s)',
+    async withCodeComments => {
+      let acceptSend!: (accepted: boolean) => void
+      mocks.send.mockImplementation(
+        () =>
+          new Promise<boolean>(resolve => {
+            acceptSend = resolve
+          })
+      )
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+
+      // Match the composer clearing the submitted draft, then publishing the
+      // next draft before the original send response reaches the renderer.
+      act(() => result.current.setInput(''))
+      act(() => result.current.setInput('next turn draft'))
+      mocks.setInput.mockClear()
+      await act(async () => {
+        acceptSend(true)
+        expect(await submission).toBe(true)
+      })
+
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test('clears the submitted draft when it has not been edited', async () => {
+    const { result } = await renderSession()
+    await act(async () => {
+      expect(await result.current.send(draft)).toBe(true)
+    })
+    expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, '')
+  })
+})
+
 describe('pane continuation without composer submission', () => {
   test.each([
     { running: false, accepted: true },
