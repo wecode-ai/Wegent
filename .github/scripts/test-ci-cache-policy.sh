@@ -289,7 +289,7 @@ fi
 sccache_action="$action_dir/setup-sccache/action.yml"
 # Environment variables are matched literally in action source.
 # shellcheck disable=SC2016
-if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
+if ! grep -Fq 'SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"' "$sccache_action" ||
   ! grep -Fq 'continue-on-error: true' "$sccache_action" ||
   [[ "$(grep -Fc "if: steps.install.outcome == 'success'" \
     "$sccache_action")" -ne 2 ]] ||
@@ -297,7 +297,7 @@ if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
   ! grep -Fq 'continuing without Rust compiler caching' "$sccache_action" ||
   ! grep -Fq 'GitHub Actions cache credentials are unavailable for sccache' \
     "$sccache_action" ||
-  ! grep -Fq 'SCCACHE_GHA_VERSION=wegent-sccache-v1-' "$sccache_action" ||
+  ! grep -Fq 'SCCACHE_GHA_VERSION="wegent-sccache-v1-' "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$sccache_action" ||
   ! grep -Fq 'refs/heads/main' "$sccache_action"; then
   fail "sccache must degrade safely and allow cache writes only from main"
@@ -635,6 +635,7 @@ bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
+bash "$script_dir/test-configure-sccache.sh"
 bash "$script_dir/test-download-actions-artifact.sh"
 
 printf 'CI cache policy tests passed\n'

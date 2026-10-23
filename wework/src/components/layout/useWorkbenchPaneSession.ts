@@ -1,3 +1,4 @@
+import { useDebugSnapshotPublisher } from '@/features/workbench/useDebugSnapshotPublisher'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import {
   transcriptRangeFromPage,
@@ -8,8 +9,8 @@ export { runtimeTurnNavigationLoadOptions } from '@wegent/chat-core/runtime-tran
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -23,7 +24,6 @@ import {
   summarizeRuntimePaneMemory,
   summarizeMessages,
   updateRuntimePaneDebugSnapshot,
-  DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessageBuffer'
@@ -286,6 +286,10 @@ export function useWorkbenchPaneSession({
   )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
+  const codeCommentContextsRef = useRef(codeCommentContexts)
+  useLayoutEffect(() => {
+    codeCommentContextsRef.current = codeCommentContexts
+  }, [codeCommentContexts])
   const [browserAnnotationCommand, setBrowserAnnotationCommand] =
     useState<BrowserAnnotationCommand | null>(null)
   const browserAnnotationCommandSequenceRef = useRef(0)
@@ -312,14 +316,26 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, projectChat]
   )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
-  const inputRevisionRef = useRef(0)
+  const inputRevisionRef = useRef({ revision: 0, scopeKey: inputScopeKey, value: input })
   useLayoutEffect(() => {
-    inputRevisionRef.current += 1
+    // A setter already records its value; only external replacements advance again.
+    const previous = inputRevisionRef.current
+    if (previous.scopeKey !== inputScopeKey || previous.value !== input) {
+      inputRevisionRef.current = {
+        revision: previous.revision + 1,
+        scopeKey: inputScopeKey,
+        value: input,
+      }
+    }
   }, [input, inputScopeKey])
   const setInputForScope = projectChat.setInputForScope
-  const scopedSetInput = useCallback(
+  const setInput = useCallback(
     (value: string) => {
-      inputRevisionRef.current += 1
+      inputRevisionRef.current = {
+        revision: inputRevisionRef.current.revision + 1,
+        scopeKey: inputScopeKey,
+        value,
+      }
       setInputForScope(inputScopeKey, value)
     },
     [inputScopeKey, setInputForScope]
@@ -349,23 +365,30 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, setErrorForScope]
   )
   const clearError = useCallback(() => setError(null), [setError])
-  const setInput = useCallback(
-    (value: string) => {
-      scopedSetInput(value)
-    },
-    [scopedSetInput]
-  )
   const restoreInputAfterFailure = useCallback(
     (value: string) => {
-      scopedSetInput(value)
+      setInput(value)
     },
-    [scopedSetInput]
+    [setInput]
   )
 
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
-      setCodeCommentContexts([])
-      if (!contexts.some(isBrowserAnnotationContext)) return
+      // Native cleanup clears the entire page; retain an edited annotation batch.
+      const submittedAnnotations = contexts.filter(isBrowserAnnotationContext)
+      const currentAnnotations = codeCommentContextsRef.current.filter(isBrowserAnnotationContext)
+      const preserveAnnotations =
+        reason === 'send_success' &&
+        (submittedAnnotations.length !== currentAnnotations.length ||
+          currentAnnotations.some(context => !submittedAnnotations.includes(context)))
+      setCodeCommentContexts(current =>
+        current.filter(
+          context =>
+            !contexts.includes(context) ||
+            (preserveAnnotations && isBrowserAnnotationContext(context))
+        )
+      )
+      if (preserveAnnotations || !contexts.some(isBrowserAnnotationContext)) return
 
       browserAnnotationCommandSequenceRef.current += 1
       setBrowserAnnotationCommand({
@@ -1831,10 +1854,17 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
-        const submittedInputRevision = inputRevisionRef.current
+        let submittedInputRevision = inputRevisionRef.current.revision
         const clearSubmittedInput = () => {
-          // The composer can already contain the next draft when this send settles.
-          if (inputRevisionRef.current === submittedInputRevision) setInput('')
+          // A delayed send acknowledgment must not erase the next composer draft.
+          if (inputRevisionRef.current.revision !== submittedInputRevision) return
+          setInput('')
+          submittedInputRevision = inputRevisionRef.current.revision
+        }
+        const restoreSubmittedInput = (scopeKey: string, value: string) => {
+          if (inputRevisionRef.current.revision === submittedInputRevision) {
+            setInputForScope(scopeKey, value)
+          }
         }
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
@@ -1907,7 +1937,7 @@ export function useWorkbenchPaneSession({
               initialGoal,
             }
             if (paneIsBusy) {
-              setInput('')
+              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
@@ -1928,7 +1958,7 @@ export function useWorkbenchPaneSession({
               clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
-              setCodeCommentContexts([])
+              clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             } else {
               currentAttachments.forEach(addExistingAttachment)
               setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
@@ -1938,7 +1968,7 @@ export function useWorkbenchPaneSession({
 
           const draftGoal = createPendingRuntimeGoal(submittedInput)
           const initialGoal = runtimeGoalCreateInput(draftGoal)
-          setInput('')
+          clearSubmittedInput()
           setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
           setGoalDraftActive(false)
           const optimisticMessage = createRuntimeUserMessage(submittedInput, currentAttachments, {
@@ -2010,7 +2040,7 @@ export function useWorkbenchPaneSession({
             if (seededGoalAddress) {
               clearRuntimePaneGoalSeed(seededGoalAddress)
             }
-            restoreInputAfterFailure(submittedInput)
+            restoreSubmittedInput(inputScopeKey, submittedInput)
             setGoalDraftActive(true)
             setPendingGoalState(null)
           }
@@ -2152,7 +2182,7 @@ export function useWorkbenchPaneSession({
               },
             })
           } catch (error) {
-            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )
@@ -2183,7 +2213,7 @@ export function useWorkbenchPaneSession({
             }
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
-            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )
@@ -2192,6 +2222,7 @@ export function useWorkbenchPaneSession({
         }
 
         if (hasCodeComments) {
+          resetAttachments()
           const queuedMessage: RuntimePaneQueuedMessage = {
             id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
             content: appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts),
@@ -2207,12 +2238,10 @@ export function useWorkbenchPaneSession({
           }
 
           if (paneIsBusy) {
-            resetAttachments()
             if (options.interruptWhenBusy) {
               const sent = await interruptAndSendQueuedMessage(queuedMessage)
               if (!sent) {
                 currentAttachments.forEach(addExistingAttachment)
-                setCodeCommentContexts(codeCommentContexts)
               } else {
                 clearSubmittedInput()
                 clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
@@ -2242,7 +2271,6 @@ export function useWorkbenchPaneSession({
           }
           if (result.accepted) {
             clearSubmittedInput()
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
             const lifecycleAfterSend = currentRuntimeTask
@@ -2255,9 +2283,9 @@ export function useWorkbenchPaneSession({
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
             clearSubmittedInput()
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
+            currentAttachments.forEach(addExistingAttachment)
             setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
           }
           return result.accepted || isRuntimeTaskBusyError(sendError)
@@ -2308,7 +2336,7 @@ export function useWorkbenchPaneSession({
         }
         if (result.accepted) {
           clearSubmittedInput()
-          setCodeCommentContexts([])
+          clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
         } else if (isRuntimeTaskBusyError(sendError)) {
           const lifecycleAfterSend = currentRuntimeTask
             ? lifecycleStore.getTask(currentRuntimeTask)
@@ -2349,7 +2377,6 @@ export function useWorkbenchPaneSession({
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,
         resetAttachments,
-        restoreInputAfterFailure,
         sendCurrentInput,
         sendQueuedMessageAsGuidance,
         sendRuntimeMessage,
@@ -2992,73 +3019,36 @@ export function useWorkbenchPaneSession({
     transcriptLoading,
   ])
 
-  useEffect(() => {
-    if (!debugSnapshotEnabled) return
-
-    let timeout: number | null = null
-    const schedule = () => {
-      if (timeout !== null) return
-      timeout = window.setTimeout(() => {
-        timeout = null
-        updateRuntimePaneDebugSnapshot(
-          {
-            currentRuntimeTask,
-            status: paneStatus,
-            messageSummary: summarizeMessages(messages),
-            messageStyleComparison: compareMessageStyles(messages),
-            memory: summarizeRuntimePaneMemory({
-              messages,
-              currentRuntimeTask,
-              loadedRanges: loadedTranscriptRanges,
-            }),
-            queuedMessages,
-            guidanceMessages,
-            codeCommentContextCount: codeCommentContexts.length,
-            inputLength: input.length,
-            transcript: {
-              loading: transcriptLoading,
-              hasMoreBefore: transcriptHasMoreBefore,
-              loadingMoreBefore: transcriptLoadingMoreBefore,
-              turnNavigationCount: turnNavigation.length,
-              loadedRanges: loadedTranscriptRanges,
-            },
-            subagentStatuses,
-            goal,
-            goalDraftActive,
-          },
-          { enabled: debugSnapshotEnabled }
-        )
-      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
-    }
-    schedule()
-    return () => {
-      if (timeout !== null) {
-        clearTimeout(timeout)
-      }
-    }
-  }, [
-    codeCommentContexts.length,
-    currentRuntimeTask,
-    debugSnapshotEnabled,
-    goal,
-    taskPlan,
-    goalDraftActive,
-    guidanceMessages,
-    input.length,
-    loadedTranscriptRanges,
-    messages,
-    paneStatus,
-    queuedMessages,
-    queuedMessagesPaused,
-    subagentStatuses,
-    transcriptHasMoreBefore,
-    transcriptFullContent,
-    transcriptLoading,
-    transcriptError,
-    reloadRuntimeTranscript,
-    transcriptLoadingMoreBefore,
-    turnNavigation.length,
-  ])
+  useDebugSnapshotPublisher(debugSnapshotEnabled, () => {
+    updateRuntimePaneDebugSnapshot(
+      {
+        currentRuntimeTask,
+        status: paneStatus,
+        messageSummary: summarizeMessages(messages),
+        messageStyleComparison: compareMessageStyles(messages),
+        memory: summarizeRuntimePaneMemory({
+          messages,
+          currentRuntimeTask,
+          loadedRanges: loadedTranscriptRanges,
+        }),
+        queuedMessages,
+        guidanceMessages,
+        codeCommentContextCount: codeCommentContexts.length,
+        inputLength: input.length,
+        transcript: {
+          loading: transcriptLoading,
+          hasMoreBefore: transcriptHasMoreBefore,
+          loadingMoreBefore: transcriptLoadingMoreBefore,
+          turnNavigationCount: turnNavigation.length,
+          loadedRanges: loadedTranscriptRanges,
+        },
+        subagentStatuses,
+        goal,
+        goalDraftActive,
+      },
+      { enabled: debugSnapshotEnabled }
+    )
+  })
 
   return {
     scopeKey: inputScopeKey,

@@ -72,28 +72,26 @@ export async function verifyTerminalHistory(control, timeoutMs) {
   await control.command('waitFor', tree, { text: MARKERS[0] })
   const firstRow = `${tree} > [role="listitem"]:first-child[aria-posinset]`
   await control.command('waitFor', firstRow, { timeoutMs })
-  let position = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
-  assert.ok(
-    Number.isSafeInteger(position) && position > 0,
-    'Missing terminal viewport row position'
-  )
+  let position
   let pages = 0
-  while (position > 1) {
-    await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
-    const deadline = Date.now() + timeoutMs
-    let next
-    do {
-      next = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
-      if (Number.isSafeInteger(next) && next > 0 && next < position) break
-      await new Promise(resolve => setTimeout(resolve, 50))
-    } while (Date.now() < deadline)
+  do {
+    const observation = JSON.parse(
+      await control.command('nativePress', textarea, {
+        key: 'Shift+PageUp',
+        target: `${panel} [data-testid="background-terminal-xterm"]`,
+      })
+    )
+    position = Number(observation.viewportBefore)
+    assert.ok(Number.isSafeInteger(position) && position > 0, 'Missing native page-up baseline')
+    const next = Number(observation.viewportAfter)
     assert.ok(
-      Number.isSafeInteger(next) && next > 0 && next < position,
+      Number.isSafeInteger(next) && next > 0 && (position === 1 ? next === 1 : next < position),
       `Native page-up did not move backwards: ${position} -> ${next}`
     )
+    await control.command('waitFor', `${firstRow}[aria-posinset="${next}"]`, { timeoutMs })
+    if (position > 1) pages += 1
     position = next
-    pages += 1
-  }
+  } while (position > 1)
   await control.command('waitFor', tree, { text: `${MARKERS[0]}_TICK_12` })
   const lines = (await control.command('getText', `${tree} > div`)).split('\n')
   for (let tick = 1; tick <= 12; tick += 1)
@@ -134,6 +132,7 @@ export function createDesktopScenario({
   let launched = false
   const toolResults = []
   return {
+    appEnvironment: { WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -269,15 +268,7 @@ export function createDesktopScenario({
 
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(readyCount),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Background terminal reload did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await control.awaitReadyAfter(readyCount)
       await showSummary(control)
       assert.equal(
         Number(

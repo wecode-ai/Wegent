@@ -713,6 +713,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             </div>
           )}
           <ProjectChatComposer
+            composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
             pluginPickerIconOnly={pluginPickerIconOnly}

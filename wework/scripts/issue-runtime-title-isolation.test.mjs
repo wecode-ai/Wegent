@@ -4,12 +4,23 @@ import {
   completedRenamedConversationState,
   verifyIssueRuntimeTitleIsolation,
 } from '../e2e/desktop/modules/issue-runtime-title-isolation.mjs'
+import {
+  CHECKPOINT_TASK_COMPLETION_TEXT,
+  DEFAULT_STEP_TIMEOUT_MS,
+} from '../e2e/desktop/modules/shared.mjs'
 
 const binding = { device_id: 'device', task_id: 'runtime-task' }
 const issue = { id: 'ISSUE-1', title: 'Shared Issue title', version: 3 }
 const title = `Private conversation for ${issue.id}`
-const previous = { turnId: 'initial-turn', assistantMessageId: 'initial-assistant' }
-const current = { turnId: 'follow-up-turn', assistantMessageId: 'follow-up-assistant' }
+const previous = {
+  turnId: 'initial-turn',
+  assistantMessageId: 'runtime-view:initial-turn:assistant',
+}
+const current = {
+  turnId: 'follow-up-turn',
+  assistantMessageId: 'runtime-view:follow-up-turn:assistant',
+}
+const content = '[data-testid="workspace-tab-content-task-tab"]'
 
 function snapshot(state = current) {
   const address = { deviceId: binding.device_id, taskId: binding.task_id }
@@ -31,7 +42,7 @@ function snapshot(state = current) {
 
 afterEach(() => vi.restoreAllMocks())
 
-test('renames through the UI before observing the new turn and its exact visible response', async () => {
+function fixture(snapshots, advanceClock = () => {}) {
   const requests = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, options) => {
     const request = JSON.parse(options.body)
@@ -45,13 +56,10 @@ test('renames through the UI before observing the new turn and its exact visible
       { headers: { 'Content-Type': 'application/json' } }
     )
   })
-  const content = '[data-testid="workspace-tab-content-task-tab"]'
   const header =
     '[data-workspace-tab-portal-owner="task-tab"]:not([hidden]) [data-testid="conversation-rename-button"]'
   const dialog = '[data-testid="conversation-rename-input-overlay"]'
-  const staleTitle = snapshot(previous)
-  staleTitle.workbench.activeTask.title = 'Draft first-message title'
-  const snapshots = [staleTitle, snapshot(previous), snapshot(previous), snapshot()]
+  const lastSnapshot = snapshots.at(-1)
   const calls = []
   let dialogOpened = false
   let renameFilled = false
@@ -90,19 +98,33 @@ test('renames through the UI before observing the new turn and its exact visible
       if (action === 'getLocationOrigin') return 'http://executor.test'
       if (action === 'getWorkbenchDebugSnapshot') {
         assert.equal(dialogClosed, true, 'The UI rename must finish its refresh before observing')
-        return JSON.stringify(snapshots.shift())
+        advanceClock()
+        return JSON.stringify(snapshots.shift() ?? lastSnapshot)
       }
       if (['fill', 'press', 'waitFor'].includes(action)) return ''
       throw new Error(`Mounted row counts cannot identify a new turn: ${action}`)
     },
   }
+  return { control, calls, requests }
+}
+
+test('renames through the UI before observing the new turn and its exact visible response', async () => {
+  const staleTitle = snapshot(previous)
+  staleTitle.workbench.activeTask.title = 'Draft first-message title'
+  const snapshots = [staleTitle, snapshot(previous), snapshot(previous), snapshot()]
+  const { control, calls, requests } = fixture(snapshots)
   await verifyIssueRuntimeTitleIsolation(control, content, { id: 1 }, issue, binding)
   const responseWait = calls.find(
     call => call.action === 'waitFor' && call.selector.includes('data-message-id')
   )
-  assert.ok(responseWait.selector.includes('follow-up-assistant'))
+  assert.ok(responseWait.selector.includes(current.assistantMessageId))
   assert.equal(responseWait.options.visible, true)
+  assert.equal(responseWait.options.text, CHECKPOINT_TASK_COMPLETION_TEXT)
   assert.equal(snapshots.length, 0, 'The previous completion incorrectly satisfied the follow-up')
+  assert.equal(
+    calls.some(call => call.action === 'getElementCount'),
+    false
+  )
   assert.equal(requests.length, 2, 'Both title-isolation checks must read the persisted Issue')
   for (const request of requests)
     assert.deepEqual(request.params, { project_id: 1, task_id: issue.id })
@@ -152,6 +174,12 @@ test.each([
     },
   ],
   [
+    'a newer response from a different turn',
+    state => {
+      state.pane.messageSummary.lastMessage.id = 'runtime-view:unrelated-turn:assistant'
+    },
+  ],
+  [
     'a running turn',
     state => {
       state.workbench.lifecycleCurrentTaskRunning = true
@@ -176,6 +204,12 @@ test.each([
     },
   ],
   [
+    'another current task',
+    state => {
+      state.workbench.currentRuntimeTask = { deviceId: binding.device_id, taskId: 'other-task' }
+    },
+  ],
+  [
     'another pane',
     state => {
       state.pane.currentRuntimeTask = { deviceId: 'other-device', taskId: 'other-task' }
@@ -187,8 +221,28 @@ test.each([
       state.workbench.activeTask.title = issue.title
     },
   ],
-])('rejects %s as evidence of a completed renamed follow-up', (_description, mutate) => {
+])('rejects %s as evidence of a completed renamed follow-up', async (_description, mutate) => {
   const state = snapshot()
   mutate(state)
   assert.equal(completedRenamedConversationState(state, binding, title, previous), null)
+  let clock = 0
+  vi.spyOn(Date, 'now').mockImplementation(() => clock)
+  const { control, requests } = fixture([snapshot(previous), state], () => {
+    clock += DEFAULT_STEP_TIMEOUT_MS / 2 + 1
+  })
+  await assert.rejects(
+    verifyIssueRuntimeTitleIsolation(control, content, { id: 1 }, issue, binding),
+    error => {
+      const prefix = 'The renamed conversation did not finish its follow-up turn: '
+      assert.ok(error.message.startsWith(prefix))
+      const diagnostic = JSON.parse(error.message.slice(prefix.length))
+      assert.equal(diagnostic.previousTurnId, previous.turnId)
+      assert.equal(diagnostic.previousMessageId, previous.assistantMessageId)
+      assert.equal(diagnostic.observedTitle, state.workbench.activeTask.title)
+      assert.deepEqual(diagnostic.lifecycle, state.workbench.activeLifecycle)
+      assert.deepEqual(diagnostic.messages, state.pane.messageSummary)
+      return true
+    }
+  )
+  assert.equal(requests.length, 1, 'An unfinished follow-up must not pass the final Issue check')
 })

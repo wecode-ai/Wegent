@@ -30,7 +30,9 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { createDesktopInputTracer, parseDesktopControlKey } from './desktop-control-keyboard'
+import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
@@ -1105,7 +1107,8 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
 async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
-  phase: 'press' | 'down' | 'up' = 'press'
+  phase: 'press' | 'down' | 'up' = 'press',
+  measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   const { inputDiagnosticId, trace } = createDesktopInputTracer({
@@ -1130,7 +1133,16 @@ async function pressNativeDesktopControlKey(
   trace('target-focused')
   const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
-  const recordKey = (event: KeyboardEvent) => received.push(event)
+  const expectedKey = parseDesktopControlKey(key).key
+  const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
+  if (measurement && !viewportTarget) throw new Error('Native viewport target is unavailable')
+  const observation = viewportTarget
+    ? createNativeKeyObservation(element, () => readNativeTerminalViewport(viewportTarget))
+    : null
+  const recordKey = (event: KeyboardEvent) => {
+    received.push(event)
+    if (event.key === expectedKey) observation?.record(event)
+  }
   window.addEventListener(eventType, recordKey, true)
   try {
     await invokeDesktopHost(
@@ -1152,7 +1164,12 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return document.activeElement?.getAttribute('data-testid') ?? ''
+  return observation && viewportTarget
+    ? JSON.stringify({
+        viewportBefore: observation.result(),
+        viewportAfter: readNativeTerminalViewport(viewportTarget),
+      })
+    : (document.activeElement?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -3274,7 +3291,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
     case 'nativePress': {
-      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+      return pressNativeDesktopControlKey(
+        command.selector,
+        command.key ?? '',
+        'press',
+        command.target ? { selector: command.target } : undefined
+      )
     }
     case 'nativeKeyDownOnly': {
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'down')
@@ -3349,14 +3371,38 @@ async function postDesktopControlStarted(
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
-  const response = await fetch(`${url}/started`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ id: command.id, clientId }),
-  })
-  await response.text()
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  let response: Response
+  try {
+    response = await fetch(`${url}/started`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify({ id: command.id, clientId }),
+    })
+    await response.text()
+  } finally {
+    window.clearInterval(probe)
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+  }
   if (!response.ok) {
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
+  }
+  if (Date.now() - startedAt > 1000) {
+    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
+      commandId: command.id,
+      action: command.action,
+      startedAt,
+      elapsedMs: Date.now() - startedAt,
+      maxEventLoopLagMs,
+      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+      visibility: document.visibilityState,
+    })
   }
 }
 
@@ -3397,12 +3443,11 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
-      traceDesktopControlTransport('command-read', {
-        clientId,
-        commandId: command.id,
-        action: command.action,
-      })
+      const diagnostic = { commandId: command.id, action: command.action, clientId }
+      traceDesktopControlTransport('command-read', diagnostic)
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
       await postDesktopControlStarted(url, command, clientId)
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3416,7 +3461,9 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
+        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
         await postDesktopControlResult(url, result, command.action)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
         console.error('[Wework] Desktop E2E result acknowledgement failed:', {
           commandId: command.id,

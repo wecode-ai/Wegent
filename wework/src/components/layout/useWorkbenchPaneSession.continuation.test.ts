@@ -63,6 +63,7 @@ let lifecycleStore: RuntimeTaskLifecycleStore
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.setInput.mockReset()
   mocks.send.mockResolvedValue(true)
   mocks.guide.mockResolvedValue({ sent: true, turnId: 'answer-turn' })
   mocks.cancel.mockResolvedValue(true)
@@ -269,6 +270,195 @@ describe('composer draft while a send acknowledgement is pending', () => {
       expect(queued[0].displayContent ?? queued[0].content).toBe(`Use ${reference}`)
     }
   )
+  test.each([true, false])(
+    'keeps content added while an accepted send is pending (code comments=%s)',
+    async withCodeComments => {
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+      let acknowledgeSend!: (accepted: boolean) => void
+      mocks.send.mockImplementationOnce(
+        () =>
+          new Promise<boolean>(resolve => {
+            acknowledgeSend = resolve
+          })
+      )
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      const nextComment = { ...codeComment, id: 'next-turn-comment' }
+      act(() => result.current.addCodeComment(nextComment))
+      // Attachments are consumed before dispatch, never by a late acknowledgment.
+      expect(mocks.resetAttachments).toHaveBeenCalledOnce()
+      mocks.resetAttachments.mockClear()
+      await act(async () => {
+        acknowledgeSend(true)
+        expect(await submission).toBe(true)
+      })
+      expect(result.current.codeCommentContexts).toEqual([nextComment])
+      expect(mocks.resetAttachments).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([false, true])(
+    'cleans submitted comments while protecting annotation edits (edited=%s)',
+    async edited => {
+      const { result } = await renderSession()
+      const annotation = {
+        ...codeComment,
+        id: 'submitted-annotation',
+        source: 'browser_annotation' as const,
+      }
+      act(() => result.current.addCodeComment(annotation))
+      let acknowledgeSend!: (accepted: boolean) => void
+      mocks.send.mockImplementationOnce(
+        () =>
+          new Promise<boolean>(resolve => {
+            acknowledgeSend = resolve
+          })
+      )
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      const nextComment = {
+        ...codeComment,
+        id: 'next-turn-comment',
+        ...(edited ? { source: 'browser_annotation' as const } : {}),
+      }
+      act(() => result.current.addCodeComment(nextComment))
+      await act(async () => {
+        acknowledgeSend(true)
+        expect(await submission).toBe(true)
+      })
+      expect(result.current.codeCommentContexts).toEqual(
+        edited ? [annotation, nextComment] : [nextComment]
+      )
+      if (edited) expect(result.current.browserAnnotationCommand).toBeNull()
+      else
+        expect(result.current.browserAnnotationCommand).toMatchObject({
+          type: 'clear_all_and_exit',
+          reason: 'send_success',
+        })
+    }
+  )
+
+  test.each([
+    { outcome: 'rejected', external: false },
+    { outcome: 'thrown', external: false },
+    { outcome: 'rejected', external: true },
+    { outcome: 'thrown', external: true },
+  ])(
+    'preserves newer text when a new-pane send is $outcome (external=$external)',
+    async ({ outcome, external }) => {
+      let rejectSend!: (cause: Error) => void
+      let resolveSend!: (accepted: boolean) => void
+      mocks.context.sendCurrentInput = vi.fn(
+        () =>
+          new Promise<boolean>((resolve, reject) => {
+            resolveSend = resolve
+            rejectSend = reject
+          })
+      )
+      const { result, rerender } = await renderSession(null)
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+      if (external) {
+        const projectChat = mocks.context.projectChat as { inputByScope: Record<string, string> }
+        projectChat.inputByScope = { 'blank-chat': 'Externally restored follow-up' }
+        rerender()
+      } else act(() => result.current.setInput('Next follow-up'))
+      mocks.setInput.mockClear()
+      await act(async () => {
+        if (outcome === 'thrown') {
+          const rejected = expect(submission).rejects.toThrow('Send failed')
+          rejectSend(new Error('Send failed'))
+          await rejected
+        } else {
+          resolveSend(false)
+          expect(await submission).toBe(false)
+        }
+      })
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([true, false])(
+    'restores a rejected new goal only without newer edits (edited=%s)',
+    async edited => {
+      let rejectGoal!: (accepted: boolean) => void
+      mocks.context.sendCurrentInput = vi.fn(
+        () =>
+          new Promise<boolean>(resolve => {
+            rejectGoal = resolve
+          })
+      )
+      const projectChat = mocks.context.projectChat as Record<string, unknown>
+      projectChat.setSelectedModelOption = vi.fn()
+      const { result } = await renderSession(null)
+      act(() => result.current.clearCodeComments())
+      await act(async () => {
+        await result.current.setCurrentGoal()
+      })
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+      if (edited) act(() => result.current.setInput('Next goal draft'))
+      mocks.setInput.mockClear()
+      await act(async () => {
+        rejectGoal(false)
+        expect(await submission).toBe(false)
+      })
+      if (edited) expect(mocks.setInput).not.toHaveBeenCalled()
+      else expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+    }
+  )
+
+  test('restores a rejected goal after its own eager clear is published', async () => {
+    let rejectGoal!: (accepted: boolean) => void
+    mocks.context.sendCurrentInput = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          rejectGoal = resolve
+        })
+    )
+    const projectChat = mocks.context.projectChat as {
+      inputByScope: Record<string, string>
+      setSelectedModelOption: ReturnType<typeof vi.fn>
+    }
+    projectChat.inputByScope = { 'blank-chat': draft }
+    projectChat.setSelectedModelOption = vi.fn()
+    const { result, rerender } = await renderSession(null)
+    act(() => result.current.clearCodeComments())
+    await act(async () => {
+      await result.current.setCurrentGoal()
+    })
+    mocks.setInput.mockImplementation((scope: string, value: string) => {
+      projectChat.inputByScope = { ...projectChat.inputByScope, [scope]: value }
+    })
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.context.sendCurrentInput).toHaveBeenCalledOnce())
+    rerender()
+    expect(result.current.input).toBe('')
+    mocks.setInput.mockClear()
+    await act(async () => {
+      rejectGoal(false)
+      expect(await submission).toBe(false)
+    })
+    expect(mocks.setInput).toHaveBeenCalledWith('blank-chat', draft)
+    rerender()
+    expect(result.current.input).toBe(draft)
+  })
 })
 
 describe('pane continuation without composer submission', () => {

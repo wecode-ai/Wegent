@@ -28,13 +28,32 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
   assert.equal(afterRename.title, issue.title, 'Renaming the conversation renamed the Issue')
   assert.equal(afterRename.version, issue.version, 'Renaming the conversation mutated the Issue')
   let observed
-  const completedState = async previous => {
-    observed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    return completedRenamedConversationState(observed, binding, title, previous)
+  const waitForCompletedState = async (previous, message) => {
+    try {
+      return await until(
+        async () => {
+          observed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          return completedRenamedConversationState(observed, binding, title, previous)
+        },
+        Boolean,
+        message,
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+    } catch (error) {
+      throw new Error(
+        `${message}: ${JSON.stringify({
+          previousTurnId: previous?.turnId,
+          previousMessageId: previous?.assistantMessageId,
+          observedTitle: observed?.workbench?.activeTask?.title,
+          lifecycle: observed?.workbench?.activeLifecycle,
+          messages: observed?.pane?.messageSummary,
+        })}`,
+        { cause: error }
+      )
+    }
   }
-  const baseline = await until(
-    () => completedState(),
-    Boolean,
+  const baseline = await waitForCompletedState(
+    undefined,
     'The renamed conversation did not expose its completed initial turn'
   )
   const composer = `${content} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -43,9 +62,8 @@ export async function verifyIssueRuntimeTitleIsolation(control, content, project
     value: CHECKPOINT_TASK_PROMPT,
   })
   await control.command('press', composer, { key: 'Enter' })
-  const completed = await until(
-    () => completedState(baseline),
-    Boolean,
+  const completed = await waitForCompletedState(
+    baseline,
     'The renamed conversation did not finish its follow-up turn'
   )
   await control.command(
@@ -87,6 +105,7 @@ export function completedRenamedConversationState(debug, binding, title, previou
     message?.role !== 'assistant' ||
     message?.status !== 'done' ||
     !message.id ||
+    !message.id.includes(turn.latestId) ||
     (previous && (turn.latestId === previous.turnId || message.id === previous.assistantMessageId))
   )
     return null
