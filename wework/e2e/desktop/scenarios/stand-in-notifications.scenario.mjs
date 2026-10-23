@@ -135,6 +135,27 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         '1',
         'Inline follow-up must keep the notification open'
       )
+      assert.equal(
+        alerts.filter(alert => alert.address?.taskId === binding.task_id).length,
+        2,
+        'Each completed turn must deliver exactly one alert, including after summary refresh'
+      )
+
+      const readyBeforeReload = control.readyCount
+      await control.command('reloadApp', 'body')
+      await control.awaitReadyAfter(readyBeforeReload)
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
+        text: '处理完毕',
+      })
+      await control.command('waitFor', `${notificationRow}[data-unread="true"]`)
+      const restoredAlerts = JSON.parse(await control.command('getSystemNotifications', 'body'))
+      assert.equal(
+        restoredAlerts.filter(alert => alert.address?.taskId === binding.task_id).length,
+        0,
+        'Restoring an unread completion must preserve the inbox entry without replaying its alert'
+      )
       const bindings = await requestExecutor(
         control,
         'todos.bindings',

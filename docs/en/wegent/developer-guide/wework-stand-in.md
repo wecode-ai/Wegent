@@ -38,6 +38,8 @@ Completion, failure, and pending input make the entry unread again and update it
 
 Stand-in read markers and desktop delivery receipts are account-scoped on the current device and do not sync between devices. Original assignment notifications retain the existing read API. Each auxiliary collection retains at most 1000 entries for 90 days and is pruned on reads and writes. Cleanup never deletes real notifications, tasks, or execution history.
 
+Completion events use the Runtime turn ID when available; tasks without a turn ID retain their existing status-and-timestamp identity. With a turn ID, receiving a turn settlement and its task summary separately does not repeat an alert or make an already-read result unread. Existing timestamp markers are upgraded when they match the current state. Restored settlements from before account monitoring began establish a delivery baseline and retain their inbox entries and unread state without replaying historical desktop alerts. Tasks that finish after monitoring starts still notify, including tasks that finish before their first summary is discovered.
+
 Focused tests cover durable versioned settings, independent tag rules, assignment age, existing binding filtering, device switching, and sidebar configuration merging and updates. The `stand-in-assignment-notifications`, `stand-in`, `stand-in-workspace`, `stand-in-cloud`, `stand-in-controls`, and `stand-in-notifications` desktop checkpoints run in existing CI. Only model responses are replaced; storage, task execution, cloud APIs, and device connections use real implementations.
 
 ## Verification
