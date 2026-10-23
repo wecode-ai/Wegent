@@ -11,6 +11,7 @@ import {
   cacheRuntimeConversationQueuedMessagesByKey,
 } from '@/features/workbench/runtimeConversationCache'
 import { TaskActivityView } from './TaskActivityView'
+import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 
@@ -2336,19 +2337,27 @@ describe('TaskActivityView', () => {
           throw new Error('An attachment is unavailable or belongs to another user')
         return []
       })
+      const fetchAttachmentBlob = vi
+        .fn()
+        .mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
       render(
-        <TaskActivityView
-          client={client}
-          currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
-          task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
-          issueTimeline
-          linear
-        />
+        <AttachmentDownloadProvider fetchAttachmentBlob={fetchAttachmentBlob}>
+          <TaskActivityView
+            client={client}
+            currentUserId={1}
+            project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+            task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
+            issueTimeline
+            linear
+          />
+        </AttachmentDownloadProvider>
       )
       if (reply)
         await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
-      await user.type(screen.getByTestId('cloud-task-activity-composer'), 'See image')
+      const composer = screen.getByTestId('cloud-task-activity-composer')
+      await user.click(composer)
+      await user.paste('See image')
+      expect(composer).toHaveTextContent('See image')
       await user.click(sendButtonFor('cloud-task-activity-composer'))
 
       await waitFor(() =>

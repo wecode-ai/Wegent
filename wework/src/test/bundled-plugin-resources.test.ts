@@ -333,6 +333,8 @@ describe('bundled plugin resources', () => {
       expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
       expect(workflow).toContain('generate-desktop-update-manifests.mjs')
       expect(workflow).toContain('plan-desktop-release.mjs')
+      expect(workflow).toContain('group: ${{ github.workflow }}')
+      expect(workflow).not.toContain('group: ${{ github.workflow }}-${{ github.ref }}')
       expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
       expect(workflow).toContain('CURRENT_SOURCE_REF')
       expect(workflow).toContain('RELEASE_KIND')
@@ -366,8 +368,10 @@ describe('bundled plugin resources', () => {
       expect(workflow).toMatch(
         /gh release upload wework-updater "\$component_asset"\s+echo "\$component_name"/
       )
-      expect(workflow).toMatch(
-        /if \[\[ "\$RELEASE_KIND" == "component" \]\]; then[\s\S]*release-manifests\/components-\$\{channel\}-macos-arm64\.json/
+      expect(workflow).not.toContain('"$RELEASE_KIND" == "component"')
+      expect(workflow).toContain('Release $RELEASE_TAG is already published. Use a new version.')
+      expect(workflow.indexOf('- name: Validate release target')).toBeLessThan(
+        workflow.indexOf('- name: Commit Wework version files')
       )
       expect(workflow).toMatch(
         /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
@@ -378,9 +382,7 @@ describe('bundled plugin resources', () => {
       expect(workflow).toMatch(
         /- name: Resolve previous Wework release[\s\S]*?resolve-previous-release-tag\.mjs/
       )
-      expect(workflow).toContain(
-        "PREVIOUS_TAG: ${{ steps.plan.outputs.kind == 'component' && steps.plan.outputs.base_tag || steps.previous-release.outputs.tag }}"
-      )
+      expect(workflow).toContain('PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}')
       expect(workflow).toMatch(
         /- name: Upload formal release assets\s+env:[\s\S]*find release-assets/
       )

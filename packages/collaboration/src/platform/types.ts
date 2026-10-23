@@ -53,7 +53,10 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
-  renderStandInPage?(props: { projects: CollaborationProject[] }): ReactNode;
+  renderStandInPage?(props: {
+    projects: CollaborationProject[];
+    onClose(): void;
+  }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
   currentUser?: {
     id: number;

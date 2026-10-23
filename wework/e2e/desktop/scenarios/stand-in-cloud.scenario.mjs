@@ -1,3 +1,4 @@
+import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
@@ -221,10 +222,10 @@ export function createDesktopScenario({
         )
         await control.command('click', '[data-testid="wework-notifications-button"]')
         await selectCollaborationProjectView(control, CONTENT, 'board')
-        await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
-          timeoutMs: uiTimeoutMs,
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          requirements: false,
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+        await control.command('click', '[data-testid="stand-in-advanced-open"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         const currentDevice = await control.command('getValue', '[data-testid="stand-in-device"]')
         assert.ok(currentDevice)
@@ -232,15 +233,17 @@ export function createDesktopScenario({
         await control.command('select', '[data-testid="stand-in-device"]', {
           value: REMOTE_DOCKER_DEVICE_ID,
         })
+        await control.command('waitFor', '[data-testid="stand-in-device"]')
+        await control.command('click', '[data-testid="stand-in-back"]')
         await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+        const agentValue = JSON.stringify(['cloud', String(project.id), String(agent.id)])
         await control.command(
           'waitFor',
-          `[data-testid="stand-in-agent"] option[value="${agent.id}"]`
+          `[data-testid="stand-in-agent"] option[value=${JSON.stringify(agentValue)}]`
         )
-        await control.command('select', '[data-testid="stand-in-agent"]', {
-          value: String(agent.id),
-        })
+        await control.command('select', '[data-testid="stand-in-agent"]', { value: agentValue })
+        await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -258,15 +261,17 @@ export function createDesktopScenario({
           false,
           'Cloud configuration leaked into the desktop Executor'
         )
-        await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
-          timeoutMs: uiTimeoutMs,
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+          requirements: false,
         })
+        await control.command('click', '[data-testid="stand-in-advanced-open"]')
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         assert.equal(
           await control.command('getValue', '[data-testid="stand-in-device"]'),
           REMOTE_DOCKER_DEVICE_ID
         )
-        await control.command('click', '[data-testid="stand-in-cancel"]')
+        await control.command('click', '[data-testid="stand-in-close"]')
+        await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
 
         const onlineDevices = await request('/devices/online')
         const desktop = onlineDevices.items.find(device =>

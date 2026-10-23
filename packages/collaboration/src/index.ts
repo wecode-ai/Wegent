@@ -44,3 +44,5 @@ export {
   mapAutomationExecutionCatalog,
 } from "./runtime-profile/executionCatalog";
 export { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
+
+export { StandInIcon } from "./StandInIcon";

@@ -7,7 +7,7 @@ import type {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { StandInIcon } from './StandInIcon'
+import { StandInIcon } from '@wegent/collaboration'
 import { StandInPopover } from './StandInPopover'
 
 export function IssueStandInControl({
@@ -19,7 +19,7 @@ export function IssueStandInControl({
   onSelect,
   disabled,
   userId,
-  profileId = 'default',
+  profileId = '',
   onSelectProfile,
 }: {
   userId?: number
@@ -64,7 +64,7 @@ export function IssueStandInControl({
     }
   }, [services])
   useEffect(() => {
-    if (!deviceId || !api.standIn) return
+    if (!deviceId || !api.standIn || !profileId) return
     let active = true
     void api.standIn
       .get(project.id, deviceId, profileId)
@@ -169,7 +169,8 @@ export function IssueStandInControl({
               onChange={event => onSelectProfile?.(event.target.value)}
               className="min-h-11 max-w-40 rounded-md bg-transparent text-sm md:min-h-7"
             >
-              <option value="default">{t('standIn.default_profile')}</option>
+              <option value="">{t('standIn.personal.auto_role')}</option>
+              <option value="default">{t('standIn.personal.default_role')}</option>
               {profiles
                 .filter(profile => profile.id !== 'default')
                 .map(profile => (
@@ -187,7 +188,7 @@ export function IssueStandInControl({
             devices={devices}
             readLocalIdentity={services.getLocalRuntimeSidebarIdentity}
             initialDeviceId={deviceId}
-            initialProfileId={profileId}
+            initialProfileId={profileId || undefined}
             userId={userId}
             onSaved={value => {
               setSettingsResult({
@@ -203,7 +204,11 @@ export function IssueStandInControl({
             className="max-w-64 truncate text-xs text-text-muted"
             title={summary}
           >
-            {settings ? summary : t('standIn.loading')}
+            {!profileId
+              ? t('standIn.personal.auto_role')
+              : settings
+                ? summary
+                : t('standIn.loading')}
           </span>
           {(error || (settingsResult?.key === settingsKey && settingsResult.error)) && (
             <span role="alert" className="text-xs text-error">
