@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
   'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
@@ -111,6 +112,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
   'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
@@ -210,6 +212,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',
   'stand-in-permissions',
@@ -252,6 +255,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'release-package-startup',
   'app-update-full',
   'component-update',
+  'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',

@@ -103,6 +103,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实 provider 账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行文本回复以及“发送 → `apply_patch` → 工具结果回传 → 完成回复”，工具调用仍由真实 Codex 在隔离工作区内执行。
 
+回复预测及其图片描述请求独立于前台场景分发。切换到协议矩阵后，上一会话的后台图片描述仍可能到达；模型服务先识别这类请求，沿用图片描述的协议校验和响应，不推进矩阵状态。`desktop-reply-prediction-fixture.test.mjs` 覆盖这条跨场景请求路径，前台模型的端点与模型 ID 断言保持不变。
+
 模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
 
 - 本机执行覆盖本机自定义模型、Codex 内置模型和云端 Model CRD，每种模型来源分别覆盖三种协议，共 9 个完整文本与工具链路。

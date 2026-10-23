@@ -12,6 +12,7 @@ import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   createSse,
+  handleEmptyReplyPrediction,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -143,6 +144,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       if (httpRequest.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(httpRequest)
+      if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(MARKER)) return false
       const id = `task-model-deletion-${++replyCount}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })

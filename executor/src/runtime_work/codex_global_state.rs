@@ -1778,6 +1778,11 @@ fn reorder_project_thread_payload(
         .map(|values| values.iter().filter_map(clean_string).collect::<Vec<_>>())
         .unwrap_or_default();
     order.retain(|value| value != thread_id);
+    if let Some(before) = before_thread_id.filter(|before| *before != thread_id) {
+        if !order.iter().any(|value| value == before) {
+            order.push(before.to_owned());
+        }
+    }
     let index = if insert_at_end {
         order.len()
     } else {
@@ -2233,7 +2238,7 @@ mod tests {
 
         assert_eq!(
             payload["sidebar-project-thread-orders"]["project"],
-            json!({"threadIds": ["moved"], "sortKey": "manual"})
+            json!({"threadIds": ["moved", "target"], "sortKey": "manual"})
         );
         assert_eq!(
             payload["thread-project-assignments"]["moved"],

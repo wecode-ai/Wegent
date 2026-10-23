@@ -117,6 +117,10 @@ class PublicContextData(BaseModel):
     external_document_id: Optional[str] = None
     external_parent_id: Optional[str] = None
 
+    # Conversation reference-specific fields (optional)
+    task_id: Optional[int] = None
+    task_updated_at: Optional[str] = None
+
     # Table-specific fields (optional)
     document_id: Optional[int] = None
     source_config: Optional[dict[str, Any]] = None

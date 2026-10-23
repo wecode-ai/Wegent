@@ -4,7 +4,7 @@ sidebar_position: 20
 
 # Reply suggestions
 
-Enable **Predict next reply** in **Settings → General → AI assistance**. Predictions inherit the current Codex conversation model; there is no separate prediction model selector.
+**Predict next reply** is enabled by default. Turn it off or back on in **Settings → General → AI assistance**. A saved preference to disable predictions is preserved. Predictions inherit the current Codex conversation model; there is no separate prediction model selector.
 
 After an AI response completes in a task, temporary chat, or project activity conversation, the empty composer may display a gray suggestion. Press **Tab, Right Arrow, or Enter** to accept it as an editable draft. This key press only accepts the suggestion. Review the text, then send it using your normal send shortcut. You can edit, undo, or ignore the suggestion and type your own reply.
 

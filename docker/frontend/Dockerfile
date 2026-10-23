@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ---- Dependencies Stage ----
-FROM node:22-slim AS deps
+FROM node:22.23.4-slim AS deps
 
 WORKDIR /app
 
@@ -30,7 +30,7 @@ RUN corepack enable \
     && pnpm install --frozen-lockfile --filter wecode-ai-assistant...
 
 # ---- Build Stage ----
-FROM node:22-slim AS builder
+FROM node:22.23.4-slim AS builder
 
 WORKDIR /app
 
@@ -61,7 +61,7 @@ RUN corepack enable \
     && pnpm --config.verify-deps-before-run=false run build
 
 # ---- Production Stage ----
-FROM node:22-slim AS runner
+FROM node:22.23.4-slim AS runner
 
 WORKDIR /app
 

@@ -203,7 +203,10 @@ describe("shared Issue threads", () => {
       root.render(
         <IssueProjectChatThread
           thread={{
-            root: { ...message, updatedAt: new Date(2026, 8, 17, 8).toISOString() },
+            root: {
+              ...message,
+              updatedAt: new Date(2026, 8, 17, 8).toISOString(),
+            },
             replies: [],
           }}
           canComment
@@ -436,6 +439,30 @@ describe("shared Issue threads", () => {
         '[data-testid="cloud-task-activity-execution-badge-root"]',
       ),
     ).not.toBeNull();
+  });
+
+  it("does not infer agent receipt from a saved mention", () => {
+    act(() =>
+      root.render(
+        <IssueChatMessage
+          message={{
+            ...message,
+            sender: { type: "user", id: "member", name: "Member" },
+            content: "@Codex please review",
+            status: "completed",
+            metadata: {
+              mentions: [{ type: "agent", id: "bot", label: "Codex" }],
+            },
+          }}
+          mine
+          plain
+          translate={translate}
+          onOpenUrl={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("@Codex please review");
+    expect(container.textContent).not.toContain("机器人已接收");
   });
 
   it("uses the desktop run disclosure and execution action for web messages", () => {

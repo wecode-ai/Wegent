@@ -8,7 +8,9 @@ const PNPM_IGNORE_SCRIPTS_ENV: &str = "PNPM_CONFIG_IGNORE_SCRIPTS";
 const PNPM_GLOBAL_VIRTUAL_STORE_ENV: &str = "PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE";
 const WORKTREE_PNPM_ENV: [(&str, &str); 2] = [
     (PNPM_IGNORE_SCRIPTS_ENV, "true"),
-    (PNPM_GLOBAL_VIRTUAL_STORE_ENV, "true"),
+    // Global virtual-store realpaths let TypeScript resolve types from home ancestors.
+    // Keep dependency links local; pnpm still reuses its shared content-addressable store.
+    (PNPM_GLOBAL_VIRTUAL_STORE_ENV, "false"),
 ];
 
 pub(super) fn configure_command(request: &ExecutionRequest, mut spec: CommandSpec) -> CommandSpec {
@@ -61,13 +63,13 @@ mod tests {
         );
         assert_eq!(
             configured.envs().get(PNPM_GLOBAL_VIRTUAL_STORE_ENV),
-            Some(&"true".to_owned())
+            Some(&"false".to_owned())
         );
         assert_eq!(
             codex_config_overrides(&request),
             vec![
                 "shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS=\"true\"".to_owned(),
-                "shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=\"true\""
+                "shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=\"false\""
                     .to_owned(),
             ]
         );
@@ -101,7 +103,7 @@ mod tests {
         );
         assert_eq!(
             configured.envs().get(PNPM_GLOBAL_VIRTUAL_STORE_ENV),
-            Some(&"true".to_owned())
+            Some(&"false".to_owned())
         );
     }
 }
