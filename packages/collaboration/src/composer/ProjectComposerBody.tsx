@@ -142,6 +142,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       },
       focus: () => editorRef.current?.focus(),
       getValue: getLiveValue,
+      captureInsertion: () => editorRef.current?.captureInsertion?.() ?? null,
       insertReference: (reference) => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))

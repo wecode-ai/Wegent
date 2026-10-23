@@ -12,6 +12,14 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+### Voice input
+
+Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
+
+Stop recording to transcribe. The recognized text is inserted at the position captured when recording started, ready to review, edit, and send. Cancelling leaves the draft unchanged. If you edit the draft during recording, the transcript is retained; select **Insert text** to insert it at the current cursor position.
+
+Voice input reuses the official DSH plugin. Once downloaded, the default local recognition model transcribes on the device.
+
 ### Edit Markdown and tables
 
 Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
