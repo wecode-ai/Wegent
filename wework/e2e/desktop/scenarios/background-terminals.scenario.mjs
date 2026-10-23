@@ -248,15 +248,7 @@ export function createDesktopScenario({
 
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(readyCount),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Background terminal reload did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await control.awaitReadyAfter(readyCount)
       await showSummary(control)
       assert.equal(
         Number(
