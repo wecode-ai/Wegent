@@ -26,6 +26,7 @@ export async function createDesktopScenario() {
       // survive that reconciliation, rather than disappear on the next launch.
       assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
+      await control.command('waitFor', '[data-testid="new-chat-button"]')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', `${voice} button:not(:disabled)`)
     },
