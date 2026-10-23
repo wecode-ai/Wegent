@@ -128,12 +128,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         uiTimeoutMs,
         'The bulk-complete dialog remained stuck after all tasks completed'
       )
-      await waitForTextPresent(
+      for (const prompt of TASK_PROMPTS) {
+        await waitForTextPresent(
+          control,
+          completedColumn,
+          prompt,
+          uiTimeoutMs,
+          `Completed task ${prompt} did not remain in the completed column`
+        )
+      }
+      await waitForTextAbsent(
         control,
-        completedColumn,
+        reviewColumn,
         TASK_PREFIX,
         uiTimeoutMs,
-        'Completed tasks did not move into the completed column'
+        'A confirmed task returned to the review column'
       )
       await control.command('scrollIntoView', '[data-testid="task-board-batch-archive-completed"]')
       await captureScreenshot(control, 'task-board-bulk-actions-02-completed.png', 'body')

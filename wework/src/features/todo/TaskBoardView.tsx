@@ -218,35 +218,39 @@ export function TaskBoardView({
   useEffect(() => {
     if (projectSpaceApis.length === 0 || reviewItems.length === 0) return
     const lookupApis = projectSpaceApis
-    const unresolvedItems = reviewItems.filter(item => {
+    const unresolvedItems = reviewItems.flatMap(item => {
       const key = runtimeTaskKey(item.runtime_address)
       const existing = taskContexts.get(key)
       if (
         (existing && lookupApis.includes(existing.api)) ||
         sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)
       ) {
-        return false
+        return []
       }
       pendingTaskContextLookups.current.set(key, lookupApis)
-      return true
-    })
-    if (unresolvedItems.length === 0) return
-    void allSettledWithConcurrency(unresolvedItems, BULK_TASK_CONCURRENCY, async item => {
-      const key = runtimeTaskKey(item.runtime_address)
+      // Reserve the version before execution so bulk changes also invalidate queued lookups.
       const lookupVersion = (taskContextLookupVersions.current.get(key) ?? 0) + 1
       taskContextLookupVersions.current.set(key, lookupVersion)
-      try {
-        return {
-          key,
-          lookupVersion,
-          source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
-        }
-      } finally {
-        if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
-          pendingTaskContextLookups.current.delete(key)
+      return [{ item, key, lookupVersion }]
+    })
+    if (unresolvedItems.length === 0) return
+    void allSettledWithConcurrency(
+      unresolvedItems,
+      BULK_TASK_CONCURRENCY,
+      async ({ item, key, lookupVersion }) => {
+        try {
+          return {
+            key,
+            lookupVersion,
+            source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
+          }
+        } finally {
+          if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
+            pendingTaskContextLookups.current.delete(key)
+          }
         }
       }
-    }).then(results => {
+    ).then(results => {
       if (!mountedRef.current || !sameProjectSpaceApis(projectSpaceApisRef.current, lookupApis)) {
         return
       }
