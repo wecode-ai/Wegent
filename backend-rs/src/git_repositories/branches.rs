@@ -221,4 +221,39 @@ mod tests {
         let params = query("git_repo=a&type=gitlab&git_domain=g&extra=1").unwrap();
         assert_eq!(params.git_repo, "a");
     }
+
+    /// The recorded body is `List[Branch]` in declaration order with the
+    /// `default` field name FastAPI's `response_model` renders.
+    #[test]
+    fn branch_rows_render_the_source_field_order_and_names() {
+        let branches = vec![
+            Branch::new("main".to_string(), true, true),
+            Branch::new("xinxin12".to_string(), false, false),
+        ];
+        assert_eq!(
+            serde_json::to_string(&branches).unwrap(),
+            r#"[{"name":"main","protected":true,"default":true},{"name":"xinxin12","protected":false,"default":false}]"#
+        );
+    }
+
+    const PATH: &str = "/api/git/repositories/branches";
+
+    /// Deferred APIs retain Python ownership and registered Rust implementations.
+    #[test]
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = crate::RouteTable::compile(crate::load_routes_config(&file).unwrap()).unwrap();
+        assert!(
+            !table.matches(&http::Method::GET, PATH),
+            "GET {PATH} must remain on Python"
+        );
+        assert!(!table.matches(&http::Method::POST, PATH));
+        let paths: Vec<_> = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)().iter().map(|route| route.path))
+        .filter(|path| *path == PATH)
+        .collect();
+        assert_eq!(paths, [PATH]);
+    }
 }

@@ -15,13 +15,15 @@
 //! and re-read the row with `db.refresh`. The response renders the refreshed
 //! row as `TranscriptLeaseResponse` with `by_alias=True` (camelCase).
 //!
-//! SQLAlchemy commits the request-scoped transaction only on success and rolls
-//! it back when the endpoint raises; the target issues those terminal
-//! `COMMIT`/`ROLLBACK` statements explicitly so the recorded session lifecycle
-//! is preserved.
+//! SQLAlchemy holds the row lock from `get_transcript(for_update=True)` until
+//! `db.commit()` and rolls the session back when the endpoint raises. The
+//! target keeps those statements on one writer transaction for the same
+//! reason: the lock must span the flush, and `brz-mysql` rejects a pool-level
+//! `FOR UPDATE` read. The `db.refresh` re-read follows the commit on the shared
+//! pool, exactly where the source issues it.
 
 use brz_http_server::StatusCode;
-use brz_mysql::{FromMysqlRow, MysqlRouteValue, MysqlValue, MysqlValueWriter};
+use brz_mysql::{FromMysqlRow, MysqlRouteValue, MysqlTransaction, MysqlValue, MysqlValueWriter};
 use chrono::{NaiveDateTime, Utc};
 #[cfg(test)]
 use serde_json::Value;
@@ -29,6 +31,7 @@ use serde_json::json;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use crate::wework_transcript_lease_transaction::{self as transaction, Completion};
 use crate::wework_transcripts::{
     EPOCH_TIME, TRANSCRIPT_BY_ID_QUERY, TranscriptRow, format_datetime, transcript_error,
     transcript_not_found,
@@ -192,65 +195,176 @@ impl LeaseError {
 async fn acquire_lease(
     #[inject(state)] state: &AppState,
     transcript_id: &str,
-    #[auth] user: crate::auth::SessionUser,
+    #[auth] user: crate::auth::TransactionSessionUser,
     body: serde_json::Value,
 ) -> Result<TranscriptLeaseResponse, FastApiError> {
-    let request = parse_lease_request(&body)?;
-    acquire_lease_impl(state, user.id, transcript_id, &request).await
+    acquire_lease_impl(state, &user.user_name, transcript_id, &body).await
 }
 
 /// Handler body for `POST /api/wework-transcripts/{transcript_id}/lease`.
+///
+/// The source endpoint and `get_current_user` share one `Depends(get_db)`
+/// session, so `get_current_user`'s user read opens the very transaction the
+/// lease write commits: `SELECT users`, `SELECT ... FOR UPDATE`, `UPDATE`,
+/// `COMMIT` all run on the request's connection. The session lookup therefore
+/// runs inside this transaction, before the fork validation and the row lock.
 async fn acquire_lease_impl(
     state: &AppState,
-    user_id: i32,
+    user_name: &str,
     transcript_id: &str,
-    request: &LeaseRequest,
+    body: &serde_json::Value,
 ) -> Result<TranscriptLeaseResponse, FastApiError> {
-    // `_validate_fork_request`: a parent without a fork point (or the reverse)
-    // is rejected before any dependency traffic.
-    if request.parent_transcript_id.is_some() != request.forked_at_sequence.is_some() {
-        return Err(LeaseError::InvalidFork.into_http());
-    }
+    let (user_id, request, first) = transaction::run(
+        &state.mysql,
+        async |transaction| {
+            let user = crate::auth::session_user_in_transaction(transaction, user_name)
+                .await
+                .map_err(crate::auth::session_auth_error)?;
+            // `_validate_fork_request`: a parent without a fork point (or the
+            // reverse) is rejected after authentication and before the lock.
+            let request = parse_lease_request(body)?;
+            if request.parent_transcript_id.is_some() != request.forked_at_sequence.is_some() {
+                return Err(LeaseError::InvalidFork.into_http());
+            }
 
-    let lock_query = format!("{TRANSCRIPT_BY_ID_QUERY} FOR UPDATE");
-    let stored: Option<TranscriptRow> = match state
-        .mysql
-        .fetch_optional(lock_query.as_str(), (user_id, transcript_id))
-        .await
-    {
-        Ok(row) => row,
-        Err(error) => {
-            tracing::error!(%error, "wework_transcripts database dependency failure");
-            return Err(FastApiError::unhandled());
+            let attempt =
+                acquire_lease_on(transaction, user.id, transcript_id, &request, None).await?;
+            Ok(match attempt {
+                LeaseAttempt::Granted(_) => Completion::Commit((user.id, request, attempt)),
+                LeaseAttempt::ConcurrentCreation(_) => {
+                    Completion::Rollback((user.id, request, attempt))
+                }
+            })
+        },
+        FastApiError::unhandled,
+    )
+    .await?;
+
+    let row_id = match first {
+        LeaseAttempt::Granted(row_id) => row_id,
+        // `except IntegrityError: db.rollback()`: the aborted transaction is
+        // gone, so the concurrently created row is locked again in a new one.
+        LeaseAttempt::ConcurrentCreation(context) => {
+            transaction::run(
+                &state.mysql,
+                async |transaction| {
+                    let attempt = acquire_lease_on(
+                        transaction,
+                        user_id,
+                        transcript_id,
+                        &request,
+                        Some(context),
+                    )
+                    .await?;
+                    match attempt {
+                        LeaseAttempt::Granted(row_id) => Ok(Completion::Commit(row_id)),
+                        // `query.one()` raises `NoResultFound` when the row is
+                        // removed again before the re-lock.
+                        LeaseAttempt::ConcurrentCreation(_) => Err(FastApiError::unhandled()),
+                    }
+                },
+                FastApiError::unhandled,
+            )
+            .await?
         }
     };
 
-    // `now = utcnow()` — computed after the lock read and before the parent
-    // read, and reused for the lease expiry and both audit columns.
-    let now = Utc::now().naive_utc();
+    // `db.refresh(transcript)`: after the commit SQLAlchemy re-selects the
+    // committed row by primary key in a new implicit read transaction.
+    let refreshed: Option<RefreshedRow> = state
+        .mysql
+        .fetch_optional(REFRESH_TRANSCRIPT_QUERY, (row_id,))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "wework_transcripts database dependency failure");
+            FastApiError::unhandled()
+        })?;
+    let Some(refreshed) = refreshed else {
+        return Err(FastApiError::unhandled());
+    };
 
-    let parent_transcript_id = request.parent_transcript_id.clone().unwrap_or_default();
-    let mut forked_at_sequence = request.forked_at_sequence.unwrap_or(0);
-    if let Some(parent_id) = request.parent_transcript_id.as_deref() {
-        let parent: Option<TranscriptRow> = match state
-            .mysql
-            .fetch_optional(lock_query.as_str(), (user_id, parent_id))
-            .await
-        {
-            Ok(row) => row,
-            Err(error) => {
-                tracing::error!(%error, "wework_transcripts database dependency failure");
-                return Err(FastApiError::unhandled());
+    Ok(TranscriptLeaseResponse {
+        transcript_id: refreshed.transcript_id,
+        client_id: refreshed.writer_client_id,
+        fencing_token: refreshed.writer_fencing_token,
+        expires_at: format_datetime(&refreshed.writer_lease_expires_at),
+        current_sequence: refreshed.current_sequence,
+    })
+}
+
+/// One locked attempt at acquiring the lease: everything `acquire_lease` runs
+/// between `get_transcript(..., for_update=True)` and `db.commit()`.
+enum LeaseAttempt {
+    /// The flush is written and the transaction commits the row id.
+    Granted(i64),
+    /// The INSERT hit the transcript uniqueness constraint; the source rolls
+    /// back and re-locks the concurrently created row with `context`.
+    ConcurrentCreation(LeaseContext),
+}
+
+/// The values `acquire_lease` computes once, before it can lose the creation
+/// race, and reuses for the retried attempt.
+struct LeaseContext {
+    now: NaiveDateTime,
+    parent_transcript_id: String,
+    forked_at_sequence: i64,
+}
+
+async fn acquire_lease_on<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i32,
+    transcript_id: &str,
+    request: &LeaseRequest,
+    context: Option<LeaseContext>,
+) -> Result<LeaseAttempt, FastApiError> {
+    let lock_query = format!("{TRANSCRIPT_BY_ID_QUERY} FOR UPDATE");
+    let stored: Option<TranscriptRow> = transaction
+        .fetch_optional(lock_query.as_str(), (user_id, transcript_id))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "wework_transcripts database dependency failure");
+            FastApiError::unhandled()
+        })?;
+
+    let allow_create = context.is_none();
+    let context = match context {
+        Some(context) => context,
+        None => {
+            // `now = utcnow()` — computed after the lock read and before the
+            // parent read, and reused for the lease expiry and both audit
+            // columns.
+            let now = Utc::now().naive_utc();
+
+            let parent_transcript_id = request.parent_transcript_id.clone().unwrap_or_default();
+            let mut forked_at_sequence = request.forked_at_sequence.unwrap_or(0);
+            if let Some(parent_id) = request.parent_transcript_id.as_deref() {
+                let parent: Option<TranscriptRow> = transaction
+                    .fetch_optional(lock_query.as_str(), (user_id, parent_id))
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(%error, "wework_transcripts database dependency failure");
+                        FastApiError::unhandled()
+                    })?;
+                let Some(parent) = parent else {
+                    // `get_transcript` raises `transcript_not_found`; the
+                    // request-scoped session rolls the locked transaction back.
+                    return Err(transcript_not_found());
+                };
+                forked_at_sequence = forked_at_sequence.min(parent.current_sequence);
             }
-        };
-        let Some(parent) = parent else {
-            // `get_transcript` raises `transcript_not_found`; the request-scoped
-            // session rolls the locked transaction back.
-            rollback(state).await;
-            return Err(transcript_not_found());
-        };
-        forked_at_sequence = forked_at_sequence.min(parent.current_sequence);
-    }
+
+            LeaseContext {
+                now,
+                parent_transcript_id,
+                forked_at_sequence,
+            }
+        }
+    };
+    let LeaseContext {
+        now,
+        parent_transcript_id,
+        forked_at_sequence,
+    } = context;
 
     let stored = match stored {
         Some(row) => StoredLease {
@@ -262,12 +376,12 @@ async fn acquire_lease_impl(
             writer_fencing_token: row.writer_fencing_token,
             writer_lease_expires_at: row.writer_lease_expires_at,
         },
+        None if !allow_create => return Err(FastApiError::unhandled()),
         None => {
             let created_at = Utc::now().naive_utc();
             let updated_at = Utc::now().naive_utc();
             let title = request.title.clone().unwrap_or_default();
-            let inserted = match state
-                .mysql
+            let inserted = match transaction
                 .execute(
                     INSERT_TRANSCRIPT_QUERY,
                     (
@@ -283,6 +397,15 @@ async fn acquire_lease_impl(
                 .await
             {
                 Ok(execution) => execution,
+                // `except IntegrityError: db.rollback()` — another request
+                // created the transcript first.
+                Err(error) if error.is_duplicate_key() => {
+                    return Ok(LeaseAttempt::ConcurrentCreation(LeaseContext {
+                        now,
+                        parent_transcript_id,
+                        forked_at_sequence,
+                    }));
+                }
                 Err(error) => {
                     tracing::error!(%error, "wework_transcripts database dependency failure");
                     return Err(FastApiError::unhandled());
@@ -300,19 +423,14 @@ async fn acquire_lease_impl(
         }
     };
 
-    let plan = match apply_lease_rules(
+    let plan = apply_lease_rules(
         &stored,
         request,
         &parent_transcript_id,
         forked_at_sequence,
         now,
-    ) {
-        Ok(plan) => plan,
-        Err(error) => {
-            rollback(state).await;
-            return Err(error.into_http());
-        }
-    };
+    )
+    .map_err(LeaseError::into_http)?;
 
     let update_query = format!(
         "UPDATE wework_transcripts SET {} WHERE wework_transcripts.id = ?",
@@ -320,37 +438,14 @@ async fn acquire_lease_impl(
     );
     let mut binds = plan.binds;
     binds.push(LeaseBind::Int(plan.row_id));
-    if let Err(error) = state.mysql.execute(update_query.as_str(), binds).await {
-        tracing::error!(%error, "wework_transcripts database dependency failure");
-        return Err(FastApiError::unhandled());
-    }
-    if let Err(error) = state.mysql.execute("COMMIT", ()).await {
-        tracing::error!(%error, "wework_transcripts commit failed");
-        return Err(FastApiError::unhandled());
-    }
-
-    let refreshed: Option<RefreshedRow> = match state
-        .mysql
-        .fetch_optional(REFRESH_TRANSCRIPT_QUERY, (plan.row_id,))
+    transaction
+        .execute(update_query.as_str(), binds)
         .await
-    {
-        Ok(row) => row,
-        Err(error) => {
+        .map_err(|error| {
             tracing::error!(%error, "wework_transcripts database dependency failure");
-            return Err(FastApiError::unhandled());
-        }
-    };
-    let Some(refreshed) = refreshed else {
-        return Err(FastApiError::unhandled());
-    };
-
-    Ok(TranscriptLeaseResponse {
-        transcript_id: refreshed.transcript_id,
-        client_id: refreshed.writer_client_id,
-        fencing_token: refreshed.writer_fencing_token,
-        expires_at: format_datetime(&refreshed.writer_lease_expires_at),
-        current_sequence: refreshed.current_sequence,
-    })
+            FastApiError::unhandled()
+        })?;
+    Ok(LeaseAttempt::Granted(plan.row_id))
 }
 
 /// `acquire_lease`'s in-memory branch after the row is loaded or created:
@@ -409,13 +504,6 @@ fn apply_lease_rules(
 /// `utcnow()` value and the `DATETIME(6)` columns.
 fn sql_datetime(value: NaiveDateTime) -> String {
     value.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
-}
-
-/// The request-scoped session rolls back when the endpoint raises.
-async fn rollback(state: &AppState) {
-    if let Err(error) = state.mysql.execute("ROLLBACK", ()).await {
-        tracing::warn!(%error, "wework_transcripts rollback failed");
-    }
 }
 
 /// FastAPI validates the JSON body against `TranscriptLeaseRequest` before the
@@ -772,6 +860,53 @@ mod tests {
     fn lock_query_appends_for_update_to_the_shared_lookup() {
         let lock_query = format!("{TRANSCRIPT_BY_ID_QUERY} FOR UPDATE");
         assert!(lock_query.ends_with("LIMIT 1 FOR UPDATE"));
+    }
+
+    /// The locked lookup, the insert, and the dirty flush run on one writer
+    /// transaction: `brz-mysql` rejects a pool-level `FOR UPDATE` read, and the
+    /// row lock has to span the flush. `db.refresh` follows the commit.
+    #[test]
+    fn locking_read_and_flush_run_on_the_writer_transaction() {
+        let source = include_str!("wework_transcripts_lease.rs");
+        assert!(
+            !source.contains("execute(\"COMMIT\", ()"),
+            "the scoped transaction commits on return; no bare pool-level COMMIT call"
+        );
+        let handler = source
+            .split("async fn acquire_lease_impl")
+            .nth(1)
+            .unwrap()
+            .split("enum LeaseAttempt")
+            .next()
+            .unwrap();
+        assert!(handler.contains("transaction::run"));
+        assert!(
+            !handler.contains("FOR_UPDATE"),
+            "a pool-level FOR UPDATE read is rejected before reaching MySQL"
+        );
+        assert!(handler.contains("REFRESH_TRANSCRIPT_QUERY"));
+        // The source endpoint and `get_current_user` share one
+        // `Depends(get_db)` session, so the user read is the transaction's
+        // first statement, before the row lock.
+        let session_read = handler
+            .find("session_user_in_transaction")
+            .expect("the source session user read belongs to the lease transaction");
+        let lock = handler
+            .find("acquire_lease_on")
+            .expect("the locked attempt runs in the same transaction");
+        assert!(
+            session_read < lock,
+            "the session user read must precede the business statements"
+        );
+        let worker = source
+            .split("async fn acquire_lease_on")
+            .nth(1)
+            .unwrap()
+            .split("fn apply_lease_rules")
+            .next()
+            .unwrap();
+        assert!(worker.contains("TRANSCRIPT_BY_ID_QUERY} FOR UPDATE"));
+        assert!(worker.contains("INSERT_TRANSCRIPT_QUERY"));
     }
 
     #[test]

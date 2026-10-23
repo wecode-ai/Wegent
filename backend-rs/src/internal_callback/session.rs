@@ -90,6 +90,9 @@ pub(crate) async fn set_task_streaming_status<R: Redis>(
 
 /// `touch_task_streaming_activity`: refresh `last_activity_at` on an existing
 /// status object. A missing or non-object value is left untouched.
+///
+/// The source re-reads the stored dict and preserves every other field,
+/// including `started_at`, exactly as Redis returns it.
 pub(crate) async fn touch_task_streaming_activity<R: Redis>(
     redis: &R,
     task_id: i64,
@@ -184,7 +187,22 @@ pub(crate) async fn get_blocks<R: Redis>(redis: &R, subtask_id: i64) -> Vec<Map<
         .unwrap_or_default()
 }
 
-async fn finalize_block<R: Redis>(redis: &R, subtask_id: i64, key: &str) -> RedisResult<()> {
+/// `_finalize_current_text_block` / `_finalize_current_thinking_block`: mark
+/// the current block done.
+///
+/// The source wraps each helper's whole body in `try/except Exception` and only
+/// logs a warning (`session.py:1251-1282`, `:1288-1318`), so a failed
+/// dependency read never aborts the caller: `add_thinking_content` still
+/// appends its content after a failed text finalize, and vice versa.
+async fn finalize_block<R: Redis>(redis: &R, subtask_id: i64, key: &str, kind: &str) {
+    if let Err(error) = finalize_block_state(redis, subtask_id, key).await {
+        tracing::warn!(%error, subtask_id, "callback {kind} block finalize failed");
+    }
+}
+
+/// The `try:` body of one finalize helper, including its `GET` and the
+/// read-back of the block list.
+async fn finalize_block_state<R: Redis>(redis: &R, subtask_id: i64, key: &str) -> RedisResult<()> {
     let Some(current) = redis.get::<_, String>(key).await? else {
         return Ok(());
     };
@@ -213,18 +231,18 @@ async fn finalize_block<R: Redis>(redis: &R, subtask_id: i64, key: &str) -> Redi
     Ok(())
 }
 
-pub(crate) async fn finalize_current_text_block<R: Redis>(
-    redis: &R,
-    subtask_id: i64,
-) -> RedisResult<()> {
-    finalize_block(redis, subtask_id, &text_block_key(subtask_id)).await
+pub(crate) async fn finalize_current_text_block<R: Redis>(redis: &R, subtask_id: i64) {
+    finalize_block(redis, subtask_id, &text_block_key(subtask_id), "text").await
 }
 
-pub(crate) async fn finalize_current_thinking_block<R: Redis>(
-    redis: &R,
-    subtask_id: i64,
-) -> RedisResult<()> {
-    finalize_block(redis, subtask_id, &thinking_block_key(subtask_id)).await
+pub(crate) async fn finalize_current_thinking_block<R: Redis>(redis: &R, subtask_id: i64) {
+    finalize_block(
+        redis,
+        subtask_id,
+        &thinking_block_key(subtask_id),
+        "thinking",
+    )
+    .await
 }
 
 /// `add_block`: upsert a block by id, finalizing any pending text/thinking
@@ -234,8 +252,8 @@ pub(crate) async fn add_block<R: Redis>(
     subtask_id: i64,
     block: &mut Map<String, Value>,
 ) -> RedisResult<()> {
-    finalize_current_text_block(redis, subtask_id).await?;
-    finalize_current_thinking_block(redis, subtask_id).await?;
+    finalize_current_text_block(redis, subtask_id).await;
+    finalize_current_thinking_block(redis, subtask_id).await;
 
     if block.get("id").is_none() {
         block.insert(
@@ -337,7 +355,7 @@ pub(crate) async fn add_text_content<R: Redis>(
     if content.is_empty() {
         return Ok(());
     }
-    finalize_current_thinking_block(redis, subtask_id).await?;
+    finalize_current_thinking_block(redis, subtask_id).await;
 
     let streaming_key = streaming_key(subtask_id);
     let text_key = text_block_key(subtask_id);
@@ -391,7 +409,7 @@ pub(crate) async fn add_thinking_content<R: Redis>(
     if content.is_empty() {
         return Ok(());
     }
-    finalize_current_text_block(redis, subtask_id).await?;
+    finalize_current_text_block(redis, subtask_id).await;
 
     let thinking_key = thinking_block_key(subtask_id);
     let blocks_key = blocks_key(subtask_id);
@@ -503,6 +521,12 @@ pub(crate) async fn add_tool_block<R: Redis>(
     tool_protocol: Option<&str>,
     server_label: Option<&str>,
 ) -> RedisResult<()> {
+    // `add_tool_block` finalizes the current text and thinking blocks itself
+    // (`session.py:930-931`) and then `add_block` repeats the same pair
+    // (`session.py:1041-1042`), so one tool-block upsert reads both keys twice.
+    finalize_current_text_block(redis, subtask_id).await;
+    finalize_current_thinking_block(redis, subtask_id).await;
+
     let mut block = create_tool_block(
         tool_use_id,
         tool_name,
@@ -637,26 +661,16 @@ pub(crate) async fn get_accumulated_content<R: Redis>(redis: &R, subtask_id: i64
 /// `finalize_and_get_blocks`: finalize the pending text and thinking blocks,
 /// hydrate block content, then close unresolved preview tool blocks.
 ///
-/// The source returns `[]` when any step raises, so every failure path here
-/// also yields an empty list.
+/// The source's finalize helpers log and return without raising
+/// (`session.py:1251-1282`, `:1288-1318`), and a failed block read yields `[]`.
 pub(crate) async fn finalize_and_get_blocks<R: Redis>(
     redis: &R,
     subtask_id: i64,
     termination_reason: Option<&str>,
     terminal_status: Option<&str>,
 ) -> Vec<Map<String, Value>> {
-    if finalize_current_text_block(redis, subtask_id)
-        .await
-        .is_err()
-    {
-        return Vec::new();
-    }
-    if finalize_current_thinking_block(redis, subtask_id)
-        .await
-        .is_err()
-    {
-        return Vec::new();
-    }
+    finalize_current_text_block(redis, subtask_id).await;
+    finalize_current_thinking_block(redis, subtask_id).await;
     let Some(blocks) = load_blocks(redis, subtask_id, true).await else {
         return Vec::new();
     };
@@ -669,6 +683,15 @@ pub(crate) async fn clear_task_streaming_status<R: Redis>(
     task_id: i64,
 ) -> RedisResult<i64> {
     redis.del(task_streaming_key(task_id)).await
+}
+
+/// `session_manager.is_cancelled`'s Redis half: the cache stores
+/// `orjson.dumps(True)`, so only the `true` payload cancels.
+pub(crate) async fn is_cancelled<R: Redis>(redis: &R, key: &str) -> bool {
+    matches!(
+        redis.get::<_, String>(key).await,
+        Ok(Some(flag)) if flag == "true"
+    )
 }
 
 /// `cleanup_streaming_state`: delete the whole per-subtask streaming key set in

@@ -321,3 +321,12 @@ def test_archive_operations_reject_inactive_tasks(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("restore_sandbox",)) as client:
+        yield client
