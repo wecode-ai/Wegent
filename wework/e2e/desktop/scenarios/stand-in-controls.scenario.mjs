@@ -13,7 +13,7 @@ const AUTO = '[data-testid="stand-in-auto"]'
 const PROMPT = '[data-testid="stand-in-prompt"]'
 const SAVE = '[data-testid="stand-in-save"]'
 
-/** Exercise independent settings and automatic handling against the real Executor. */
+/** Save automatic handling and execution settings together against the real Executor. */
 export function createDesktopScenario({ uiTimeoutMs }) {
   return {
     async verify(control) {
@@ -43,9 +43,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const cancel = () => control.command('click', '[data-testid="stand-in-cancel"]')
 
       await open()
+      assert.equal(await control.command('getAttribute', AUTO, { value: 'type' }), 'checkbox')
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await control.command('clickWhenEnabled', AUTO)
-      await control.command('waitFor', '[data-testid="stand-in-enable-notice"]')
+      await control.command('waitFor', AUTO + '[aria-checked="true"]')
       assert.equal((await read()).enabled, false, 'First activation requires saving settings')
       await cancel()
       assert.equal((await read()).version, 0, 'Cancel must not create a configuration')
@@ -61,7 +62,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await open()
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', `${AUTO}[aria-checked="true"]`)
-      assert.equal((await read()).enabled, true, 'A configured stand-in enables immediately')
+      assert.equal((await read()).enabled, false, 'Existing configurations also wait for Save')
+      assert.equal((await read()).version, saved.version, 'Editing a checkbox must not persist')
       await control.command('fill', PROMPT, { value: 'Unsaved changes' })
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
@@ -75,7 +77,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       assert.equal(await control.command('getValue', PROMPT), 'Saved manual settings')
       await control.command('fill', PROMPT, { value: 'Confirmed new settings' })
       await control.command('clickWhenEnabled', AUTO)
-      await control.command('waitFor', '[data-testid="stand-in-enable-notice"]')
+      await control.command('waitFor', AUTO + '[aria-checked="true"]')
       assert.equal((await read()).enabled, false, 'Pending edits require explicit save and enable')
       await control.command('clickWhenEnabled', SAVE)
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -87,7 +89,22 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await cancel()
-      assert.equal((await read()).enabled, false, 'Cancel must not undo a persisted toggle')
+      assert.equal(
+        (await read()).enabled,
+        true,
+        'Cancel must discard the unsaved disable selection'
+      )
+      await open()
+      await control.command('waitFor', AUTO + '[aria-checked="true"]')
+      assert.equal(await control.command('getValue', PROMPT), 'Confirmed new settings')
+      await control.command('clickWhenEnabled', AUTO)
+      await control.command('fill', PROMPT, { value: 'Saved disabled settings' })
+      assert.equal((await read()).enabled, true, 'Disabling must wait for Save')
+      await control.command('clickWhenEnabled', SAVE)
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      saved = await read()
+      assert.equal(saved.enabled, false)
+      assert.equal(saved.prompt, 'Saved disabled settings')
     },
   }
 }

@@ -22,7 +22,6 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   | 'menu'
   | 'titleTrailing'
   | 'afterContent'
-  | 'summary'
   | 'detailFlushBottom'
   | 'renderAssigneeTooltip'
   | 'item'
@@ -62,6 +61,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   progressTaskBindings = [],
   goal,
   renderTaskSummary,
+  summary,
   cardStyle,
   cardClassName,
   dragging: draggingOverride = false,
@@ -151,12 +151,17 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         ) : null
       }
       summary={
-        hasProgress ? (
-          <div data-testid={`cloud-todo-card-tasks-${item.id}`} className="min-w-0">
-            {progressTaskBindings.map(binding => (
-              <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
-            ))}
-          </div>
+        summary || hasProgress ? (
+          <>
+            {summary}
+            {hasProgress ? (
+              <div data-testid={`cloud-todo-card-tasks-${item.id}`} className="min-w-0">
+                {progressTaskBindings.map(binding => (
+                  <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null
       }
       cardRef={drag.setNodeRef}

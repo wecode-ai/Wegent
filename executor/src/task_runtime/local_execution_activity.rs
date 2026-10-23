@@ -352,13 +352,19 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let comment_context = transaction
             .query_row(
-                "SELECT task_id, json_extract(metadata, '$.dispatch_role')
+                "SELECT task_id, json_extract(metadata, '$.dispatch_role'), message_id
                  FROM loop_item_comments
                  WHERE deleted_at IS NULL AND status IN ('pending','streaming')
                    AND json_extract(metadata,'$.runtime_address.taskId')=?1
                  ORDER BY id DESC LIMIT 1",
                 params![runtime_task_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?;
         transaction.execute(
@@ -370,7 +376,13 @@ impl LocalTaskStore {
             params![content, status, now(), runtime_task_id],
         )?;
         if matches!(status, "completed" | "failed" | "cancelled" | "canceled") {
-            if let Some((task_id, dispatch_role)) = comment_context {
+            if let Some((task_id, dispatch_role, message_id)) = comment_context {
+                issue_badges::update_stored_source(
+                    &transaction,
+                    &task_id,
+                    &format!("comment:{message_id}"),
+                    content,
+                )?;
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
                     transaction.execute(
                         "UPDATE loop_items

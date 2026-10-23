@@ -93,6 +93,7 @@ export function useStandInNotifications(
         title: item.payload.taskTitle || item.title,
         body: t(`notifications.stand_in_${state.status}`),
         address: item.runtimeItem.address,
+        url: item.url ?? undefined,
       })
     }
   }, [

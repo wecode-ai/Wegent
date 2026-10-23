@@ -8,6 +8,7 @@ import {
 import {
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   readRequestBody,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
@@ -44,6 +45,7 @@ export function createCatalogContextVerification({
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const kind = codexRequestKind(body)
       if (kind === 'compaction' || url.pathname.endsWith('/compact')) {
         compactions += 1
