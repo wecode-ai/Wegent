@@ -1,5 +1,28 @@
 import { describe, expect, test } from 'vitest'
-import { toKnownAiProvider } from './modelCatalog'
+import { toKnownAiProvider, toTelemetryModelName } from './modelCatalog'
+
+describe('toTelemetryModelName', () => {
+  test('reports the catalog model name as it is shown in the app', () => {
+    expect(toTelemetryModelName('ali-deepseek-v3.1(国内)')).toBe('ali-deepseek-v3.1(国内)')
+    expect(toTelemetryModelName('wecode-claude-sina-glm-4.5(内网)')).toBe(
+      'wecode-claude-sina-glm-4.5(内网)'
+    )
+    expect(toTelemetryModelName('gpt-4o')).toBe('gpt-4o')
+  })
+
+  test('keeps the value to a single bounded line', () => {
+    expect(toTelemetryModelName('  公网:Claude  Opus  ')).toBe('公网:Claude Opus')
+    expect(toTelemetryModelName('line\nbreak\tmodel')).toBe('linebreakmodel')
+    expect(toTelemetryModelName('m'.repeat(200))).toHaveLength(128)
+  })
+
+  test('falls back to other when no model was resolved', () => {
+    expect(toTelemetryModelName(undefined)).toBe('other')
+    expect(toTelemetryModelName(null)).toBe('other')
+    expect(toTelemetryModelName('   ')).toBe('other')
+    expect(toTelemetryModelName('\n\u0000')).toBe('other')
+  })
+})
 
 describe('toKnownAiProvider', () => {
   test('derives the provider from the model id prefix over the configured provider string', () => {

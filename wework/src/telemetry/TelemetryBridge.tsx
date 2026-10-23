@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from './client'
+import { useAuth } from '@/features/auth/useAuth'
+import {
+  applyTelemetryIdentity,
+  installTelemetry,
+  isTelemetryEnabled,
+  setTelemetryEnabled,
+  track,
+  useTelemetryEnabled,
+} from './client'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 import { useTranslation } from '@/hooks/useTranslation'
+import { telemetryPolicy } from '@extensions/telemetry-policy'
 import { TelemetryConsentDialog } from './TelemetryConsentDialog'
 import { getTelemetryConfig, isOfficialReleaseBuild } from './config'
 
@@ -23,7 +32,9 @@ const CONSENT_SAVE_TIMEOUT_MS = 10_000
 
 export function TelemetryBridge() {
   const appPreferences = useAppPreferencesState()
+  const { user } = useAuth()
   const { t } = useTranslation('common')
+  const clientEnabled = useTelemetryEnabled()
   const initializedRef = useRef(false)
   const startedRef = useRef(false)
   const [savingConsent, setSavingConsent] = useState(false)
@@ -38,6 +49,14 @@ export function TelemetryBridge() {
   const effectiveTelemetryEnabled =
     !officialRelease && consentAsked !== true ? true : telemetryEnabled === true
   const surface = useMemo(() => appSurface(), [])
+
+  // A distribution that installs account identity attaches the signed-in user
+  // as soon as the client is capturing; the anonymous policy returns `null` and
+  // leaves the generated distinct id untouched.
+  useEffect(() => {
+    if (!clientEnabled) return
+    applyTelemetryIdentity(telemetryPolicy.identityFor(user))
+  }, [clientEnabled, user])
 
   useEffect(() => {
     if (!appPreferences?.loaded || initializedRef.current) {
