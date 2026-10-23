@@ -172,9 +172,24 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide
-suite-level parallelism across runners. Shards are balanced from observed CI
-durations and capped to bound the complete suite's critical path; a new or
+Core and Cloud matrix jobs also provide suite-level parallelism across runners.
+Core uses 12 shards, with Windows sharing the same matrix, and Cloud uses 10.
+Combining short shards reuses container initialization, checkout, artifact
+downloads, and runtime preparation without increasing checkpoint concurrency
+within a runner. The two Core benchmark shards and three Cloud account-auth and
+long-plugin-list shards remain separate. The concurrency limit must accommodate
+the complete matrix in one scheduling wave; classifier regression tests enforce
+both the shard budget and this constraint. Shared runner capacity can still
+introduce external queueing.
+
+This grouping uses step timings from successful runs `39920301020` and
+`39920742402`. In the first sample, non-test steps across 42 shards consumed about
+60 runner minutes, or 31% of shard execution time; setup overhead was higher in
+the second sample. Consolidation removes 20 setup cycles. Conservatively summing
+the original test-step durations bounds the longest ordinary Core shard at about
+7.5 minutes and Cloud at 8.4 minutes across both samples. Actual durations depend
+on scheduling four checkpoints per runner and shared resources; these estimates
+are not measured savings. Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:

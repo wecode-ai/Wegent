@@ -179,58 +179,40 @@ cloud_segments=(
   plugin-workspace-publication
   plugin-toggle-persistence
 )
-# Group checkpoints by observed parallel CI duration. Keep account auth and
-# the 24-plugin composer fixture on separate runners to avoid CPU contention.
+# Combine short shards to amortize container, checkout, and artifact setup.
+# Based on successful runs 39920301020 and 39920742402, ordinary Cloud shards
+# have at most 8.4 minutes of combined checkpoint time before intra-runner overlap.
+# Keep account auth and the 24-plugin composer fixture on separate runners.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow
-  embedded-browser,cloud-project-creation
-  goal-lifecycle,cloud-worktree-archive-restore
-  rendering-extensions
-  project-automation
-  window-lifecycle
-  priority-filter,cloud-worktree-tools
-  resilience,telemetry-consent
-  cloud-worktree-create,automation-lifecycle,browser-multi-tabs
-  workspace-tabs,cloud-worktree-capability
-  supervisor-lifecycle,conversation-state
-  model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
+  core-task-flow,embedded-browser,cloud-project-creation
+  goal-lifecycle,cloud-worktree-archive-restore,window-lifecycle,priority-filter,cloud-worktree-tools
+  rendering-extensions,cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result,plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination
+  project-automation,workspace-tabs,cloud-worktree-capability,model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
+  resilience,telemetry-consent,plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
+  cloud-worktree-create,automation-lifecycle,browser-multi-tabs,cloud-worktree-queued-cancel,plugin-runtime-path-recovery
+  supervisor-lifecycle,conversation-state,plugin-auto-update,plugin-workspace-publication,workspace-attachments
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
-  cloud-worktree-queued-cancel,plugin-runtime-path-recovery
-  plugin-auto-update,plugin-workspace-publication,workspace-attachments
-  cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result
   plugin-composer-long-list
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
-  plugin-uninstall-restart-recovery,plugin-uninstall-reinstall-race,plugin-toggle-persistence
-  plugin-write-coordination,plugin-registration-coordination,plugin-account-auth-coordination
 )
-# Group checkpoints by observed parallel CI duration while reusing the same
-# prebuilt application. Rendering runs apart from terminal/transcript workloads.
+# Combine short shards to reuse the container and prebuilt application.
+# The same measured runs bound ordinary Core shards at 7.5 minutes of combined
+# checkpoint time before intra-runner overlap. Keep latency benchmarks exclusive.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-app-development,harness-app-lifecycle,browser-annotation-design
-  supervisor-lifecycle,remote-device-onboarding,core-task-flow
-  temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
-  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
-  send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
-  claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
-  window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
+  harness-app-development,harness-app-lifecycle,browser-annotation-design,codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
+  supervisor-lifecycle,remote-device-onboarding,core-task-flow,workspace-attachments,automation-lifecycle,drawing-attachment
+  temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,streaming-scroll,streaming-message-order,streaming-subagents
+  goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture,project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
+  claude-runtime,workspace-tabs,task-attachments,local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
+  task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction,window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
+  project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume,rendering-extensions,streaming-content,streaming-tools,streaming-timers
   resilience,environment-panel-scroll,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
-  workspace-attachments,automation-lifecycle,drawing-attachment
-  project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
-  transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-crash-recovery,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
-  model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-personal-task,stand-in-permissions
-  rendering-extensions,streaming-content,streaming-tools,streaming-timers
-  streaming-scroll,streaming-message-order,streaming-subagents
-  # Preserve the fixed interaction latency budget without CPU contention from other apps.
+  transcript-sync,background-terminals,collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-personal-task,stand-in-permissions
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-crash-recovery,renderer-storage,external-content-import,model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
+  # Keep fixed interaction-latency assertions on exclusive runners.
   split-workbench
-  # Drawer frame assertions also require a runner without competing Electron apps.
   collaboration-shared-core
 )
 
