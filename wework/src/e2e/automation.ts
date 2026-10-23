@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { collectBackgroundTerminalDiagnostics } from './background-terminal-diagnostics'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -3058,9 +3059,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return String(finishedCount)
     }
-    case 'getWorkbenchDebugSnapshot':
+    case 'getWorkbenchDebugSnapshot': {
+      const debugSnapshot = getWorkbenchDebugSnapshot()
+      const address =
+        debugSnapshot.pane?.currentRuntimeTask ?? debugSnapshot.workbench?.currentRuntimeTask
       return JSON.stringify({
-        ...getWorkbenchDebugSnapshot(),
+        ...debugSnapshot,
+        ...(command.value && address
+          ? {
+              backgroundTerminals: collectBackgroundTerminalDiagnostics(
+                getRuntimeConversationMessagesForLogicalAddress(address),
+                address.taskId,
+                command.value
+              ),
+            }
+          : {}),
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {
@@ -3078,6 +3091,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           }
         }),
       })
+    }
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':

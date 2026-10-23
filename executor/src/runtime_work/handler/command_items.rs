@@ -6,15 +6,19 @@ use super::*;
 
 pub(super) fn merge_codex_command_item(existing: &Value, mut incoming: Value) -> Value {
     if item_type(existing) == "commandexecution" && item_type(&incoming) == "commandexecution" {
-        if let Some(output) = raw_string_field(existing, "aggregatedOutput") {
-            let snapshot = raw_string_field(&incoming, "aggregatedOutput").unwrap_or_default();
-            // A yield snapshot can arrive after newer output deltas.
-            if output.starts_with(&snapshot) {
-                incoming["aggregatedOutput"] = Value::String(output);
-            }
-        }
+        preserve_newer_command_output(existing, &mut incoming, "aggregatedOutput");
     }
     incoming
+}
+
+pub(super) fn preserve_newer_command_output(existing: &Value, incoming: &mut Value, field: &str) {
+    if let Some(output) = raw_string_field(existing, field) {
+        let snapshot = raw_string_field(incoming, field).unwrap_or_default();
+        // A yield snapshot can arrive after newer output deltas.
+        if output.starts_with(&snapshot) {
+            incoming[field] = Value::String(output);
+        }
+    }
 }
 
 pub(super) fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {

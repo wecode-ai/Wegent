@@ -100,6 +100,108 @@ fn background_terminal_item_snapshot_preserves_output_received_after_initial_yie
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn background_terminal_late_yield_snapshot_preserves_completed_transcript_output() {
+    let (handler, root) = isolated_runtime_work_handler("background-terminal-late-yield");
+    let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    let output = (1..=10)
+        .map(|tick| format!("tick-{tick}\n"))
+        .collect::<String>();
+    let mut command = json!({
+        "id": "command-1", "type": "commandExecution", "command": "pnpm dev",
+        "status": "inProgress", "processId": "42", "aggregatedOutput": output,
+    });
+    handler.persist_completed_codex_turn_from_notification(
+        "task-1",
+        &json!({
+            "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                "id": "turn-1", "status": "completed", "items": [command]
+            }}
+        }),
+    );
+    handler.record_background_terminal_notification(
+        "task-1",
+        &json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {"itemId": "command-1", "delta": "tick-11\ntick-12\n"}
+        }),
+    );
+    command["processId"] = json!("43");
+    handler.record_background_terminal_notification(
+        "task-1",
+        &json!({
+            "method": "item/completed", "params": {"item": command}
+        }),
+    );
+    handler.record_background_terminal_notification(
+        "task-1",
+        &json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {"itemId": "command-1", "delta": "tick-13\n"}
+        }),
+    );
+
+    let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    let expected = (1..=13)
+        .map(|tick| format!("tick-{tick}\n"))
+        .collect::<String>();
+    for block in [
+        &messages[0]["blocks"][0],
+        &messages[0]["runtimeItems"][0]["block"],
+    ] {
+        assert_eq!(block["tool_output"], expected);
+        assert_eq!(block["render_payload"]["processId"], "43");
+        assert_eq!(block["render_payload"]["status"], "inProgress");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn background_terminal_completion_applies_new_output_and_retains_missing_output() {
+    for output in [Some("ready\nfinished\n"), Some("replacement\n"), None] {
+        let (handler, root) = isolated_runtime_work_handler("background-terminal-exit-output");
+        let mut link =
+            RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+        link.thread_id = Some("thread-1".into());
+        handler.upsert_local_task(link);
+        let mut command = json!({
+            "id": "command-1", "type": "commandExecution", "command": "pnpm dev",
+            "status": "inProgress", "processId": "42", "aggregatedOutput": "ready\n",
+        });
+        handler.persist_completed_codex_turn_from_notification(
+            "task-1",
+            &json!({
+                "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                    "id": "turn-1", "status": "completed", "items": [command]
+                }}
+            }),
+        );
+        command["status"] = json!("completed");
+        command["exitCode"] = json!(0);
+        command["aggregatedOutput"] = json!(output);
+        handler.record_background_terminal_notification(
+            "task-1",
+            &json!({
+                "method": "item/completed", "params": {"item": command}
+            }),
+        );
+
+        let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+        for block in [
+            &messages[0]["blocks"][0],
+            &messages[0]["runtimeItems"][0]["block"],
+        ] {
+            assert_eq!(block["tool_output"], output.unwrap_or("ready\n"));
+            assert_eq!(block["status"], "done");
+            assert_eq!(block["render_payload"]["status"], "completed");
+            assert_eq!(block["render_payload"]["exitCode"], 0);
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
 fn verify_background_terminal_settlement(persist_before_finish: bool) {
     let (mut handler, root) = isolated_runtime_work_handler(if persist_before_finish {
         "background-terminal-settlement"

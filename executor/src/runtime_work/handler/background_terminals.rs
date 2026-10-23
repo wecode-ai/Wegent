@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::command_items::preserve_newer_command_output;
 use super::*;
 use crate::runtime_work::events::push_limited_tool_output;
 use crate::runtime_work::transcript::tool_update_from_notification;
@@ -126,10 +127,12 @@ fn update_completed_command(handle: &mut Value, id: &str, updates: &Value) {
             }
             if let Some(delta) = updates.get("tool_output_delta").and_then(Value::as_str) {
                 append_command_output(block, "tool_output", delta);
-            } else if let (Some(block), Some(updates)) =
-                (block.as_object_mut(), updates.as_object())
-            {
-                block.extend(updates.clone());
+            } else {
+                let mut updates = updates.clone();
+                preserve_newer_command_output(block, &mut updates, "tool_output");
+                if let (Some(block), Some(updates)) = (block.as_object_mut(), updates.as_object()) {
+                    block.extend(updates.clone());
+                }
             }
         });
     }
