@@ -107,7 +107,7 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
-  runtimeTurns?: RuntimeTranscriptTurn[];
+  runtimeTurns?: RuntimeTranscriptTurn[] | null;
   supersededTurnIds?: string[];
   origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
   historyUnavailable?: boolean;

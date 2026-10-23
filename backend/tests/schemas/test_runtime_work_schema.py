@@ -25,8 +25,13 @@ def test_transcript_preserves_canonical_turns_and_execution_state():
 
     payload = {
         "taskId": "task-1",
+        "threadId": "thread-native",
         "workspacePath": "/repo",
         "runtime": "codex",
+        "runtimeTurns": [
+            {"id": "turn-1", "items": [{"id": "live-command", "type": "block"}]}
+        ],
+        "supersededTurnIds": ["old-attempt"],
         "turns": [
             {
                 "id": "turn-1",

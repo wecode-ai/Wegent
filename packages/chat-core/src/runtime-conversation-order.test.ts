@@ -1,3 +1,4 @@
+import { projectRuntimePaneTranscript } from "./runtime-transcript-page";
 import { describe, expect, it } from "vitest";
 import type {
   RuntimeConversationItem,
@@ -25,6 +26,18 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("preserves a legacy display projection when the remote schema returns no runtime overlay", () => {
+    const page = projectRuntimePaneTranscript({
+      runtime: "claude_code",
+      workspacePath: "/repo",
+      runtimeTurns: null,
+      turns: [],
+      messages: [
+        { id: "legacy", role: "assistant", content: "Legacy display" },
+      ],
+    });
+    expect(page.messages[0].content).toBe("Legacy display");
+  });
   it("keeps pending runtime blocks omitted by durable history and only deletes explicit superseded turns", () => {
     const command: RuntimeConversationItem = {
       id: "background",

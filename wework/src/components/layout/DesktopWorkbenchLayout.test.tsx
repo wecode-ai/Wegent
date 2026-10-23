@@ -7689,7 +7689,7 @@ describe('DesktopWorkbenchLayout', () => {
         taskId: 'runtime-subagent-panel',
         threadId: 'thread-1',
       }),
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
     expect(screen.getByTestId('right-workspace-panel')).toContainElement(
       screen.getByTestId('subagent-conversation-panel')

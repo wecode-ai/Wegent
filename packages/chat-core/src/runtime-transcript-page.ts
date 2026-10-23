@@ -52,10 +52,9 @@ export function projectRuntimePaneTranscript(
     historyUnavailable: transcript.historyUnavailable,
     runtime: transcript.runtime,
     running: transcript.running,
-    messages:
-      transcript.runtimeTurns !== undefined
-        ? projectRuntimeConversationTurns(turns)
-        : runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+    messages: Array.isArray(transcript.runtimeTurns)
+      ? projectRuntimeConversationTurns(turns)
+      : runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
     turns,
     contextUsage: transcript.contextUsage ?? null,
     turnNavigation: transcript.turnNavigation ?? [],
