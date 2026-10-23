@@ -366,7 +366,7 @@ export function EmbeddedLocalTerminal({
       }`}
       hidden={!active}
     >
-      <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden" />
+      <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden [contain:strict]" />
     </div>
   )
 }

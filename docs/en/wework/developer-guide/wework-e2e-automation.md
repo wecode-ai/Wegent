@@ -833,6 +833,10 @@ Authenticated flows should create users and data through backend APIs before the
 
 ### Readiness for Local Project Scenarios
 
+Terminal containers use strict CSS containment to confine xterm's per-row accessibility width measurements to their allocated terminal bounds. Do not disable accessibility or extend native key budgets to conceal layout stalls. `background-terminals` retains native paging and history assertions, with CPU profiles available to inspect layout hotspots.
+
+Stand-in completion can arrive before the runtime unread flag. A new completion after observation starts must remain unread, and delivery must consult the current read ledger rather than consume it as restored history. Persist delivery records once per batch before sending alerts. Regressions cover late unread updates, no replay after reload, and a single delivery-ledger write for 1,000 records.
+
 `createSingleRootLocalProject` must wait until the new project is the workbench’s current project. Closing the creation dialog or finding an older composer is insufficient. The cloud-context and running-history scenarios also select a registered model explicitly through `selectE2EModel` before entering the first message. Their stalled-context, attachment, history recovery, and task-move assertions remain intact.
 
 The running-history scenario measures its three-second responsiveness gate with the workbench snapshot, excluding the debugger protocol cost of forced GC inside `performanceSnapshot`. Full history, pagination, transfer, and memory assertions remain intact. Windows restart checks still require the original executor to exit and record the selected PID’s process name and start time together with the `taskkill` exit code and output, distinguishing a surviving executor from PID reuse without collecting process command lines or environment variables.
