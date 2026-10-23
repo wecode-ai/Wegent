@@ -232,3 +232,12 @@ def test_direct_viewer_downgrade_revokes_work_without_faking_runtime_completion(
     assert not execution_authorized(test_db, run)
     assert run.status == ("cancel_requested" if initial == "running" else "cancelled")
     cancellation.assert_called_once()
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("project_members",)) as client:
+        yield client

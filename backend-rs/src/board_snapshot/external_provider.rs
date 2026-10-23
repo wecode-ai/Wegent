@@ -416,6 +416,102 @@ pub(crate) async fn list_issue_values(
     Ok(results)
 }
 
+/// `_request`'s API base: the configured `api_base`, else the provider default
+/// for the project domain, with the trailing `/` trimmed.
+pub(crate) fn api_base(task_provider: &str, config: &ProviderConfig) -> String {
+    let default_domain = if task_provider == "github" {
+        "github.com"
+    } else {
+        "gitlab.com"
+    };
+    let domain = config.domain.as_deref().unwrap_or(default_domain).trim();
+    let default_api_base = if task_provider == "github" {
+        "https://api.github.com".to_string()
+    } else {
+        format!("https://{domain}/api/v4")
+    };
+    config
+        .api_base
+        .as_deref()
+        .unwrap_or(&default_api_base)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// One `_request` failure, already classified like the source's
+/// `HTTPException` mapping. Configuration failures (409) are raised by the
+/// caller before the request, matching `_config`/`_repository`.
+pub(crate) enum RequestError {
+    /// Provider answered `404` (the source's `404 "TODO not found"`).
+    NotFound,
+    /// Transport or non-2xx failure (`502 "Provider request failed: {e}"`).
+    Failed(String),
+    /// A successful response whose body is not JSON (uncaught -> 500).
+    InvalidJson,
+}
+
+impl RequestError {
+    /// The source's `_request` exception mapping.
+    pub(crate) fn into_fastapi(self) -> crate::http_compat::FastApiError {
+        use brz_http_server::StatusCode;
+        match self {
+            Self::NotFound => {
+                crate::http_compat::FastApiError::detail(StatusCode::NOT_FOUND, "TODO not found")
+            }
+            Self::Failed(error) => crate::http_compat::FastApiError::detail(
+                StatusCode::BAD_GATEWAY,
+                format!("{PROVIDER_REQUEST_FAILED_PREFIX}{error}"),
+            ),
+            Self::InvalidJson => crate::http_compat::FastApiError::detail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error",
+            ),
+        }
+    }
+}
+
+/// `ExternalLoopItemProvider._request` for one fully built `GET` URL. The
+/// caller resolves the provider configuration and credential first, exactly
+/// like the source's `_repository`/`_config` call order.
+pub(crate) async fn request_json(
+    client: &HttpClient,
+    token: &str,
+    task_provider: &str,
+    url: &str,
+) -> Result<serde_json::Value, RequestError> {
+    use brz_http_server::StatusCode;
+    let mut request = client
+        .get(url)
+        .map_err(|error| RequestError::Failed(python_httpx_error_text(&error)))?;
+    if task_provider == "github" {
+        request = request
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json");
+    } else {
+        request = request.header("PRIVATE-TOKEN", token);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| RequestError::Failed(python_httpx_error_text(&error)))?;
+    let status = response.status();
+    if status == StatusCode::NOT_FOUND {
+        return Err(RequestError::NotFound);
+    }
+    if !status.is_success() {
+        return Err(RequestError::Failed(format!("HTTP status {status}")));
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| RequestError::Failed(python_httpx_error_text(&error)))?;
+    // `response.json() if response.content else {}`.
+    if body.is_empty() {
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
+    }
+    serde_json::from_slice(&body).map_err(|_| RequestError::InvalidJson)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

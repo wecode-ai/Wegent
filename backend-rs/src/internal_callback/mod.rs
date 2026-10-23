@@ -15,13 +15,16 @@
 //! that subsystem; the wrapped emitter's `chat:done` and `task:status` frames
 //! are emitted from here, in the source's order.
 mod channel;
-mod completion;
-mod emitter;
-mod event;
-mod parser;
+pub(crate) mod completion;
+pub(crate) mod emitter;
+pub(crate) mod event;
+pub(crate) mod parser;
+mod pipeline;
 pub(crate) mod py_json;
-mod session;
+pub(crate) mod session;
 mod socketio;
+
+pub(crate) use session::is_cancelled;
 
 #[cfg(test)]
 mod tests;
@@ -100,7 +103,8 @@ async fn handle_callback(
 
     let terminal_status = completion::terminal_status(&event.event_type);
 
-    let mut emitter = StatusUpdatingEmitter::new(redis, request.task_id, request.subtask_id);
+    let mut emitter =
+        StatusUpdatingEmitter::new(redis.to_owned(), request.task_id, request.subtask_id);
     if terminal_status.is_none()
         && let Err(error) = emitter.emit(&mut event).await
     {
@@ -113,6 +117,7 @@ async fn handle_callback(
             mysql: &state.mysql,
             redis,
             tables: tables(state),
+            executor_manager: &state.executor_manager,
         };
         let (final_result, user_id) = completion::complete_terminal(
             &ctx,
@@ -126,14 +131,33 @@ async fn handle_callback(
             request.executor_namespace.as_deref(),
         )
         .await;
+        let advance = if status == "COMPLETED" {
+            state
+                .task_store
+                .advance_pipeline_stage(&state.mysql, request.task_id, request.subtask_id)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "pipeline advancement failed");
+                    FastApiError::internal()
+                })?
+        } else {
+            None
+        };
+        let current_status = pipeline::task_status(state, request.task_id).await?;
         let result = final_result
             .or_else(|| event.result.clone())
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         event.result = Some(result.clone());
         // `WebSocketResultEmitter.emit`'s DONE branch: `chat:done` then
         // `task:status`.
-        if let Err(error) = emitter::emit_done_frames(redis, &event, user_id, &result).await {
+        if let Err(error) =
+            emitter::emit_done_frames(redis, &event, user_id, &result, current_status.as_deref())
+                .await
+        {
             tracing::warn!(%error, "callback done frames failed");
+        }
+        if let Some(advance) = advance {
+            pipeline::dispatch_next(state, advance).await?;
         }
     }
 
@@ -146,7 +170,7 @@ async fn handle_callback(
 }
 
 /// The deployment's task/subtask table templates.
-fn tables(state: &AppState) -> completion::Tables {
+pub(crate) fn tables(state: &AppState) -> completion::Tables {
     let templates = state.task_store.table_templates();
     completion::Tables {
         tasks: templates.tasks,

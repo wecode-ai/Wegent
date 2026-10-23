@@ -11,7 +11,7 @@
 //! download path reads are exposed through accessors.
 
 use brz_json::{JsonProjection, OpaqueJson};
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -371,25 +371,41 @@ pub async fn get_task_by_id(
 }
 
 /// `resource_members` approved-membership probe (`_check_task_access`).
+///
+/// The source issues `db.query(ResourceMember).filter(...).first()`, so the
+/// statement selects the full mapped projection in mapper order and filters
+/// only on the five source predicates. `copied_resource_id` is not part of
+/// this query: an approved member of a shared task copy still matches the
+/// source's ownership check.
 pub async fn is_task_member<M>(mysql: &M, task_id: i64, user_id: i32) -> MysqlResult<bool>
 where
     M: Mysql,
 {
-    #[derive(Debug, FromMysqlRow)]
-    struct MemberRow {
-        #[allow(dead_code)]
-        id: i64,
-    }
-    let member: Option<MemberRow> = mysql
+    let member: Option<MysqlRow> = mysql
         .fetch_optional(
-            "SELECT resource_members.id AS resource_members_id \
+            "SELECT resource_members.id AS resource_members_id, \
+             resource_members.resource_type AS resource_members_resource_type, \
+             resource_members.resource_id AS resource_members_resource_id, \
+             resource_members.entity_type AS resource_members_entity_type, \
+             resource_members.entity_id AS resource_members_entity_id, \
+             resource_members.entity_display_name AS resource_members_entity_display_name, \
+             resource_members.user_id AS resource_members_user_id, \
+             resource_members.`role` AS resource_members_role, \
+             resource_members.status AS resource_members_status, \
+             resource_members.invited_by_user_id AS resource_members_invited_by_user_id, \
+             resource_members.share_link_id AS resource_members_share_link_id, \
+             resource_members.reviewed_by_user_id AS resource_members_reviewed_by_user_id, \
+             resource_members.reviewed_at AS resource_members_reviewed_at, \
+             resource_members.copied_resource_id AS resource_members_copied_resource_id, \
+             resource_members.requested_at AS resource_members_requested_at, \
+             resource_members.created_at AS resource_members_created_at, \
+             resource_members.updated_at AS resource_members_updated_at \
              FROM resource_members \
              WHERE resource_members.resource_type = 'Task' \
              AND resource_members.resource_id = ? \
              AND resource_members.entity_type = 'user' \
              AND resource_members.entity_id = ? \
              AND resource_members.status = 'approved' \
-             AND resource_members.copied_resource_id = 0 \
              LIMIT 1",
             (task_id, user_id.to_string()),
         )
@@ -637,5 +653,46 @@ mod tests {
             None
         );
         assert_eq!(AttachmentMetadata::default().legacy_weibo_fid(), None);
+    }
+
+    /// `_check_task_access` issues `db.query(ResourceMember).filter(...).first()`:
+    /// the full mapper projection and only the five source predicates. The
+    /// replay matcher compares the normalized statement, so a narrowed
+    /// projection or an extra `copied_resource_id` filter would diverge from
+    /// the recorded source exchange.
+    #[tokio::test]
+    async fn membership_probe_renders_the_source_statement() {
+        let capture = crate::sql_test_support::KindQueryCapture::default();
+        let member = is_task_member(&capture, 327929343134391, 845)
+            .await
+            .expect("capture answers an empty result set");
+        assert!(!member);
+        let queries = capture.queries();
+        assert_eq!(queries.len(), 1);
+        let sql = &queries[0].sql;
+        assert!(
+            sql.starts_with("SELECT resource_members.id AS resource_members_id,"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                "resource_members.copied_resource_id AS resource_members_copied_resource_id"
+            ),
+            "the projection keeps the mapped column: {sql}"
+        );
+        assert_eq!(
+            sql.split(" WHERE ").nth(1),
+            Some(
+                "resource_members.resource_type = 'Task' \
+                 AND resource_members.resource_id = ? \
+                 AND resource_members.entity_type = 'user' \
+                 AND resource_members.entity_id = ? \
+                 AND resource_members.status = 'approved' \
+                 LIMIT 1"
+            ),
+            "{sql}"
+        );
+        assert_eq!(queries[0].args, 2);
+        assert_eq!(queries[0].first_integer, Some(327929343134391));
     }
 }

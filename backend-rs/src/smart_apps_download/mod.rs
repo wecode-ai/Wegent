@@ -32,8 +32,8 @@
 
 pub(crate) mod artifact;
 mod artifact_handler;
-mod db;
+pub(crate) mod db;
 mod handler;
 mod link;
-mod models;
-mod service;
+pub(crate) mod models;
+pub(crate) mod service;

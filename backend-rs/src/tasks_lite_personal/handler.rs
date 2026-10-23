@@ -400,7 +400,9 @@ async fn build_lite_task_list(
     // projection does not return; the registered reader (public direct SQL,
     // or a deployment's cached reader) keeps the source dependency topology.
     let _ = state.user_reader.get_by_id(i64::from(user_id)).await;
-    let device_data = device_display_names(&state.mysql, i64::from(user_id), &device_ids).await;
+    let device_data = device_display_names(&state.mysql, i64::from(user_id), &device_ids)
+        .await
+        .unwrap_or_default();
 
     Ok(project_lite_tasks(
         tasks,

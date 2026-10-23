@@ -99,7 +99,8 @@ class CallbackResponse(BaseModel):
     message: Optional[str] = None
 
 
-@router.post("", response_model=CallbackResponse)
+# MIGRATION-CANDIDATE(api="POST /api/internal/callback"): remove after final confirmation.
+# @router.post("", response_model=CallbackResponse)
 async def handle_callback(
     request: CallbackRequest,
 ) -> CallbackResponse:

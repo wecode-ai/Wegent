@@ -15,6 +15,9 @@ use std::time::Duration;
 use brz_http_server::{
     Bytes, EphemeralBytesArena, HeaderBlock, Response, ResponseStream, StatusCode,
 };
+use serde_json::{Value, json};
+
+use super::protocol::{self, InboundMessage, MessageError};
 
 /// `mcp.server.streamable_http.CONTENT_TYPE_JSON`.
 pub(crate) const CONTENT_TYPE_JSON: &str = "application/json";
@@ -102,6 +105,130 @@ fn sse_header_block() -> HeaderBlock {
     let mut bytes = arena.alloc(SSE_HEADERS.len());
     bytes.extend_from_slice(SSE_HEADERS);
     HeaderBlock::new(bytes.freeze()).expect("static SSE headers are valid")
+}
+
+/// The transport-level validation shared by every stateless server
+/// (`_validate_accept_header` with `is_json_response_enabled=True`,
+/// `_validate_content_type`, JSON-RPC parsing, and `_validate_protocol_version`
+/// for every message except `initialize`).
+#[allow(clippy::result_large_err)]
+pub(crate) fn prepare_message(
+    accept: Option<&str>,
+    content_type: Option<&str>,
+    protocol_version: Option<&str>,
+    body: &[u8],
+) -> Result<InboundMessage, Response> {
+    if !accepts_json(accept) {
+        return Err(json_response(
+            StatusCode::NOT_ACCEPTABLE,
+            protocol::server_error_body(
+                protocol::INVALID_REQUEST,
+                "Not Acceptable: Client must accept application/json",
+            ),
+        ));
+    }
+    if !is_json_content_type(content_type) {
+        return Err(json_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            protocol::server_error_body(
+                protocol::INVALID_REQUEST,
+                "Unsupported Media Type: Content-Type must be application/json",
+            ),
+        ));
+    }
+    let message = match protocol::parse(body) {
+        Ok(message) => message,
+        Err(MessageError::Parse(error)) => {
+            return Err(json_response(
+                StatusCode::BAD_REQUEST,
+                protocol::server_error_body(
+                    protocol::PARSE_ERROR,
+                    &format!("Parse error: {error}"),
+                ),
+            ));
+        }
+        Err(MessageError::Invalid(error)) => {
+            return Err(json_response(
+                StatusCode::BAD_REQUEST,
+                protocol::server_error_body(
+                    protocol::INVALID_PARAMS,
+                    &format!("Validation error: {error}"),
+                ),
+            ));
+        }
+    };
+    match &message {
+        // `initialize` derives its protocol version from the request
+        // parameters and skips the header validation; every other request
+        // validates the header.
+        InboundMessage::Request(request) => {
+            if request.method != "initialize"
+                && !protocol::protocol_version_supported(protocol_version)
+            {
+                return Err(unsupported_protocol_version(protocol_version));
+            }
+        }
+        // Notifications and client responses are validated like any other
+        // non-initialize message and acknowledged with `202`.
+        InboundMessage::NoReply => {
+            if !protocol::protocol_version_supported(protocol_version) {
+                return Err(unsupported_protocol_version(protocol_version));
+            }
+        }
+    }
+    Ok(message)
+}
+
+/// `StreamableHTTPServerTransport._validate_protocol_version` rejection.
+pub(crate) fn unsupported_protocol_version(protocol_version: Option<&str>) -> Response {
+    json_response(
+        StatusCode::BAD_REQUEST,
+        protocol::server_error_body(
+            protocol::INVALID_REQUEST,
+            &protocol::unsupported_protocol_version_message(protocol_version),
+        ),
+    )
+}
+
+/// `ServerSession._received_request(InitializeRequest)`: the SDK's negotiated
+/// protocol version, the server's declared capabilities, and its identity.
+pub(crate) fn initialize_result(server_name: &str, params: Option<&Value>) -> Value {
+    let requested = params
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(Value::as_str);
+    json!({
+        "protocolVersion": protocol::negotiated_protocol_version(requested),
+        "capabilities": capabilities(),
+        "serverInfo": { "name": server_name, "version": protocol::SERVER_VERSION },
+    })
+}
+
+/// `Server.get_capabilities` for the FastMCP servers: FastMCP registers its
+/// prompt, resource, resource-template, and tool handlers for every server
+/// (`FastMCP._setup_handlers`), so the SDK advertises `prompts`, `resources`,
+/// and `tools` regardless of the registered tool surface; each is reported
+/// without change notifications (and resources without subscriptions), and
+/// `experimental` is always present.
+pub(crate) fn capabilities() -> Value {
+    json!({
+        "experimental": {},
+        "prompts": { "listChanged": false },
+        "resources": { "subscribe": false, "listChanged": false },
+        "tools": { "listChanged": false },
+    })
+}
+
+/// `Server.call_tool`'s `Unknown tool: <name>` error for a tool body that is
+/// not executed by the current batch.
+pub(crate) fn unknown_tool_message(params: Option<&Value>) -> String {
+    match params
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+    {
+        Some(name) => format!("Unknown tool: {name}"),
+        None => "Invalid arguments".to_string(),
+    }
 }
 
 #[cfg(test)]
