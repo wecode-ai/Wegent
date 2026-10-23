@@ -105,6 +105,7 @@ mod conversion_callback;
 mod crd;
 mod decisions;
 mod delivery_storage;
+mod device_artifacts;
 mod device_command;
 pub mod device_commands;
 pub mod device_identity;

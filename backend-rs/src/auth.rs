@@ -219,10 +219,9 @@ pub fn extract_authorization_token(authorization: Option<&str>) -> String {
     let Some(header) = authorization else {
         return String::new();
     };
-    if let Some(token) = header.strip_prefix("Bearer ") {
-        return token.trim().to_string();
-    }
-    if let Some(token) = header.strip_prefix("bearer ") {
+    if let Some((scheme, token)) = header.split_once(' ')
+        && scheme.eq_ignore_ascii_case("bearer")
+    {
         return token.trim().to_string();
     }
     header.trim().to_string()

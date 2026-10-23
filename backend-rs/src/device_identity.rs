@@ -118,7 +118,7 @@ impl DeviceType {
 }
 
 /// Source `app/services/device/identity.py::record_route_id`.
-fn record_route_id(device: &DeviceKindRow) -> String {
+pub(crate) fn record_route_id(device: &DeviceKindRow) -> String {
     if DeviceType::from_spec(&device.spec()) == DeviceType::App {
         format!("{RECORD_ROUTE_PREFIX}{}", device.id)
     } else {

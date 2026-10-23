@@ -4,6 +4,7 @@
 """Guarded, reversible updates of the built-in Wework delivery instructions."""
 
 import importlib.util
+import os
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
@@ -38,25 +39,31 @@ def migration() -> ModuleType:
 def storage(
     migration: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[Storage]:
-    engine = sa.create_engine("sqlite://")
+    engine = sa.create_engine(
+        os.environ.get("WEGENT_MIGRATION_TEST_DATABASE_URL", "sqlite://")
+    )
     metadata = sa.MetaData()
     kinds = sa.Table(
         "kinds",
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("user_id", sa.Integer),
-        sa.Column("kind", sa.String),
-        sa.Column("name", sa.String),
-        sa.Column("namespace", sa.String),
+        sa.Column("kind", sa.String(64)),
+        sa.Column("name", sa.String(255)),
+        sa.Column("namespace", sa.String(255)),
         sa.Column("is_active", sa.Boolean),
         sa.Column("json", sa.JSON),
+        prefixes=["TEMPORARY"],
     )
-    metadata.create_all(engine)
     with engine.begin() as connection:
+        # A connection-local table shadows any real kinds table. Never mutate
+        # seeded application resources, even when running the MySQL contract.
+        kinds.create(connection)
         monkeypatch.setattr(
             migration, "op", Operations(MigrationContext.configure(connection))
         )
         yield connection, kinds
+        kinds.drop(connection)
     engine.dispose()
 
 
@@ -90,6 +97,46 @@ def _insert(storage: Storage, payload: Any, **overrides: Any) -> None:
     }
     values.update(overrides)
     connection.execute(kinds.insert().values(**values))
+
+
+def test_preflight_is_read_only_scoped_and_does_not_disclose_prompts(
+    storage: Storage, migration: ModuleType
+) -> None:
+    path = Path(__file__).parents[2] / "scripts/preflight_wework_file_delivery.py"
+    spec = importlib.util.spec_from_file_location("artifact_preflight", path)
+    assert spec and spec.loader
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+    _insert(storage, _payload(migration))
+    _insert(
+        storage,
+        {"spec": {"systemPrompt": "private-custom-prompt"}},
+        id=1288,
+        is_active=False,
+    )
+    _insert(storage, _payload(migration), id=1289, user_id=1)
+    connection, _ = storage
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    sa.event.listen(connection, "before_cursor_execute", record)
+    try:
+        report = preflight.inventory(connection)
+        assert preflight.inventory(connection) == report
+    finally:
+        sa.event.remove(connection, "before_cursor_execute", record)
+    assert all(
+        statement.lstrip().upper().startswith("SELECT") for statement in statements
+    )
+    assert [(row["id"], row["classification"]) for row in report["rows"]] == [
+        (1287, "legacy_exact"),
+        (1288, "custom_or_unrecognized"),
+    ]
+    assert report["rows"][1]["is_active"] is False
+    assert "private-custom-prompt" not in str(report)
+    assert len(report["inventory_sha256"]) == 64
 
 
 def _stored(storage: Storage) -> RowMapping:
@@ -148,6 +195,47 @@ def test_cp01_prompt_correction_issues_no_ddl_or_permission_writes(
         or statement.startswith("UPDATE KINDS SET JSON=")
         for statement in statements
     )
+
+
+@pytest.mark.parametrize("direction", ["upgrade", "downgrade"])
+@pytest.mark.parametrize("field", ["json", "namespace", "user_id", "is_active"])
+def test_concurrent_configuration_changes_are_never_overwritten(
+    migration: ModuleType, storage: Storage, direction: str, field: str
+) -> None:
+    _insert(storage, _payload(migration))
+    if direction == "downgrade":
+        migration.upgrade()
+    connection, kinds = storage
+    original = deepcopy(dict(_stored(storage)))
+    changed = False
+
+    def edit_before_update(_conn, _cursor, statement, _params, _context, _many):
+        nonlocal changed
+        if changed or not statement.lstrip().upper().startswith("UPDATE KINDS"):
+            return
+        changed = True
+        values = {"namespace": "custom", "user_id": 42, "is_active": False}
+        payload = deepcopy(original["json"])
+        payload["spec"]["mcpServers"] = {
+            "edited-concurrently": {"url": "https://example.test"}
+        }
+        values["json"] = payload
+        connection.execute(
+            kinds.update().where(kinds.c.id == 1287).values(**{field: values[field]})
+        )
+
+    sa.event.listen(connection, "before_cursor_execute", edit_before_update)
+    try:
+        with pytest.raises(RuntimeError, match="changed concurrently"):
+            getattr(migration, direction)()
+    finally:
+        sa.event.remove(connection, "before_cursor_execute", edit_before_update)
+    assert changed
+    stored = dict(_stored(storage))
+    assert stored[field] != original[field]
+    assert {key: value for key, value in stored.items() if key != field} == {
+        key: value for key, value in original.items() if key != field
+    }
 
 
 @pytest.mark.parametrize(

@@ -134,7 +134,8 @@ def _replace_rules(replacements: tuple[tuple[str, str], ...]) -> None:
         )
     ).fetchall()
     for row in rows:
-        payload = deepcopy(row.json) if isinstance(row.json, dict) else {}
+        original = row.json
+        payload = deepcopy(original) if isinstance(original, dict) else {}
         spec = payload.get("spec")
         prompt = spec.get("systemPrompt") if isinstance(spec, dict) else None
         # Do not overwrite customized delivery sections or partially match a prompt.
@@ -145,9 +146,25 @@ def _replace_rules(replacements: tuple[tuple[str, str], ...]) -> None:
         for old, new in replacements:
             prompt = prompt.replace(old, new, 1)
         spec["systemPrompt"] = prompt
-        connection.execute(
-            kinds.update().where(kinds.c.id == row.id).values(json=payload)
+        updated = connection.execute(
+            kinds.update()
+            .where(
+                kinds.c.id == row.id,
+                kinds.c.user_id == 0,
+                kinds.c.kind == "Ghost",
+                kinds.c.name == "wegent-wework",
+                kinds.c.namespace == "default",
+                kinds.c.is_active.is_(True),
+                sa.func.json_extract(kinds.c.json, "$")
+                == sa.func.json_extract(sa.literal(original, type_=sa.JSON()), "$"),
+            )
+            .values(json=payload)
         )
+        if updated.rowcount != 1:
+            raise RuntimeError(
+                "Wework Ghost changed concurrently; migration aborted without "
+                "overwriting it. Repeat the read-only preflight and human approval."
+            )
 
 
 def upgrade() -> None:

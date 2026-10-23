@@ -11,6 +11,7 @@ core_segments=(
   collaboration-issue-archive
   collaboration-board-sorting
   collaboration-board-move-recovery
+  collaboration-home-preload
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
@@ -58,6 +59,7 @@ core_segments=(
   task-board-bulk-actions
   core-task-flow
   task-attachments
+  device-artifact-declaration
   drawing-attachment
   window-lifecycle
   goal-lifecycle
@@ -212,11 +214,11 @@ core_shards=(
   temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
-  claude-runtime,workspace-tabs,task-attachments
+  claude-runtime,workspace-tabs,task-attachments,device-artifact-declaration
   task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-home-preload,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
@@ -423,6 +425,14 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
+      select_target "core:collaboration-home-preload"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
+      select_target "core:device-artifact-declaration"
+      return
+      ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
       select_target "core:split-workbench"
       return
@@ -1543,6 +1553,7 @@ classify_path() {
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-move-recovery"
+      select_target "core:collaboration-home-preload"
       ;;
     executor/src/server/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
