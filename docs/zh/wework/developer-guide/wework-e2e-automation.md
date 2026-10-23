@@ -617,7 +617,7 @@ const route = await app.route();
 
 Windows 上工作树的 `.git` 文件可能带隐藏属性，Node 默认的 `writeFile` 写入模式会返回 `EPERM`。归档清理 fixture 使用 `r+` 打开已有文件、显式截断并写入，在 `finally` 关闭句柄；损坏、恢复和失败清理共享同一逻辑。
 
-Workbench Home 迁移探针通过 `ensureLocalModelCatalogReady` 等待模型目录同步及其触发的 app-server 重启完成，再使用原生 Codex 访问迁移后的 Home。仅等待 executor 启动不代表目录同步已完成。原生探针失败时保留 `native-migration-turn-failure.json`，包含实际 Home、数据库完整性和线程历史模式；应先检查初始化警告，避免把日志库打开失败引起的 `list_turns` 错误误判为历史丢失。
+桌面控制通道在模型 fixture 初始化结束后注册，初始化失败时也保留诊断入口。Workbench Home 迁移探针通过 `ensureLocalModelCatalogReady` 等待模型目录同步及其触发的 app-server 重启完成，再使用原生 Codex 访问迁移后的 Home。仅等待 executor 启动不代表目录同步已完成。原生探针失败时保留 `native-migration-turn-failure.json`，包含实际 Home、数据库完整性和线程历史模式；应先检查初始化警告，避免把日志库打开失败引起的 `list_turns` 错误误判为历史丢失。
 
 打开项目设置时，直接等待并点击当前项目的编辑或重命名入口。侧栏根据项目的状态所属设备和来源选择菜单标识，不能根据菜单尚未渲染时的即时快照猜选入口。云端项目保存、重启和设置恢复断言保持不变。
 

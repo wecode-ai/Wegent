@@ -523,9 +523,14 @@ export async function installWeworkAutomationBridge(
   }
   installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
-  installDesktopControlClient()
-  await beforeSeed.catch(() => undefined)
-  await seedDesktopE2ECloudConnection()
+  try {
+    await beforeSeed.catch(() => undefined)
+    await seedDesktopE2ECloudConnection()
+  } finally {
+    // Commands must observe seeded models, including the catalog-readiness barrier.
+    // Keep failure diagnostics reachable if seeding itself fails.
+    installDesktopControlClient()
+  }
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
