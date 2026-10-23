@@ -4,8 +4,15 @@ import { verifyTerminalHistory } from '../e2e/desktop/scenarios/background-termi
 
 const marker = 'WEWORK_BACKGROUND_PROCESS_ONE'
 
-function historyControl({ stuck = false, missingTick = false, pendingOutput = false } = {}) {
+function historyControl({
+  stuck = false,
+  missingTick = false,
+  pendingOutput = false,
+  advanceBeforeKey = false,
+} = {}) {
   let row = 121
+  let bottom = row
+  let advanced = false
   let elapsed = 0
   const calls = []
   let pendingRow = null
@@ -30,12 +37,18 @@ function historyControl({ stuck = false, missingTick = false, pendingOutput = fa
           : `${marker}_TICK_${row}`
       }
       if (action === 'nativePress') {
+        if (advanceBeforeKey && !advanced && options.key === 'Shift+PageUp') {
+          row += 80
+          bottom = row
+          advanced = true
+        }
+        const attributeBefore = String(row)
         if (options.key === 'Shift+PageUp' && !stuck) {
           if (pendingOutput) pendingRow = Math.max(1, row - 40)
           else row = Math.max(1, row - 40)
         }
-        if (options.key === 'Shift+PageDown') row = Math.min(121, row + 40)
-        return
+        if (options.key === 'Shift+PageDown') row = Math.min(bottom, row + 40)
+        return options.target ? JSON.stringify({ attributeBefore }) : undefined
       }
       if (action === 'waitFor') {
         if (options.text === `${marker}_TICK_12` && (row !== 1 || missingTick)) {
@@ -73,4 +86,11 @@ test('waits for backward movement when live output advances before page-up rende
 test('still fails when the restored initial output is missing', async () => {
   const history = historyControl({ missingTick: true })
   await assert.rejects(verifyTerminalHistory(history.control, 10000), /history is not visible/)
+})
+
+test('compares page-up against the viewport at the native key, after live output has advanced', async () => {
+  const history = historyControl({ advanceBeforeKey: true })
+  await verifyTerminalHistory(history.control, 10000)
+  assert.equal(history.row(), 201)
+  assert.equal(history.control.calls.filter(call => call.options.key === 'Shift+PageUp').length, 5)
 })

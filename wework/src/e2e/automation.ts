@@ -29,6 +29,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { createNativeKeyAttributeObservation } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -1105,7 +1106,8 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
 async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
-  phase: 'press' | 'down' | 'up' = 'press'
+  phase: 'press' | 'down' | 'up' = 'press',
+  measurement?: { selector: string; attribute: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
@@ -1119,7 +1121,20 @@ async function pressNativeDesktopControlKey(
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
   const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
-  const recordKey = (event: KeyboardEvent) => received.push(event)
+  const expectedKey = parseDesktopControlKey(key).key
+  const observation = measurement
+    ? createNativeKeyAttributeObservation(
+        element,
+        () =>
+          findDesktopControlElements(measurement.selector)[0]?.getAttribute(
+            measurement.attribute
+          ) ?? null
+      )
+    : null
+  const recordKey = (event: KeyboardEvent) => {
+    received.push(event)
+    if (event.key === expectedKey) observation?.record(event)
+  }
   window.addEventListener(eventType, recordKey, true)
   try {
     await invokeDesktopHost('e2e.pressKey', {
@@ -1139,7 +1154,9 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return document.activeElement?.getAttribute('data-testid') ?? ''
+  return observation
+    ? JSON.stringify({ attributeBefore: observation.result() })
+    : (document.activeElement?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -3248,7 +3265,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
     case 'nativePress': {
-      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+      return pressNativeDesktopControlKey(
+        command.selector,
+        command.key ?? '',
+        'press',
+        command.target ? { selector: command.target, attribute: command.value ?? '' } : undefined
+      )
     }
     case 'nativeKeyDownOnly': {
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'down')

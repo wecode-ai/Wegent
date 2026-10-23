@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 
@@ -31,4 +32,12 @@ test('cancels pending publication when disabled or unmounted', () => {
   hook.unmount()
   act(() => vi.advanceTimersByTime(100))
   expect(publish).not.toHaveBeenCalled()
+})
+
+test('publishes after StrictMode replays effect setup', () => {
+  vi.useFakeTimers()
+  const publish = vi.fn()
+  renderHook(() => useDebugSnapshotPublisher(true, publish), { wrapper: StrictMode })
+  act(() => vi.advanceTimersByTime(100))
+  expect(publish).toHaveBeenCalledOnce()
 })

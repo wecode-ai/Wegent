@@ -904,6 +904,7 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
+  const taskComposerCatalogsRequired = loadTaskComposerCatalogs || taskComposerCatalogsRequested
   const taskComposerCatalogsEnabled =
     taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
@@ -1055,7 +1056,9 @@ export function WorkbenchProvider({
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
-    isWorkbenchShellReady && modelSelection.isSelectionReady && !skillSelection.isLoading
+    isWorkbenchShellReady &&
+    (!taskComposerCatalogsRequired || modelSelection.isSelectionReady) &&
+    !skillSelection.isLoading
 
   useEffect(() => {
     onStartupReadyChange?.(isWorkbenchShellReady)

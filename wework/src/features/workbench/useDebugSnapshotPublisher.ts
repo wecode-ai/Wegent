@@ -20,6 +20,7 @@ export function useDebugSnapshotPublisher(enabled: boolean, publish: () => void)
   useEffect(
     () => () => {
       if (timer.current !== null) window.clearTimeout(timer.current)
+      timer.current = null
     },
     []
   )

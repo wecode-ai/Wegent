@@ -79,7 +79,15 @@ export async function verifyTerminalHistory(control, timeoutMs) {
   )
   let pages = 0
   while (position > 1) {
-    await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
+    const observation = JSON.parse(
+      await control.command('nativePress', textarea, {
+        key: 'Shift+PageUp',
+        target: firstRow,
+        value: 'aria-posinset',
+      })
+    )
+    position = Number(observation.attributeBefore)
+    assert.ok(Number.isSafeInteger(position) && position > 0, 'Missing native page-up baseline')
     const deadline = Date.now() + timeoutMs
     let next
     do {
