@@ -1943,12 +1943,15 @@ wework_desktop_core_job="$(
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_core_job" != *"max-parallel: 17"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"'* ]] ||
   [[ "$wework_desktop_core_job" != *"node .github/scripts/run-with-resource-logging.mjs"* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
   printf 'Wework Core desktop E2E must run all prebuilt Core shards in one scheduling wave\n' >&2
+  exit 1
+fi
+if [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]]; then
+  printf 'Wework Core desktop E2E must reserve CPU headroom with two checkpoint workers per shard\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
