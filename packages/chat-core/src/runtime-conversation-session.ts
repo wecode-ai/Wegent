@@ -79,6 +79,7 @@ export function createRuntimeConversationSession(
   let latestRequest: Promise<void> | undefined;
   let invalidated = false;
   let threadId: string | null = address.threadId ?? null;
+  let supersededTurnIds = new Set<string>();
   const listeners = new Set<() => void>();
   const guidanceListeners = new Set<
     (payload: RuntimeGuidanceAppliedPayload) => void
@@ -112,7 +113,9 @@ export function createRuntimeConversationSession(
           if (!listening || owner !== generation) return;
           revision += 1;
           pendingReads.forEach((actions) => actions.push(action));
-          turns = reduceRuntimeConversationTurns(turns, action);
+          turns = reduceRuntimeConversationTurns(turns, action).filter(
+            (turn) => !turn.id || !supersededTurnIds.has(turn.id),
+          );
           publishTurns();
         },
         onAssistantStart() {
@@ -185,11 +188,15 @@ export function createRuntimeConversationSession(
       response.threadId && threadId && response.threadId !== threadId,
     );
     if (response.threadId) threadId = response.threadId;
+    if (changedThread) supersededTurnIds = new Set();
+    for (const id of response.supersededTurnIds ?? [])
+      supersededTurnIds.add(id);
     turns = hydrateRuntimeConversationTurns(
       changedThread ? [] : turns,
       page.turns,
       actions,
       !changedThread,
+      [...supersededTurnIds],
     );
     if (changedThread) {
       beforeCursor = null;

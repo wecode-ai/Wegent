@@ -1857,13 +1857,14 @@ async fn running_codex_transcript_reads_native_order_with_provisional_live_outpu
         transcript["messages"][4]["blocks"][0]["content"],
         "Writing quicksort"
     );
-    let plan = transcript["messages"]
+    let plan = transcript["runtimeTurns"]
         .as_array()
         .unwrap()
         .iter()
-        .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .map(|item| &item["block"])
         .find(|block| block["id"] == "plan-plan-live")
-        .expect("running transcript should include the active plan");
+        .expect("runtime state should include the active plan without rewriting durable history");
     assert_eq!(plan["type"], "plan");
     assert_eq!(
         plan["content"],

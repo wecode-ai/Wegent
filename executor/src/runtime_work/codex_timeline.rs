@@ -158,10 +158,11 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
             let mut turn = metadata
                 .get(&turn_id)
                 .cloned()
-                .unwrap_or_else(|| json!({"id": turn_id, "status": "completed"}));
+                .unwrap_or_else(|| json!({"id": turn_id, "status": "inProgress"}));
             turn["items"] = json!([]);
             turn["itemsView"] = json!("summary");
             turn["itemsPositioned"] = json!(true);
+            turn["ownsUserPresentation"] = json!(false);
             turn["position"] = json!(position);
             turns.push(turn);
             turns.len() - 1
@@ -174,9 +175,15 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
                     return Err("timeline item has no identity".to_owned());
                 }
                 item["position"] = json!(position);
+                if item["type"] == "userMessage" {
+                    turn["ownsUserPresentation"] = json!(true);
+                }
                 turn["items"].as_array_mut().unwrap().push(item);
             }
             Some("turnStarted") | Some("turnCompleted") => {
+                if entry["type"] == "turnStarted" {
+                    turn["ownsUserPresentation"] = json!(true);
+                }
                 for field in ["startedAt", "completedAt", "durationMs", "status", "error"] {
                     if let Some(value) = entry.get(field).filter(|value| !value.is_null()) {
                         turn[field] = value.clone();
@@ -192,6 +199,35 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_turn_started_after_metadata_was_read_remains_running() {
+        let turns = timeline_turns(&json!({"data":[
+            {"type":"turnStarted","position":10,"turnId":"new","startedAt":123},
+            {"type":"item","position":11,"turnId":"new","item":{"id":"stream","type":"agentMessage","text":"Still running"}}
+        ]}), vec![]).unwrap();
+        assert_eq!(turns[0]["status"], "inProgress");
+    }
+
+    #[test]
+    fn opening_boundary_ownership_does_not_leak_into_another_page() {
+        let metadata = timeline_turns(
+            &json!({"data":[
+                {"type":"turnStarted","position":1,"turnId":"turn"}
+            ]}),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(metadata[0]["ownsUserPresentation"], true);
+        let partial = timeline_turns(
+            &json!({"data":[
+                {"type":"item","position":10,"turnId":"turn","item":{"id":"answer"}}
+            ]}),
+            metadata,
+        )
+        .unwrap();
+        assert_eq!(partial[0]["ownsUserPresentation"], false);
+    }
 
     #[test]
     fn partial_pages_keep_native_positions_and_completion_metadata() {

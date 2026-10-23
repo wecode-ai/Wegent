@@ -25,7 +25,54 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
-  it("retires provisional stream history before a confirmed native boundary instead of appending it after 500 items", () => {
+  it("keeps pending runtime blocks omitted by durable history and only deletes explicit superseded turns", () => {
+    const command: RuntimeConversationItem = {
+      id: "background",
+      type: "block",
+      block: {
+        id: "background",
+        type: "tool",
+        subtaskId: "turn",
+        toolName: "exec_command",
+        createdAt: 1,
+        status: "streaming",
+        renderPayload: { kind: "command_execution", status: "inProgress" },
+      },
+    };
+    const snapshot = { ...turn([item("final", 20)]), status: "done" as const };
+    const local = { ...snapshot, items: [command, item("final", 20)] };
+    expect(
+      ids(hydrateRuntimeConversationTurns([local], [snapshot], [])),
+    ).toEqual(["background", "final"]);
+    expect(
+      hydrateRuntimeConversationTurns([local], [], [], true, ["turn"]),
+    ).toEqual([]);
+  });
+
+  it("joins the native user identity to its explicit client alias without duplicating the prompt", () => {
+    const message = {
+      id: "client-user",
+      role: "user" as const,
+      content: "Prompt",
+      status: "done" as const,
+      createdAt: "",
+    };
+    const local: RuntimeConversationItem = {
+      id: "client-user",
+      type: "user_message",
+      message,
+    };
+    const native: RuntimeConversationItem = {
+      id: "native-user",
+      type: "user_message",
+      message,
+      position: 1,
+    };
+    expect(
+      ids(mergeRuntimeConversationTurns([turn([local])], [turn([native])])),
+    ).toEqual(["native-user"]);
+  });
+  it("keeps unpersisted runtime items beside their observed native boundary across 500-item pages", () => {
     const provisional = Array.from({ length: 520 }, (_, index) => ({
       ...item(`item-${index}`, index),
       position: undefined,
@@ -41,7 +88,7 @@ describe("native conversation ordering contract", () => {
           [turn(snapshot)],
         ),
       ),
-    ).toEqual([...snapshot.map((item) => item.id), "unfinished"]);
+    ).toEqual([...provisional.map((item) => item.id), "unfinished"]);
   });
   it("does not append a tool delta twice when native history already persisted it", () => {
     const tool = (output: string): RuntimeConversationTurn =>

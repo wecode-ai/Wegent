@@ -1987,7 +1987,7 @@ export function WorkbenchProvider({
       options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
     ) => {
       const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
-      if (transcript.contextUsage) {
+      if (!options?.threadOnly && transcript.contextUsage) {
         const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,

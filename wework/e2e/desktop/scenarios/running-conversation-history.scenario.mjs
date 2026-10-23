@@ -570,7 +570,7 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
-      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-items:'))
+      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
       const cachedPage = await requestExecutor(
         control,
         'runtime.tasks.transcript',

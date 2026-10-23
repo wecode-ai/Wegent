@@ -44,7 +44,10 @@ export function hydrateRuntimeConversationTurns(
   snapshot: RuntimeConversationTurn[],
   actions: RuntimePaneMessageAction[],
   actionsAlreadyApplied = false,
+  supersededTurnIds: readonly string[] = [],
 ): RuntimeConversationTurn[] {
+  const superseded = new Set(supersededTurnIds);
+  local = local.filter((turn) => !turn.id || !superseded.has(turn.id));
   const localIds = new Set(local.map((turn) => turn.id));
   // A viewer can attach after turn/start. Native history supplies that turn's prerequisites.
   let observed = [
@@ -63,32 +66,34 @@ export function hydrateRuntimeConversationTurns(
     }
   }
   const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
-  return mergeRuntimeConversationTurns(observed, snapshot).map((turn) => {
-    const latest = observedByTurn.get(turn.id);
-    if (!latest || updatedTextIds.size === 0) return turn;
-    const latestItems = new Map(latest.items.map((item) => [item.id, item]));
-    return {
-      ...turn,
-      items: turn.items.map((item) => {
-        const live = latestItems.get(item.id);
-        if (
-          item.type !== "assistant_text" ||
-          live?.type !== "assistant_text" ||
-          !updatedTextIds.has(item.id)
-        )
-          return item;
-        // Text deltas are append-only. A native snapshot may already include a received delta,
-        // or even a suffix whose notification has not arrived; keep that complete prefix.
-        return item.content.startsWith(live.content)
-          ? item
-          : {
-              ...item,
-              content: live.content,
-              streamTextOffset: live.streamTextOffset,
-            };
-      }),
-    };
-  });
+  return mergeRuntimeConversationTurns(observed, snapshot)
+    .filter((turn) => !turn.id || !superseded.has(turn.id))
+    .map((turn) => {
+      const latest = observedByTurn.get(turn.id);
+      if (!latest || updatedTextIds.size === 0) return turn;
+      const latestItems = new Map(latest.items.map((item) => [item.id, item]));
+      return {
+        ...turn,
+        items: turn.items.map((item) => {
+          const live = latestItems.get(item.id);
+          if (
+            item.type !== "assistant_text" ||
+            live?.type !== "assistant_text" ||
+            !updatedTextIds.has(item.id)
+          )
+            return item;
+          // Text deltas are append-only. A native snapshot may already include a received delta,
+          // or even a suffix whose notification has not arrived; keep that complete prefix.
+          return item.content.startsWith(live.content)
+            ? item
+            : {
+                ...item,
+                content: live.content,
+                streamTextOffset: live.streamTextOffset,
+              };
+        }),
+      };
+    });
 }
 
 export function mergeRuntimeConversationTurns(
@@ -190,7 +195,7 @@ export function runtimeConversationTurnClientUserMessageIds(
     new Set([
       ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
       ...turn.items.flatMap((item) =>
-        item.type === "user_message" ? [item.id] : [],
+        item.type === "user_message" ? [item.id, item.message.id] : [],
       ),
     ]),
   );

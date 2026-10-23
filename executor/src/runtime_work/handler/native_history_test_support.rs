@@ -14,7 +14,7 @@ pub(super) fn install_native_history(
     fs::create_dir_all(root).unwrap();
     let item_count: usize = turns
         .iter()
-        .map(|turn| turn["items"].as_array().unwrap().len())
+        .map(|turn| 1 + turn["items"].as_array().unwrap().len())
         .sum();
     let padding = if next_cursor.is_some() {
         500usize.saturating_sub(item_count)
@@ -26,6 +26,7 @@ pub(super) fn install_native_history(
         .collect();
     let mut metadata = Vec::new();
     for mut turn in turns {
+        entries.push(json!({"type":"turnStarted","position":entries.len(),"turnId":turn["id"]}));
         for item in turn["items"].as_array().unwrap() {
             entries.push(
                 json!({"type":"item","position":entries.len(),"turnId":turn["id"],"item":item}),

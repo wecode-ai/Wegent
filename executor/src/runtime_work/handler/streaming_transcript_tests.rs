@@ -79,11 +79,14 @@ async fn native_transcript_preserves_text_identity_and_order() {
                 .iter()
                 .map(|item| item["id"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["progress-1", "progress-2", "final-1"]
+            ["progress-1", "progress-2"]
         );
         assert_eq!(items[0]["type"], "block");
-        assert_eq!(items[2]["type"], "assistant_text");
-        assert_eq!(items[2]["content"], expected_content);
+        let live = response["runtimeTurns"][0]["items"].as_array().unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0]["id"], "final-1");
+        assert_eq!(live[0]["type"], "assistant_text");
+        assert_eq!(live[0]["content"], expected_content);
         assert_eq!(
             items,
             response["messages"][0]["runtimeItems"].as_array().unwrap()

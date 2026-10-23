@@ -16,7 +16,9 @@ The executor preserves native positions on normalized turns and items. Multiple 
 
 Positions belong to a native `threadId`. Replacing a thread invalidates the previous branch's cached ordering and supersedes its in-flight reads. Ordinary task navigation retains each task's shared conversation.
 
-An item identity shared by the native page and observed stream establishes a confirmation boundary. History supersedes unpositioned provisional cache entries before that boundary; they cannot move to the end of confirmed history. Previously positioned history remains loaded, and the unconfirmed live suffix remains visible. This boundary uses identity intersection rather than text or timestamp guesses.
+A turn can span multiple native pages. Only a page containing its user item or turn-start boundary owns a synthetic user presentation; turn metadata carried by a cursor cannot transfer that ownership to another page.
+
+Persisted items use native positions; unpositioned runtime items retain their observed native neighbors. Absence from a history page is not deletion. The executor returns unfinished live items and running background commands separately in runtimeTurns, without appending cached historical text. Explicit supersededTurnIds remove replaced turns and reject late events. Native users bind to host send identities only through a unique user and presentation in the same turn.
 
 ## Ownership and synchronization
 
@@ -27,6 +29,8 @@ Edit/retry supersession markers filter native turns before normalization so both
 Task navigation, reconnection, and lifecycle reconciliation use `synchronizeRuntimeConversation`: identical requests coalesce, competing writes within a conversation serialize, and other conversations proceed independently. Archival invalidates outstanding writes. Navigation metadata reads do not mutate transcript content.
 
 Live updates continue publishing during a history read. Their observed state is retained for the commit. Append-only tool deltas are materialized against that state before reconciliation, avoiding duplicate appends when native history already contains them. Text reconciliation uses stable item identity and preserves complete prefixes already included in native history. This contract does not claim that the upstream protocol exposes an atomic revision or watermark.
+
+Child-thread views are read-only projections: they neither adopt the child as the parent task thread nor update parent context usage. The cache applies updates immediately; React subscriptions coalesce view notifications per animation frame without holding another message state.
 
 Each live action is published once on arrival. Completing or aborting hydration only notifies subscribers of the snapshot change; replaying actions would repeat their side effects.
 

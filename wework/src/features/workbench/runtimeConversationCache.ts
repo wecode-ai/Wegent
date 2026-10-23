@@ -62,6 +62,7 @@ import {
   runtimeConversationKey,
   turnsByConversation,
   threadIdsByConversation,
+  supersededTurnIdsByConversation,
   turnContainsClientUserMessage,
   type RuntimeConversationMetadata,
 } from './runtimeConversationCacheStore'
@@ -237,6 +238,7 @@ export function adoptRuntimeConversationThread(
   const previous = threadIdsByConversation.get(key)
   threadIdsByConversation.set(key, threadId)
   if (!previous || previous === threadId) return false
+  supersededTurnIdsByConversation.delete(key)
   cacheRuntimeConversationTurns(key, [])
   projectedMessagesByConversation.delete(key)
   return true
@@ -304,18 +306,25 @@ export function completeRuntimeConversationHydration(
   address: RuntimeTaskAddress,
   token: symbol,
   snapshotTurns: RuntimeConversationTurn[],
-  threadId?: string | null
+  threadId?: string | null,
+  supersededTurnIds: string[] = []
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
   const changedThread = adoptRuntimeConversationThread(address, threadId)
+  const superseded = new Set([
+    ...(supersededTurnIdsByConversation.get(key) ?? []),
+    ...supersededTurnIds,
+  ])
+  if (superseded.size > 0) supersededTurnIdsByConversation.set(key, superseded)
 
   const turns = hydrateRuntimeConversationTurns(
     turnsByConversation.get(key) ?? [],
     snapshotTurns,
     hydration.bufferedActions,
-    !changedThread
+    !changedThread,
+    [...superseded]
   )
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
@@ -420,7 +429,10 @@ export function applyRuntimeConversationAction(
     hydration.bufferedActions.push(action)
   }
   const currentTurns = turnsByConversation.get(key) ?? []
-  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)
+  const superseded = supersededTurnIdsByConversation.get(key)
+  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action).filter(
+    turn => !turn.id || !superseded?.has(turn.id)
+  )
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action)
   return projectRuntimeConversationMessages(key, nextTurns)

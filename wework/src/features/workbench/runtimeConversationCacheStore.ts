@@ -42,6 +42,7 @@ export interface RuntimeConversationMetadata {
 
 export const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
 export const threadIdsByConversation = new Map<string, string>()
+export const supersededTurnIdsByConversation = new Map<string, Set<string>>()
 export const projectedMessagesByConversation = new Map<
   string,
   { turns: RuntimeConversationTurn[]; messages: WorkbenchMessage[] }
@@ -112,6 +113,7 @@ function conversationMaps(): Map<string, unknown>[] {
   return [
     turnsByConversation,
     threadIdsByConversation,
+    supersededTurnIdsByConversation,
     projectedMessagesByConversation,
     metadataByConversation,
     listenersByConversation,
@@ -138,9 +140,16 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   if (replacedThread) {
     turnsByConversation.delete(previousKey)
     hydrationByConversation.delete(previousKey)
+    supersededTurnIdsByConversation.delete(previousKey)
     evictConversationViewport(previousKey)
   }
   moveEntry(threadIdsByConversation, previousKey, nextKey, (_, current) => current)
+  moveEntry(
+    supersededTurnIdsByConversation,
+    previousKey,
+    nextKey,
+    (previous, current) => new Set([...previous, ...current])
+  )
   moveEntry(turnsByConversation, previousKey, nextKey, (previous, current) =>
     isMoreRecent(previous, current)
       ? mergeRuntimeConversationTurns(current, previous)

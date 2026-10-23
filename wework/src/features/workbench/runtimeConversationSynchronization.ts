@@ -66,7 +66,13 @@ export function synchronizeRuntimeConversation(
         throw new Error('Runtime transcript response is missing canonical turns')
       const transcript = projectRuntimePaneTranscript(response)
       if (token && operation.isCurrent()) {
-        completeRuntimeConversationHydration(address, token, transcript.turns, transcript.threadId)
+        completeRuntimeConversationHydration(
+          address,
+          token,
+          transcript.turns,
+          transcript.threadId,
+          transcript.supersededTurnIds
+        )
       } else if (token) {
         abortRuntimeConversationHydration(address, token)
       }
@@ -83,4 +89,17 @@ export function synchronizeRuntimeConversation(
   requests.set(requestKey, pending)
   writer.pending = pending
   return pending
+}
+
+/** Viewing a child thread does not adopt it as the task's current conversation. */
+export async function readRuntimeThreadConversation(
+  read: Reader,
+  address: RuntimeTaskAddress,
+  options: Omit<RuntimeTranscriptRequest, keyof RuntimeTaskAddress> = {}
+): Promise<RuntimePaneTranscript> {
+  if (!address.threadId) throw new Error('A thread view requires an explicit thread identity')
+  const response = await read({ ...address, ...options })
+  if (response.threadId !== address.threadId)
+    throw new Error('Runtime returned a different thread for the requested view')
+  return projectRuntimePaneTranscript(response)
 }

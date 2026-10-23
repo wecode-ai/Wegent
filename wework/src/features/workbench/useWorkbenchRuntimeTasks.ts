@@ -1,4 +1,7 @@
-import { synchronizeRuntimeConversation } from './runtimeConversationSynchronization'
+import {
+  readRuntimeThreadConversation,
+  synchronizeRuntimeConversation,
+} from './runtimeConversationSynchronization'
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -157,10 +160,12 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options: RuntimePaneTranscriptLoadOptions = {}
     ): Promise<RuntimePaneTranscript> => {
-      return synchronizeRuntimeConversation(
+      const { threadOnly, ...requestOptions } = options
+      const load = threadOnly ? readRuntimeThreadConversation : synchronizeRuntimeConversation
+      return load(
         request => executorClient.runtime.getRuntimeTranscript(request),
         address,
-        options
+        requestOptions
       )
     },
     [executorClient]

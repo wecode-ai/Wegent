@@ -7,7 +7,10 @@ import {
   getRuntimeConversationTurns,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
-import { synchronizeRuntimeConversation } from './runtimeConversationSynchronization'
+import {
+  readRuntimeThreadConversation,
+  synchronizeRuntimeConversation,
+} from './runtimeConversationSynchronization'
 
 const address = { deviceId: 'device', taskId: 'sync-task' }
 const response = (content: string): RuntimeTranscriptResponse => ({
@@ -39,6 +42,30 @@ function deferred<T>() {
   return { promise, resolve }
 }
 afterEach(clearRuntimeConversationCacheForTests)
+
+test('removes explicit superseded turns and rejects their late live events', async () => {
+  await synchronizeRuntimeConversation(
+    async () => ({ ...response('Old'), threadId: 'thread' }),
+    address
+  )
+  await synchronizeRuntimeConversation(
+    async () => ({
+      ...response('Empty'),
+      threadId: 'thread',
+      turns: [],
+      supersededTurnIds: ['turn'],
+    }),
+    address
+  )
+  expect(getRuntimeConversationTurns(address)).toEqual([])
+  applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId: 'turn' })
+  expect(getRuntimeConversationTurns(address)).toEqual([])
+  await synchronizeRuntimeConversation(
+    async () => ({ ...response('New branch'), threadId: 'new' }),
+    address
+  )
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({ content: 'New branch' })
+})
 
 test('a superseded alias read cannot switch the canonical conversation back to an old thread', async () => {
   const oldResponse = deferred<RuntimeTranscriptResponse>()
@@ -161,4 +188,62 @@ test('releases the writer on failure so a later explicit recovery can proceed', 
   ).rejects.toThrow('Disconnected')
   await synchronizeRuntimeConversation(async () => response('Recovered'), address)
   expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({ content: 'Recovered' })
+})
+
+test('restores running runtime commands beside completed native history without cached text', async () => {
+  await synchronizeRuntimeConversation(
+    async () => ({
+      ...response('Native answer'),
+      running: false,
+      turns: response('Native answer').turns.map(turn => ({ ...turn, status: 'completed' })),
+      runtimeTurns: [
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [
+            {
+              id: 'command',
+              type: 'block',
+              block: {
+                id: 'command',
+                type: 'tool',
+                status: 'pending',
+                tool_name: 'bash',
+                tool_output: 'ready',
+                render_payload: { kind: 'command_execution', status: 'inProgress' },
+              },
+            },
+          ],
+        },
+      ],
+    }),
+    address
+  )
+  const turn = getRuntimeConversationTurns(address)[0]
+  expect(turn.status).toBe('done')
+  expect(turn.items.map(item => item.id)).toEqual(['command', 'text'])
+  expect(turn.items[0]).toMatchObject({ block: { toolOutput: 'ready' } })
+})
+
+test('reading a child thread cannot replace or invalidate its parent task conversation', async () => {
+  await synchronizeRuntimeConversation(
+    async () => ({ ...response('Parent'), threadId: 'parent' }),
+    address
+  )
+  const child = await readRuntimeThreadConversation(
+    async () => ({ ...response('Child'), threadId: 'child' }),
+    { ...address, threadId: 'child' }
+  )
+  expect(child.messages).toEqual([])
+  expect(child.turns[0].items[0]).toMatchObject({ content: 'Child' })
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({ content: 'Parent' })
+  applyRuntimeConversationAction(address, {
+    type: 'assistant_chunk',
+    subtaskId: 'turn',
+    itemId: 'text',
+    content: ' continues',
+  })
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({
+    content: 'Parent continues',
+  })
 })

@@ -786,7 +786,9 @@ impl RuntimeWorkRpcHandler {
                 }
             });
         if !direct_thread_override {
-            self.merge_active_codex_transcript(&local_task_id, &mut thread);
+            if thread["timeline"] != true {
+                self.merge_active_codex_transcript(&local_task_id, &mut thread);
+            }
             self.repair_legacy_task_activity_time(&local_task_id, &thread);
         }
         let workspace_path = local_link
@@ -811,9 +813,14 @@ impl RuntimeWorkRpcHandler {
                     after_cursor.as_deref(),
                 );
             }
+            let presentations =
+                native_page_user_presentations(user_message_presentations(link), &thread);
+            if thread["timeline"] == true {
+                bind_native_user_presentations(&mut messages, &presentations);
+            }
             attach_user_message_presentations_for_page(
                 &mut messages,
-                user_message_presentations(link),
+                presentations,
                 presentation_page_messages.as_deref().unwrap_or_default(),
                 &presentation_page_turn_ids,
                 page_before_cursor.is_some(),
@@ -938,6 +945,13 @@ impl RuntimeWorkRpcHandler {
             turn_navigation,
         });
         response["threadId"] = json!(thread_id);
+        if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
+            if thread["timeline"] == true {
+                response["runtimeTurns"] = json!(self.runtime_codex_turns(link, running));
+            }
+            response["supersededTurnIds"] =
+                json!(superseded_transcript_turn_ids(&link.runtime_handle));
+        }
         Ok(response)
     }
 

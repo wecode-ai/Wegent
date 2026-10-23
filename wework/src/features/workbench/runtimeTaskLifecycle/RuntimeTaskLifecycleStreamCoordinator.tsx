@@ -9,7 +9,6 @@ import {
   beginRuntimeGoalSnapshot,
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
-  replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
@@ -221,9 +220,6 @@ export function RuntimeTaskLifecycleStreamCoordinator({
             store.isPriorTurn(address, terminalTurnId))
         ) {
           return
-        }
-        if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
-          replaceRuntimeConversationSnapshot(address, transcript.turns)
         }
         store.syncTranscript(address, transcript)
         if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {

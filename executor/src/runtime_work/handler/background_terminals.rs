@@ -101,6 +101,46 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+pub(super) fn runtime_background_command_messages(link: &RuntimeTaskLink) -> Vec<Value> {
+    let mut messages = completed_transcript_messages(link)
+        .into_iter()
+        .filter(|message| message["role"] == "assistant")
+        .collect::<Vec<_>>();
+    for message in &mut messages {
+        let items = message
+            .get("runtimeItems")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|item| {
+                item["type"] == "block"
+                    && item
+                        .pointer("/block/render_payload/kind")
+                        .and_then(Value::as_str)
+                        == Some("command_execution")
+                    && item
+                        .pointer("/block/render_payload/status")
+                        .and_then(Value::as_str)
+                        == Some("inProgress")
+                    && !matches!(
+                        item.pointer("/block/status").and_then(Value::as_str),
+                        Some("done" | "error")
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        message["runtimeItems"] = json!(items);
+    }
+    messages
+        .into_iter()
+        .filter(|message| {
+            message["runtimeItems"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        })
+        .collect()
+}
+
 fn append_command_output(value: &mut Value, field: &str, delta: &str) {
     let mut output = raw_string_field(value, field).unwrap_or_default();
     push_limited_tool_output(&mut output, delta);

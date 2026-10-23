@@ -27,9 +27,12 @@ fn cached_transcript_response(
         context_usage,
         running,
         pagination: if runtime_has_provider_transcript_reader(&link.runtime) {
-            let (before_cursor, after_cursor) = transcript_snapshot_pagination(link)
-                .unwrap_or((None, None));
-            TranscriptPagination::Opaque { before_cursor, after_cursor }
+            let (before_cursor, after_cursor) =
+                transcript_snapshot_pagination(link).unwrap_or((None, None));
+            TranscriptPagination::Opaque {
+                before_cursor,
+                after_cursor,
+            }
         } else {
             transcript_pagination(
                 &link.runtime,
@@ -45,6 +48,7 @@ fn cached_transcript_response(
     });
     response["historyUnavailable"] = Value::Bool(history_unavailable);
     response["threadId"] = json!(link.thread_id);
+    response["supersededTurnIds"] = json!(superseded_transcript_turn_ids(&link.runtime_handle));
     if link.runtime == "claude_code" && link.status == "interrupted" && !running {
         if let Some(turn) = response
             .get_mut("turns")
@@ -155,19 +159,32 @@ fn merge_latest_completed_transcript_messages(
         {
             // Exit snapshots are authoritative; running commands use their live event buffer.
             visit_transcript_blocks_mut(&mut completed, |block| {
-                if block.pointer("/render_payload/kind").and_then(Value::as_str)
+                if block
+                    .pointer("/render_payload/kind")
+                    .and_then(Value::as_str)
                     != Some("command_execution")
                 {
                     return;
                 }
-                if let Some(native) = existing.get("blocks").and_then(Value::as_array)
-                    .into_iter().flatten().find(|native| {
+                if let Some(native) = existing
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find(|native| {
                         native.get("id") == block.get("id")
-                            && native.pointer("/render_payload/kind").and_then(Value::as_str) == Some("command_execution")
-                            && matches!(native.get("status").and_then(Value::as_str), Some("done" | "error"))
+                            && native
+                                .pointer("/render_payload/kind")
+                                .and_then(Value::as_str)
+                                == Some("command_execution")
+                            && matches!(
+                                native.get("status").and_then(Value::as_str),
+                                Some("done" | "error")
+                            )
                     })
                 {
-                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object()) {
+                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object())
+                    {
                         block.extend(native.clone());
                     }
                 }
@@ -427,8 +444,12 @@ fn transcript_canonical_turns(
     }
 
     for turn in &mut turns {
-        if let Some(position) = turn["items"].as_array().into_iter().flatten()
-            .filter_map(|item| item["position"].as_u64()).min()
+        if let Some(position) = turn["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["position"].as_u64())
+            .min()
         {
             turn["position"] = json!(position);
         }
@@ -750,6 +771,51 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
         false,
         false,
     );
+}
+
+fn native_page_user_presentations(mut presentations: Vec<Value>, thread: &Value) -> Vec<Value> {
+    if thread["timeline"] != true {
+        return presentations;
+    }
+    let owning_turns = thread["turns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|turn| turn["ownsUserPresentation"] == true)
+        .filter_map(|turn| turn["id"].as_str())
+        .collect::<Vec<_>>();
+    // A turn can span pages. Only its native user entry or opening boundary owns a prompt.
+    for presentation in &mut presentations {
+        let turn_id =
+            string_field(presentation, "turnId").or_else(|| string_field(presentation, "turn_id"));
+        if !turn_id.is_some_and(|id| owning_turns.contains(&id.as_str())) {
+            presentation["ensureVisible"] = json!(false);
+        }
+    }
+    presentations
+}
+
+fn bind_native_user_presentations(messages: &mut [Value], presentations: &[Value]) {
+    for index in 0..messages.len() {
+        let message = &messages[index];
+        if message["role"] != "user" || message.get("clientUserMessageId").is_some() {
+            continue;
+        }
+        let turn_id = &message["turnId"];
+        let users = messages
+            .iter()
+            .filter(|message| message["role"] == "user" && &message["turnId"] == turn_id)
+            .count();
+        let owners = presentations
+            .iter()
+            .filter(|presentation| &presentation["turnId"] == turn_id)
+            .collect::<Vec<_>>();
+        if users == 1 && owners.len() == 1 {
+            if let Some(id) = owners[0].get("clientUserMessageId") {
+                messages[index]["clientUserMessageId"] = id.clone();
+            }
+        }
+    }
 }
 
 fn attach_user_message_presentations_for_page(

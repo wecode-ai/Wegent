@@ -1,3 +1,7 @@
+import {
+  mergeRuntimeConversationTurns,
+  projectRuntimeConversationTurns,
+} from "./runtime-turns";
 import type {
   RuntimeName,
   RuntimeContextUsage,
@@ -17,6 +21,7 @@ export interface LoadedTranscriptRange {
   end: number;
 }
 export interface RuntimePaneTranscript {
+  supersededTurnIds?: string[];
   threadId?: string | null;
   historyUnavailable?: boolean;
   runtime?: RuntimeName;
@@ -37,13 +42,21 @@ export interface RuntimePaneTranscript {
 export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse,
 ): RuntimePaneTranscript {
+  const turns = mergeRuntimeConversationTurns(
+    runtimeTranscriptTurnsToConversationTurns(transcript.runtimeTurns ?? []),
+    runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+  );
   return {
+    supersededTurnIds: transcript.supersededTurnIds ?? [],
     threadId: transcript.threadId,
     historyUnavailable: transcript.historyUnavailable,
     runtime: transcript.runtime,
     running: transcript.running,
-    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+    messages:
+      transcript.runtimeTurns !== undefined
+        ? projectRuntimeConversationTurns(turns)
+        : runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+    turns,
     contextUsage: transcript.contextUsage ?? null,
     turnNavigation: transcript.turnNavigation ?? [],
     fullContent: transcript.fullContent === true,

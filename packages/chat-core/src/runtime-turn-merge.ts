@@ -228,28 +228,33 @@ export function mergeRuntimeConversationItems(
       .filter((item) => item.position !== undefined)
       .map((item) => item.id),
   );
-  // A native identity confirms the observed stream through that item. Unpositioned items
-  // before that boundary are superseded by history, not a second history to append at its tail.
-  const confirmedIndex = localItems.reduce(
-    (last, item, index) => (positionedIds.has(item.id) ? index : last),
-    -1,
+  const snapshotUserIds = new Map(
+    snapshotItems.flatMap((item) =>
+      item.type === "user_message" ? [[item.message.id, item.id] as const] : [],
+    ),
+  );
+  const localUsers = new Map(
+    localItems.flatMap((item) =>
+      item.type === "user_message" ? [[item.message.id, item] as const] : [],
+    ),
   );
   const reconciledLocalItems =
     positionedIds.size > 0
-      ? localItems.filter(
-          (item, index) =>
-            item.position !== undefined ||
-            positionedIds.has(item.id) ||
-            (item.type === "user_message" && !item.message.runtimeGuidance) ||
-            index > confirmedIndex,
-        )
+      ? localItems
       : removeEquivalentAssistantTextItems(localItems, snapshotItems);
-  const localById = new Map(
-    reconciledLocalItems.map((item) => [item.id, item]),
+  const canonicalLocalItems = reconciledLocalItems.filter(
+    (item) =>
+      item.type !== "user_message" ||
+      !snapshotUserIds.has(item.message.id) ||
+      snapshotUserIds.get(item.message.id) === item.id,
   );
+  const localById = new Map(canonicalLocalItems.map((item) => [item.id, item]));
   const mergedSnapshotItems = snapshotItems.map((item) =>
     mergeRuntimeConversationItem(
-      localById.get(item.id),
+      localById.get(item.id) ??
+        (item.type === "user_message"
+          ? localUsers.get(item.message.id)
+          : undefined),
       item,
       preserveLocalTerminal,
     ),
@@ -257,7 +262,7 @@ export function mergeRuntimeConversationItems(
   const snapshotById = new Map(
     mergedSnapshotItems.map((item) => [item.id, item]),
   );
-  const mergedLocalItems = reconciledLocalItems.map(
+  const mergedLocalItems = canonicalLocalItems.map(
     (item) => snapshotById.get(item.id) ?? item,
   );
   return orderRuntimeConversationItems(
@@ -270,22 +275,33 @@ export function orderRuntimeConversationItems(
   items: RuntimeConversationItem[],
 ): RuntimeConversationItem[] {
   if (!items.some((item) => item.position !== undefined)) return items;
-  return items
-    .map((item, index) => ({ item, index }))
+  let nextPosition = Infinity;
+  const ordered = items.map((item, index) => ({
+    item,
+    index,
+    anchor: Infinity,
+  }));
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const entry = ordered[index];
+    if (entry.item.position !== undefined) nextPosition = entry.item.position;
+    // Unpersisted runtime items stay before their observed next native identity. Absence from
+    // durable history is not deletion: background commands and pending prompts may never be rows.
+    entry.anchor =
+      entry.item.type === "user_message" &&
+      !entry.item.message.runtimeGuidance &&
+      entry.item.position === undefined
+        ? -Infinity
+        : (entry.item.position ?? nextPosition);
+  }
+  return ordered
     .sort(
       (left, right) =>
-        itemPosition(left.item) - itemPosition(right.item) ||
+        left.anchor - right.anchor ||
+        Number(left.item.position !== undefined) -
+          Number(right.item.position !== undefined) ||
         left.index - right.index,
     )
     .map(({ item }) => item);
-}
-
-function itemPosition(item: RuntimeConversationItem): number {
-  if (item.position !== undefined) return item.position;
-  // An acknowledged initial prompt may precede its native user item being persisted.
-  return item.type === "user_message" && !item.message.runtimeGuidance
-    ? -Infinity
-    : Infinity;
 }
 
 export function removeEquivalentAssistantTextItems(
@@ -526,6 +542,9 @@ export function mergeRuntimeConversationItem(
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {
   snapshot = { ...snapshot, position: snapshot.position ?? local?.position };
+  if (local?.type === "user_message" && snapshot.type === "user_message") {
+    return { ...snapshot, message: { ...local.message, ...snapshot.message } };
+  }
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
   const snapshotBlock = preserveToolOutput(
     local.block,
