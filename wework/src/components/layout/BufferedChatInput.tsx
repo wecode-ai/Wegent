@@ -261,7 +261,11 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       draftScopeKeyRef.current = scopeKey
       setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
     } else if (hasNewerLocalDraft) {
-      publishedDraftsRef.current.delete(scopeKey)
+      // Keep pending publications: the parent may acknowledge an older draft
+      // after this clear, and that acknowledgement must not replace the newer
+      // local edit.
+      draftScopeKeyRef.current = scopeKey
+      setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
     } else {
       publishedDraftsRef.current.delete(scopeKey)
       draftRef.current = value

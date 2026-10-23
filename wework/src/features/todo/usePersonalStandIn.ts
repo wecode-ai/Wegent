@@ -16,6 +16,7 @@ export function usePersonalStandIn(
   const [saved, setSaved] = useState<PersonalStandInSettings | null>(null)
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
   const [currentDeviceId, setCurrentDeviceId] = useState('')
+  const [loadDeviceId, setLoadDeviceId] = useState(initialDeviceId ?? '')
   const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
   const [agents, setAgents] = useState<PersonalStandInAgent[]>([])
   const [agentError, setAgentError] = useState<string | null>(null)
@@ -32,12 +33,14 @@ export function usePersonalStandIn(
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity) throw new Error('Executor identity is unavailable')
       const target = deviceId || identity.deviceId
+      if (!active) return
+      setCurrentDeviceId(identity.deviceId)
+      setLoadDeviceId(target)
       const settings = await services.standInApi!.personalGet(userId, target)
       if (!active) return
       const key = JSON.stringify([userId, target, reload])
       const previous = loaded.current
       loaded.current = { key, settings }
-      setCurrentDeviceId(identity.deviceId)
       setSaved(settings)
       setDraft(current =>
         previous?.key === key && current && !dequal(current, previous.settings) ? current : settings
@@ -118,6 +121,7 @@ export function usePersonalStandIn(
     saving,
     save,
     currentDeviceId,
+    loadDeviceId,
     setDeviceId: (value: string) => {
       setLoading(true)
       setDeviceId(value)
