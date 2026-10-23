@@ -61,6 +61,24 @@ function lastUserMessageBody(body) {
   return messages.length > 0 ? JSON.stringify(messages.at(-1)) : ''
 }
 
+function hasAcceptedQuestionAnswer(messages) {
+  return messages.some(message =>
+    (message.blocks ?? []).some(block => {
+      const payload = block?.renderPayload
+      return (
+        payload?.kind === 'request_user_input' &&
+        Array.isArray(payload.questions) &&
+        payload.questions.length > 0 &&
+        Boolean(
+          payload.response ??
+          payload.requestUserInputResponse ??
+          payload.request_user_input_response
+        )
+      )
+    })
+  )
+}
+
 async function waitForCount(control, selector, expected, message, timeoutMs) {
   const startedAt = Date.now()
   let latest = null
@@ -319,6 +337,13 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const failureGate = nextContinuationGate()
       await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      const failureTask = await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
+        'The transport-failure elicitation was not attached to a runtime task',
+        taskTimeoutMs
+      )
+      const failureAddress = failureTask.workbench.currentRuntimeTask
       await control.command('failNextLocalExecutorRequest', 'body', {
         value: JSON.stringify({
           method: 'runtime.tasks.send',
@@ -332,11 +357,22 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'The rejected transport did not surface an error',
         taskTimeoutMs
       )
+      assert.equal(
+        hasAcceptedQuestionAnswer(
+          JSON.parse(
+            await control.command('getRuntimeConversationMessages', 'body', {
+              value: JSON.stringify(failureAddress),
+            })
+          )
+        ),
+        false,
+        'A failed answer transport was recorded as accepted'
+      )
       await waitForCount(
         control,
-        `${WORKBENCH} [data-testid="request-user-input-summary"]`,
-        0,
-        'A failed answer transport was marked as accepted',
+        `${WORKBENCH} [data-testid="request-user-input-questions"]`,
+        1,
+        'A failed answer transport removed its pending form',
         taskTimeoutMs
       )
       await control.command(
@@ -361,6 +397,13 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       const rejectionGate = deferred()
       activeContinuationGate = rejectionGate
       await openElicitation(control, WORKBENCH, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
+      const rejectionTask = await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
+        'The rejection elicitation was not attached to a runtime task',
+        taskTimeoutMs
+      )
+      const rejectionAddress = rejectionTask.workbench.currentRuntimeTask
       await control.command('holdLocalExecutorRequests', 'body', {
         value: JSON.stringify({
           method: 'runtime.tasks.send',
@@ -384,12 +427,16 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'The executor rejection did not surface for the stale answer',
         taskTimeoutMs
       )
-      await waitForCount(
-        control,
-        `${WORKBENCH} [data-testid="request-user-input-summary"]`,
-        0,
-        'A rejected input answer was marked as accepted',
-        taskTimeoutMs
+      assert.equal(
+        hasAcceptedQuestionAnswer(
+          JSON.parse(
+            await control.command('getRuntimeConversationMessages', 'body', {
+              value: JSON.stringify(rejectionAddress),
+            })
+          )
+        ),
+        false,
+        'A rejected input answer was recorded as accepted'
       )
       rejectionGate.resolve()
 
