@@ -17,7 +17,7 @@ from openai import APIConnectionError, AsyncOpenAI
 from app.services.execution.chat_shell_client import ChatShellClientPool
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
-from shared.models import EventType, ExecutionRequest
+from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 _COMPLETED = b'data: {"type":"response.completed","response":{"output":[]}}\n\n'
 _DELTA = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
@@ -207,12 +207,15 @@ async def test_exhausted_dispatch_emits_one_classified_terminal_error() -> None:
 
 
 class _UnfinishedTerminalStream(httpx.AsyncByteStream):
-    def __init__(self, failure: str):
+    def __init__(self, failure: str, first_byte_delay: float = 0) -> None:
         self.failure = failure
+        self.first_byte_delay = first_byte_delay
         self.closed = False
         self.tail_started = asyncio.Event()
 
     async def __aiter__(self):
+        if self.first_byte_delay:
+            await asyncio.sleep(self.first_byte_delay)
         yield _COMPLETED
         self.tail_started.set()
         if self.failure == "read_error":
@@ -224,9 +227,14 @@ class _UnfinishedTerminalStream(httpx.AsyncByteStream):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["timeout", "read_error", "cancel"])
-async def test_terminal_cleanup_preserves_completion(failure) -> None:
-    body = _UnfinishedTerminalStream(failure)
+@pytest.mark.parametrize(
+    "failure,first_byte_delay",
+    [("timeout", 0), ("read_error", 0), ("cancel", 0), ("cancel", 2.1)],
+)
+async def test_terminal_cleanup_preserves_completion(
+    failure: str, first_byte_delay: float
+) -> None:
+    body = _UnfinishedTerminalStream(failure, first_byte_delay)
     requests = []
 
     def handler(request):
@@ -239,7 +247,14 @@ async def test_terminal_cleanup_preserves_completion(failure) -> None:
             200, headers={"content-type": "text/event-stream"}, stream=body
         )
 
+    terminal_delivered = asyncio.Event()
+
+    async def record_terminal(event: ExecutionEvent) -> None:
+        if event.type == EventType.DONE.value:
+            terminal_delivered.set()
+
     emitter = AsyncMock()
+    emitter.emit.side_effect = record_terminal
     async with _environment(handler) as (dispatcher, request, target, client, session):
         with patch(
             "app.services.execution.chat_shell_sse._SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS",
@@ -249,6 +264,9 @@ async def test_terminal_cleanup_preserves_completion(failure) -> None:
                 dispatcher._dispatch_sse(request, target, emitter)
             )
             try:
+                # Request startup and SDK decoding precede the cleanup under test.
+                # Keep the original two-second bounds on the terminal drain itself.
+                await asyncio.wait_for(terminal_delivered.wait(), timeout=30)
                 if failure == "cancel":
                     await asyncio.wait_for(body.tail_started.wait(), timeout=2)
                     task.cancel()
