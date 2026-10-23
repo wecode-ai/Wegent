@@ -1936,6 +1936,7 @@
     "plugins_update": "Update",
     "plugins_update_confirm": "This update syncs to the current device. If it fails, the installed version on this device stays unchanged. Continue?",
     "plugins_update_available": "Update available",
+    "plugins_runtime_recovery_required": "Repair required",
     "plugins_auto_update_progress": "Automatically updating plugins: {{updated}} processed, {{remaining}} remaining",
     "plugins_auto_update_complete_one": "Automatically updated {{count}} plugin",
     "plugins_auto_update_complete_other": "Automatically updated {{count}} plugins",
