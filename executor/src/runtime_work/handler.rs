@@ -133,6 +133,7 @@ mod context_compaction;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
 mod project_preparation;
@@ -142,6 +143,7 @@ mod runner_catalog;
 mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
+mod stand_in_agent;
 mod stand_in_workspace;
 mod supervisor;
 mod system;
@@ -1114,7 +1116,10 @@ impl RuntimeWorkRpcHandler {
             self.reconcile_and_resume_persisted_turns().await;
         }
         let result = match method {
-            "runtime.stand_in.list" => self.list_stand_in_settings(payload),
+            "runtime.stand_in.list" => self.list_stand_in_settings(payload).await,
+            "runtime.stand_in.personal.get" => self.personal_stand_in_settings(payload, false),
+            "runtime.stand_in.personal.agents" => self.personal_stand_in_agents(payload).await,
+            "runtime.stand_in.personal.save" => self.personal_stand_in_settings(payload, true),
             "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
             "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
             "runtime.stand_in.run" => self.run_stand_in(payload).await,

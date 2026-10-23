@@ -18,7 +18,15 @@ fn project_stand_ins_keep_independent_tag_rules_and_versions() {
     store.save_stand_in_settings("project", 7, review).unwrap();
     drop(store);
     let store = LocalTaskStore::open(&path).unwrap();
-    assert_eq!(store.enabled_stand_in_settings().unwrap().len(), 2);
+    assert_eq!(
+        store.personal_stand_in(7, "mac").unwrap()["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|role| role["enabled"] == true)
+            .count(),
+        2
+    );
     assert_eq!(
         store.stand_in_settings("project", 7, "default").unwrap()["version"],
         1
@@ -97,12 +105,24 @@ fn cloud_settings_need_no_local_project_mirror_and_preserve_enable_time_on_edit(
         .save_stand_in_settings("cloud-project", 7, changed)
         .unwrap();
     assert_eq!(edited["enabledAfter"], saved["enabledAfter"]);
-    assert_eq!(store.enabled_stand_in_settings().unwrap().len(), 1);
+    assert_eq!(
+        store.personal_stand_in(7, "mac").unwrap()["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|role| role["enabled"] == true)
+            .count(),
+        1
+    );
     edited["enabled"] = json!(false);
     store
         .save_stand_in_settings("cloud-project", 7, edited)
         .unwrap();
-    assert!(store.enabled_stand_in_settings().unwrap().is_empty());
+    assert!(store.personal_stand_in(7, "mac").unwrap()["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|role| role["enabled"] == false));
 }
 
 #[test]

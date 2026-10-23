@@ -4,6 +4,9 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 function fixture() {
   const transport = {
+    personalAgents: vi.fn<StandInExecutorApi['personalAgents']>(),
+    personalGet: vi.fn<StandInExecutorApi['personalGet']>(),
+    personalSave: vi.fn<StandInExecutorApi['personalSave']>(),
     readTask: vi.fn<StandInExecutorApi['readTask']>(),
     catalog: vi.fn<StandInExecutorApi['catalog']>().mockResolvedValue({ models: [] }),
     run: vi.fn<StandInExecutorApi['run']>().mockResolvedValue({ deviceId: 'mac', taskId: 'task' }),
@@ -93,7 +96,7 @@ it('explicitly runs a saved disabled stand-in through its selected device', asyn
   const request = vi.fn().mockResolvedValue({ deviceId: 'cloud-device', taskId: 'stand-in-human' })
   const transport = createStandInExecutorApi(request)
   const api = bindProjectStandInApi(transport, 7, 'cloud', async () => ({ deviceId: 'mac' }))
-  await expect(api.run!('project', 'issue', 'cloud-device')).resolves.toEqual({
+  await expect(api.run!('project', 'issue', 'cloud-device', 'default')).resolves.toEqual({
     deviceId: 'cloud-device',
     taskId: 'stand-in-human',
   })

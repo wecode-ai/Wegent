@@ -108,7 +108,7 @@ AppImage 手工替换。
 
 `components.json` 记录应用版本、发布通道、每个组件的版本、资源路径和内容
 SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七个组件使用
-`components-<channel>-<platform>-<arch>.json` 独立升级。
+`components-<channel>-<platform>-<arch>.json` 随目标应用版本一起升级。
 
 macOS 发布先按未签名内容、证书身份、架构、签名参数和构建工具版本定位不可变的
 已签名组件。输入和签名策略不变时，安装包与在线组件复用完全相同的已签名字节；
@@ -134,18 +134,8 @@ Release；外部 Core DSH、Codex 和 DWS 压缩包集中存放在 `wework-updat
 对应的版本 Release 都携带完整安装包和当次组件清单，并且只向相应位置上传尚未
 存在的哈希资产。
 
-版本边界按是否必须与 Electron 宿主原子兼容划分：
-
-- 跟随应用版本：Electron/Chromium/Node、主进程、preload、启动 Shell、Host
-  capability 实现、原生 Node 模块、应用标识、签名权限、图标、安装器、updater
-  协议与不兼容的本地数据迁移；
-- 独立组件版本：Core DSH、Wework 核心 DSH 插件及 UI、Wework 应用静态资源、
-  内置个人插件与 Skills、Executor、Codex、DWS；
-- 用户从插件市场安装的插件继续由插件系统独立管理，不进入桌面组件发布。
-
-独立组件仍必须与当前 Electron `appVersion` 精确匹配，并作为一个组件集合原子
-切换。如果某个组件开始依赖新的 Host capability、原生模块或不兼容的数据格式，
-该次发布自动升级为整包发布。
+所有内置桌面组件与 Electron 共用应用发布版本。组件本身保留内容哈希和依赖产品
+版本，用于完整性校验与跨版本复用；用户从插件市场安装的插件仍由插件系统独立管理。
 
 Wework UI、核心插件、应用静态资源、内置个人插件和 Executor 共用同一个
 `wework-<sourceSha12>` 运行时版本，其中 `sourceSha12` 是源码提交 SHA 的前 12
@@ -155,28 +145,25 @@ Wework 发布。Codex 和 DWS 保留各自的产品版本。
 
 Wework 应用按变化频率进一步拆分：`weworkCorePlugins` 保存经常变化的应用代码和
 UI，`weworkAppStatic` 保存稳定的 `web/vendor` 与 `web/wasm`。客户端在启动前将
-同一版本的两个组件原子组合成完整插件目录。常规 Wework UI 修改只应发布并下载
-`weworkCorePlugins`，其压缩包必须小于 20 MiB；如果超过该上限，应重新检查组件
+同一版本的两个组件原子组合成完整插件目录。常规 Wework UI 修改只应改变
+`weworkCorePlugins` 的内容，其压缩包必须小于 20 MiB；如果超过该上限，应重新检查组件
 归属，不得把 Codex、Core DSH、DWS 等外部二进制塞入版本 Release。
 
-发布工作流会自动比较上一次组件清单记录的源码提交。如果改动只影响可管理组件，
-当前 Electron 应用版本保持不变，已安装客户端只收到组件清单；Electron 主进程、
-preload、打包资源或发布边界发生变化时，工作流才提升应用版本并推进 Electron
-整包更新清单。无法安全归类的 Wework 改动一律按整包更新处理。
+发布工作流比较上次发布的源码提交。只要桌面代码或任一内置组件有变化，就提升
+应用版本，创建唯一的 `wework-v<appVersion>` Release，并同时更新 Electron YAML
+和组件清单。没有相关变化时跳过发布；已发布版本不能用于发布另一份代码。
+组件变化也使用新的 stable 补丁版本或 beta 序号，不再生成同版本 Runtime Release。
+稳定渠道的最新版本 Release 标记为 GitHub `latest`；完整安装包支持离线首次安装。
 
-无论选择组件更新还是整包更新，每次发布都会创建一个不可变的版本 Release，并
-携带包含最新组件的完整安装包。整包更新使用 `wework-v<appVersion>` 标签；组件
-更新使用 `wework-v<appVersion>-runtime.<sourceSha12>` 标签，其中 `sourceSha12`
-是源码提交 SHA 的前 12 个十六进制字符，不提升 Electron `appVersion`。稳定渠道
-的最新版本 Release 标记为 GitHub `latest`，新人从该 Release 下载完整安装包，
-任意历史 Release 也都可以独立完成首次安装。
+客户端统一通过用户选择的 stable/beta 渠道检查应用版本。在下载应用更新时，先
+准备目标版本的组件，再下载宿主包，重启后一起激活；启动时不再独立检查或下载
+同版本组件。组件清单与组件缓存只是传输和存储优化，不是第二条更新入口。
 
 本项目源码构建的 Wework 核心插件及 UI、应用静态资源、内置插件和 Executor
 组件包上传到对应的版本 Release。Core DSH、Codex、DWS 等外部或非本项目源码
 构建的二进制依赖，以内容哈希命名并统一存放在 `wework-updater`，供不同版本复用。
 滚动组件清单也发布到 `wework-updater`，但这里不再作为新人完整安装包的下载入口。
-已有用户因此只下载实际发生变化的组件，无需因为纯 Wework UI 或组件改动重复下载
-Electron 和 Chromium。
+已有用户复用内容未变的组件，同时下载与新应用版本匹配的精简宿主更新包。
 
 版本 Release 的组件附件上传前会校验已有同名附件的上传状态、大小和 SHA-256，
 完全一致时直接复用，不覆盖不可变组件。如果 GitHub CLI 上传报错，脚本会重新
@@ -196,7 +183,7 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 原始字节的 `store` 模式；正式 Release E2E 会读取 ZIP 摘要并拒绝未压缩的宿主更新
 产物。完整安装包始终包含所有组件，以支持离线首次安装。
 
-客户端只接受与当前 Electron 应用版本、通道、平台和架构完全匹配的组件清单。
+客户端只接受与目标 Electron 应用版本、所选通道、平台和架构完全匹配的组件清单。
 清单中的 `downloadUrl` 可以指向版本 Release、共享依赖 Release 或独立对象存储，
 不要求与滚动清单同源或位于同一路径。下载内容的可信边界由完整性校验确定：客户端
 先校验压缩包大小与 SHA-256，再解压并校验组件内容 SHA-256。组件先写入用户数据

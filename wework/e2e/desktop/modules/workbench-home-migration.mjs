@@ -30,6 +30,44 @@ const ATTACHMENT_PATH = join('workspace', 'attachments', 'workbench-home-e2e.bin
 const ATTACHMENT = Buffer.from([0, 1, 2, 127, 128, 254, 255])
 const NATIVE_SESSION_MARKER = 'WEWORK_MIGRATION_NATIVE_HISTORY_42'
 
+async function recordNativeTurnFailure(fixture, home, resumeId, error, stdout) {
+  try {
+    const configPath = join(home, 'config.toml')
+    const [configResult, homeResult] = await Promise.allSettled([
+      readFile(configPath, 'utf8'),
+      realpath(home),
+    ])
+    const config = configResult.status === 'fulfilled' ? configResult.value : ''
+    const diagnostic = {
+      home,
+      configPath,
+      resolvedHome: homeResult.status === 'fulfilled' ? homeResult.value : undefined,
+      homeError: homeResult.status === 'rejected' ? homeResult.reason.message : undefined,
+      configError: configResult.status === 'rejected' ? configResult.reason.message : undefined,
+      configBytes: Buffer.byteLength(config),
+      providerSection: config
+        .split('\n')
+        .filter(line => line.includes('model_providers') && line.trim().startsWith('[')),
+      selectedProvider: config.match(/^model_provider\s*=\s*(.+)$/m)?.[1],
+      configMarkerPresent: config.includes(CONFIG_MARKER),
+      resumeId,
+      code: error.code,
+      message: error.message,
+      stdout: stdout ?? error.stdout,
+      stderr: error.stderr,
+      sqlite: await collectCodexSqliteDiagnostics(home, resumeId),
+    }
+    await writeFile(
+      join(fixture.resultDir, 'native-migration-turn-failure.json'),
+      JSON.stringify(diagnostic)
+    )
+    console.error('[native-migration-resume]', JSON.stringify(diagnostic))
+  } catch (diagnosticError) {
+    // Observability must not replace the native execution or validation failure.
+    console.error('Native migration diagnostics failed:', diagnosticError.message)
+  }
+}
+
 async function runNativeTurn(fixture, home, resumeId) {
   const args = resumeId
     ? [
@@ -64,35 +102,24 @@ async function runNativeTurn(fixture, home, resumeId) {
   let stdout
   try {
     stdout = (await execution).stdout
-  } catch (error) {
-    // Retain storage evidence from the active migration Home before runner cleanup.
-    await writeFile(
-      join(fixture.resultDir, 'native-migration-turn-failure.json'),
-      JSON.stringify({
-        home,
-        realHome: await realpath(home),
-        resumeId,
-        code: error.code,
-        stderr: error.stderr,
-        sqlite: await collectCodexSqliteDiagnostics(home, resumeId),
-      })
+    const events = stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+    const thread = events.find(event => event.type === 'thread.started')?.thread_id
+    assert.equal(typeof thread, 'string', 'Native Codex did not report its persisted thread')
+    assert.ok(
+      events.some(event => event.type === 'turn.completed'),
+      'Native Codex turn did not finish'
     )
+    if (resumeId)
+      assert.equal(thread, resumeId, 'Native Codex created a new session instead of resuming')
+    return thread
+  } catch (error) {
+    await recordNativeTurnFailure(fixture, home, resumeId, error, stdout)
     throw error
   }
-  const events = stdout
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map(line => JSON.parse(line))
-  const thread = events.find(event => event.type === 'thread.started')?.thread_id
-  assert.equal(typeof thread, 'string', 'Native Codex did not report its persisted thread')
-  assert.ok(
-    events.some(event => event.type === 'turn.completed'),
-    'Native Codex turn did not finish'
-  )
-  if (resumeId)
-    assert.equal(thread, resumeId, 'Native Codex created a new session instead of resuming')
-  return thread
 }
 
 function assertWithin(root, path) {
