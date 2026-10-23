@@ -8,7 +8,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex as StdMutex, OnceLock, Weak,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -78,6 +81,7 @@ const CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=fal
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
+static CODEX_NOTIFICATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const CODEX_GLOBAL_NOTIFICATION_CAPACITY: usize = 2048;
 const CODEX_THREAD_NOTIFICATION_CAPACITY: usize = 2048;
 const MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS: usize = 4;
@@ -1313,14 +1317,20 @@ impl CodexNotificationHub {
             .subscribe()
     }
 
-    fn send(&self, message: Value) {
-        let _ = self.all.send(message.clone());
-        let thread_id =
-            stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
+    fn send(&self, mut message: Value) {
         let mut threads = self
             .threads
             .lock()
             .expect("Codex notification thread registry should not be poisoned");
+        if let Some(object) = message.as_object_mut() {
+            object.insert(
+                crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD.to_owned(),
+                json!(CODEX_NOTIFICATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)),
+            );
+        }
+        let _ = self.all.send(message.clone());
+        let thread_id =
+            stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
         threads.retain(|_, sender| sender.receiver_count() > 0);
         if let Some(thread_id) = thread_id {
             if let Some(sender) = threads.get(&thread_id) {

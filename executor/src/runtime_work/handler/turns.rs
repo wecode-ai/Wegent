@@ -942,21 +942,6 @@ impl RuntimeWorkRpcHandler {
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
-        let notification = codex_notification(&message);
-        let notification_turn_id = codex_notification_turn_id(&message);
-        let command_notification = notification.method.starts_with("item/commandExecution/")
-            || item_type(&notification_item(notification.params)) == "commandexecution";
-        if command_notification
-            && notification_turn_id.is_some()
-            && notification_turn_id == event_mapper.execution_completed_turn_id
-        {
-            // Goal continuations keep this receiver alive after native completion.
-            // The global router owns all subsequent output from that completed turn.
-            return;
-        }
-        if notification.method == "turn/completed" {
-            event_mapper.execution_completed_turn_id = notification_turn_id;
-        }
         if self.sync_runtime_task_goal_from_notification(local_task_id, &message) {
             self.journal_active_goal_turn(local_task_id, request, active_turn.as_ref());
         }
@@ -979,7 +964,9 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         }
-        self.record_background_terminal_notification(local_task_id, &message);
+        let notification = codex_notification(&message);
+        let command_notification = notification.method.starts_with("item/commandExecution/")
+            || item_type(&notification_item(notification.params)) == "commandexecution";
         if codex_notification_requires_user_input(&message) {
             self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         } else if matches!(
@@ -1035,6 +1022,17 @@ impl RuntimeWorkRpcHandler {
             request,
             active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
         );
+        let _command_delivery = if command_notification {
+            Some(
+                match self.claim_codex_command_notification(local_task_id, &message, false) {
+                    Some(guard) => guard,
+                    None => return,
+                },
+            )
+        } else {
+            None
+        };
+        self.record_background_terminal_notification(local_task_id, &message);
         if let Some(active_turn) = active_turn {
             event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);

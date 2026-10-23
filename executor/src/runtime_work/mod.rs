@@ -6,6 +6,7 @@ mod api_context;
 pub(crate) mod automations;
 mod codex_global_state;
 mod codex_notifications;
+pub(crate) use codex_notifications::CODEX_NOTIFICATION_SEQUENCE_FIELD;
 mod codex_rollout;
 mod codex_transcript_page;
 mod codex_user_input;

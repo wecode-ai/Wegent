@@ -534,9 +534,20 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
 
     hub.send(message.clone());
 
-    assert_eq!(all.recv().await.unwrap(), message);
-    assert_eq!(thread_a.recv().await.unwrap(), message);
+    let delivered = all.recv().await.unwrap();
+    assert_eq!(thread_a.recv().await.unwrap(), delivered);
+    let sequence = delivered[crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD]
+        .as_u64()
+        .unwrap();
+    let mut original = delivered.as_object().unwrap().clone();
+    original.remove(crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD);
+    assert_eq!(Value::Object(original), message);
     assert!(thread_b.try_recv().is_err());
+    hub.send(message);
+    assert_ne!(
+        all.recv().await.unwrap()[crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD],
+        sequence
+    );
 }
 
 #[tokio::test]

@@ -714,6 +714,8 @@ struct RuntimeThreadEventRoute {
 
 #[derive(Default)]
 struct RuntimeThreadEventRouting {
+    command_notification_claims: HashMap<String, HashSet<u64>>,
+    global_notification_progress: HashMap<String, u64>,
     routes: HashMap<String, RuntimeThreadEventRoute>,
     pending_notifications: VecDeque<PendingCodexNotification>,
     replaying_route_generations: HashMap<String, u64>,

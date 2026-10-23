@@ -208,7 +208,20 @@ fn background_terminal_started_turn_does_not_route_before_execution_mapper_is_re
 
 #[tokio::test]
 async fn background_terminal_output_is_owned_once_while_waiting_for_goal_continuation() {
-    let (mut handler, root) = isolated_runtime_work_handler("background-terminal-goal-handoff");
+    verify_background_terminal_goal_handoff(true).await;
+}
+
+#[tokio::test]
+async fn background_terminal_output_survives_router_missing_completion() {
+    verify_background_terminal_goal_handoff(false).await;
+}
+
+async fn verify_background_terminal_goal_handoff(router_observed_completion: bool) {
+    let (mut handler, root) = isolated_runtime_work_handler(if router_observed_completion {
+        "background-terminal-goal-handoff"
+    } else {
+        "background-terminal-router-missed-completion"
+    });
     let (event_tx, mut event_rx) = broadcast::channel(32);
     handler.event_tx = Some(event_tx);
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
@@ -229,39 +242,61 @@ async fn background_terminal_output_is_owned_once_while_waiting_for_goal_continu
         }]}
     }});
     let mut mapper = CodexNotificationEventMapper::default();
-    handler.route_codex_notification(completion.clone());
+    let hook_turn = handler.active_codex_turn("task-1");
+    if router_observed_completion {
+        handler.route_codex_notification(completion.clone());
+    }
+    // A lagged router can miss completion and receive output while the native
+    // receiver is preempted before its active-turn callback runs.
     handler
         .map_execution_codex_notification(
             "task-1",
             execution_id,
             &request,
-            handler.active_codex_turn("task-1"),
+            hook_turn.clone(),
             &mut mapper,
             completion,
         )
         .await;
     while event_rx.try_recv().is_ok() {}
-    let output = json!({"method": "item/commandExecution/outputDelta", "params": {
-        "threadId": "thread-1", "turnId": "turn-1", "itemId": "command-1", "delta": "tick\n"
-    }});
-    handler.route_codex_notification(output.clone());
-    handler
-        .map_execution_codex_notification(
-            "task-1",
-            execution_id,
-            &request,
-            handler.active_codex_turn("task-1"),
-            &mut mapper,
-            output,
-        )
-        .await;
-    assert_eq!(
-        event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["tool_output_delta"],
-        "tick\n"
-    );
-    assert!(event_rx.try_recv().is_err());
+    for sequence in [2, 3] {
+        let output = json!({"_wegentNotificationSequence": sequence, "method": "item/commandExecution/outputDelta", "params": {
+            "threadId": "thread-1", "turnId": "turn-1", "itemId": "command-1", "delta": "tick\n"
+        }});
+        if sequence == 2 {
+            handler.route_codex_notification(output.clone());
+        }
+        handler
+            .map_execution_codex_notification(
+                "task-1",
+                execution_id,
+                &request,
+                hook_turn.clone(),
+                &mut mapper,
+                output.clone(),
+            )
+            .await;
+        if sequence == 3 {
+            assert!(handler.finish_local_task(
+                "task-1",
+                execution_id,
+                Some("thread-1".into()),
+                "done"
+            ));
+            handler.mark_thread_event_route_idle("thread-1");
+            handler.route_codex_notification(output);
+        }
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["tool_output_delta"],
+            "tick\n"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
     let messages = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
-    assert_eq!(messages[0]["blocks"][0]["tool_output"], "ready\ntick\n");
+    assert_eq!(
+        messages[0]["blocks"][0]["tool_output"],
+        "ready\ntick\ntick\n"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
