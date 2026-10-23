@@ -16,6 +16,7 @@ export function projectRuntimeConversationTurn(
   let assistantItems: RuntimeConversationItem[] = [];
   let followsGuidance = false;
   let assistantAnchor = "assistant";
+  let hasUser = false;
 
   const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
     const shouldProjectEmptyAssistant =
@@ -71,7 +72,9 @@ export function projectRuntimeConversationTurn(
   for (const item of turn.items) {
     if (item.type === "user_message") {
       const hadAssistant = assistantItems.length > 0;
-      flushAssistant(false, hadAssistant);
+      const splitsReply = hasUser || item.message.runtimeGuidance === true;
+      if (splitsReply) flushAssistant(false, hadAssistant);
+      hasUser = true;
       const parsedContexts = parseCodeCommentContexts(item.message.content);
       messages.push(
         parsedContexts
@@ -87,7 +90,10 @@ export function projectRuntimeConversationTurn(
       followsGuidance = item.message.runtimeGuidance === true;
       // Output items can be reordered or recovered while the same reply streams.
       // Only user boundaries establish another assistant view within a turn.
-      if (hadAssistant || followsGuidance || assistantAnchor !== "assistant") {
+      if (
+        splitsReply &&
+        (hadAssistant || followsGuidance || assistantAnchor !== "assistant")
+      ) {
         assistantAnchor = `after:${item.id}`;
       }
       if (followsGuidance && turn.id !== null) {

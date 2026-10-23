@@ -180,7 +180,7 @@ pub(super) fn push_accumulated_assistant(
     assistant: &mut AssistantTurnAccumulation,
     include_file_only: bool,
     options: TranscriptBuildOptions,
-) {
+) -> Vec<Value> {
     let has_content = if include_file_only {
         assistant.has_output()
     } else {
@@ -190,7 +190,7 @@ pub(super) fn push_accumulated_assistant(
         include_file_only && context.status == "failed" && *segment_index == 0;
     let should_emit = has_content || is_first_failed_turn;
     if !should_emit {
-        return;
+        return Vec::new();
     }
 
     apply_turn_completed_at(&mut assistant.blocks, context.completed_at);
@@ -224,6 +224,7 @@ pub(super) fn push_accumulated_assistant(
     }));
     *segment_index += 1;
     assistant.clear_after_emit();
+    runtime_items
 }
 
 fn user_message(

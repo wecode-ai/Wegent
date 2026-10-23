@@ -44,10 +44,7 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
-  abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
-  beginRuntimeConversationHydration,
-  completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   getRuntimeConversationTurnIds,
@@ -354,29 +351,20 @@ export function TemporaryChatPanel({
     if (!address || sendEphemeral) return
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
-    const hydrationToken = beginRuntimeConversationHydration(address)
     setHistoryLoading(true)
     setHistoryError(null)
     const usageRevision = contextUsageStore.getRevision()
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
-        if (cancelled) {
-          abortRuntimeConversationHydration(address, hydrationToken)
-          return
-        }
+        if (cancelled) return
         contextUsageStore.receiveTranscript(transcript.contextUsage, usageRevision)
         lifecycleStore.syncTranscript(address, transcript, {
           preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
         })
-        const nextMessages = completeRuntimeConversationHydration(
-          address,
-          hydrationToken,
-          transcript.turns
-        )
+        const nextMessages = getRuntimeConversationMessages(address)
         if (nextMessages.length > 0) setMessages(nextMessages)
       })
       .catch(caughtError => {
-        abortRuntimeConversationHydration(address, hydrationToken)
         if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
           setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
         }
@@ -386,7 +374,6 @@ export function TemporaryChatPanel({
       })
     return () => {
       cancelled = true
-      abortRuntimeConversationHydration(address, hydrationToken)
     }
   }, [
     address,
@@ -678,6 +665,7 @@ export function TemporaryChatPanel({
       address,
       goalDraftActive,
       createTask,
+      lifecycleStore,
       createTemporaryRuntimeTask,
       currentProject,
       input,

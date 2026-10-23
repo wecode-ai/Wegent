@@ -137,6 +137,7 @@ export const DESKTOP_CHECKPOINTS = [
   'streaming-timers',
   'streaming-scroll',
   'streaming-message-order',
+  'streaming-conversation-switching',
   'streaming-subagents',
 
   'collaboration-issue-badges',
@@ -202,6 +203,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'streaming-timers',
       'streaming-scroll',
       'streaming-message-order',
+      'streaming-conversation-switching',
       'streaming-subagents',
     ],
   ],
