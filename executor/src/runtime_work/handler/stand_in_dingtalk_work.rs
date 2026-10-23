@@ -78,15 +78,15 @@ impl RuntimeWorkRpcHandler {
             .iter()
             .find(|role| role["id"] == origin["standInId"]);
         let confirm = if origin["type"] == "dingtalk_work" {
-            role.is_none_or(|role| {
-                role["dingtalk"].as_array().is_none_or(|sources| {
+            role.map_or(true, |role| {
+                role["dingtalk"].as_array().map_or(true, |sources| {
                     sources
                         .iter()
                         .any(|source| source["policy"]["askBeforeAct"] == true)
                 })
             })
         } else {
-            role.is_none_or(|role| {
+            role.map_or(true, |role| {
                 crate::task_runtime::personal_stand_in::project_policy(
                     role,
                     origin["cloudProjectId"].as_str().unwrap_or_default(),

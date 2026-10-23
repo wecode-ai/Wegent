@@ -183,9 +183,9 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
         ));
     }
     let source = &role["collaboration"];
-    let valid = role.get("collaboration").is_none_or(valid_collaboration)
-        && source.get("policy").is_none_or(validate_policy)
-        && source.get("projectPolicies").is_none_or(|rows| {
+    let valid = role.get("collaboration").map_or(true, valid_collaboration)
+        && source.get("policy").map_or(true, validate_policy)
+        && source.get("projectPolicies").map_or(true, |rows| {
             rows.as_array().is_some_and(|rows| {
                 let mut ids = HashSet::new();
                 rows.len() <= 1000
@@ -196,7 +196,7 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                     })
             })
         })
-        && role.get("dingtalk").is_none_or(|rows| {
+        && role.get("dingtalk").map_or(true, |rows| {
             rows.as_array().is_some_and(|rows| {
                 let mut ids = HashSet::new();
                 rows.len() <= 1000
@@ -234,6 +234,7 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
         let mut primary = settings["primary"].clone();
         primary["id"] = json!("@primary");
         primary["name"] = json!("我的分身");
+        primary["version"] = settings["version"].clone();
         identities.push(primary);
     }
     for identity in &mut identities {

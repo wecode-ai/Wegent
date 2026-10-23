@@ -90,6 +90,7 @@ fn primary_project_intake_has_a_cutoff_and_never_collides_with_a_role_named_prim
     let identities = stand_in_identities(&saved);
     assert_eq!(identities[0]["id"], "primary");
     assert_eq!(identities[1]["id"], "@primary");
+    assert_eq!(identities[1]["version"], saved["version"]);
     assert!(identities[1]["enabledAfter"].is_string());
     assert_eq!(
         store.stand_in_settings("project", 7, "@primary").unwrap()["prompt"],
@@ -135,7 +136,7 @@ fn ingestion_deduplicates_and_corrections_never_replay_sent_messages() {
         .unwrap()
         .to_owned();
     store
-        .update_stand_in_dispatch(7, id, &[record.clone()], "sent", None)
+        .update_stand_in_dispatch(7, id, std::slice::from_ref(&record), "sent", None)
         .unwrap();
     let moved = store.adjust_stand_in_message(7, id, &record, None).unwrap();
     assert_eq!(
@@ -196,7 +197,7 @@ fn messages_arriving_during_dispatch_remain_pending_after_the_earlier_batch_fini
         .unwrap()
         .to_owned();
     store
-        .update_stand_in_dispatch(7, id, &[first.clone()], "sending", None)
+        .update_stand_in_dispatch(7, id, std::slice::from_ref(&first), "sending", None)
         .unwrap();
     store
         .ingest_stand_in_message(

@@ -150,6 +150,14 @@ pub(crate) fn normalize_source_page(
     response: &Value,
     own_id: &str,
 ) -> Result<Vec<Value>, AppIpcError> {
+    // DWS omits conversationMessagesList on a successful empty page.
+    if response["success"] == true
+        && response["result"]["hasMore"] == false
+        && response["result"].get("conversationMessagesList").is_none()
+        && response["result"]["nextCursor"].is_string()
+    {
+        return Ok(Vec::new());
+    }
     let conversations = response["result"]["conversationMessagesList"]
         .as_array()
         .ok_or_else(|| invalid("Missing conversation messages"))?;
@@ -180,44 +188,6 @@ pub(crate) fn normalize_source_page(
         }
     }
     Ok(result)
-}
-
-#[cfg(test)]
-mod source_tests {
-    use super::*;
-
-    fn conversation(id: &str, direct: bool, sender: &str) -> Value {
-        json!({"openConversationId":id,"singleChat":direct,"messages":[{"senderOpenDingTalkId":sender,"content":"Review this","openMessageId":format!("{id}:{sender}"),"createTime":"2026-10-23 12:00:00"}]})
-    }
-
-    #[test]
-    fn intake_never_broadens_group_or_direct_scopes_and_excludes_self() {
-        let response = json!({"result":{"conversationMessagesList":[conversation("selected",false,"alice"),conversation("other",false,"alice"),conversation("selected",false,"me"),conversation("dm-a",true,"alice"),conversation("dm-b",true,"bob"),conversation("self",true,"me")]}});
-        let group =
-            normalize_source_page(&json!({"kind":"group","id":"selected"}), &response, "me")
-                .unwrap();
-        assert_eq!(group.len(), 1);
-        assert_eq!(group[0]["conversationId"], "selected");
-        let direct =
-            normalize_source_page(&json!({"kind":"direct","id":"alice"}), &response, "me").unwrap();
-        assert_eq!(direct.len(), 1);
-        assert_eq!(direct[0]["conversationId"], "dm-a");
-    }
-
-    #[test]
-    fn invalid_provider_responses_fail_explicitly_without_advancing_intake() {
-        assert!(normalize_source_page(
-            &json!({"kind":"group","id":"selected"}),
-            &json!({"success":false}),
-            "me"
-        )
-        .is_err());
-        let malformed = json!({"result":{"conversationMessagesList":[{"openConversationId":"selected","singleChat":false,"messages":[{"senderOpenDingTalkId":"alice"}]}]}});
-        assert!(
-            normalize_source_page(&json!({"kind":"group","id":"selected"}), &malformed, "me")
-                .is_err()
-        );
-    }
 }
 
 async fn own_identity(profile: &str) -> Result<String, AppIpcError> {
@@ -327,4 +297,57 @@ pub(crate) fn runtime_work_summaries(user: i64, role: Option<&str>) -> Vec<Value
         })
         .map(super::response::local_task_json)
         .collect()
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    fn conversation(id: &str, direct: bool, sender: &str) -> Value {
+        json!({"openConversationId":id,"singleChat":direct,"messages":[{"senderOpenDingTalkId":sender,"content":"Review this","openMessageId":format!("{id}:{sender}"),"createTime":"2026-10-23 12:00:00"}]})
+    }
+
+    #[test]
+    fn intake_never_broadens_group_or_direct_scopes_and_excludes_self() {
+        let response = json!({"result":{"conversationMessagesList":[conversation("selected",false,"alice"),conversation("other",false,"alice"),conversation("selected",false,"me"),conversation("dm-a",true,"alice"),conversation("dm-b",true,"bob"),conversation("self",true,"me")]}});
+        let group =
+            normalize_source_page(&json!({"kind":"group","id":"selected"}), &response, "me")
+                .unwrap();
+        assert_eq!(group.len(), 1);
+        assert_eq!(group[0]["conversationId"], "selected");
+        let direct =
+            normalize_source_page(&json!({"kind":"direct","id":"alice"}), &response, "me").unwrap();
+        assert_eq!(direct.len(), 1);
+        assert_eq!(direct[0]["conversationId"], "dm-a");
+    }
+
+    #[test]
+    fn invalid_provider_responses_fail_explicitly_without_advancing_intake() {
+        assert!(normalize_source_page(
+            &json!({"kind":"group","id":"selected"}),
+            &json!({"success":false}),
+            "me"
+        )
+        .is_err());
+        let malformed = json!({"result":{"conversationMessagesList":[{"openConversationId":"selected","singleChat":false,"messages":[{"senderOpenDingTalkId":"alice"}]}]}});
+        assert!(
+            normalize_source_page(&json!({"kind":"group","id":"selected"}), &malformed, "me")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn successful_empty_dws_pages_omit_the_message_array() {
+        let response = json!({"arguments":[],"errorCode":null,"errorMsg":null,"result":{"hasMore":false,"nextCursor":"0"},"success":true});
+        assert!(
+            normalize_source_page(&json!({"kind":"group","id":"selected"}), &response, "me")
+                .unwrap()
+                .is_empty()
+        );
+        let incomplete = json!({"success":true,"result":{"hasMore":true,"nextCursor":"next"}});
+        assert!(
+            normalize_source_page(&json!({"kind":"group","id":"selected"}), &incomplete, "me")
+                .is_err()
+        );
+    }
 }
