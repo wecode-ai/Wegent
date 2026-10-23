@@ -1,10 +1,11 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WeworkInbox } from '@/api/notifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import type { DeviceInfo } from '@/types/devices'
 import { assignment } from './standInNotifications.fixtures'
 import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import { publishPersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
 
 const { windowLabel } = vi.hoisted(() => ({ windowLabel: vi.fn(() => 'main') }))
 vi.mock('@/lib/runtime-environment', () => ({ getDesktopWindowLabel: windowLabel }))
@@ -139,5 +140,19 @@ describe('automatic stand-in assignment notifications', () => {
     )
     expect(identity).not.toHaveBeenCalled()
     expect(notifyAssignment).not.toHaveBeenCalled()
+  })
+
+  it('reconsiders an assignment after an explicit settings save or selection retry', async () => {
+    const { notifyAssignment, source, inbox } = fixture()
+    renderHook(() => useStandInAssignmentNotifications(inbox, source, 'account', 7))
+    await waitFor(() => expect(notifyAssignment).toHaveBeenCalledOnce())
+    act(() =>
+      publishPersonalStandIn({ userId: 8, executionDeviceId: 'mac' } as PersonalStandInSettings)
+    )
+    expect(notifyAssignment).toHaveBeenCalledOnce()
+    act(() =>
+      publishPersonalStandIn({ userId: 7, executionDeviceId: 'mac' } as PersonalStandInSettings)
+    )
+    await waitFor(() => expect(notifyAssignment).toHaveBeenCalledTimes(2))
   })
 })

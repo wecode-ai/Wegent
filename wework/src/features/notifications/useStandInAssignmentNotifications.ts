@@ -1,5 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { WeworkInbox } from '@/api/notifications'
+import { subscribePersonalStandIn } from '@/api/personalStandIn'
+import { subscribeStandInSettings } from '@/api/standIn'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import type { TaskSource } from './NotificationTaskSourceContext'
@@ -12,9 +14,26 @@ export function useStandInAssignmentNotifications(
   userId: number | null
 ) {
   const attempted = useRef(new Set<string>())
+  const [settingsRevision, setSettingsRevision] = useState(0)
   const api = source?.services?.standInApi
   const identity = source?.services?.getLocalRuntimeSidebarIdentity
   const devices = source?.devices
+  useEffect(() => {
+    const retryUpdatedDevice = (settings: { userId: number; executionDeviceId: string }) => {
+      if (settings.userId !== userId) return
+      const prefix = `${accountKey}:${userId}:${settings.executionDeviceId}:`
+      for (const key of attempted.current) {
+        if (key.startsWith(prefix)) attempted.current.delete(key)
+      }
+      setSettingsRevision(revision => revision + 1)
+    }
+    const unsubscribePersonal = subscribePersonalStandIn(retryUpdatedDevice)
+    const unsubscribeProject = subscribeStandInSettings(retryUpdatedDevice)
+    return () => {
+      unsubscribePersonal()
+      unsubscribeProject()
+    }
+  }, [accountKey, userId])
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main' || !api || !identity || userId == null) return
     const assignments = (inbox?.items ?? []).flatMap(notification => {
@@ -64,5 +83,5 @@ export function useStandInAssignmentNotifications(
     return () => {
       active = false
     }
-  }, [inbox, api, identity, devices, userId, accountKey])
+  }, [inbox, api, identity, devices, userId, accountKey, settingsRevision])
 }
