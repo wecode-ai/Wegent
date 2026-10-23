@@ -42,6 +42,29 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    const diagnose = (event: string, detail: Record<string, unknown> = {}) => {
+      if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+      console.error(
+        '[desktop-e2e-terminal]',
+        JSON.stringify({
+          event,
+          at: Date.now(),
+          id: terminal?.id,
+          rows: xterm.rows,
+          cols: xterm.cols,
+          base: xterm.buffer.active.baseY,
+          viewport: xterm.buffer.active.viewportY,
+          ...detail,
+        })
+      )
+    }
+    const keydown = (event: KeyboardEvent) => {
+      diagnose('keydown', { key: event.key, keyCode: event.keyCode, shift: event.shiftKey })
+      queueMicrotask(() => diagnose('after-keydown'))
+    }
+    container.addEventListener('keydown', keydown, true)
+    const scroll = xterm.onScroll(() => diagnose('scroll'))
+    const resize = xterm.onResize(() => diagnose('resize'))
     const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
     resourceRef.current = { terminal: xterm, fit, output: '' }
     const observer = new ResizeObserver(() => {
@@ -50,6 +73,9 @@ export function BackgroundTerminalPanel({
     observer.observe(container)
     return () => {
       observer.disconnect()
+      container.removeEventListener('keydown', keydown, true)
+      scroll.dispose()
+      resize.dispose()
       disposeTheme()
       resourceRef.current = null
       xterm.dispose()
@@ -63,6 +89,18 @@ export function BackgroundTerminalPanel({
       const delta = output.slice(resource.output.length)
       if (delta.length > 0) resource.terminal.write(delta)
     } else {
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        console.error(
+          '[desktop-e2e-terminal]',
+          JSON.stringify({
+            event: 'output-reset',
+            at: Date.now(),
+            id: terminal?.id,
+            previousLength: resource.output.length,
+            nextLength: output.length,
+          })
+        )
+      }
       resource.terminal.reset()
       resource.terminal.write(output)
     }

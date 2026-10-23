@@ -20,6 +20,8 @@ vi.mock('@xterm/xterm', () => ({
     dispose = vi.fn()
     open = vi.fn()
     loadAddon = vi.fn()
+    onScroll = vi.fn(() => ({ dispose: vi.fn() }))
+    onResize = vi.fn(() => ({ dispose: vi.fn() }))
     constructor(public options: Record<string, unknown>) {
       records.instances.push(this)
     }
