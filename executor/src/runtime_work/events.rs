@@ -453,6 +453,17 @@ impl CodexNotificationEventMapper {
                 );
             }
             "mcpServer/elicitation/request" => {
+                log_executor_event(
+                    "runtime MCP elicitation observed",
+                    &[
+                        ("local_task_id", local_task_id.to_owned()),
+                        ("turn_id", request.subtask_id.clone()),
+                        (
+                            "mode",
+                            string_field(notification.params, "mode").unwrap_or_default(),
+                        ),
+                    ],
+                );
                 if let Some(params) =
                     mcp_server_elicitation_request_user_input_params(notification.params)
                 {
