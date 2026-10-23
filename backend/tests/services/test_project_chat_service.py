@@ -3189,6 +3189,135 @@ def test_execution_truth_rejection_blocks_project_chat_projection(
     assert message.status == "streaming"
 
 
+def _create_terminal_runtime_activity(
+    test_db: Session, test_user: User, *, content: str
+) -> ProjectChatMessage:
+    """Create a completed execution with its already-projected runtime activity."""
+
+    suffix = uuid.uuid4().hex[:8]
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id=f"CHAT-RECONCILED-RUNTIME-{suffix}",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Reconciled runtime activity",
+        description="",
+        status="in_review",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="completed",
+        runtime_device_id="local-device",
+        runtime_task_id=f"reconciled-runtime-{suffix}",
+    )
+    test_db.add_all([task, execution])
+    test_db.flush()
+    activity = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Agent",
+        message_type="text",
+        content=content,
+        metadata_json={"execution_id": execution.id, "run_status": "completed"},
+        status="completed",
+        runtime_device_id="local-device",
+        runtime_task_id=execution.runtime_task_id,
+    )
+    test_db.add(activity)
+    test_db.commit()
+    return activity
+
+
+def test_delayed_completed_event_restores_reconciled_activity_content(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "turn-reconciled-1",
+                "eventSeq": 5,
+                "data": {"value": "Final answer from the delayed event"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["mode"] == "snapshot"
+    assert projected["message"]["messageId"] == activity.message_id
+    assert projected["message"]["content"] == "Final answer from the delayed event"
+    test_db.refresh(activity)
+    assert activity.content == "Final answer from the delayed event"
+    assert activity.metadata_json["runtime_turn_id"] == "turn-reconciled-1"
+
+
+def test_delayed_completed_event_preserves_existing_completed_content(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="A more recent completed answer",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "older-turn",
+                "eventSeq": 5,
+                "data": {"value": "Stale older answer"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "A more recent completed answer"
+    assert "runtime_turn_id" not in activity.metadata_json
+
+
 def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
     test_db: Session, test_user: User
 ) -> None:

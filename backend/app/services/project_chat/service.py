@@ -1248,12 +1248,29 @@ class ProjectChatService:
                 task_id=runtime_task_id,
                 turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
             )
+            if completed is None:
+                from app.services.loop_item_executions.service import (
+                    loop_item_execution_service,
+                )
+
+                completed = loop_item_execution_service.reconciled_activity_for_runtime(
+                    db,
+                    runtime_device_id=device_id,
+                    runtime_task_id=runtime_task_id,
+                    owner_user_id=owner_user_id,
+                )
             if completed is not None:
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
                 if content is not None:
                     completed.content = content
+                    turn_id = payload.get("subtaskId") or payload.get("subtask_id")
+                    if isinstance(turn_id, str) and turn_id:
+                        completed.metadata_json = {
+                            **dict(completed.metadata_json or {}),
+                            "runtime_turn_id": turn_id,
+                        }
                     self._index_activity_change_requests(db, completed)
                 self._commit(db)
                 db.refresh(completed)

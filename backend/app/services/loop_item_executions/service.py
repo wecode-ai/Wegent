@@ -1965,6 +1965,50 @@ class LoopItemExecutionService:
             )
         return query.order_by(LoopItemExecution.id.desc()).first()
 
+    def reconciled_activity_for_runtime(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        owner_user_id: int | None = None,
+    ) -> Optional[ProjectChatMessage]:
+        """Return an outcome-only activity owned by a terminal execution.
+
+        A reconciliation can elect the terminal execution before the final
+        Runtime event arrives. The execution is then no longer active, so the
+        delayed final text must be matched through the execution aggregate
+        instead of the streaming-activity query. Only activities that still
+        carry the outcome-only marker are eligible, so a delayed event for an
+        older turn cannot overwrite a later turn's completed content.
+        """
+
+        device_ids = runtime_device_identity_ids(
+            db,
+            runtime_device_id,
+            owner_user_id=owner_user_id,
+        )
+        if not device_ids:
+            return None
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.runtime_device_id.in_(device_ids),
+            LoopItemExecution.runtime_task_id == runtime_task_id,
+            LoopItemExecution.status == STATUS_COMPLETED,
+        )
+        if owner_user_id is not None:
+            query = query.filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id
+            )
+        execution = query.order_by(LoopItemExecution.id.desc()).first()
+        if execution is None:
+            return None
+        activity = self._linked_activity(db, execution)
+        if activity is None or activity.status != "completed":
+            return None
+        if (activity.content or "").strip() not in {"", "Runtime reconciled"}:
+            return None
+        return activity
+
     def open_execution_activity(
         self,
         db: Session,
