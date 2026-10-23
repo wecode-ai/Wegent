@@ -115,6 +115,9 @@ class SubtaskContextBrief(BaseModel):
     external_node_id: Optional[str] = None
     external_document_id: Optional[str] = None
     external_parent_id: Optional[str] = None
+    # Conversation reference fields
+    task_id: Optional[int] = None
+    task_updated_at: Optional[str] = None
     # External web content fields
     video_count: Optional[int] = None
     site: Optional[str] = None

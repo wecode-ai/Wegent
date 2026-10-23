@@ -227,4 +227,7 @@ pub(crate) struct ContextBriefResponse {
     pub site: RawJson,
     pub source_url: RawJson,
     pub cover_url: RawJson,
+    // Conversation reference fields.
+    pub task_id: RawJson,
+    pub task_updated_at: RawJson,
 }

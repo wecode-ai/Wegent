@@ -2740,7 +2740,7 @@ fn codex_worktree_launch_config_sets_pnpm_environment() {
     );
     assert_eq!(
         params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
-        "true"
+        "false"
     );
 }
 

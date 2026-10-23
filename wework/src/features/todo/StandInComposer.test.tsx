@@ -93,7 +93,7 @@ describe('Stand-in configuration composer', () => {
       }
     )
   })
-  it('waits for the model catalog before allowing settings to be saved', async () => {
+  it('allows settings to be saved while the model catalog is loading', async () => {
     const save = vi.fn(async () => true)
     const model = {
       runtime: 'codex' as const,
@@ -111,7 +111,9 @@ describe('Stand-in configuration composer', () => {
       modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
     } as unknown as WorkbenchServices
     render(<Fixture save={save} services={services} />)
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledOnce()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     await act(async () => finishCatalog({ models: [model] }))
     await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
@@ -236,7 +238,7 @@ describe('Stand-in configuration composer', () => {
     render(<Fixture save={save} />)
     expect(screen.getByTestId('stand-in-prompt')).toHaveAttribute('contenteditable', 'true')
     expect(screen.getByText('本地项目')).toBeInTheDocument()
-    expect(screen.getByText('沿用项目环境')).toBeInTheDocument()
+    expect(screen.getByText('设备默认工作区')).toBeInTheDocument()
     expect(screen.getByTestId('stand-in-workspace-bar')).toContainElement(
       screen.getByTestId('model-selector-button')
     )
@@ -336,10 +338,11 @@ describe('Stand-in configuration composer', () => {
     )
   })
 
-  it('prevents saving an unavailable selected project instead of using another directory', () => {
+  it('saves an unavailable project selection without substituting another directory', async () => {
+    const save = vi.fn(async () => true)
     render(
       <Fixture
-        save={vi.fn()}
+        save={save}
         initial={{
           projectKey: 'removed',
           workspacePath: '/gone',
@@ -347,7 +350,11 @@ describe('Stand-in configuration composer', () => {
         }}
       />
     )
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace: expect.objectContaining({ workspacePath: '/gone' }) })
+    )
     expect(screen.getByTestId('stand-in-prompt')).toHaveAttribute('contenteditable', 'true')
   })
   it('uses the ordinary plus menu for Goal without offering unsupported attachment actions', async () => {

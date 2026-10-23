@@ -31,7 +31,6 @@ import {
   ListTodo,
   Maximize2,
   Minimize2,
-  Package,
   Play,
   Plus,
   Tag,
@@ -49,7 +48,6 @@ import {
   IssueStatusHistoryList,
   issueExecutionElapsedMinutes,
   isScheduleRangeInvalid,
-  isExecutionActive as isTaskExecutionActive,
   Tooltip,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
@@ -94,6 +92,11 @@ import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigu
 import { useCollaborationPortalTheme } from "./theme";
 import { useIssueAssigneeResources } from "./issue-detail/useIssueAssigneeResources";
 import { useIssueCreation } from "./issue-detail/useIssueCreation";
+import {
+  IssueLinkedTasks,
+  IssueDeliveries,
+} from "./issue-detail/IssueExecutionLists";
+import { taskDeviceLabel } from "./issue-detail/taskBindingPresentation";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -671,61 +674,6 @@ export type TodoEditorProps = {
   onWorkflowPlanChanged?: () => void | Promise<void>;
 } & (TodoEditorCreateProps | TodoEditorEditProps);
 
-function taskDeviceLabel(
-  task: SharedIssueDetailTaskBinding,
-  deviceNamesById: Readonly<Record<string, string>> | undefined,
-) {
-  return deviceNamesById?.[task.device_id]?.trim() || task.device_id;
-}
-
-function taskExecutionStatusLabel(
-  status: SharedIssueDetailTaskExecutionState["status"],
-  translate: (
-    key: string,
-    fallback?: string,
-    options?: Record<string, string | number>,
-  ) => string,
-): string {
-  const labels: Record<
-    SharedIssueDetailTaskExecutionState["status"],
-    [string, string]
-  > = {
-    waiting_approval: ["todo.execution_waiting_approval", "等待审批"],
-    queued: ["todo.execution_queued", "排队中"],
-    starting: ["todo.execution_starting", "启动中"],
-    waiting_runtime: ["todo.execution_waiting_runtime", "等待执行环境"],
-    running: ["todo.execution_running", "执行中"],
-    cancelling: ["todo.execution_cancelling", "取消中"],
-    succeeded: ["todo.execution_succeeded", "已完成"],
-    failed: ["todo.execution_failed", "失败"],
-    cancelled: ["todo.execution_cancelled", "已取消"],
-    skipped: ["todo.execution_skipped", "已跳过"],
-    unknown: ["todo.execution_unknown", "状态待同步"],
-  };
-  const [key, fallback] = labels[status];
-  return translate(key, fallback);
-}
-
-function taskExecutionDotClass(
-  status: SharedIssueDetailTaskExecutionState["status"] | undefined,
-): string {
-  if (status === "running") return "is-running";
-  if (status === "succeeded" || status === "skipped") return "is-success";
-  if (status === "failed" || status === "cancelled") return "is-failed";
-  if (
-    status === "waiting_approval" ||
-    status === "queued" ||
-    status === "starting" ||
-    status === "waiting_runtime" ||
-    status === "cancelling"
-  ) {
-    return "is-queued";
-  }
-  return "is-idle";
-}
-
-const COLLAPSED_EXECUTION_TASK_LIMIT = 2;
-
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
 // local draft and stages attachments until the item exists; edit mode loads the
 // sections that require an item id (children, collaborators, executions,
@@ -903,7 +851,6 @@ export function TodoEditor(props: TodoEditorProps) {
     setSaveError,
     item?.assignee_agent_id,
   );
-  const [tasksExpanded, setTasksExpanded] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [assignmentChainOpen, setAssignmentChainOpen] = useState(false);
   const assignmentChainTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1161,7 +1108,6 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentBusy(false);
     setAttachmentError(null);
     setEditingContent(!readFirst);
-    setTasksExpanded(false);
   }, [editItemId, readFirst]);
 
   useLayoutEffect(() => {
@@ -1360,39 +1306,8 @@ export function TodoEditor(props: TodoEditorProps) {
       ? effectiveTasks.slice(0, 1)
       : []
     : effectiveTasks;
-  const activeDisplayedTasks = displayedTasks.filter((task) =>
-    isTaskExecutionActive(props.taskExecutionStates?.[String(task.id)]?.status),
-  );
-  const activeDisplayedTaskIds = new Set(
-    activeDisplayedTasks.map((task) => String(task.id)),
-  );
-  const recentInactiveTasks = displayedTasks
-    .filter((task) => !activeDisplayedTaskIds.has(String(task.id)))
-    .slice()
-    .sort(
-      (left, right) =>
-        Date.parse(right.linked_at ?? "") - Date.parse(left.linked_at ?? ""),
-    );
-  const collapsedDisplayedTasks = [
-    ...activeDisplayedTasks,
-    ...recentInactiveTasks.slice(
-      0,
-      Math.max(0, COLLAPSED_EXECUTION_TASK_LIMIT - activeDisplayedTasks.length),
-    ),
-  ];
-  const orderedDisplayedTasks = [
-    ...activeDisplayedTasks,
-    ...recentInactiveTasks,
-  ];
-  const visibleDisplayedTasks = tasksExpanded
-    ? orderedDisplayedTasks
-    : collapsedDisplayedTasks;
   const executionChildItems = showChildren ? [] : childItems;
   const executionTaskCount = executionChildItems.length + displayedTasks.length;
-  const canToggleExecutionDetails =
-    displayedTasks.length > collapsedDisplayedTasks.length ||
-    executionChildItems.length > COLLAPSED_EXECUTION_TASK_LIMIT ||
-    deliveries.length > 0;
   const hasExecutionDetails =
     executionTaskCount > 0 ||
     deliveries.length > 0 ||
@@ -3342,19 +3257,9 @@ export function TodoEditor(props: TodoEditorProps) {
                         ) : null}
                       </span>
                     ) : null}
-                    {hasExecutionDetails && canToggleExecutionDetails ? (
-                      <button
-                        type="button"
-                        data-testid="cloud-todo-toggle-tasks"
-                        aria-expanded={tasksExpanded}
-                        onClick={() => setTasksExpanded((current) => !current)}
-                        className="task-detail-state-action"
-                      >
-                        {tasksExpanded
-                          ? t("todo.collapse_execution_details", "收起")
-                          : t("todo.expand_execution_details", "展开")}
-                      </button>
-                    ) : canStartWork && !props.defaultAssistant ? (
+                    {canStartWork &&
+                    !props.defaultAssistant &&
+                    executionTaskCount === 0 ? (
                       <button
                         type="button"
                         data-testid="cloud-todo-create-task"
@@ -3380,202 +3285,30 @@ export function TodoEditor(props: TodoEditorProps) {
                     issue={item}
                     translate={t}
                   />
-                  {!isCreate && executionTaskCount > 0 ? (
-                    <section
-                      className="task-detail-workspace-section"
-                      data-testid="cloud-todo-tasks"
-                    >
-                      <div className="task-detail-workspace-section-head">
-                        <h3 className="task-detail-workspace-section-title">
-                          {props.showCurrentTaskOnly
-                            ? t("todo.current_running_task")
-                            : t("todo.linked_tasks", "关联任务")}
-                        </h3>
-                        <span
-                          className="task-detail-workspace-count"
-                          data-testid="cloud-todo-execution-task-count"
-                        >
-                          {executionTaskCount}
-                        </span>
-                        {props.onCreateTask ? (
-                          <button
-                            type="button"
-                            data-testid="cloud-todo-create-task"
-                            onClick={() => props.onCreateTask?.()}
-                            className="task-detail-workspace-ghost-action"
-                          >
-                            <Plus aria-hidden="true" className="h-3.5 w-3.5" />
-                            {t("todo.new_task", "新建任务")}
-                          </button>
-                        ) : null}
-                      </div>
-                      <div
-                        data-testid="cloud-todo-task-list"
-                        className="task-detail-flat-task-list"
-                      >
-                        {(tasksExpanded
-                          ? executionChildItems
-                          : executionChildItems.slice(
-                              0,
-                              COLLAPSED_EXECUTION_TASK_LIMIT,
-                            )
-                        ).map((child) => {
-                          const assignee =
-                            child.assignee_agent_name ??
-                            child.assignee_team_name ??
-                            child.assignee_name;
-                          const childStatus =
-                            statusOptions.find(
-                              (option) => option.id === child.status,
-                            )?.name ?? child.status;
-                          return (
-                            <button
-                              key={child.id}
-                              type="button"
-                              data-testid={`cloud-todo-open-child-task-${child.id}`}
-                              disabled={
-                                !props.onOpenChildTask ||
-                                child.can_view_detail === false
-                              }
-                              onClick={() => props.onOpenChildTask?.(child)}
-                              className="task-detail-flat-task-row"
-                            >
-                              <span
-                                className={cn(
-                                  "task-detail-flat-task-dot",
-                                  columnDotClasses[child.status],
-                                )}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-text-primary">
-                                  {child.title}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-text-muted">
-                                  {childStatus}
-                                  {assignee ? ` · ${assignee}` : ""}
-                                </span>
-                              </span>
-                              {props.onOpenChildTask &&
-                              child.can_view_detail !== false ? (
-                                <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                        {visibleDisplayedTasks.map((task) => {
-                          const selected =
-                            props.selectedTaskId === task.task_id;
-                          const executionState =
-                            props.taskExecutionStates?.[String(task.id)];
-                          const executionStatusLabel = executionState
-                            ? taskExecutionStatusLabel(executionState.status, t)
-                            : null;
-                          const deviceLabel = taskDeviceLabel(
-                            task,
-                            props.deviceNamesById,
-                          );
-                          return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              data-testid={`cloud-todo-open-task-conversation-${task.id}`}
-                              data-selected={selected ? "true" : "false"}
-                              onClick={() =>
-                                props.onOpenTaskConversation?.(task)
-                              }
-                              className="task-detail-flat-task-row"
-                            >
-                              <span
-                                className={cn(
-                                  "task-detail-flat-task-dot",
-                                  executionState
-                                    ? taskExecutionDotClass(
-                                        executionState.status,
-                                      )
-                                    : selected
-                                      ? "is-selected"
-                                      : "is-idle",
-                                )}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span
-                                  className="block truncate text-sm font-medium text-text-primary"
-                                  title={task.task_title || task.task_id}
-                                >
-                                  {task.task_title || task.task_id}
-                                </span>
-                                <span
-                                  className="mt-0.5 block truncate text-xs text-text-muted"
-                                  title={deviceLabel}
-                                >
-                                  {deviceLabel} ·{" "}
-                                  {selected
-                                    ? t("todo.current_conversation", "当前会话")
-                                    : t(
-                                        "todo.expand_conversation",
-                                        "点击展开会话",
-                                      )}
-                                </span>
-                              </span>
-                              {executionState && executionStatusLabel ? (
-                                <span
-                                  className="task-detail-flat-task-status"
-                                  data-status={executionState.status}
-                                  data-testid={`cloud-todo-task-status-${task.id}`}
-                                >
-                                  <span
-                                    className="task-detail-flat-task-status-dot"
-                                    aria-hidden="true"
-                                  />
-                                  {executionStatusLabel}
-                                </span>
-                              ) : null}
-                              <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ) : null}
-                  {tasksExpanded && deliveries.length > 0 ? (
-                    <section
-                      className="task-detail-workspace-section"
-                      data-testid="todo-detail-deliveries"
-                    >
-                      <div className="task-detail-workspace-section-head">
-                        <h3 className="task-detail-workspace-section-title">
-                          交付
-                        </h3>
-                        <span className="task-detail-workspace-count">
-                          {deliveries.length}
-                        </span>
-                      </div>
-                      <div>
-                        {deliveries.map((delivery) => (
-                          <button
-                            key={delivery.id}
-                            type="button"
-                            onClick={() => void openDelivery(delivery.id)}
-                            className="task-detail-workspace-sub-row w-full text-left"
-                          >
-                            <Package className="h-4 w-4 shrink-0 text-text-muted" />
-                            <span className="min-w-0 flex-1 truncate">
-                              交付结果
-                              {delivery.assets.length > 0
-                                ? ` · ${t(
-                                    "todo.attachment_count",
-                                    "{{count}} 个附件",
-                                    { count: delivery.assets.length },
-                                  )}`
-                                : ""}
-                            </span>
-                            <span className="shrink-0 text-xs text-text-muted">
-                              {delivery.delivered_at?.slice(0, 10)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </section>
+                  {!isCreate ? (
+                    <>
+                      <IssueLinkedTasks
+                        key={item.id}
+                        tasks={displayedTasks}
+                        childItems={executionChildItems}
+                        statusOptions={statusOptions}
+                        statusDotClasses={columnDotClasses}
+                        taskExecutionStates={props.taskExecutionStates}
+                        deviceNamesById={props.deviceNamesById}
+                        selectedTaskId={props.selectedTaskId}
+                        showCurrentTaskOnly={props.showCurrentTaskOnly}
+                        onCreateTask={props.onCreateTask}
+                        onOpenTaskConversation={props.onOpenTaskConversation}
+                        onOpenChildTask={props.onOpenChildTask}
+                        translate={t}
+                      />
+                      <IssueDeliveries
+                        key={`deliveries-${item.id}`}
+                        deliveries={deliveries}
+                        onOpen={(id) => void openDelivery(id)}
+                        translate={t}
+                      />
+                    </>
                   ) : null}
                 </>
               ) : null}

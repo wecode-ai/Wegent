@@ -840,6 +840,7 @@ class SharedTaskService:
                         [
                             ContextType.KNOWLEDGE_BASE.value,
                             ContextType.REMOTE_WORKSPACE_ARTIFACT.value,
+                            ContextType.CONVERSATION.value,
                         ]
                     ),
                 )

@@ -8,6 +8,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ContextBadgeList } from '@/features/tasks/components/message/ContextBadgeList'
 import type { SubtaskContextBrief } from '@/types/api'
 
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: 'en' },
+  }),
+}))
+
 jest.mock('@/features/tasks/components/input/AttachmentPreview', () => ({
   __esModule: true,
   default: ({ attachment, compact }: { attachment: { filename: string }; compact: boolean }) => (
@@ -158,5 +165,24 @@ describe('ContextBadgeList', () => {
       value: originalRevokeObjectUrl,
     })
     anchorClick.mockRestore()
+  })
+
+  it('renders a previous task reference without exposing its transcript', () => {
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 91,
+            context_type: 'conversation',
+            name: 'Launch checklist',
+            status: 'ready',
+            task_id: 77,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('conversation-reference-77')).toBeInTheDocument()
+    expect(screen.getByText('Launch checklist')).toBeInTheDocument()
   })
 })

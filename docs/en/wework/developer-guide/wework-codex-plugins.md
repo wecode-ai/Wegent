@@ -178,8 +178,20 @@ After catalog rebuilds or migrations, Backend reconciles installed Kinds by chec
 
 Plugins such as PR Review read Issue activity discussions with `wework_space.list_board_item_comments` and publish visible comments with `add_board_item_comment`. Both tools reuse project/Issue permissions and the activity message store. The returned comment ID is the activity message ID. Existing Socket.IO pushes refresh the UI, and comments remain available after reload.
 
+To mention a member, resolve their ID and name with `get_assignment_candidates`, then pass `mentions` to `add_board_item_comment`, for example `{"body":"@qindi please review","mentions":[{"type":"user","id":"52","label":"qindi"}]}`, together with explicit `space_id` and `item_id`. Plain `@name` text does not notify. MCP comments in shared Backend projects use the page's recipient authorization, transaction and notification flow: duplicate mentions create one notification, self-mentions create none, and an unauthorized recipient rolls back both the comment and notifications. Do not also call `send_notification` for the same mention. Pure local projects have no shared member inbox and reject structured mentions explicitly.
+
+```mermaid
+flowchart LR
+    MCP[Backend or native Executor MCP] --> Activity[Issue comment entry]
+    UI[Page comment] --> Send[ProjectChatSend with structured mentions]
+    Activity --> Send
+    Send --> Auth[Existing sender and recipient authorization]
+    Auth --> Tx[Save comment and unique notifications in one transaction]
+    Tx --> Delivery[Post-commit activity push and member notifications]
+```
+
 The native Executor uses `GET/POST /api/v1/cloud-projects/{project_id}/loop-items/{item_id}/activity-comments`. Reads return the latest 200 messages by default, up to 500, ordered by ascending sequence number; use `after_sequence` to page forward. Read-only members can read but cannot post, and messages from other Issues are excluded.
 
 The legacy `/loop-items/{item_id}/comments` endpoint still handles provider comments and historical assignment events. Its underlying data must not be deleted wholesale, and historical records are not automatically migrated into Issue activity. Plugins should use project-space tools instead of treating an ID returned by the old endpoint as evidence of a visible activity comment.
 
-Desktop CI Core shard 15 includes `collaboration-issue-mcp-comments`: MCP writes appear in the UI, survive reload, native HTTP writes appear live, MCP reads back the PR link, Issues remain isolated, and the page has no collaboration loading error. Cleanup closes Electron before stopping cloud test services so an open page cannot display a service-shutdown error.
+Desktop CI Core shard 15 includes `collaboration-issue-mcp-comments`: MCP writes appear in the UI, survive reload, native HTTP writes appear live, both entries notify an inherited member exactly once, plain text does not notify, MCP reads back mentions and the PR link, Issues remain isolated, and the page has no collaboration loading error. Cleanup closes Electron before stopping cloud test services so an open page cannot display a service-shutdown error.

@@ -479,7 +479,6 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
       '交付结果 · 1 个附件'
     )
@@ -692,7 +691,9 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-personal-task-action')).toBeInTheDocument()
 
     const toggle = screen.getByTestId('cloud-todo-toggle-tasks')
-    expect(toggle).toHaveTextContent('展开')
+    expect(toggle).toHaveTextContent('查看全部 3 个')
+    expect(screen.getByTestId('cloud-todo-tasks')).toContainElement(toggle)
+    expect(screen.getByTestId('cloud-todo-state-summary')).not.toContainElement(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
     await userEvent.click(toggle)
@@ -1227,7 +1228,6 @@ describe('TodoEditor external item sync', () => {
       })
     )
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
       '交付结果 · 1 个附件'
     )

@@ -1292,18 +1292,7 @@ async fn call_tool_with_runtime_context(
             }
         }
         "list_board_item_comments" => comments::list(runtime, &arguments).await,
-        "add_board_item_comment" => {
-            let project_id = string_argument(&arguments, "space_id");
-            let task_id = string_argument(&arguments, "item_id");
-            let body = string_argument(&arguments, "body");
-            match (project_id, task_id, body) {
-                (Ok(project_id), Ok(task_id), Ok(body)) => runtime
-                    .add_comment(project_id, task_id, body)
-                    .await
-                    .and_then(|comment| serde_json::to_value(comment).map_err(invalid_json)),
-                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
-            }
-        }
+        "add_board_item_comment" => comments::add_local(runtime, &arguments).await,
         "list_item_attachments" => {
             let project_id = string_argument(&arguments, "space_id");
             let task_id = string_argument(&arguments, "item_id");
@@ -2269,7 +2258,8 @@ async fn call_backend_tool(
                 encode_segment(task_id()?)
             ))
             .json(&json!({
-                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
+                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
+                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
             })),
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
@@ -3187,16 +3177,8 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "add_board_item_comment",
-            "Add a visible comment to the Wework Issue activity",
-            json!({
-                "type": "object",
-                "properties": {
-                    "space_id": {"type": "string"},
-                    "item_id": {"type": "string"},
-                    "body": {"type": "string"}
-                },
-                "required": ["space_id", "item_id", "body"]
-            }),
+            "Post an Issue comment. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Pass mentions as [{\"type\":\"user\",\"id\":\"52\",\"label\":\"qindi\"}]. Plain @name text does not notify. Do not send a separate notification for the same mention.",
+            comments::create_schema(),
         ),
         tool(
             "list_item_attachments",

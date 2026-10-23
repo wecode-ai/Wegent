@@ -125,6 +125,31 @@ def test_upgrade_and_downgrade_preserve_identity_and_unrelated_configuration(
     assert _stored(storage)["json"] == original
 
 
+def test_cp01_prompt_correction_issues_no_ddl_or_permission_writes(
+    migration: ModuleType, storage: Storage
+) -> None:
+    _insert(storage, _payload(migration))
+    connection, _ = storage
+    statements: list[str] = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(" ".join(statement.upper().split()))
+
+    sa.event.listen(connection, "before_cursor_execute", capture)
+    try:
+        migration.upgrade()
+        migration.downgrade()
+    finally:
+        sa.event.remove(connection, "before_cursor_execute", capture)
+
+    assert len(statements) == 4
+    assert all(
+        statement.startswith("SELECT KINDS.")
+        or statement.startswith("UPDATE KINDS SET JSON=")
+        for statement in statements
+    )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

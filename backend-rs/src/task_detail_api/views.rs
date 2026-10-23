@@ -731,6 +731,7 @@ struct ContextTypeData {
     target_type: Option<OpaqueJson>,
     node_id: Option<OpaqueJson>,
     parent_id: Option<OpaqueJson>,
+    updated_at: Option<OpaqueJson>,
 }
 
 fn context_field(field: &Option<OpaqueJson>, enabled: bool) -> RawJson {
@@ -766,6 +767,7 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
     // stored document-id count (`len(document_ids)` when it is a list, else
     // `0`), and leaves every other display field at its schema default.
     let selected_documents = context_type == "selected_documents";
+    let conversation = context_type == "conversation";
 
     ContextBriefResponse {
         id: context.subtask_contexts_id,
@@ -808,7 +810,33 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
         site: raw_null(),
         source_url: raw_null(),
         cover_url: raw_null(),
+        task_id: context_field(&data.task_id, conversation),
+        task_updated_at: context_field(&data.updated_at, conversation),
     }
+}
+
+/// `task_id` of a conversation reference context, when the row carries one.
+pub(crate) fn conversation_task_id(context: &ContextRow) -> Option<i64> {
+    if context.subtask_contexts_context_type != "conversation" {
+        return None;
+    }
+    context
+        .subtask_contexts_type_data
+        .as_ref()
+        .and_then(|value| value.0.project::<ContextTypeData>())
+        .and_then(|data| data.task_id)
+        .and_then(|value| value.project::<i64>())
+}
+
+/// Drop conversation references whose referenced task the viewer cannot read.
+pub(crate) fn retain_accessible_conversation_contexts(
+    contexts: &mut Vec<ContextRow>,
+    accessible_task_ids: &std::collections::HashSet<i64>,
+) {
+    contexts.retain(|context| match conversation_task_id(context) {
+        Some(task_id) => accessible_task_ids.contains(&task_id),
+        None => true,
+    });
 }
 
 #[cfg(test)]

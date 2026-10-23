@@ -8,7 +8,6 @@ import type {
 import {
   createProjectTaskTrackingSingleFlight,
   DEFAULT_WORK_ITEM_PROJECT_ID,
-  enqueueTaskTrackingMutation,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudLoopItemExecution,
@@ -1561,24 +1560,6 @@ export function createLocalDeliveryApi(
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
-      })
-    },
-    async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
-      return enqueueTaskTrackingMutation(task, async () => {
-        let binding: LocalTaskBindingRecord
-        try {
-          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-            device_id: task.deviceId,
-            task_id: task.taskId,
-          })
-        } catch {
-          return null
-        }
-        if (!binding.loop_item_id) return null
-        const item = await api.getLoopItem(binding.loop_item_id)
-        return item.title === title
-          ? item
-          : api.updateLoopItem(item.id, { version: item.version, title })
       })
     },
     async unbindCloudContext(task: RuntimeTaskAddress) {

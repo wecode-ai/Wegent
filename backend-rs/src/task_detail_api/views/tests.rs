@@ -249,7 +249,48 @@ fn artifact_context_preserves_download_card_metadata() {
     assert_eq!(value["mime_type"], "application/pdf");
     assert_eq!(value["modified_at"], 123);
     assert_eq!(value["sha256"], "a".repeat(64));
+    assert_eq!(value["task_id"], Value::Null);
+    assert_eq!(value["task_updated_at"], Value::Null);
     assert!(value.get("source").is_none());
+}
+
+/// A conversation reference carries the referenced task identity; every other
+/// context type leaves those fields null.
+#[test]
+fn conversation_context_exposes_reference_identity() {
+    let row = context_with(
+        "conversation",
+        json!({"task_id": 42, "updated_at": "2026-10-20T19:15:03"}),
+    );
+
+    assert_eq!(conversation_task_id(&row), Some(42));
+    let brief = context_brief(&row);
+    assert_eq!(brief.task_id.get(), "42");
+    assert_eq!(brief.task_updated_at.get(), "\"2026-10-20T19:15:03\"");
+    assert_eq!(brief.remote_task_id.get(), "null");
+    assert_eq!(brief.remote_path.get(), "null");
+
+    let attachment = context_with("attachment", json!({"task_id": 42}));
+    assert_eq!(conversation_task_id(&attachment), None);
+    assert_eq!(context_brief(&attachment).task_id.get(), "null");
+    assert_eq!(context_brief(&attachment).task_updated_at.get(), "null");
+}
+
+/// A viewer without access to the referenced task never receives its title.
+#[test]
+fn inaccessible_conversation_contexts_are_dropped() {
+    let mut contexts = vec![
+        context_with("conversation", json!({"task_id": 42})),
+        context_with("conversation", json!({"task_id": 43})),
+        context_with("attachment", json!({})),
+    ];
+    let accessible = std::collections::HashSet::from([42_i64]);
+
+    retain_accessible_conversation_contexts(&mut contexts, &accessible);
+
+    let ids: Vec<Option<i64>> = contexts.iter().map(conversation_task_id).collect();
+    assert_eq!(ids, vec![Some(42), None]);
+    assert_eq!(contexts.len(), 2);
 }
 
 /// `build_context_display_fields` renders `selected_documents` as
