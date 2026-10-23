@@ -411,7 +411,7 @@
     "group_delivery_hint": "开启后，通知会发送到当前已绑定的群聊会话",
     "group_control_title": "群聊通知控制",
     "group_control_silent": "静默：请在消息结尾添加【静默】或【silent】，本次不发送群聊通知，私聊不受影响",
-    "group_control_mention": "@指定用户：请在消息结尾添加【@列表:1234,1235】或【mention:1234,1235】，群消息会 @ 这些 staffId 对应用户；多个 staffId 可用中文或英文逗号分隔",
+    "group_control_mention": "@指定用户：请在消息结尾添加【@列表:1234,1235】或【mention:1234,1235】，群消息会 @ 这些 staffId 对应用户；多个 staffId 可用中文或英文逗号分隔，列表后的冒号可用中文或英文冒号",
     "group_control_cleanup": "控制说明必须放在【】中，只用于通知路由，发送前会自动清理",
     "bind_now": "去绑定",
     "step_start": "开始绑定",

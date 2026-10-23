@@ -79,6 +79,18 @@ def test_parse_notification_directives_accepts_brackets_and_comma_variants() -> 
     assert fullwidth.mention_staff_ids == ("1234", "1235")
 
 
+def test_parse_notification_directives_accepts_colon_variants() -> None:
+    fullwidth_colon = parse_notification_directives(
+        "Alert needs attention.\n\n【@列表：41068】"
+    )
+    ascii_colon = parse_notification_directives(
+        "Alert needs attention.\n\n[@列表:41068]"
+    )
+
+    assert fullwidth_colon.mention_staff_ids == ("41068",)
+    assert ascii_colon.mention_staff_ids == ("41068",)
+
+
 def test_parse_notification_directives_keeps_body_mentions() -> None:
     message = "Please ask @41068 to review.\nThis is still the body."
 
