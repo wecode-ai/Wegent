@@ -860,7 +860,9 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PYTHONPATH: ..:.
-        run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
+        run: |
+          uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
+          uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
       - name: Run knowledge remote index E2E
         if: matrix.shardIndex == 1
