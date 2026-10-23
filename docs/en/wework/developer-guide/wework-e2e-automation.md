@@ -173,7 +173,7 @@ CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
 Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-Core uses 12 shards, with Windows sharing the same matrix, and Cloud uses 10.
+Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
 within a runner. The two Core benchmark shards and three Cloud account-auth and
@@ -182,14 +182,26 @@ the complete matrix in one scheduling wave; classifier regression tests enforce
 both the shard budget and this constraint. Shared runner capacity can still
 introduce external queueing.
 
-This grouping uses step timings from successful runs `39920301020` and
-`39920742402`. In the first sample, non-test steps across 42 shards consumed about
-60 runner minutes, or 31% of shard execution time; setup overhead was higher in
-the second sample. Consolidation removes 20 setup cycles. Conservatively summing
-the original test-step durations bounds the longest ordinary Core shard at about
-7.5 minutes and Cloud at 8.4 minutes across both samples. Actual durations depend
-on scheduling four checkpoints per runner and shared resources; these estimates
-are not measured savings. Shards are balanced from observed CI durations; a new or
+Step timings from successful runs `39920301020` and `39920742402` separate test
+work from setup overhead. In the first sample, non-test steps across 42 shards
+consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
+was higher in the second sample. The final 18 shards remove 24 setup cycles.
+
+Checkpoint timings from `39930854745` drive the final allocation: longest tasks
+start first and cumulative work is balanced, while CLI and Electron preparation
+remain shared. That run's `workspace-tabs` failed early because Issue creation
+did not wait for readiness after navigating to the board. Its successful
+116-second duration from `39920301020` supplies the estimate instead of its
+incomplete failure duration. The click uses the existing `clickWhenEnabled`
+with the default ten-second timeout and preserves all business assertions.
+The 112 ordinary Core checkpoints total 10,246 seconds, distributed into eight
+shards of 14 tasks with four concurrent workers each. Predicted durations are
+323–332 seconds; a ninth shard only reduces the maximum to 320 seconds.
+The 37 ordinary Cloud checkpoints total 5,769 seconds, distributed into five
+shards with predicted durations of 291–339 seconds; a sixth shard only reduces
+the maximum to 321 seconds. Two Core and three Cloud shards remain isolated.
+These scheduling estimates exclude per-shard setup and runtime resource
+variation and are not measured savings. Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
