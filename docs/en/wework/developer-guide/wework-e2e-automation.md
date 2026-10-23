@@ -708,6 +708,10 @@ Platform E2E services must start etcd and MinIO before Milvus. The GitHub runner
 
 Desktop E2E `clickWhenEnabled` starts the existing ten-second conversation layout diagnostic window. Milestone and failure artifacts retain `conversation-diagnostics` JSON with virtual ranges, message measurements, and scroll positions. These records contain no message text and do not change UI waits or business assertions. Compare them with `workbench-debug.json` when a completed message is missing from the rendered conversation.
 
+On Windows, a worktree's `.git` file can have the hidden attribute, causing Node's default `writeFile` mode to return `EPERM`. The archived-cleanup fixture opens the existing file with `r+`, explicitly truncates and writes it, and closes the handle in `finally`. Corruption, restoration, and failure cleanup share this implementation.
+
+Workbench Home migration probes use `ensureLocalModelCatalogReady` to await model-catalog synchronization and its app-server restart before accessing the migrated Home with native Codex. Executor startup alone does not establish catalog readiness. A failed native probe retains `native-migration-turn-failure.json` with the actual Home, database integrity, and thread history mode. Check initialization warnings first: a log-database open failure can surface as a `list_turns` error without losing thread history.
+
 Opening project settings waits for and clicks the current project's edit or rename action directly. The sidebar chooses its menu identifier from the project's state owner and source; a snapshot taken before the menu renders cannot determine that action. Cloud project save, restart, and restored-settings assertions remain unchanged.
 
 During local macOS verification of cloud project state files, a running ChatGPT or Codex desktop application activates the existing state-write guard. A runner whose HOME and Codex Home are both inside its isolated test-result directory can use `WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH=1` to verify that state reaches disk.
