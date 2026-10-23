@@ -58,6 +58,7 @@ export function completeRuntimeTurnTiming(
 ): Pick<RuntimeConversationTurn, "startedAt" | "completedAt" | "durationMs"> {
   if (
     ["done", "failed", "cancelled"].includes(turn.status) &&
+    turn.completedAt !== null &&
     turn.completedAt !== undefined
   ) {
     return {

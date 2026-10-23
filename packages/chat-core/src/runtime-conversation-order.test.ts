@@ -63,6 +63,18 @@ describe("native conversation ordering contract", () => {
       });
       vi.mocked(Date.now).mockReturnValue(58_200);
       expect(
+        reduceRuntimeConversationTurns(
+          [{ ...settled[0], completedAt: null, durationMs: undefined }],
+          {
+            type: "assistant_done",
+            subtaskId: "turn",
+          },
+        )[0],
+      ).toMatchObject({
+        durationMs: 18_000,
+        completedAt: new Date(58_200).toISOString(),
+      });
+      expect(
         mergeRuntimeConversationTurns(
           [
             {

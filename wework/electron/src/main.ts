@@ -1,4 +1,3 @@
-import { installE2ENetworkDiagnostics } from './host/e2e-network-diagnostics.js'
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
@@ -423,10 +422,7 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
-    if (
-      process.env.VITE_WEWORK_E2E === 'true' &&
-      (level === 3 || message.startsWith('[Wework] Runtime task create diagnostic '))
-    ) {
+    if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
         message: redactLog(message).slice(0, 4096),
@@ -741,7 +737,18 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 
 function installDshWindowLabelHeaders(): void {
   if (process.env.VITE_WEWORK_E2E === 'true') {
-    installE2ENetworkDiagnostics(session.defaultSession.webRequest)
+    session.defaultSession.webRequest.onErrorOccurred(
+      { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
+      details => {
+        console.error('[desktop-e2e-network-error]', {
+          at: new Date().toISOString(),
+          path: new URL(details.url).pathname,
+          method: details.method,
+          error: details.error,
+          webContentsId: details.webContentsId,
+        })
+      }
+    )
   }
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const label =
