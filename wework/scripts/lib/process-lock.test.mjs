@@ -3,29 +3,33 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { describe, expect, test, vi } from 'vitest'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { afterAll, describe, expect, test, vi } from 'vitest'
 
-const fileSystemHooks = vi.hoisted(() => ({
+const require = createRequire(import.meta.url)
+const nativeFileSystem = require('node:fs/promises')
+const actualFileSystem = { ...nativeFileSystem }
+const fileSystemHooks = {
   readFile: null,
   unlink: null,
   rmdir: null,
   rename: null,
-}))
+}
+for (const method of Object.keys(fileSystemHooks)) {
+  vi.spyOn(nativeFileSystem, method).mockImplementation((...args) =>
+    (fileSystemHooks[method] ?? actualFileSystem[method])(...args)
+  )
+}
 
-vi.mock('node:fs/promises', async importOriginal => {
-  const actual = await importOriginal()
-  return {
-    ...actual,
-    readFile: (...args) => (fileSystemHooks.readFile ?? actual.readFile)(...args),
-    unlink: (...args) => (fileSystemHooks.unlink ?? actual.unlink)(...args),
-    rmdir: (...args) => (fileSystemHooks.rmdir ?? actual.rmdir)(...args),
-    rename: (...args) => (fileSystemHooks.rename ?? actual.rename)(...args),
-  }
+// Install spies before the client runner snapshots the lock's builtin imports.
+syncBuiltinESMExports()
+const { acquireProcessLock } = await import('./process-lock.mjs')
+
+afterAll(() => {
+  vi.restoreAllMocks()
+  syncBuiltinESMExports()
 })
-
-import { acquireProcessLock } from './process-lock.mjs'
-
-const actualFileSystem = await vi.importActual('node:fs/promises')
 
 function deferred() {
   let resolve
@@ -401,7 +405,7 @@ function startLockWorker(lockPath, journalPath, workerId) {
       '--input-type=module',
       '-e',
       source,
-      new URL('./process-lock.mjs', import.meta.url).href,
+      pathToFileURL(require.resolve('./process-lock.mjs')).href,
       lockPath,
       journalPath,
       String(workerId),
