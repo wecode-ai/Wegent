@@ -1107,9 +1107,16 @@ async function pressNativeDesktopControlKey(
   phase: 'press' | 'down' | 'up' = 'press'
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  const startedAt = Date.now()
+  const trace = (stage: string) =>
+    console.info(
+      `[desktop-e2e-key] ${JSON.stringify({ stage, key, phase, windowLabel, elapsedMs: Date.now() - startedAt })}`
+    )
+  trace('focus-start')
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
+  trace('focus-complete')
   await waitForDesktopControlTick()
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
@@ -1121,13 +1128,16 @@ async function pressNativeDesktopControlKey(
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
+    trace('key-start')
     await invokeDesktopHost('e2e.pressKey', {
       windowLabel,
       key,
       phase,
       focus: false,
     })
+    trace('key-complete')
     await waitForDesktopControlTick()
+    trace('key-observed')
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
         `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
@@ -3359,12 +3369,16 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       try {
         await postDesktopControlResult(url, result)
       } catch (error) {
-        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
-          commandId: command.id,
-          action: command.action,
-          actionSucceeded: result.ok,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        console.error(
+          '[Wework] Desktop E2E result acknowledgement failed:',
+          JSON.stringify({
+            commandId: command.id,
+            action: command.action,
+            actionSucceeded: result.ok,
+            actionError: result.error,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
         throw error
       }
       if (result.ok) {
