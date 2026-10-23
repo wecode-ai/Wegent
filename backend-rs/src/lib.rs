@@ -167,6 +167,8 @@ pub use mcp::interactive_form_question::{
 pub use mcp::knowledge_external::auth::{
     ExternalKnowledgeAuth, ExternalKnowledgeUser, PersonalApiKeyAuth,
 };
+#[cfg(test)]
+mod app_test_support;
 mod mcp_identity;
 pub mod mcp_providers;
 pub mod media_policy;
