@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  VenetianMask,
   Bot,
   CircleCheck,
   Cloud,
@@ -109,6 +110,7 @@ const platformMessages = {
     projectActions: "项目操作",
     allSpaces: "所有空间",
     home: "新建 Issue",
+    standIn: "我的替身",
     newConversation: "新建对话",
     teams: "协作小组",
     devices: "设备",
@@ -310,6 +312,7 @@ const platformMessages = {
     projectActions: "Project actions",
     allSpaces: "All spaces",
     home: "New Issue",
+    standIn: "My stand-in",
     newConversation: "New conversation",
     teams: "Teams",
     devices: "Devices",
@@ -763,6 +766,39 @@ function CollaborationPlatformNavigation({
               <Plus aria-hidden="true" />
               <span>{messages.home}</span>
             </button>
+            {host.renderStandInPage && (
+              <button
+                type="button"
+                data-testid="collaboration-primary-stand-in"
+                className={
+                  !host.location.workspaceId &&
+                  host.location.rootView === "stand-in"
+                    ? "active"
+                    : undefined
+                }
+                aria-current={
+                  !host.location.workspaceId &&
+                  host.location.rootView === "stand-in"
+                    ? "page"
+                    : undefined
+                }
+                onClick={() =>
+                  host.navigate({
+                    platformView: "spaces",
+                    collaborationDomain: domain,
+                    rootView: "stand-in",
+                    workspaceId: null,
+                    workspaceView: "home",
+                    projectId: null,
+                    projectView: "board",
+                    issueId: null,
+                  })
+                }
+              >
+                <VenetianMask aria-hidden="true" />
+                <span>{messages.standIn}</span>
+              </button>
+            )}
             <button
               type="button"
               className={
@@ -1123,6 +1159,7 @@ function CollaborationPlatformNavigation({
                             })
                           }
                         >
+                          {host.renderProjectSidebarBadge?.(project)}
                           <span>{project.name}</span>
                         </button>
                         <div className="collaboration-project-row-actions">
@@ -2661,6 +2698,8 @@ function IssueHomeLauncher({
     content: string,
     owner: IssueHomeOwner | null,
     files: File[],
+    standInDeviceId?: string,
+    standInId?: string,
   ): Promise<boolean>;
   onOpenExecutionEnvironments(project: CollaborationProject): void;
   pending: boolean;
@@ -2787,6 +2826,7 @@ function IssueHomeLauncher({
       <div
         className="flex min-h-0 flex-1"
         data-testid="collaboration-issue-home"
+        data-execution-environment-readiness={environmentReadiness.kind}
       >
         {composer}
       </div>
@@ -2796,6 +2836,7 @@ function IssueHomeLauncher({
     <section
       className="collaboration-issue-home"
       data-testid="collaboration-issue-home"
+      data-execution-environment-readiness={environmentReadiness.kind}
     >
       <div className="collaboration-issue-home-heading">
         <h1 data-testid="collaboration-issue-home-title">
@@ -3271,6 +3312,15 @@ export function CollaborationPlatformApp({
   );
   const [rootIssueLoading, setRootIssueLoading] = useState(false);
   const rootIssueSubmitting = useRef(false);
+  const [standInRetry, setStandInRetry] = useState<{
+    projectId: string;
+    issueId: string;
+    deviceId: string;
+    standInId?: string;
+    files: File[];
+    error: string;
+  } | null>(null);
+  const [standInRetrying, setStandInRetrying] = useState(false);
   const projectWorkspace =
     projectWorkspaceId == null
       ? null
@@ -3364,18 +3414,23 @@ export function CollaborationPlatformApp({
   useEffect(() => {
     if (!state.loading && !state.error) onReady?.();
   }, [onReady, state.error, state.loading]);
+  const navigationProjectsRef = useRef(state.navigationProjects);
+  useLayoutEffect(() => {
+    navigationProjectsRef.current = state.navigationProjects;
+  }, [state.navigationProjects]);
+  const hasFullWorkspaceAccess =
+    state.workspace?.id === host.location.workspaceId;
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {
     if (!host.location.workspaceId) return api;
     const workspaceId = host.location.workspaceId;
     const projectId = host.location.projectId;
-    const hasFullWorkspaceAccess = state.workspace?.id === workspaceId;
     return {
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
           if (projectId) {
-            const selectedProject = state.navigationProjects.find(
+            const selectedProject = navigationProjectsRef.current.find(
               (project) => project.id === projectId,
             );
             if (selectedProject) return [selectedProject];
@@ -3393,8 +3448,7 @@ export function CollaborationPlatformApp({
     api,
     host.location.projectId,
     host.location.workspaceId,
-    state.navigationProjects,
-    state.workspace,
+    hasFullWorkspaceAccess,
   ]);
   const workspaceAgentConfigurationApi = useMemo(
     () =>
@@ -3484,8 +3538,12 @@ export function CollaborationPlatformApp({
     content: string,
     owner: IssueHomeOwner | null,
     files: File[],
+    standInDeviceId?: string,
+    standInId?: string,
   ) => {
     if (!rootIssueProject || rootIssueSubmitting.current || !content.trim())
+      return false;
+    if (standInDeviceId && (!host.currentUser || !api.standIn?.run))
       return false;
     rootIssueSubmitting.current = true;
     setRootIssueLoading(true);
@@ -3493,25 +3551,52 @@ export function CollaborationPlatformApp({
       const created = await api.issues.create(rootIssueProject.id, {
         title: truncateRuntimeTaskTitle(content.replace(/\s+/g, " "))!,
         description: content,
-        ...(owner?.kind === "user"
-          ? {
-              assigneeUserId: Number(owner.id),
-              notifyAssignee: true,
-            }
-          : owner?.kind === "agent"
-            ? { assigneeAgentId: owner.id }
-            : owner?.kind === "group"
-              ? { assigneeGroupId: owner.id }
-              : {}),
+        ...(standInDeviceId
+          ? {}
+          : owner?.kind === "user"
+            ? {
+                assigneeUserId: Number(owner.id),
+                notifyAssignee: true,
+              }
+            : owner?.kind === "agent"
+              ? { assigneeAgentId: owner.id }
+              : owner?.kind === "group"
+                ? { assigneeGroupId: owner.id }
+                : {}),
       });
+      const pendingFiles: File[] = [];
+      let attachmentError = "";
       for (const file of files) {
         try {
           await api.attachments.upload(created.id, file);
         } catch (error) {
+          pendingFiles.push(file);
+          attachmentError =
+            error instanceof Error ? error.message : String(error);
           host.notify?.(
             error instanceof Error ? error.message : messages.loadFailed,
             "error",
           );
+        }
+      }
+      if (standInDeviceId && api.standIn?.run) {
+        try {
+          if (pendingFiles.length) throw new Error(attachmentError);
+          await api.standIn.run(
+            rootIssueProject.id,
+            created.id,
+            standInDeviceId,
+            standInId,
+          );
+        } catch (error) {
+          setStandInRetry({
+            projectId: rootIssueProject.id,
+            issueId: created.id,
+            deviceId: standInDeviceId,
+            standInId,
+            files: pendingFiles,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
       navigateWithin(host, {
@@ -3773,22 +3858,22 @@ export function CollaborationPlatformApp({
         {messages.loading}
       </div>
     );
-  } else if (!state.workspace || isDevicePage) {
+  } else if (
+    !state.workspace ||
+    isDevicePage ||
+    host.location.rootView === "stand-in"
+  ) {
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return (
-        item.is_unread ||
-        item.human_work?.can_start ||
-        item.human_work?.can_review ||
-        operation === "failed" ||
-        operation === "review"
-      );
+      return item.is_unread || operation === "failed" || operation === "review";
     });
     content =
-      rootView === "agents" ||
-      rootView === "teams" ||
-      rootView === "devices" ? (
+      rootView === "stand-in" && host.renderStandInPage ? (
+        host.renderStandInPage({ projects: domainProjects })
+      ) : rootView === "agents" ||
+        rootView === "teams" ||
+        rootView === "devices" ? (
         <ResourceCatalogPage
           api={api}
           domain={collaborationDomain}
@@ -3929,8 +4014,20 @@ export function CollaborationPlatformApp({
               workspaces={domainWorkspaces}
               onSelectProject={setRootIssueProjectId}
               pending={rootIssueLoading}
-              onCreateIssue={(content, memberIds, files) =>
-                startRootIssueCreation(content, memberIds, files)
+              onCreateIssue={(
+                content,
+                memberIds,
+                files,
+                standInDeviceId,
+                standInId,
+              ) =>
+                startRootIssueCreation(
+                  content,
+                  memberIds,
+                  files,
+                  standInDeviceId,
+                  standInId,
+                )
               }
               onOpenExecutionEnvironments={(project) =>
                 navigateWithin(host, {
@@ -4281,6 +4378,55 @@ export function CollaborationPlatformApp({
   );
   const main = (
     <main className="collaboration-platform-main">
+      {standInRetry && (
+        <div
+          role="alert"
+          data-testid="stand-in-run-error"
+          className="flex items-center gap-2 p-3 text-sm text-text-secondary"
+        >
+          <span>
+            {createCollaborationTranslator(locale)("standIn.start_failed")}{" "}
+            {standInRetry.error}
+          </span>
+          <button
+            type="button"
+            data-testid="stand-in-run-retry"
+            disabled={standInRetrying}
+            onClick={async () => {
+              if (!api.standIn?.run) return;
+              setStandInRetrying(true);
+              const remainingFiles = [...standInRetry.files];
+              try {
+                while (remainingFiles.length) {
+                  await api.attachments.upload(
+                    standInRetry.issueId,
+                    remainingFiles[0],
+                  );
+                  remainingFiles.shift();
+                }
+                await api.standIn.run(
+                  standInRetry.projectId,
+                  standInRetry.issueId,
+                  standInRetry.deviceId,
+                  standInRetry.standInId,
+                );
+                setStandInRetry(null);
+              } catch (error) {
+                setStandInRetry({
+                  ...standInRetry,
+                  files: remainingFiles,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              } finally {
+                setStandInRetrying(false);
+              }
+            }}
+            className="shrink-0 rounded-md px-2 py-1 hover:bg-muted"
+          >
+            {createCollaborationTranslator(locale)("standIn.retry")}
+          </button>
+        </div>
+      )}
       {content}
       {archiveProject && (
         <ProjectArchiveDialog

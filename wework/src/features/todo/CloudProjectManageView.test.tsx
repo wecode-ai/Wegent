@@ -47,6 +47,7 @@ describe('CloudProjectManageView', () => {
   function createApi(overrides: Record<string, unknown> = {}) {
     return {
       projects: {
+        get: vi.fn().mockResolvedValue(project),
         update: vi
           .fn()
           .mockImplementation(
@@ -122,6 +123,7 @@ describe('CloudProjectManageView', () => {
 
     render(<CloudProjectManageView api={api} project={project} />)
 
+    await user.click(screen.getByTestId('cloud-project-manage-tags-toggle'))
     await user.click(await screen.findByRole('button', { name: '＋ 新建标签' }))
     await user.type(screen.getByTestId('cloud-project-tag-create-input'), 'bug')
     await user.click(screen.getByTestId('cloud-project-tag-create-confirm'))
@@ -136,11 +138,13 @@ describe('CloudProjectManageView', () => {
   })
 
   test('resets project-owned state when navigating to another project', async () => {
+    const user = userEvent.setup()
     const api = createApi()
     const { rerender } = render(
       <CloudProjectManageView api={api} project={{ ...project, tags: ['old'] }} />
     )
 
+    await user.click(screen.getByTestId('cloud-project-manage-tags-toggle'))
     expect(await screen.findByTestId('cloud-project-tag-old')).toBeInTheDocument()
 
     rerender(
@@ -157,6 +161,9 @@ describe('CloudProjectManageView', () => {
       />
     )
 
+    expect(screen.getByTestId('cloud-project-manage-tags')).not.toHaveAttribute('open')
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce()
+    await user.click(screen.getByTestId('cloud-project-manage-tags-toggle'))
     expect(await screen.findByTestId('cloud-project-tag-new')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-tag-old')).not.toBeInTheDocument()
   })

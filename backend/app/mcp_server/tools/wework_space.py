@@ -43,7 +43,7 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
-from app.schemas.project_chat import LoopItemAssign
+from app.schemas.project_chat import LoopItemAssign, ProjectChatMention
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
@@ -58,6 +58,10 @@ from app.services.loop_items.provider_router import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
+from app.services.project_chat.issue_comments import (
+    add_issue_comment,
+    list_issue_comments,
+)
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces import workspace_service
 from app.services.workspaces.storage import workspace_id_for_project
@@ -663,34 +667,58 @@ async def update_board_item(
 
 
 @mcp_tool(server="wework_space")
-def add_board_item_comment(
+def list_board_item_comments(
     token_info: MCPAuthInfo,
-    body: str,
     space_id: str = "",
     item_id: str = "",
-) -> dict[str, Any]:
-    """Add a comment to a provider-backed board item."""
+    after_sequence: int = 0,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Read the latest Issue activity comments, or page forward after a sequence."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
-        if project.task_provider in {"github", "gitlab"}:
-            result = dict(
-                external_loop_item_provider.add_comment(
-                    db, resolved_item_id, token_info.user_id, body
-                )
-            )
-        else:
-            result = dict(
-                loop_item_service.add_comment(
-                    db,
-                    resolved_item_id,
-                    token_info.user_id,
-                    body,
-                )
-            )
-        return result
+        return list_issue_comments(
+            db,
+            user_id=token_info.user_id,
+            project_id=str(project.id),
+            item_id=resolved_item_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+
+@mcp_tool(server="wework_space")
+def add_board_item_comment(
+    token_info: MCPAuthInfo,
+    body: str,
+    space_id: str = "",
+    item_id: str = "",
+    mentions: list[ProjectChatMention] | None = None,
+) -> dict[str, Any]:
+    """Post an Issue comment; structured user mentions notify members.
+
+    Resolve members with get_assignment_candidates and pass mentions as
+    [{"type": "user", "id": "52", "label": "qindi"}]. Plain @name text does
+    not notify. Uses the same recipient authorization and notifications as
+    the page; do not send a separate notification for the same mention.
+    """
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        return add_issue_comment(
+            db,
+            user_id=token_info.user_id,
+            user_name=token_info.user_name,
+            project_id=str(project.id),
+            item_id=resolved_item_id,
+            body=body,
+            mentions=mentions,
+        )
 
 
 @mcp_tool(server="wework_space")

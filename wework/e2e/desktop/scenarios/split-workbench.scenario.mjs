@@ -832,6 +832,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         })
       )
+      console.log(`[split-workbench] sidebar drag timings: ${JSON.stringify(splitResult)}`)
       const splitDurationMs = splitResult.durationMs
       assert.equal(
         typeof splitDurationMs,

@@ -24,9 +24,10 @@ import { GuidedQuestions } from '@/features/knowledge/document/components/Guided
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers, type SendMessageOptions } from './useChatStreamHandlers'
+import { taskMentionName } from './MentionAutocomplete'
 import { allBotsHavePredefinedModel, DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { Attachment, Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type { Attachment, SubtaskContextBrief, Task, TaskType, Team } from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
@@ -55,6 +56,8 @@ import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { useDefaultTeam } from '../../hooks/useDefaultTeam'
+import { useRecentTaskTeams } from '../../hooks/useRecentTaskTeams'
+import { useUser } from '@/features/common/UserContext'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
@@ -293,6 +296,7 @@ function ChatAreaContent({
   onExternalDraftConsumed,
 }: ChatAreaProps) {
   const { t } = useTranslation('chat')
+  const { user } = useUser()
   const { toast } = useToast()
   const router = useRouter()
   const pathname = usePathname()
@@ -327,6 +331,7 @@ function ChatAreaContent({
 
   // Task context
   const {
+    tasks,
     selectedTask,
     selectedTaskDetail,
     selectTask,
@@ -358,6 +363,10 @@ function ChatAreaContent({
   const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
   const teamIdFromUrl =
     getSearchParam(searchParams, 'teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
+  const { recentTeamIds, isLoading: isRecentTeamsLoading } = useRecentTaskTeams(
+    taskType,
+    !effectiveTaskId && !taskIdFromUrl && !teamIdFromUrl && !selectedTeamForNewTask
+  )
   const earlyDefaultTeam = useDefaultTeam(
     taskType,
     (isTeamsLoading || Boolean(loadError)) &&
@@ -1139,9 +1148,26 @@ function ChatAreaContent({
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
+  const teamSelectionScope = `${user?.id}:${taskType}`
+  const teamSelectionScopeRef = useRef(teamSelectionScope)
+  const [initializedTeamSelection, setInitializedTeamSelection] = useState<{
+    scope: string
+    teamId: number | null
+  } | null>(null)
+  const markTeamSelectionInitialized = useCallback(
+    (team: Team | null, scope = teamSelectionScope) => {
+      hasInitializedTeamRef.current = true
+      const teamId = team?.id ?? null
+      setInitializedTeamSelection(current =>
+        current?.scope === scope && current.teamId === teamId ? current : { scope, teamId }
+      )
+    },
+    [teamSelectionScope]
+  )
   const lastSyncedTaskIdRef = useRef<number | null>(null)
   const ignoredTeamIdParamRef = useRef<string | null>(null)
   const isExitingGenerationRef = useRef(false)
+  const restoreConfiguredDefaultRef = useRef(false)
 
   // Filter teams by bind_mode based on current visible agent mode.
   const filteredTeams = useMemo(
@@ -1151,6 +1177,10 @@ function ChatAreaContent({
 
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
+  const isTeamSelectionReady =
+    initializedTeamSelection?.scope === teamSelectionScope &&
+    initializedTeamSelection.teamId != null &&
+    initializedTeamSelection.teamId === selectedTeam?.id
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
   const showGenerateModeSelector =
@@ -1158,22 +1188,41 @@ function ChatAreaContent({
 
   const handleUserTeamChange = useCallback(
     (team: Team | null) => {
-      hasInitializedTeamRef.current = true
+      restoreConfiguredDefaultRef.current = false
+      ignoredTeamIdParamRef.current = teamIdFromUrl
       handleTeamChange(team)
       const routeTaskId =
         typeof window === 'undefined'
           ? null
           : getTaskQueryParam(new URLSearchParams(window.location.search))
-      if (effectiveTaskId || routeTaskId || !onGenerateModeChange || !isGenerateMode(taskType)) {
-        return
-      }
-      const nextMode = getTeamGenerateMode(team, taskType)
-      if (nextMode && nextMode !== taskType) {
+      const nextMode =
+        !effectiveTaskId && !routeTaskId && onGenerateModeChange && isGenerateMode(taskType)
+          ? getTeamGenerateMode(team, taskType)
+          : null
+      const nextScope = nextMode ? `${user?.id}:${nextMode}` : teamSelectionScope
+      markTeamSelectionInitialized(team, nextScope)
+      if (nextMode && nextMode !== taskType && onGenerateModeChange) {
+        teamSelectionScopeRef.current = nextScope
         onGenerateModeChange(nextMode)
       }
     },
-    [effectiveTaskId, handleTeamChange, onGenerateModeChange, taskType]
+    [
+      effectiveTaskId,
+      handleTeamChange,
+      markTeamSelectionInitialized,
+      onGenerateModeChange,
+      taskType,
+      teamIdFromUrl,
+      teamSelectionScope,
+      user?.id,
+    ]
   )
+
+  useEffect(() => {
+    if (teamSelectionScopeRef.current === teamSelectionScope) return
+    teamSelectionScopeRef.current = teamSelectionScope
+    hasInitializedTeamRef.current = false
+  }, [teamSelectionScope])
 
   useEffect(() => {
     if (!isExitingGenerationRef.current || isGenerateMode(taskType)) return
@@ -1181,7 +1230,7 @@ function ChatAreaContent({
     hasInitializedTeamRef.current = false
   }, [taskType])
 
-  // Team selection logic - using default team from server configuration
+  // Explicit selections take priority over recent history and configured defaults.
   useEffect(() => {
     if (isExitingGenerationRef.current) return
     if (filteredTeams.length === 0 && (!selectedTeam || isTeamsLoading || loadError)) return
@@ -1209,7 +1258,7 @@ function ChatAreaContent({
           if (teamFromDetail) {
             handleTeamChange(teamFromDetail)
             lastSyncedTaskIdRef.current = selectedTaskDetail.id
-            hasInitializedTeamRef.current = true
+            markTeamSelectionInitialized(teamFromDetail)
             return
           } else {
             // Team not in filtered list, try to use the team object from detail
@@ -1218,7 +1267,7 @@ function ChatAreaContent({
             if (teamObject) {
               handleTeamChange(teamObject)
               lastSyncedTaskIdRef.current = selectedTaskDetail.id
-              hasInitializedTeamRef.current = true
+              markTeamSelectionInitialized(teamObject)
               return
             }
           }
@@ -1232,6 +1281,8 @@ function ChatAreaContent({
       }
     }
 
+    if (taskIdFromUrl || effectiveTaskId) return
+
     // Case 2a: teamId URL param present - select specific team regardless of initialization state
     // This handles navigation after accepting a share invite (/chat?teamId=xxx)
     if (!taskIdFromUrl && teamIdFromUrl && teamIdFromUrl !== ignoredTeamIdParamRef.current) {
@@ -1240,30 +1291,45 @@ function ChatAreaContent({
         filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
       if (teamFromUrl) {
         handleTeamChange(teamFromUrl)
-        hasInitializedTeamRef.current = true
+        markTeamSelectionInitialized(teamFromUrl)
         lastSyncedTaskIdRef.current = null
         return
       }
+      if (isTeamsLoading || loadError) return
+    }
+
+    if (!taskIdFromUrl && selectedTeamForNewTask) {
+      markTeamSelectionInitialized(selectedTeamForNewTask)
+      return
     }
 
     // A partial or failed catalog cannot invalidate an already selected agent.
     if (selectedTeam && (isTeamsLoading || loadError)) return
 
-    // Case 2: New chat (no taskId in URL) - use default team from server config
-    if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
-      // Use the default team computed from server config
+    // Case 2: Restore same-mode task history once both sources have settled.
+    if (!taskIdFromUrl && !effectiveTaskId && !hasInitializedTeamRef.current) {
       const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
-      if (defaultTeamForMode) {
-        handleTeamChange(defaultTeamForMode)
-        hasInitializedTeamRef.current = true
-        lastSyncedTaskIdRef.current = null
+      if (
+        isTeamsLoading ||
+        loadError ||
+        (isRecentTeamsLoading && !restoreConfiguredDefaultRef.current)
+      ) {
+        // A provisional default keeps the input usable without locking out history.
+        if (!selectedTeam && defaultTeamForMode) handleTeamChange(defaultTeamForMode)
         return
       }
-      // No default found, select first team
-      if (!selectedTeam && filteredTeams.length > 0) {
-        handleTeamChange(filteredTeams[0])
+      const modeTeams = filterTeamsByMode(filteredTeams, taskType)
+      const recentTeam = restoreConfiguredDefaultRef.current
+        ? undefined
+        : recentTeamIds
+            .map(id => modeTeams.find(team => team.id === id))
+            .find(team => team !== undefined)
+      const initialTeam = recentTeam || defaultTeamForMode || filteredTeams[0]
+      if (initialTeam && selectedTeam?.id !== initialTeam.id) {
+        handleTeamChange(initialTeam)
       }
-      hasInitializedTeamRef.current = true
+      markTeamSelectionInitialized(initialTeam ?? null)
+      restoreConfiguredDefaultRef.current = false
       lastSyncedTaskIdRef.current = null
       return
     }
@@ -1273,7 +1339,9 @@ function ChatAreaContent({
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
       if (!exists) {
         const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
-        handleTeamChange(defaultTeamForMode || filteredTeams[0] || null)
+        const nextTeam = defaultTeamForMode || filteredTeams[0] || null
+        handleTeamChange(nextTeam)
+        markTeamSelectionInitialized(nextTeam)
       }
     }
   }, [
@@ -1284,9 +1352,16 @@ function ChatAreaContent({
     teamIdFromUrl,
     selectedTeam,
     handleTeamChange,
+    markTeamSelectionInitialized,
     findDefaultTeamForMode,
     isTeamsLoading,
     loadError,
+    effectiveTaskId,
+    selectedTeamForNewTask,
+    recentTeamIds,
+    isRecentTeamsLoading,
+    taskType,
+    teamSelectionScope,
   ])
 
   // Reset initialization when switching from task to new chat
@@ -1435,7 +1510,7 @@ function ChatAreaContent({
       const targetTeam =
         filteredTeams.find(t => t.id === teamId) || teams.find(t => t.id === teamId)
       if (targetTeam) {
-        handleTeamChange(targetTeam)
+        handleUserTeamChange(targetTeam)
       }
     },
     currentTeamId: chatState.selectedTeam?.id,
@@ -1649,7 +1724,31 @@ function ChatAreaContent({
   const selectedContextsRef = useRef(chatState.selectedContexts)
   selectedContextsRef.current = chatState.selectedContexts
 
+  const handleSelectConversation = useCallback(
+    (task: Task) => {
+      setSelectedContexts(previous => {
+        if (
+          previous.some(context => context.type === 'conversation' && context.task_id === task.id)
+        ) {
+          return previous
+        }
+        return [
+          ...previous,
+          {
+            id: `conversation:${task.id}`,
+            name: taskMentionName(task),
+            type: 'conversation',
+            task_id: task.id,
+            task_updated_at: task.updated_at,
+          },
+        ]
+      })
+    },
+    [setSelectedContexts]
+  )
+
   const handleRestoreDefaultTeam = useCallback(() => {
+    hasInitializedTeamRef.current = true
     const url = new URL(window.location.href)
     ignoredTeamIdParamRef.current = teamIdFromUrl
     setQuickLaunchIntent(null)
@@ -1657,6 +1756,7 @@ function ChatAreaContent({
 
     if (isGenerateMode(effectiveTaskType)) {
       isExitingGenerationRef.current = true
+      restoreConfiguredDefaultRef.current = true
       removeGenerationModeQueryParam(url.searchParams)
       handleTeamChange(null)
       router.replace(`${url.pathname}${url.search}${url.hash}`)
@@ -1671,7 +1771,17 @@ function ChatAreaContent({
       )
     }
     restoreDefaultTeam()
-  }, [effectiveTaskType, handleTeamChange, restoreDefaultTeam, router, teamIdFromUrl])
+    markTeamSelectionInitialized(chatState.defaultTeam || selectedTeam)
+  }, [
+    chatState.defaultTeam,
+    effectiveTaskType,
+    handleTeamChange,
+    markTeamSelectionInitialized,
+    restoreDefaultTeam,
+    router,
+    selectedTeam,
+    teamIdFromUrl,
+  ])
 
   const shouldConfirmPendingReplacement =
     runtimeTaskStatus === 'PENDING' &&
@@ -1806,6 +1916,7 @@ function ChatAreaContent({
       const trimmedMessage = message.trim()
       const hasAttachments = chatState.attachmentState.attachments.length > 0
       if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
+      markTeamSelectionInitialized(selectedTeam)
 
       if (pendingInteractiveForm && !options?.interactiveFormAnswer) {
         setPendingFormReplacementMessage(trimmedMessage)
@@ -1826,7 +1937,9 @@ function ChatAreaContent({
     [
       chatState.attachmentState.attachments.length,
       chatState.shouldHideChatInput,
+      markTeamSelectionInitialized,
       pendingInteractiveForm,
+      selectedTeam,
       shouldConfirmPendingReplacement,
       streamHandlers,
       submitBlockedReason,
@@ -1862,6 +1975,7 @@ function ChatAreaContent({
       }
       selectTask(null)
       hasInitializedTeamRef.current = false
+      setInitializedTeamSelection(null)
       lastSyncedTaskIdRef.current = null
 
       quickPresetAttachmentIdsRef.current = new Set()
@@ -2291,6 +2405,14 @@ function ChatAreaContent({
             type: 'external_knowledge',
             ref,
           })
+        } else if (ctx.context_type === 'conversation' && ctx.task_id) {
+          restoredContextItems.push({
+            id: `conversation:${ctx.task_id}`,
+            name: ctx.name,
+            type: 'conversation',
+            task_id: ctx.task_id,
+            task_updated_at: ctx.task_updated_at ?? undefined,
+          })
         }
       }
       if (restoredContextItems.length > 0) {
@@ -2367,6 +2489,11 @@ function ChatAreaContent({
     teamModeFilter,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
+    mentionTasks: tasks,
+    currentTaskId: selectedTaskDetail?.id ?? selectedTask?.id,
+    enableTaskMentions:
+      effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task',
+    onSelectConversation: handleSelectConversation,
     isDragging: chatState.isDragging,
     onDragEnter: handleDragEnter,
     onDragLeave: handleDragLeave,
@@ -2534,8 +2661,9 @@ function ChatAreaContent({
       <QueryParamAutoSend
         teams={teams}
         isTeamsLoading={isTeamsLoading}
+        isTeamSelectionReady={isTeamSelectionReady}
         selectedTeam={chatState.selectedTeam}
-        onTeamChange={handleTeamChange}
+        onTeamChange={handleUserTeamChange}
         onSendMessage={streamHandlers.handleSendMessage}
         hasTaskId={!!taskIdFromUrl}
         onPrefillMessage={chatState.setTaskInputMessage}
@@ -2615,6 +2743,13 @@ function ChatAreaContent({
               onReEdit={handleReEdit}
               waitingMessage={compactingWaitMessage}
               defaultSaveKnowledgeBaseId={taskType === 'knowledge' ? knowledgeBaseId : undefined}
+              mentionTasks={tasks}
+              currentTaskId={selectedTaskDetail?.id ?? selectedTask?.id}
+              enableTaskMentions={
+                effectiveTaskType === 'chat' ||
+                effectiveTaskType === 'code' ||
+                effectiveTaskType === 'task'
+              }
             />
           </div>
         </div>

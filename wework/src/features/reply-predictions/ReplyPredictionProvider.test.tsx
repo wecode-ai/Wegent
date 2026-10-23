@@ -19,7 +19,7 @@ const source: ReplyPredictionSource = {
   revision: 'completed-turn',
   latestTurnId: 'turn-1',
   busy: false,
-  address: { deviceId: 'device-1', taskId: 'task-1' },
+  address: { deviceId: 'device-1', taskId: 'task-1', workspacePath: '/workspace' },
 }
 type Predict = (data: { signal?: AbortSignal }) => Promise<{ suggestion: string | null }>
 const apis = new WeakMap<Predict, { predict: Predict }>()
@@ -108,6 +108,39 @@ function fixture(
 }
 
 describe('reply prediction provider', () => {
+  it.each([
+    { workspaceKind: 'chat' },
+    { projectSession: { projectId: 'project-1', issueId: 'issue-1' } },
+  ])('predicts non-workspace sessions and preserves their address: %j', async session => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const address = { ...source.address, workspacePath: undefined, ...session }
+    const { rerender } = render(fixture(predict, { ...source, address }))
+
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ address }))
+
+    rerender(fixture(predict, { ...source, address: { ...address, workspacePath: '/session' } }))
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button')).toHaveTextContent('请继续')
+  })
+
+  it('waits for the task workspace to be restored before generating or reading its cache', async () => {
+    const predict = vi.fn(async () => ({ suggestion: '请继续' }))
+    const { rerender } = render(
+      fixture(predict, {
+        ...source,
+        address: { ...source.address, workspacePath: undefined },
+      })
+    )
+    expect(predict).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).toBeNull()
+
+    rerender(fixture(predict))
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(predict).toHaveBeenCalledWith(expect.objectContaining({ address: source.address }))
+  })
+
   it.each(['suggestion', 'failure'])(
     'refreshes a cached %s when the session model changes',
     async state => {
@@ -222,6 +255,43 @@ describe('reply prediction provider', () => {
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
     rerender(fixture(predict, source, { enabled: false }))
     expect(predict.mock.calls[0][0].signal?.aborted).toBe(true)
+  })
+
+  it('keeps a pending prediction when native recovery reorders the same model options', async () => {
+    let resolve!: (result: { suggestion: string }) => void
+    const predict = vi.fn<Predict>(
+      () =>
+        new Promise(done => {
+          resolve = done
+        })
+    )
+    const original = {
+      ...source,
+      modelSelection: {
+        modelName: 'session-model',
+        modelType: 'runtime' as const,
+        options: { collaborationMode: 'default', speed: 'standard', codexProviderId: 'provider' },
+      },
+    }
+    const { rerender } = render(fixture(predict, original))
+    await waitFor(() => expect(predict).toHaveBeenCalledTimes(1))
+
+    rerender(
+      fixture(predict, {
+        ...original,
+        modelSelection: {
+          options: { codexProviderId: 'provider', speed: 'standard', collaborationMode: 'default' },
+          modelType: 'runtime',
+          modelName: 'session-model',
+        },
+      })
+    )
+
+    expect(predict.mock.calls[0][0].signal?.aborted).toBe(false)
+    expect(predict).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status')).toBeVisible()
+    resolve({ suggestion: '请继续' })
+    await waitFor(() => expect(screen.getByRole('button')).toHaveTextContent('请继续'))
   })
 
   it('keeps a completed-turn prediction when a task refresh clears the active turn ID', async () => {

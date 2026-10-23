@@ -1,11 +1,13 @@
 import base64
+import hashlib
+import json
+import time
+import uuid
 
-import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
 from app.api.endpoints import wework_auth
-from app.core.config import settings
 
 
 class MemoryAuthSessionCache:
@@ -43,89 +45,37 @@ def device_identity():
     return private_key, public_jwk
 
 
-def create_session(test_client: TestClient, public_jwk: dict[str, str]):
-    return test_client.post(
-        "/api/auth/wework/sessions",
-        json={"device_public_key": public_jwk},
-    )
-
-
-def create_legacy_session(test_client: TestClient):
-    return test_client.post("/api/auth/wework/sessions")
-
-
-def test_wework_config_exposes_wegent_frontend_url(
-    test_client: TestClient,
-    monkeypatch,
-):
-    monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com/")
-    monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "wss://socket.example.com/")
-
-    response = test_client.get("/api/auth/wework/config")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "web_url": "https://frontend.example.com",
-        "socket_url": "wss://socket.example.com",
+def seed_device_bound_session(
+    cache: MemoryAuthSessionCache, public_jwk: dict[str, str]
+) -> dict[str, str]:
+    session_id = str(uuid.uuid4())
+    device_public_key = public_jwk
+    thumbprint_payload = json.dumps(
+        {key: device_public_key[key] for key in ("crv", "kty", "x", "y")},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    cache.values[wework_auth._session_key(session_id)] = {
+        "status": "pending",
+        "auth_mode": wework_auth.DEVICE_BOUND_REFRESH_AUTH_MODE,
+        "poll_token": "poll-token",
+        "created_at": int(time.time()),
+        "expires_at": int(time.time()) + wework_auth.SESSION_TTL_SECONDS,
+        "device_public_key": device_public_key,
+        "device_thumbprint": base64url(hashlib.sha256(thumbprint_payload).digest()),
     }
+    return {"session_id": session_id, "poll_token": "poll-token"}
 
 
-def test_wework_config_returns_null_for_unconfigured_socket_url(
-    test_client: TestClient,
-    monkeypatch,
-):
-    monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com")
-    monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "")
-
-    response = test_client.get("/api/auth/wework/config")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "web_url": "https://frontend.example.com",
-        "socket_url": None,
-    }
-
-
-def test_create_wework_auth_session_uses_dedicated_authorize_base_url(
-    test_client: TestClient,
-    monkeypatch,
-):
-    install_memory_auth_session_cache(monkeypatch)
-    monkeypatch.setattr(
-        settings, "WEWORK_AUTHORIZE_BASE_URL", "https://app.example.com"
-    )
-    monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com")
-
-    _, public_jwk = device_identity()
-    response = create_session(test_client, public_jwk)
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["authorize_url"].startswith(
-        "https://app.example.com/auth/wework/authorize?"
-    )
-    assert data["web_url"] == "https://frontend.example.com"
-    assert data["session_id"]
-    assert data["poll_token"]
-    assert data["poll_interval_seconds"] > 0
-
-
-def test_wework_auth_session_approve_and_poll_returns_token_once(
+def test_wework_auth_session_approve_persists_device_bound_tokens(
     test_client: TestClient,
     test_token: str,
     test_user,
     monkeypatch,
 ):
-    install_memory_auth_session_cache(monkeypatch)
-    monkeypatch.setattr(settings, "WEWORK_AUTHORIZE_BASE_URL", "")
-    monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com")
+    cache = install_memory_auth_session_cache(monkeypatch)
     _, public_jwk = device_identity()
-    session_response = create_session(test_client, public_jwk)
-    assert session_response.status_code == 200
-    session = session_response.json()
-    assert session["authorize_url"].startswith(
-        "https://frontend.example.com/auth/wework/authorize?"
-    )
+    session = seed_device_bound_session(cache, public_jwk)
 
     approve_response = test_client.post(
         f"/api/auth/wework/sessions/{session['session_id']}/approve",
@@ -134,44 +84,11 @@ def test_wework_auth_session_approve_and_poll_returns_token_once(
     assert approve_response.status_code == 200
     assert approve_response.json()["status"] == "approved"
 
-    poll_response = test_client.get(
-        f"/api/auth/wework/sessions/{session['session_id']}/poll",
-        params={"poll_token": session["poll_token"]},
-    )
-    assert poll_response.status_code == 200
-    poll_data = poll_response.json()
-    assert poll_data["status"] == "success"
-    assert poll_data["access_token"]
-    assert poll_data["refresh_token"]
-    assert poll_data["token_type"] == "bearer"
-    assert poll_data["username"] == test_user.user_name
-
-    second_poll_response = test_client.get(
-        f"/api/auth/wework/sessions/{session['session_id']}/poll",
-        params={"poll_token": session["poll_token"]},
-    )
-    assert second_poll_response.status_code == 200
-    assert second_poll_response.json()["status"] == "failed"
-
-
-def test_wework_auth_session_rejects_invalid_poll_token(
-    test_client: TestClient, monkeypatch
-):
-    install_memory_auth_session_cache(monkeypatch)
-    monkeypatch.setattr(
-        settings, "WEWORK_AUTHORIZE_BASE_URL", "https://app.example.com"
-    )
-    _, public_jwk = device_identity()
-    session_response = create_session(test_client, public_jwk)
-    assert session_response.status_code == 200
-    session = session_response.json()
-
-    poll_response = test_client.get(
-        f"/api/auth/wework/sessions/{session['session_id']}/poll",
-        params={"poll_token": "wrong-token"},
-    )
-
-    assert poll_response.status_code == 401
+    stored = cache.values[wework_auth._session_key(session["session_id"])]
+    assert stored["status"] == "approved"
+    assert stored["access_token"]
+    assert stored["refresh_token"]
+    assert stored["username"] == test_user.user_name
 
 
 def test_device_bound_session_does_not_downgrade_when_binding_is_missing(
@@ -181,7 +98,7 @@ def test_device_bound_session_does_not_downgrade_when_binding_is_missing(
 ):
     cache = install_memory_auth_session_cache(monkeypatch)
     _, public_jwk = device_identity()
-    session = create_session(test_client, public_jwk).json()
+    session = seed_device_bound_session(cache, public_jwk)
     cached_session = cache.values[wework_auth._session_key(session["session_id"])]
     cached_session.pop("device_thumbprint")
 
@@ -194,35 +111,3 @@ def test_device_bound_session_does_not_downgrade_when_binding_is_missing(
     assert approve_response.json()["detail"] == (
         "Authorization session is missing its device binding"
     )
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.wework_auth as endpoint_0
-    import app.api.endpoints.wework_auth as endpoint_1
-    import app.api.endpoints.wework_auth as endpoint_2
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/auth/wework/config",
-            endpoint_0.get_wework_web_config,
-            endpoint_0.router,
-            methods=["GET"],
-            response_model=endpoint_0.WeworkWebConfigResponse,
-        )
-        register(
-            "/api/auth/wework/sessions",
-            endpoint_1.create_wework_auth_session,
-            endpoint_1.router,
-            methods=["POST"],
-            response_model=endpoint_1.WeworkAuthSessionCreateResponse,
-        )
-        register(
-            "/api/auth/wework/sessions/{session_id}/poll",
-            endpoint_2.poll_wework_auth_session,
-            endpoint_2.router,
-            methods=["GET"],
-            response_model=endpoint_2.WeworkAuthSessionPollResponse,
-        )
-        yield

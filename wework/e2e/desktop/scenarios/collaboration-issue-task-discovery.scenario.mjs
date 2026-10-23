@@ -36,9 +36,10 @@ export function createDesktopScenario({
   let localProjectCreated = false
   const fixtures = []
   const modelRequests = []
-  const request = async (path, values) => {
+  const request = async (path, values, method = values ? 'POST' : 'GET') => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
-      ...(values ? { method: 'POST', body: JSON.stringify(values) } : {}),
+      method,
+      ...(values ? { body: JSON.stringify(values) } : {}),
       headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
     })
     const body = await response.json()
@@ -68,10 +69,13 @@ export function createDesktopScenario({
       target_id: String(owner.id),
       notify_target: false,
     })
-    const started = await request(`/api/v1/loop-items/${issue.id}/work/start`, {
-      version: assigned.issue.version,
-    })
-    assert.equal(started.issue.human_work.can_submit, true)
+    const started = await request(
+      `/api/v1/loop-items/${issue.id}`,
+      { version: assigned.issue.version, status: 'in_progress' },
+      'PATCH'
+    )
+    assert.equal(started.status, 'in_progress')
+    assert.equal(started.human_task_binding.assignmentId, assigned.assignment.id)
     const fixture = { project, issue, device }
     fixtures.push(fixture)
     return fixture
@@ -97,8 +101,10 @@ export function createDesktopScenario({
     )
     await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
-    await control.command('waitFor', scoped('[data-testid="human-issue-ai-assist"]'))
-    await control.command('click', scoped('[data-testid="human-issue-ai-assist"]'))
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="cloud-todo-personal-task-start"]')
+    )
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`
     await control.command('waitFor', composer)

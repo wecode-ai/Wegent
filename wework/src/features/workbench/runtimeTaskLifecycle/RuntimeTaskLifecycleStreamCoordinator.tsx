@@ -211,7 +211,12 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         if (disposed) return
         const transcript = projectRuntimePaneTranscript(transcriptResponse)
         const currentSnapshot = store.getTask(address)
-        if (didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId)) {
+        if (
+          didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId) ||
+          (currentSnapshot?.turn.active &&
+            terminalTurnId &&
+            store.isPriorTurn(address, terminalTurnId))
+        ) {
           reconcileRuntimeConversationSnapshot(address, transcript.turns)
           return
         }

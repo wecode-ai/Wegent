@@ -92,9 +92,11 @@ export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
   headers?: HeadersInit
+  cache?: RequestCache
 }
 
 export interface HttpClient {
+  getCacheScope?(): unknown
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   getBlob(endpoint: string): Promise<Blob>
   post<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
@@ -152,7 +154,8 @@ async function parseError(response: Response): Promise<ApiError> {
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
-  const inFlightGetRequests = new Map<string, Promise<unknown>>()
+  let cacheToken: string | null | undefined
+  let cacheScope = 0
 
   async function fetchWithDiagnostics(
     endpoint: string,
@@ -259,10 +262,17 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     requestOptions: HttpRequestOptions = {},
     selectionAttempted = false
   ): Promise<T> {
-    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
-      token: getToken(),
-      signal: requestOptions.signal,
-    })
+    const diagnostics = await fetchWithDiagnostics(
+      endpoint,
+      {
+        ...init,
+        ...(requestOptions.cache ? { cache: requestOptions.cache } : {}),
+      },
+      {
+        token: getToken(),
+        signal: requestOptions.signal,
+      }
+    )
     const { response } = diagnostics
 
     if (!response.ok) {
@@ -302,29 +312,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   function get<T>(endpoint: string, requestOptions: HttpRequestOptions = {}): Promise<T> {
-    const token = getToken()
-    const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
-    const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
-    if (!requestOptions.signal) {
-      const currentRequest = inFlightGetRequests.get(cacheKey)
-      if (currentRequest) {
-        return currentRequest as Promise<T>
-      }
-    }
-
-    const nextRequest = request<T>(
-      endpoint,
-      { method: 'GET', headers: requestOptions.headers },
-      requestOptions
-    ).finally(() => {
-      if (!requestOptions.signal) {
-        inFlightGetRequests.delete(cacheKey)
-      }
-    })
-    if (!requestOptions.signal) {
-      inFlightGetRequests.set(cacheKey, nextRequest)
-    }
-    return nextRequest
+    return request<T>(endpoint, { method: 'GET', headers: requestOptions.headers }, requestOptions)
   }
 
   async function getBlob(endpoint: string): Promise<Blob> {
@@ -349,6 +337,14 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   }
 
   return {
+    getCacheScope() {
+      const token = getToken()
+      if (cacheToken !== token) {
+        cacheToken = token
+        cacheScope++
+      }
+      return cacheScope
+    },
     get,
     getBlob,
     post: (endpoint, data, requestOptions = {}) =>

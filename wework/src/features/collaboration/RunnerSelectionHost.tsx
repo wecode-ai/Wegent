@@ -17,7 +17,9 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
   const { t } = useTranslation('common')
   const api = useMemo(
     () => ({
-      listRunnerEnvironments: async () => pending.request.environments,
+      listEnvironments: async () => pending.request.environments,
+      listNativeModels: async (environment: import('@wegent/collaboration').RunnerEnvironment) =>
+        environment,
       listModels: async () => pending.request.cloud_models,
     }),
     [pending]

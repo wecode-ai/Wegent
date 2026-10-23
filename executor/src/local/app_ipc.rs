@@ -34,7 +34,6 @@ use crate::{
         branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
         workspace_diff, worktree_add, worktree_remove,
     },
-    local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
         PrepareLocalHarnessLaunchRequest,
@@ -1440,14 +1439,6 @@ impl AppIpcServer {
             .ok_or_else(|| AppIpcError::new("bad_request", "command_key is required"))?;
         let command_key = command_key.trim();
 
-        if command_key == "git_generate_commit_message" {
-            let cwd = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
-            let env = string_env(params.get("env"))?;
-            let result = generate_commit_message(cwd, env).await;
-            return serde_json::to_value(result)
-                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
-        }
-
         if command_key == "ls_skills" {
             let result = list_local_skills().await;
             return serde_json::to_value(result)
@@ -1557,6 +1548,19 @@ impl AppIpcServer {
         let args = string_list(params.get("args"))?;
         let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
         let env = string_env(params.get("env"))?;
+        let linked_provider = match command_key {
+            "git_github_pull_request_view" => Some("github"),
+            "git_gitlab_merge_request_view" => Some("gitlab"),
+            _ => None,
+        };
+        if let Some(provider) = linked_provider {
+            if let Err(error) =
+                super::linked_change_requests::validate_linked_request(provider, &args, &env).await
+            {
+                return serde_json::to_value(CommandResult::error(error, 0.0, false))
+                    .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+            }
+        }
         if is_workspace_file_command(command_key) {
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
@@ -3277,6 +3281,16 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "remote", "get-url", "origin"],
             None,
         )),
+        "git_github_pull_request_view" => Some(command_definition(
+            "gh pr view --json <status-fields> <url>",
+            &["gh", "pr", "view", "--json", "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt"],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_request_view" => Some(command_definition(
+            "glab mr view --output json <iid> --repo <url>",
+            &["glab", "mr", "view", "--output", "json"],
+            Some(PostProcessor::Json),
+        )),
         "git_github_pull_requests" => Some(command_definition(
             "gh pr list --state all --head <branch>",
             &[
@@ -3976,6 +3990,16 @@ mod tests {
             .await
             .expect("client input should close");
         serving.await.expect("app IPC task should finish");
+    }
+
+    #[test]
+    fn linked_change_request_commands_accept_explicit_repository_urls() {
+        let github = local_app_command("git_github_pull_request_view").unwrap();
+        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
+        assert!(github.argv[4].contains("statusCheckRollup"));
+        assert!(github.argv[4].contains("mergedAt"));
+        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
+        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
     }
 
     #[test]

@@ -1915,33 +1915,6 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         "turn_file_changes_review must run through the native handler"
     );
 
-    let commit_message_response = server
-        .handle_line(
-            &json!({
-                "type": "request",
-                "id": "req-commit-message",
-                "method": "device.execute_command",
-                "params": {
-                    "command_key": "git_generate_commit_message",
-                    "path": "/tmp/project"
-                }
-            })
-            .to_string(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(commit_message_response["ok"], true);
-    assert_eq!(commit_message_response["result"]["success"], false);
-    assert_eq!(
-        commit_message_response["result"]["stdout"]["success"],
-        false
-    );
-    assert_eq!(
-        seen_request.lock().unwrap().as_ref(),
-        None,
-        "native commit message generation must not dispatch through the generic command handler"
-    );
     let push_response = server
         .handle_line(
             &json!({

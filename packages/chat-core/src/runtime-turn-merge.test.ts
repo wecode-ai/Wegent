@@ -94,3 +94,44 @@ it('keeps live command output when a transcript read races with a later output e
     merged(command('tick-4\ntick-5\n'), command('authoritative', 'completed')),
   ).toMatchObject({ toolOutput: 'authoritative', status: 'done' })
 })
+
+describe('MCP output history reconciliation', () => {
+  function tool(output: unknown): RuntimeConversationTurn {
+    return {
+      id: 'turn-1',
+      status: 'streaming',
+      items: [
+        {
+          id: 'node-repl',
+          type: 'block',
+          block: {
+            id: 'node-repl',
+            type: 'tool',
+            toolName: 'node_repl.js',
+            status: 'done',
+            createdAt: 1,
+            toolOutput: output,
+          },
+        },
+      ],
+    }
+  }
+
+  it.each([undefined, null, ''])(
+    'keeps a completed MCP result over an empty snapshot (%s)',
+    (output) => {
+      const result = {
+        content: [{ type: 'text', text: "{ status: 'executed', result: 84 }" }],
+      }
+      expect(merged(tool(result), tool(output))).toMatchObject({
+        toolOutput: result,
+      })
+    },
+  )
+
+  it('accepts a nonempty authoritative result', () => {
+    expect(merged(tool('live'), tool('history'))).toMatchObject({
+      toolOutput: 'history',
+    })
+  })
+})

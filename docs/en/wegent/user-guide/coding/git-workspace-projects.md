@@ -125,7 +125,7 @@ While a task is running, Wework refreshes the change counts periodically in the 
 - **Commit and push** creates a local commit, then pushes the current branch.
 - **Push** pushes the current branch without creating another commit.
 
-You can enter the commit message manually. When the field is empty, Wework first verifies that the staged diff contains changes, then asks Codex on the execution device to generate a one-line commit message from that diff. When there are no changes to commit, Wework reports the error without invoking AI. AI generation requires an authenticated, working Codex installation on the execution device.
+You can enter the commit message manually. When the field is empty, Wework first verifies that the staged diff contains changes, then uses the application's text generation service to generate a one-line commit message from that diff. When there are no changes to commit, Wework reports the error without invoking AI. Generation uses the title generation model configured in settings, or an available model when none is configured, through the application's model routing and authentication. Requests are cancelled after 60 seconds. An unavailable model, authentication failure, or invalid response stops the operation before commit or push; you can enter a message manually and try again.
 
 Push always publishes the current local branch to a branch with the same name on `origin` and configures it as the upstream, equivalent to:
 
@@ -133,7 +133,7 @@ Push always publishes the current local branch to a branch with the same name on
 git push -u origin <current-branch>
 ```
 
-This prevents an incorrectly configured old upstream such as `master` from receiving commits from a differently named local branch. Push is rejected with an error in detached HEAD state because there is no current branch name. While Wework generates a message, commits, or pushes, **Environment info** shows the current progress; Git or Codex errors remain visible in the panel for troubleshooting.
+This prevents an incorrectly configured old upstream such as `master` from receiving commits from a differently named local branch. Push is rejected with an error in detached HEAD state because there is no current branch name. While Wework generates a message, commits, or pushes, **Environment info** shows the current progress; Git or model errors remain visible in the panel for troubleshooting.
 
 ## Browse Workspace Files and Add Code Comments
 

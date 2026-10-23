@@ -10,7 +10,7 @@ import { inputUserMessageTexts } from './desktop-server.mjs'
 import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
-import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
+import { findRuntimeWorkTask, waitForForkTaskRow } from './runtime-task-evidence.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -464,6 +464,11 @@ export async function verifyAsyncQuestionWaitingIndicator({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`runtime-local-task-waiting-${taskId}`),
+    'The sidebar did not receive the accepted async reply state'
+  )
   assert.equal(
     Number(await control.command('getElementCount', waitingSelector)),
     0,
@@ -638,6 +643,8 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
   })
   await waitForRuntimeTaskOrder(control, reloadedSortableListSelector, reorderedTaskRows)
 
+  await verifyNewChatBeforeManualOrder({ composerSelector, control, reorderedTaskRows })
+
   const unreadBefore = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
   ).workbench
@@ -679,6 +686,34 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
       snapshot.workbench?.visibleUnreadTaskCount === unreadBefore.visibleUnreadTaskCount,
     'A stale lifecycle task increased the visible unread task count'
   )
+}
+
+async function verifyNewChatBeforeManualOrder({ composerSelector, control, reorderedTaskRows }) {
+  const newTaskRowTestId = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    '[data-testid="runtime-chat-section-new-chat-button"]'
+  )
+  const expectedRows = [newTaskRowTestId, ...reorderedTaskRows]
+  const listSelector = await findRuntimeTaskSortableListSelector(control, expectedRows)
+  await waitForRuntimeTaskOrder(control, listSelector, expectedRows)
+  await assertRuntimeTaskOrderRemainsStable(control, listSelector, expectedRows)
+
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The new-chat order reload did not reconnect to the desktop controller'
+  )
+  for (const taskRowTestId of expectedRows) {
+    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  const reloadedListSelector = await findRuntimeTaskSortableListSelector(control, expectedRows)
+  await waitForRuntimeTaskOrder(control, reloadedListSelector, expectedRows)
+  await assertRuntimeTaskOrderRemainsStable(control, reloadedListSelector, expectedRows)
 }
 
 async function verifyBackgroundCompletionRestore({
@@ -967,11 +1002,6 @@ async function verifyRunningFollowUpFork({
   )
   assert.equal(previousTask?.running, false, 'The source turn must be complete before follow-up')
   assert.equal(typeof previousTask?.completedAt, 'number')
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
   control.setScenario('running_fork_follow_up')
   try {
     await sendPromptUntilScenarioRequest(
@@ -1005,7 +1035,7 @@ async function verifyRunningFollowUpFork({
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
-    const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '', 15_000)
+    const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, 15_000)
     assert.notEqual(
       forkTaskRowTestId,
       sourceTaskRowTestId,
@@ -1063,11 +1093,7 @@ async function verifyCompletedTurnFork({
   sourceTaskRowTestId,
   workspacePath,
 }) {
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
   await control.command('scrollIntoView', firstTurnForkButtonSelector)
   await control.command('waitFor', firstTurnForkButtonSelector, {
@@ -1084,13 +1110,12 @@ async function verifyCompletedTurnFork({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, DEFAULT_STEP_TIMEOUT_MS)
   assert.notEqual(
     forkTaskRowTestId,
     sourceTaskRowTestId,
     'Forking reused the source task instead of creating an independent task'
   )
-  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   const runtimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
@@ -1207,11 +1232,6 @@ async function verifyForkProviderModelPreservation({
     'The source task did not persist its local model execution request'
   )
 
-  const taskRowsBeforeFork = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
   await control.command(
     'clickDescendantInElementWithText',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -1221,7 +1241,7 @@ async function verifyForkProviderModelPreservation({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, DEFAULT_STEP_TIMEOUT_MS)
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,

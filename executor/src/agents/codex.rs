@@ -122,7 +122,7 @@ pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework �
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
 - "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
-- For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
+- For the current bound Issue, call `get_current_context` first. Read its description with `get_board_item` and its discussion with `list_board_item_comments`, including PR links and feedback posted in comments. Use `add_board_item_comment` to write to the same visible Issue activity. Read attachments with `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
 - For a manager-bound Issue, call `get_board_item` and `get_assignment_candidates` to inspect the Issue and eligible group members, then call `submit_workflow_plan` once for the current concurrent batch. The Executor starts every selected member as an independent task with that member's configured runtime; never use Codex subagents or execute member work yourself. A fresh manager task will be started after the batch finishes. Only the manager may update the parent Issue status through the project-space tool.
 - Manager and member runs are automatically recorded in the Issue activity. When the manager calls `update_issue_status`, its `comment` field is optional and is the only extra status explanation to publish. Do not duplicate the same result with `add_board_item_comment`.
@@ -4029,7 +4029,7 @@ fn explicit_codex_upstream(
         .expect("explicit model config should produce an upstream")
 }
 
-fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
+pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
     task_identity_env(request)
         .into_iter()
         .map(|(key, value)| {
@@ -4077,8 +4077,6 @@ fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<Strin
 }
 
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
-    const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: i64 = 262_144;
-
     let mut overrides = Vec::new();
     if let Some(web_search) = codex_web_search_mode(model_config) {
         overrides.push(format!("web_search={}", toml_value(&web_search)));
@@ -4086,13 +4084,15 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     if let Some(image_generation) = codex_image_generation_enabled(model_config) {
         overrides.push(format!("features.image_generation={image_generation}"));
     }
-    let context_window =
-        codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
-    overrides.push(format!("model_context_window={context_window}"));
-    if let Some(auto_compact_limit) = codex_auto_compact_token_limit(model_config, context_window) {
-        overrides.push(format!(
-            "model_auto_compact_token_limit={auto_compact_limit}"
-        ));
+    if let Some(context_window) = codex_model_context_window(model_config) {
+        overrides.push(format!("model_context_window={context_window}"));
+        if let Some(auto_compact_limit) =
+            codex_auto_compact_token_limit(model_config, context_window)
+        {
+            overrides.push(format!(
+                "model_auto_compact_token_limit={auto_compact_limit}"
+            ));
+        }
     }
     overrides
 }

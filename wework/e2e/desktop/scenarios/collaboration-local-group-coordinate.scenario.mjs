@@ -117,6 +117,20 @@ async function addAgent(control, name, prompt, timeoutMs) {
 }
 
 async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs) {
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+    timeoutMs,
+  })
+  const defaultAgentOption =
+    '[data-testid="project-agent-wegent-team"] label:has(input[aria-label="当前设备智能体"])'
+  await control.command('waitFor', defaultAgentOption, { timeoutMs })
+  await control.command('click', defaultAgentOption)
+  await control.command('clickWhenEnabled', '[data-testid="project-agent-wegent-create"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="project-agent-wegent-create"]', {
+    visible: false,
+    timeoutMs,
+  })
   const rowTestId = await waitForTestIdByText(
     control,
     scoped('[data-testid="project-agent-list"]'),
@@ -248,7 +262,7 @@ async function createCoordinateGroup(control, timeoutMs) {
 
 async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: title,
   })

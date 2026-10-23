@@ -1,5 +1,15 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -33,6 +43,7 @@ test('builds and materializes one archive per DSH source while preserving role a
     cp(resolve('scripts/lib'), join(scripts, 'lib'), { recursive: true }),
     writeFile(join(source, '.npmrc'), ''),
     writeFile(join(source, 'pnpm-workspace.yaml'), ''),
+    writeFile(join(source, 'published-runtimes.json'), '{}'),
     writeFile(
       join(commands, 'install.cjs'),
       `
@@ -50,7 +61,7 @@ writeFileSync(join(root, 'lib', 'bin.js'), '')
   if (process.platform === 'win32') {
     await writeFile(join(commands, 'pnpm.cmd'), `@"${process.execPath}" "%~dp0install.cjs" %*\r\n`)
   } else {
-    await writeFile(join(commands, 'pnpm'), `#!${process.execPath}\nimport './install.cjs'\n`, {
+    await writeFile(join(commands, 'pnpm'), `#!/usr/bin/env node\nimport './install.cjs'\n`, {
       mode: 0o755,
     })
   }
@@ -129,4 +140,36 @@ writeFileSync(join(root, 'lib', 'bin.js'), '')
   expect((await readdir(join(cache, 'harness-runtime-dev'))).sort()).toEqual(
     [...new Set(runtimes.map(runtime => runtime.sourceFingerprint)), 'runtimes.json'].sort()
   )
-})
+
+  const legacy = runtimes.find(runtime => runtime.dshVersion === '0.1.0-rc.8')
+  const { role: _legacyRole, ...publishedDescriptor } = legacy
+  const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
+  await writeFile(
+    join(source, 'published-runtimes.json'),
+    JSON.stringify({
+      '0.1.0-rc.8': {
+        roles: ['workbench'],
+        assets: { [`${platform}-${process.arch}`]: publishedDescriptor },
+      },
+    })
+  )
+  await rm(join(source, 'runtimes', '0.1.0-rc.8'), { recursive: true })
+  await rm(join(cache, 'harness-runtime-assets', legacy.assetName))
+  const legacyRoot = join(cache, 'harness-runtime-dev', legacy.sourceFingerprint)
+  const downloadedContent = join(cache, 'harness-runtime-dev', '.content-legacy-fixture')
+  await rename(legacyRoot, downloadedContent)
+  await symlink(downloadedContent, legacyRoot, 'junction')
+
+  await prepare()
+
+  const pinnedCatalog = JSON.parse(
+    await readFile(join(root, 'resources', 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
+  )
+  expect(pinnedCatalog.runtimes.find(runtime => runtime.dshVersion === '0.1.0-rc.8')).toEqual(
+    legacy
+  )
+  expect((await readFile(log, 'utf8')).trim().split('\n')).toHaveLength(2)
+  expect(JSON.parse(await readFile(join(legacyRoot, 'runtime.json'), 'utf8')).dshVersion).toBe(
+    legacy.dshVersion
+  )
+}, 30_000)

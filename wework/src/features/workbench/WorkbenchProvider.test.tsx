@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { resetRuntimeConversationQueueControllersForTests } from './runtimeConversationQueueController'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import {
   clearPluginMarketplaceCache,
@@ -36,6 +37,10 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { buildAutomationTaskOptions } from '@/features/automations/automationDraft'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
+import {
+  getArchivedCleanupError,
+  resetArchivedConversationsSettingsStateForTest,
+} from '@/components/settings/archivedConversationsSettingsState'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { ChatInput } from '@/components/chat/ChatInput'
@@ -75,10 +80,12 @@ import {
 import {
   applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
+  cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
+  getRuntimeConversationQueuePaused,
   setRuntimeConversationGoal,
 } from './runtimeConversationCache'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
@@ -2763,6 +2770,30 @@ function ExternalRuntimeSendProbe() {
   )
 }
 
+function ExecutionQueueCancelProbe({ address }: { address: RuntimeTaskAddress }) {
+  const workbench = useWorkbench()
+  const [result, setResult] = useState('idle')
+
+  return (
+    <>
+      <span data-testid="execution-queue-cancel-result">{result}</span>
+      <button
+        data-testid="execution-queue-cancel"
+        type="button"
+        onClick={() => {
+          setResult('pending')
+          void workbench.cancelRuntimeTask(address).then(
+            () => setResult('completed'),
+            () => setResult('failed')
+          )
+        }}
+      >
+        stop execution queue task
+      </button>
+    </>
+  )
+}
+
 function RuntimeTaskSkillsProbe() {
   const workbench = useWorkbench()
   const [appsResult, setAppsResult] = useState('idle')
@@ -2842,6 +2873,30 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('publishes background archive cleanup failures outside the settings page', async () => {
+    resetArchivedConversationsSettingsStateForTest()
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const services = createWorkbenchServices({
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(onChanged).toBeDefined())
+    act(() =>
+      onChanged?.({
+        taskId: 'task-1',
+        deviceId: 'device-1',
+        archiveCleanup: { workspacePath: '/managed/task-1/repo', errors: ['Git metadata missing'] },
+      })
+    )
+    expect(getArchivedCleanupError()).toContain('Git metadata missing')
+    resetArchivedConversationsSettingsStateForTest()
+  })
+
   beforeEach(async () => {
     await i18n.changeLanguage('zh-CN')
     vi.useRealTimers()
@@ -10330,6 +10385,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    resetRuntimeConversationQueueControllersForTests()
     clearRuntimeConversationCacheForTests()
     resetRuntimeTerminalContextForTests()
   })
@@ -17006,13 +17062,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('keeps runtime title synchronization separate from lifecycle reconciliation', async () => {
+  test('updates runtime titles without mutating Issues during lifecycle reconciliation', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onChatStart) streamHandlers = handlers
       return vi.fn()
     })
-    const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
+    const updateLoopItem = vi.fn()
     const initialRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -17100,7 +17156,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
-        local: { updateTaskTrackingTitle },
+        local: { updateLoopItem },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
@@ -17130,12 +17186,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         title: '修复登录回调',
       })
     })
-    await waitFor(() =>
-      expect(updateTaskTrackingTitle).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        '修复登录回调'
-      )
-    )
 
     act(() => {
       streamHandlers.onChatDone?.({
@@ -17151,97 +17201,91 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-local-task-titles')).not.toHaveTextContent('Stale Runtime B')
     expect(screen.getByTestId('runtime-a-task-status')).toHaveTextContent('done')
+    expect(updateLoopItem).not.toHaveBeenCalled()
   })
 
-  test('routes task titles to the project store recorded in the runtime handle', async () => {
-    let streamHandlers: ChatStreamHandlers = {}
-    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (handlers.onRuntimeTaskTitleUpdated) streamHandlers = handlers
-      return vi.fn()
-    })
-    const updateLocalTaskTitle = vi.fn().mockResolvedValue(null)
-    const updateCloudTaskTitle = vi.fn().mockResolvedValue(null)
-    const updateLegacyCloudTaskTitle = vi.fn().mockResolvedValue(null)
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: { id: 7, name: 'Wegent' },
-              deviceWorkspaces: [
-                {
-                  deviceId: 'local-device',
-                  workspacePath: '/workspace/project-alpha',
-                  available: true,
-                  tasks: [
-                    {
-                      taskId: 'runtime-cloud',
-                      workspacePath: '/workspace/project-alpha',
-                      title: 'Cloud Issue task',
-                      runtime: 'codex',
-                      running: true,
-                      status: 'running',
-                      runtimeHandle: {
-                        origin: {
-                          type: 'board_task',
-                          cloudProjectId: 'cloud-project',
-                          loopItemId: 'ISSUE-1',
-                          projectStore: 'backend',
+  test.each(['backend', 'local'] as const)(
+    'keeps %s Issue titles unchanged on runtime title events',
+    async projectStore => {
+      let streamHandlers: ChatStreamHandlers = {}
+      const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+        if (handlers.onRuntimeTaskTitleUpdated) streamHandlers = handlers
+        return vi.fn()
+      })
+      const updateLocalIssue = vi.fn()
+      const updateCloudIssue = vi.fn()
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: { id: 7, name: 'Wegent' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'local-device',
+                    workspacePath: '/workspace/project-alpha',
+                    available: true,
+                    tasks: [
+                      {
+                        taskId: 'runtime-bound',
+                        workspacePath: '/workspace/project-alpha',
+                        title: 'Issue task',
+                        runtime: 'codex',
+                        running: true,
+                        status: 'running',
+                        runtimeHandle: {
+                          origin: {
+                            type: 'board_task',
+                            cloudProjectId: 'project-1',
+                            loopItemId: 'ISSUE-1',
+                            projectStore,
+                          },
                         },
                       },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          totalTasks: 1,
-        })
-      ),
-    })
-    const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-      chatStream: {
-        subscribe,
-      } as unknown as WorkbenchServices['chatStream'],
-      projectSpaceApis: {
-        local: {
-          updateTaskTrackingTitle: updateLocalTaskTitle,
-        },
-        cloud: {
-          updateTaskTrackingTitle: updateLegacyCloudTaskTitle,
-        },
-        defaultLocation: 'cloud',
-      } as unknown as WorkbenchServices['projectSpaceApis'],
-      workspaceRuntimePort: {
-        updateTrackedTaskTitle: updateCloudTaskTitle,
-      } as unknown as WorkbenchServices['workspaceRuntimePort'],
-    })
-
-    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
-
-    await waitFor(() => expect(streamHandlers.onRuntimeTaskTitleUpdated).toBeDefined())
-    act(() => {
-      streamHandlers.onRuntimeTaskTitleUpdated?.({
-        taskId: 'runtime-cloud',
-        subtaskId: 'Cloud title',
-        deviceId: 'local-device',
-        title: 'Cloud title',
+                    ],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          })
+        ),
       })
-    })
-
-    await waitFor(() =>
-      expect(updateCloudTaskTitle).toHaveBeenCalledWith(
-        expect.objectContaining({
-          deviceId: 'local-device',
-          taskId: 'runtime-cloud',
-        }),
-        'Cloud title'
+      const services = createWorkbenchServices({
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+        chatStream: { subscribe } as unknown as WorkbenchServices['chatStream'],
+        projectSpaceApis: {
+          local: { updateLoopItem: updateLocalIssue },
+          cloud: { updateLoopItem: updateCloudIssue },
+          defaultLocation: 'cloud',
+        } as unknown as WorkbenchServices['projectSpaceApis'],
+      })
+      renderWorkbench(
+        <>
+          <RuntimeTopLevelStreamLifecycleProbe />
+          <RuntimePaneSendProbe />
+        </>,
+        services
       )
-    )
-    expect(updateLocalTaskTitle).not.toHaveBeenCalled()
-    expect(updateLegacyCloudTaskTitle).not.toHaveBeenCalled()
-  })
+      await waitFor(() => expect(streamHandlers.onRuntimeTaskTitleUpdated).toBeDefined())
+      await waitFor(() =>
+        expect(screen.getByTestId('runtime-local-task-titles')).toHaveTextContent('Issue task')
+      )
+      act(() => {
+        streamHandlers.onRuntimeTaskTitleUpdated?.({
+          taskId: 'runtime-bound',
+          subtaskId: 'friendly-title',
+          deviceId: 'local-device',
+          title: 'New conversation title',
+        })
+      })
+      expect(screen.getByTestId('runtime-local-task-titles')).toHaveTextContent(
+        'New conversation title'
+      )
+      expect(updateLocalIssue).not.toHaveBeenCalled()
+      expect(updateCloudIssue).not.toHaveBeenCalled()
+    }
+  )
 
   test('does not backfill historical runtime tasks into My Tasks during load', async () => {
     const trackProjectTask = vi.fn().mockResolvedValue({
@@ -17294,7 +17338,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       projectSpaceApis: {
         local: {
           trackProjectTask,
-          updateTaskTrackingTitle: vi.fn().mockResolvedValue(null),
         },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
@@ -18463,7 +18506,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
   })
 
-  test('waits for the sent queued runtime message to start before sending the next queued item', async () => {
+  test('waits for the queued turn to start and drains the next item while another task is open', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -18660,6 +18703,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+      'device-1:runtime-b'
+    )
+    expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        address: expect.objectContaining({ taskId: 'runtime-a' }),
+        message: '执行ls',
+      })
+    )
     await userEvent.click(screen.getByText('open follow-up runtime a'))
     await waitFor(() =>
       expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
@@ -18673,6 +18726,159 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
   })
+
+  test.each([
+    { outcome: 'accepted', initiallyPaused: false },
+    { outcome: 'rejected', initiallyPaused: false },
+    { outcome: 'transport', initiallyPaused: false },
+    { outcome: 'rejected', initiallyPaused: true },
+    { outcome: 'notify-failed', initiallyPaused: false },
+  ] as const)(
+    'execution cancellation preserves a background queue ($outcome, initiallyPaused=$initiallyPaused)',
+    async ({ outcome, initiallyPaused }) => {
+      const address = {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      } satisfies RuntimeTaskAddress
+      let runtimeRunning = true
+      const cancellation = deferred<{ accepted: boolean; taskId: string; error?: string }>()
+      const cancelRuntimeTask = vi.fn().mockReturnValue(cancellation.promise)
+      const sendRuntimeMessage = vi.fn().mockResolvedValue({
+        accepted: true,
+        taskId: address.taskId,
+      })
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockImplementation(async () =>
+          createRuntimeWork({
+            projects: [
+              {
+                project: { id: 7, name: 'Wegent' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: address.deviceId,
+                    available: true,
+                    workspacePath: address.workspacePath,
+                    tasks: [
+                      {
+                        taskId: address.taskId,
+                        workspacePath: address.workspacePath,
+                        title: 'Runtime A',
+                        runtime: 'claude_code',
+                        running: runtimeRunning,
+                        continuable: true,
+                      },
+                      {
+                        taskId: 'runtime-b',
+                        workspacePath: address.workspacePath,
+                        title: 'Runtime B',
+                        runtime: 'claude_code',
+                        running: false,
+                        continuable: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 2,
+          })
+        ),
+        getRuntimeTranscript: vi.fn().mockImplementation(async ({ taskId }) => ({
+          taskId,
+          workspacePath: address.workspacePath,
+          runtime: 'claude_code',
+          messages: [],
+        })),
+        cancelRuntimeTask,
+        sendRuntimeMessage,
+      })
+      renderWorkbench(
+        <>
+          <FollowUpProbe />
+          <ExecutionQueueCancelProbe address={address} />
+          <RuntimeRunningTasksProbe />
+        </>,
+        createWorkbenchServices({
+          runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+        })
+      )
+      await userEvent.click(await screen.findByText('open follow-up runtime a'))
+      await waitFor(() =>
+        expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('busy')
+      )
+      await userEvent.click(screen.getByText('set follow-up'))
+      await userEvent.click(screen.getByText('send follow-up'))
+      await userEvent.click(screen.getByText('set ls follow-up'))
+      await userEvent.click(screen.getByText('send follow-up'))
+      const queuedMessages = getRuntimeConversationQueuedMessages(address)
+      expect(queuedMessages).toHaveLength(2)
+      expect(sendRuntimeMessage).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByText('open follow-up runtime b'))
+      await waitFor(() =>
+        expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+          'device-1:runtime-b'
+        )
+      )
+      if (initiallyPaused) {
+        act(() => cacheRuntimeConversationQueuePaused(address, true))
+      }
+      if (outcome === 'notify-failed') {
+        runtimeWorkSyncMocks.notifyMainRuntimeWorkChanged.mockRejectedValueOnce(
+          new Error('work list notification unavailable')
+        )
+      }
+
+      await userEvent.click(screen.getByTestId('execution-queue-cancel'))
+
+      await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledExactlyOnceWith(address))
+      expect(getRuntimeConversationQueuePaused(address)).toBe(true)
+      expect(getRuntimeConversationQueuedMessages(address)).toEqual(queuedMessages)
+      runtimeRunning = false
+      await userEvent.click(screen.getByText('refresh work lists'))
+      await waitFor(() =>
+        expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent('none')
+      )
+      expect(sendRuntimeMessage).not.toHaveBeenCalled()
+
+      await act(async () => {
+        if (outcome === 'transport') cancellation.reject(new Error('executor unavailable'))
+        else {
+          cancellation.resolve({
+            accepted: outcome !== 'rejected',
+            taskId: address.taskId,
+            ...(outcome === 'rejected' ? { error: 'stop rejected' } : {}),
+          })
+        }
+      })
+
+      await waitFor(() =>
+        expect(screen.getByTestId('execution-queue-cancel-result')).toHaveTextContent(
+          outcome === 'accepted' ? 'completed' : 'failed'
+        )
+      )
+      const shouldStayPaused =
+        initiallyPaused || outcome === 'accepted' || outcome === 'notify-failed'
+      expect(getRuntimeConversationQueuePaused(address)).toBe(shouldStayPaused)
+      if (shouldStayPaused) {
+        expect(sendRuntimeMessage).not.toHaveBeenCalled()
+        expect(getRuntimeConversationQueuedMessages(address)).toEqual(queuedMessages)
+      } else {
+        await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+        expect(sendRuntimeMessage).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            address,
+            message: queuedMessages[0].content,
+            clientUserMessageId: queuedMessages[0].id,
+          })
+        )
+      }
+      expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent(
+        'device-1:runtime-b'
+      )
+      expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement()
+    }
+  )
 
   test('drains the preserved queue when a manual turn settles before React commits', async () => {
     let streamHandlers: ChatStreamHandlers = {}

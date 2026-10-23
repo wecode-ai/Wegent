@@ -155,6 +155,7 @@ export interface WorkspaceIssueCreateInput {
 }
 
 export interface WorkspaceIssueUpdateInput {
+  position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
   title?: string;
@@ -172,6 +173,7 @@ export interface WorkspaceIssueUpdateInput {
 }
 
 export interface WorkspaceIssueAssignmentInput {
+  position?: { beforeItemId: string | null };
   version: number;
   assigneeType: "user" | "agent" | "team" | "group";
   assigneeId: string;
@@ -522,7 +524,11 @@ export interface SharedWorkspaceIssuesApi {
   restore(issueId: string): Promise<CollaborationIssue[]>;
   reorder(
     projectId: string,
-    input: { parentId: string | null; status: string; issueIds: string[] },
+    input: {
+      parentId: string | null;
+      status: string | null;
+      issueIds: string[];
+    },
   ): Promise<CollaborationIssue[]>;
   markRead(
     issueId: string,
@@ -579,7 +585,10 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
-  listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>;
+  listAgents(
+    workspaceId: string,
+    options?: { forceRefresh?: boolean },
+  ): Promise<CollaborationOwnedAgent[]>;
   addAgent(
     workspaceId: string,
     input: WorkspaceAgentCreateInput,
@@ -856,7 +865,7 @@ export interface SharedWorkspaceRuntimeProfilesApi {
 export interface SharedWorkspaceAgentsApi {
   list(
     projectId: string,
-    options?: { includeArchived?: boolean },
+    options?: { includeArchived?: boolean; forceRefresh?: boolean },
   ): Promise<WorkspaceProjectAgent[]>;
   create(
     projectId: string,
@@ -915,7 +924,46 @@ export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
   ): Promise<Blob>;
 }
 
+export interface WorkspaceStandInWorkspace {
+  projectKey: string;
+  workspacePath: string;
+  executionMode: "current_workspace" | "git_worktree";
+  branch?: string | null;
+}
+
+export interface WorkspaceStandInSettings {
+  goalMode?: boolean;
+  modelOptions?: Record<string, string>;
+  model?: import("../agent-form/runnerRouting").RunnerModelIdentity | null;
+  workspace?: WorkspaceStandInWorkspace | null;
+  id?: string;
+  name?: string;
+  tags?: string[];
+  agentId?: string | null;
+  enabled: boolean;
+  prompt: string;
+  executionDeviceId: string;
+  version: number;
+}
+
 export interface SharedWorkspaceApi {
+  standIn?: {
+    run?(
+      projectId: string,
+      issueId: string,
+      deviceId: string,
+      standInId?: string,
+    ): Promise<WorkspaceRuntimeTaskAddress>;
+    get(
+      projectId: string,
+      deviceId?: string,
+      standInId?: string,
+    ): Promise<WorkspaceStandInSettings>;
+    save(
+      projectId: string,
+      settings: WorkspaceStandInSettings,
+    ): Promise<WorkspaceStandInSettings>;
+  };
   /** Device-addressed execution transcripts and live runtime events. */
   runtime?: SharedWorkspaceRuntimeApi;
   /** Live project threads, when supported by the host. */
@@ -978,10 +1026,6 @@ export interface WeworkWorkspaceRuntimePort {
     title: string,
     description: string,
   ): Promise<{ issue: CollaborationIssue }>;
-  updateTrackedTaskTitle(
-    task: WorkspaceRuntimeTaskAddress,
-    title: string,
-  ): Promise<CollaborationIssue | null>;
   reportExecutionLifecycle(
     projectId: string,
     executionId: number,

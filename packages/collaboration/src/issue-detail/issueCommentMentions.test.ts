@@ -35,6 +35,13 @@ describe("issueMentionCandidates", () => {
 });
 
 describe("issueCommentSubmission", () => {
+  it("keeps first appearance order when mentions repeat", () => {
+    expect(
+      issueCommentSubmission(
+        "[$@alice](wework-member://1) [$@bob](wework-member://2) [$@alice](wework-member://1)",
+      ).mentions.map((mention) => mention.id),
+    ).toEqual(["1", "2"]);
+  });
   it("submits a pick as the plain mention the home composer submits", () => {
     expect(
       issueCommentSubmission("[$@bob](wework-member://8) please review"),

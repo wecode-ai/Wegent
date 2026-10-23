@@ -22,12 +22,12 @@ describe('IssuePropertiesPopover', () => {
     container.remove()
   })
 
-  async function renderPopover(onBlur = vi.fn(), uiFontSize = 14) {
+  async function renderPopover(onClose = vi.fn(), uiFontSize = 14) {
     await act(async () => {
       root.render(
         <CollaborationTheme mode="dark" appearance={{ ...defaultThemeAppearance, uiFontSize }}>
-          <IssuePropertiesPopover label="更多信息">
-            <input aria-label="添加标签" onBlur={onBlur} />
+          <IssuePropertiesPopover label="更多信息" onClose={onClose}>
+            <input aria-label="添加标签" />
           </IssuePropertiesPopover>
         </CollaborationTheme>
       )
@@ -57,14 +57,14 @@ describe('IssuePropertiesPopover', () => {
   })
 
   it('commits focused field drafts before Escape dismisses and returns focus', async () => {
-    const onBlur = vi.fn()
-    const trigger = await renderPopover(onBlur)
+    const onClose = vi.fn(() => expect(getPopover()).not.toBeNull())
+    const trigger = await renderPopover(onClose)
     const input = getPopover()!.querySelector<HTMLInputElement>('input')!
     await act(async () => input.focus())
     await act(async () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    expect(onBlur).toHaveBeenCalledOnce()
+    expect(onClose).toHaveBeenCalledOnce()
     expect(getPopover()).toBeNull()
     // Radix restores focus after the portal unmount lifecycle completes.
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger))

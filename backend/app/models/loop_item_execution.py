@@ -232,6 +232,20 @@ class LoopItemExecution(Base):
         return "wegent_team" if self.team_id else "generic_robot"
 
     @hybrid_property
+    def assignment_pending(self) -> bool:
+        """An admitted assignment whose execution configuration is not prepared."""
+        return isinstance(self.runtime_selection.get("assignment_request"), dict)
+
+    @assignment_pending.expression
+    def assignment_pending(cls) -> ColumnElement[bool]:
+        payload = case(
+            (func.json_valid(cls.execution_payload) == 1, cls.execution_payload),
+            else_="{}",
+        )
+        request = type_coerce(payload, JSON)["runtime_selection"]["assignment_request"]
+        return func.coalesce(func.lower(func.json_type(request)) == "object", False)
+
+    @hybrid_property
     def uses_runner_routing(self) -> bool:
         """Identify routed work from its persisted intent, including in queue SQL."""
         return isinstance(self.runtime_selection.get("runner_routing"), dict)

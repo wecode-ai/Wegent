@@ -8,6 +8,7 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
@@ -232,7 +234,7 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     )
 
     initialize_response = test_client.post(
-        (f"/api/v1/workspaces/{workspace['id']}" "/execution-environment/initialize"),
+        (f"/api/v1/workspaces/{workspace['id']}/execution-environment/initialize"),
         headers=_auth(test_token),
         json={"device_id": device.id, "version": workspace["version"]},
     )
@@ -555,10 +557,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     }
 
     enable_response = test_client.post(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
     )
     assert enable_response.status_code == 201
@@ -667,10 +666,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     ).json()["items"] == [group, project_codex_group, project_group]
 
     update_response = test_client.patch(
-        (
-            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
         json={
             "version": group["version"],
@@ -729,10 +725,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert list_response.json()["items"] == [updated]
 
     disable_response = test_client.delete(
-        (
-            f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/cloud-projects/{project['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
     )
     assert disable_response.status_code == 204
@@ -756,10 +749,7 @@ def test_workspace_collaboration_group_supports_human_or_agent_leader(
     assert delete_project_codex_group_response.status_code == 204
 
     delete_response = test_client.delete(
-        (
-            f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/"
-            f"{group['id']}"
-        ),
+        (f"/api/v1/workspaces/{workspace['id']}/collaboration-groups/{group['id']}"),
         headers=_auth(test_token),
     )
     assert delete_response.status_code == 204
@@ -1122,16 +1112,14 @@ def test_invalid_project_member_role_cannot_read_project_or_navigation_context(
     membership.role = "CorruptedRole"
     test_db.commit()
 
-    project_response = test_client.get(
-        f"/api/v1/cloud-projects/{project['id']}",
-        headers=_auth(target_token),
-    )
+    with pytest.raises(HTTPException) as project_error:
+        cloud_project_service.get(test_db, project["id"], target.id)
     navigation_response = test_client.get(
         f"/api/v1/workspaces/{workspace['id']}/navigation-context",
         headers=_auth(target_token),
     )
 
-    assert project_response.status_code == 404
+    assert project_error.value.status_code == 404
     assert navigation_response.status_code == 404
 
 
@@ -1697,19 +1685,3 @@ def test_agent_assignment_rejects_agent_from_another_project(
         .count()
         == 0
     )
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.cloud_projects as endpoint_1
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/v1/cloud-projects/{project_id}",
-            endpoint_1.get_cloud_project,
-            endpoint_1.router,
-            methods=["GET"],
-            response_model=endpoint_1.CloudProjectResponse,
-        )
-        yield

@@ -120,6 +120,7 @@ impl RestoreStartupGate {
     }
 }
 
+mod active_text;
 mod archives;
 mod automation_rpc;
 mod background_terminals;
@@ -140,6 +141,8 @@ mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
 mod sidebar;
+mod stand_in;
+mod stand_in_workspace;
 mod supervisor;
 mod system;
 mod tasks;
@@ -793,6 +796,14 @@ impl RuntimeThreadEventRoute {
 
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
+        Self::with_optional_event_sender(device_id, codex_binary, None)
+    }
+
+    fn with_optional_event_sender(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: Option<broadcast::Sender<Value>>,
+    ) -> Self {
         let codex_binary = codex_binary.into();
         let device_id = normalize_device_id(device_id.into());
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
@@ -865,7 +876,7 @@ impl RuntimeWorkRpcHandler {
             )),
             startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
-            event_tx: None,
+            event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
@@ -946,10 +957,7 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        let handler = Self {
-            event_tx: Some(event_tx),
-            ..Self::new(device_id, codex_binary)
-        };
+        let handler = Self::with_optional_event_sender(device_id, codex_binary, Some(event_tx));
         if let Some(sender) = handler.event_tx.clone() {
             crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);
@@ -967,6 +975,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.start_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
@@ -1105,6 +1114,10 @@ impl RuntimeWorkRpcHandler {
             self.reconcile_and_resume_persisted_turns().await;
         }
         let result = match method {
+            "runtime.stand_in.list" => self.list_stand_in_settings(payload),
+            "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
+            "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
+            "runtime.stand_in.run" => self.run_stand_in(payload).await,
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),

@@ -37,6 +37,7 @@ from app.schemas.subscription import (
 from app.schemas.subscription import NotificationLevel as SchemaNotificationLevel
 from app.schemas.subscription import (
     SubscriptionFollowConfig,
+    normalize_dingtalk_mention_user_ids,
 )
 from app.services.subscription.websocket import (
     emit_subscription_binding_update,
@@ -52,6 +53,24 @@ SUBSCRIPTION_KIND = "Subscription"
 BINDING_PENDING_TTL_SECONDS = 600
 BINDING_PENDING_PREFIX = "subscription:binding:pending:"
 BINDING_PENDING_INDEX_PREFIX = "subscription:binding:pending:index:"
+
+
+def _normalize_channel_binding_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize persisted or requested channel binding values."""
+    bind_group = bool(cfg.get("bind_group", False))
+    group_conversation_id = cfg.get("group_conversation_id")
+    mention_user_ids = normalize_dingtalk_mention_user_ids(
+        cfg.get("group_mention_user_ids") or []
+    )
+    if not bind_group or not group_conversation_id:
+        mention_user_ids = []
+    return {
+        "bind_private": bool(cfg.get("bind_private", True)),
+        "bind_group": bind_group,
+        "group_conversation_id": group_conversation_id,
+        "group_name": cfg.get("group_name"),
+        "group_mention_user_ids": mention_user_ids,
+    }
 
 
 class SubscriptionNotificationService:
@@ -339,17 +358,41 @@ class SubscriptionNotificationService:
             json_data = deepcopy(subscription.json or {})
             internal = json_data.get("_internal", {})
             channel_binding_map: Dict[str, Any] = {}
+            existing_binding_map = internal.get("notification_channel_bindings", {})
             for item in channel_binding_configs:
+                explicit_fields = set(getattr(item, "model_fields_set", set()))
                 if hasattr(item, "model_dump"):
                     item_data = item.model_dump()
                 else:
                     item_data = dict(item)
                 channel_id = str(item_data["channel_id"])
+                existing_binding = existing_binding_map.get(channel_id, {})
+                is_model = hasattr(item, "model_dump")
+                mention_omitted = (
+                    "group_mention_user_ids" not in explicit_fields
+                    if is_model
+                    else "group_mention_user_ids" not in item_data
+                )
+                group_was_supplied = (
+                    "group_conversation_id" in explicit_fields
+                    if is_model
+                    else "group_conversation_id" in item_data
+                )
+                incoming_group_id = (
+                    item_data.get("group_conversation_id")
+                    if group_was_supplied
+                    else existing_binding.get("group_conversation_id")
+                )
+                if mention_omitted and incoming_group_id == existing_binding.get(
+                    "group_conversation_id"
+                ):
+                    item_data["group_mention_user_ids"] = existing_binding.get(
+                        "group_mention_user_ids", []
+                    )
+                elif mention_omitted:
+                    item_data["group_mention_user_ids"] = []
                 channel_binding_map[channel_id] = {
-                    "bind_private": bool(item_data.get("bind_private", True)),
-                    "bind_group": bool(item_data.get("bind_group", False)),
-                    "group_conversation_id": item_data.get("group_conversation_id"),
-                    "group_name": item_data.get("group_name"),
+                    **_normalize_channel_binding_config(item_data),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
             internal["notification_channel_bindings"] = channel_binding_map
@@ -673,19 +716,23 @@ class SubscriptionNotificationService:
     def _get_binding_pending_key(
         self, *, user_id: int, channel_id: int, subscription_id: Optional[int] = None
     ) -> str:
+        """Return the Redis key for one pending channel binding."""
         if subscription_id is not None:
             return f"{BINDING_PENDING_PREFIX}{user_id}:{subscription_id}:{channel_id}"
         return f"{BINDING_PENDING_PREFIX}{user_id}:{channel_id}"
 
     def _get_binding_pending_index_key(self, *, user_id: int) -> str:
+        """Return the Redis index key for a user's pending binding."""
         return f"{BINDING_PENDING_INDEX_PREFIX}{user_id}"
 
     def _get_redis_client(self):
+        """Create a Redis client for binding-session state."""
         return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
     def _get_subscription_channel_binding_configs(
         self, subscription: Kind
     ) -> List[Dict[str, Any]]:
+        """Return persisted channel binding settings for a subscription."""
         json_data = subscription.json or {}
         internal = json_data.get("_internal", {})
         binding_map = internal.get("notification_channel_bindings", {})
@@ -694,10 +741,7 @@ class SubscriptionNotificationService:
             result.append(
                 {
                     "channel_id": int(channel_id),
-                    "bind_private": bool(cfg.get("bind_private", True)),
-                    "bind_group": bool(cfg.get("bind_group", False)),
-                    "group_conversation_id": cfg.get("group_conversation_id"),
-                    "group_name": cfg.get("group_name"),
+                    **_normalize_channel_binding_config(cfg),
                 }
             )
         return result
@@ -705,6 +749,7 @@ class SubscriptionNotificationService:
     def _get_subscription_for_owner(
         self, db: Session, *, subscription_id: int, user_id: int
     ) -> Kind:
+        """Load a subscription and verify the caller owns it."""
         subscription = (
             db.query(Kind)
             .filter(
@@ -723,6 +768,7 @@ class SubscriptionNotificationService:
     def get_subscription_channel_binding_config(
         self, db: Session, *, subscription_id: int, channel_id: int
     ) -> Optional[Dict[str, Any]]:
+        """Return one channel's persisted binding settings when available."""
         subscription = (
             db.query(Kind)
             .filter(
@@ -740,12 +786,7 @@ class SubscriptionNotificationService:
         cfg = binding_map.get(str(channel_id))
         if not cfg:
             return None
-        return {
-            "bind_private": bool(cfg.get("bind_private", True)),
-            "bind_group": bool(cfg.get("bind_group", False)),
-            "group_conversation_id": cfg.get("group_conversation_id"),
-            "group_name": cfg.get("group_name"),
-        }
+        return _normalize_channel_binding_config(cfg)
 
     def _upsert_subscription_channel_binding(
         self,
@@ -757,13 +798,28 @@ class SubscriptionNotificationService:
         bind_group: Optional[bool] = None,
         group_conversation_id: Optional[str] = None,
         group_name: Optional[str] = None,
+        group_mention_user_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        """Create or update one channel binding and return the stored settings."""
         json_data = deepcopy(subscription.json or {})
         internal = json_data.get("_internal", {})
         binding_map = internal.get("notification_channel_bindings", {})
         existing = binding_map.get(str(channel_id), {})
+        existing_group_id = existing.get("group_conversation_id")
+        effective_group_id = (
+            group_conversation_id
+            if group_conversation_id is not None
+            else existing_group_id
+        )
+        mention_user_ids = (
+            group_mention_user_ids
+            if group_mention_user_ids is not None
+            else existing.get("group_mention_user_ids", [])
+        )
+        if group_mention_user_ids is None and effective_group_id != existing_group_id:
+            mention_user_ids = []
 
-        updated = {
+        merged = {
             "bind_private": (
                 bind_private
                 if bind_private is not None
@@ -777,11 +833,15 @@ class SubscriptionNotificationService:
             "group_conversation_id": (
                 group_conversation_id
                 if group_conversation_id is not None
-                else existing.get("group_conversation_id")
+                else existing_group_id
             ),
             "group_name": (
                 group_name if group_name is not None else existing.get("group_name")
             ),
+            "group_mention_user_ids": mention_user_ids,
+        }
+        updated = {
+            **_normalize_channel_binding_config(merged),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         binding_map[str(channel_id)] = updated
@@ -813,6 +873,7 @@ class SubscriptionNotificationService:
         bind_group: bool,
         subscription_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Create a pending binding session for a user and channel."""
         if not bind_private and not bind_group:
             raise ValueError("At least one binding target is required")
 
@@ -870,6 +931,7 @@ class SubscriptionNotificationService:
         channel_id: int,
         subscription_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Cancel a pending binding session."""
         # Subscription ownership check is optional (only when subscription_id is provided)
         if subscription_id is not None:
             self._get_subscription_for_owner(
@@ -912,6 +974,7 @@ class SubscriptionNotificationService:
         sender_staff_id: Optional[str],
         group_name: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Complete a pending binding from an inbound DingTalk message."""
         index_key = self._get_binding_pending_index_key(user_id=user_id)
         redis_client = self._get_redis_client()
         try:

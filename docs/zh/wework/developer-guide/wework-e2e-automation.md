@@ -4,6 +4,10 @@ sidebar_position: 34
 
 # E2E 自动化
 
+桌面 E2E 共享 fixture 使用 `GPT 5.6 Luna`。真实运行时目录同时存在 `GPT-5.6 Luna` 和 `GPT 5.6 Luna` 两种显示名称，默认模型选择断言接受这两种名称，同时继续核对模型 ID 和供应商。任务恢复断言继续核对 fixture 原有的显示名称。
+
+桌面检查点清理结果目录时保留 `backend-rs-logs/`，供 CI 上传 Rust 网关启动日志。设置页按当前全局路由显示，同时保留原标签页的应用路由，返回时恢复原应用。
+
 Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口，用于在 CI 中稳定操作 Wework 的 Vite/React 前端。默认入口运行在浏览器模式，适合覆盖大多数前端交互；原生窗口与任务执行链路由下文的桌面端全链路 E2E 覆盖。
 
 ## 运行方式
@@ -99,6 +103,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实 provider 账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行文本回复以及“发送 → `apply_patch` → 工具结果回传 → 完成回复”，工具调用仍由真实 Codex 在隔离工作区内执行。
 
+回复预测及其图片描述请求独立于前台场景分发。切换到协议矩阵后，上一会话的后台图片描述仍可能到达；模型服务先识别这类请求，沿用图片描述的协议校验和响应，不推进矩阵状态。`desktop-reply-prediction-fixture.test.mjs` 覆盖这条跨场景请求路径，前台模型的端点与模型 ID 断言保持不变。
+
 模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
 
 - 本机执行覆盖本机自定义模型、Codex 内置模型和云端 Model CRD，每种模型来源分别覆盖三种协议，共 9 个完整文本与工具链路。
@@ -143,13 +149,45 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件固定使用 17 个 GitHub Actions matrix job，Cloud 套件使用 15 个；Core
-job 最多并行运行 2 个彼此隔离的 checkpoint，避免三个完整 Electron、Executor 和真实
-后端栈争抢同一 runner 的 CPU；Cloud job 保持最多 3 个并发。共享同一协作云端运行时
-或已证实存在时序竞争的 checkpoint 通过资源锁保持串行。
-跨 runner 的 32 个 Core/Cloud matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
+Core 和 Cloud 的分片定义以 `.github/scripts/classify-wework-desktop-e2e.sh` 为准。
+Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，实际并发还受
+分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
+Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。
+macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持串行。
+
+`split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
+避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
+松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
+各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
-必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
+必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
+长场景按独立行为拆成 checkpoint，而不是只调整分片：
+
+- `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
+- `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
+- `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
+- `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
+
+每个 checkpoint 都从隔离环境建立自己的前置数据。上述组名仍可用于 `--segment`，
+`--from-segment` 从该组第一个 checkpoint 开始；CI 则直接调度各独立 checkpoint。
+各分片复用同一份构建产物，减少重型流程在同一 runner 上的 CPU 争抢。
+24 插件长列表仍验证全部条目、滚动和末项选择；启停及两次重启后的持久化改由
+`plugin-toggle-persistence` 使用一个插件独立验证，避免重复同步整个长列表。
+Linux Core/Cloud 测试在开始、结束和每 15 秒输出 `[runner-resources]` JSON 记录，
+并保存到诊断产物中的 `runner-resources.jsonl`。Web 分片复用同一采样器，设置
+`RUNNER_PROCESS_DIAGNOSTICS=1` 后额外记录 PID、父 PID、状态、运行时长和进程名，
+不记录命令参数。`RUNNER_RESOURCE_LOG_PATH` 可指定日志路径；Web 日志保存在独立的
+`e2e-process-diagnostics-*` 产物中，便于定位测试结束后命令未退出的问题。
+记录包含 CPU 使用率、load average、
+内存、磁盘可用空间、Linux CPU/内存/I/O 压力及 cgroup CPU 限额、内存峰值和 OOM 计数；
+不可读取的内核指标会记录 `unavailable`。CPU 使用率是两次采样间的平均值，首次记录为 `null`。
+`[desktop-e2e-schedule]` 日志在 checkpoint 启停时记录活动列表和实际并发数，可用于确认
+测试是否真正重叠；不能只凭配置的并发上限推断并行效果。提高并发后需要对比同一分片的
+耗时和这些指标，确认没有把等待转成 CPU、内存或 I/O 争抢。
+抽屉动画逐帧检查从操作前持续采样，观察到位移且轨道动画结束后主动停止；采样上限沿用
+共享单步超时。这样命令传输和渲染延迟不会耗尽固定的 800ms 采样窗口；位移、连续性、
+中间帧和减弱动态效果的断言仍完整执行。
+包含 2200 个增量的
 Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
 通知场景使用定向的 30 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
 应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
@@ -186,6 +224,7 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。
 Windows 构建、分片和汇总检查共用同一个运行条件，预期任务被跳过时门禁失败。
+Issue MCP 附件场景在 Linux 和 Windows 均通过共享 `setup-minio-e2e` Action 构建并验证同一固定版本的真实 MinIO；仅 main 写入缓存，场景通过 `WEWORK_E2E_MINIO_BIN` 使用当前平台的可执行文件。
 macOS 内存检查直接调用 Node checkpoint runner，构建缓存命中时无需 pnpm。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
 必须同步登记对应 segment。新增 `DESKTOP_CHECKPOINTS` 检查点时，必须同时把它加入
@@ -243,6 +282,10 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 120 秒。控制命令和等待 helper 都可以通过 `timeoutMs` 为确实较慢的特殊步骤设置
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
+
+首次模型路由任务与真实 Harness CLI 启动使用工作台启动预算；流式滚动先等待模型请求，再使用原有 10 秒预算校验界面。切换项目后等待执行模式按钮可用；看板卡片移列后先滚动到结果再校验可见性。云端替身复用自适应视图选择 helper，兼容紧凑下拉框。失败工作台快照附带资源请求的连接、发送与响应时序，仅记录路径，不记录查询参数。
+
+进程浏览器的纯数字筛选精确匹配 PID，避免匹配其他进程的启动参数或 PID 子串；文字筛选仍搜索进程名和启动信息。应用菜单检查点保留按主进程 PID 排除无关 helper 的断言。
 
 主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`。
 
@@ -340,6 +383,11 @@ Executor 在创建 Tokio 运行时之前配置回环地址的 `NO_PROXY`，避�
 Core DSH 使用端口 `0` 直接绑定操作系统分配的端口。Electron 读取 DSH 的实际
 监听地址后再逐项验证 host、Executor、Terminal 和应用入口，不通过提前打开再关闭
 监听器探测端口，避免并行启动时其他服务抢占已探测的端口。
+
+Linux 云端测试的后端、数据库等服务需要在启动前公布端口。共享分配器读取
+`/proc/sys/net/ipv4/ip_local_port_range`，在内核动态端口范围之外选择可绑定的
+非特权端口，并通过端口注册目录隔离并行 checkpoint，避免服务初始化期间被
+Core DSH 等使用端口 `0` 的进程抢占。
 
 GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
 任意深度的 `managed-components`，防止 teardown 失败时把主实例或插件开发子实例的
@@ -557,6 +605,8 @@ const route = await app.route();
 
 ## CI 建议
 
+平台 E2E 基础镜像 `docker/wework-e2e/browser.Dockerfile` 通过 `docker.io` 预装 Docker CLI，并在构建时执行 `docker --version`。各分片准备远程工作区 Executor 时直接使用镜像内的 CLI，不再运行 apt 更新和安装。Dockerfile 的内容哈希决定镜像标签，修改后 CI 会构建新镜像并在后续运行中复用。
+
 本地列表启动读取和手动刷新共享同一版本号。启动读取若已被后续刷新取代，必须在写入列表和发起云端同步之前一并退出，避免过期启动请求重新开启同步并覆盖已选择的本地项目。原任务发现 E2E 的执行模式和本地运行断言保持不变。
 
 云端 Issue 变化通知必须使正在读取的旧看板快照失效，并发起通知后的读取。使用共享控制器的 `loadProjectSnapshot(projectId, { invalidate: true })` 复用既有变更版本保护，避免连续取消指派、重新指派时，第二条通知复用第一条通知的旧请求。普通重复读取仍可合并。控制器的并发回归由 Frontend CI 执行，原人工 Issue E2E 保留 10 秒 UI 等待。
@@ -610,7 +660,7 @@ pnpm --filter wework e2e:desktop:memory
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
 Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵；完整分类会在
-两个平台分别运行全部 17 个 Core 分片。Windows job 使用 `windows-latest` 构建
+两个平台分别运行分类器定义的全部 Core 分片。Windows job 使用 `windows-latest` 构建
 原生 `WeWork.exe`、`wegent-executor.exe` 和 `codex.exe` 后再执行 checkpoint，
 不能用跨平台构建产物或单个 Windows smoke test 替代。
 

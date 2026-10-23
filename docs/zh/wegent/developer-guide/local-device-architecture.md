@@ -72,7 +72,7 @@ Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 
 
 本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
 
-工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
+工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。同一工具块的空历史输出不能覆盖已收到的实时结果；此规则同时适用于命令、Node REPL 和其他 MCP 工具，并保留输出截断与加载引用信息。
 
 Wework 的 DSH 通道通过独立的本地 endpoint 连接订阅 executor 事件。事件序号、断线重放和历史丢失检测全部由 executor 负责：executor 为事件分配单调递增的 `sequence`，并维护同时受 4096 条事件和 8 MiB 限制的内存日志；客户端重连时携带最后已消费的序号，executor 原子地返回其后的日志快照并继续发送实时事件，避免快照与订阅之间的竞态。请求序号已经落后于日志窗口或超出当前最新序号时，executor 发送带 `event_history_lost` 原因的 `executor.event_lagged`，由 Wework 通过 transcript 重新收敛。
 
@@ -99,6 +99,10 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 排查一条请求时，先从用户可见失败附近的 Wework frontend、DSH 或 Backend 日志取得 `request_id`，再在同一诊断目录或集中式日志系统中按精确值搜索。开始和结束日志还会记录方法名、结果与耗时，因此缺失的边界可以直接定位请求停留在哪个组件，而不需要按相近时间或任务名称猜测。
 
 ### Executor 启动环境与 Codex Home 初始化
+
+自动凭据同步只对实际凭据尝试应用冷却。登录或退出使旧迁移意图失效时，`plugin_auth_migration_expired` 不得阻止下一轮处理新登录意图；其他失败仍保留冷却，避免反复触发原生授权。同步日志仅记录插件、连接标识和结果码，不记录凭据或迁移意图令牌。
+
+Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false`，复用 pnpm 内容缓存，但将虚拟依赖目录保留在工作树内。全局虚拟仓库的真实路径会让 TypeScript 向用户主目录查找类型，可能混入另一版本的 React。Wework 的 TypeScript 配置还将 `react` 和 `react/*` 绑定到自身的 `@types/react`，让共享 JSON 等工作树包目录外的输入也使用同一套类型。已有工作树切换此设置后，需运行 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false pnpm install --frozen-lockfile` 重建依赖链接；PowerShell 使用 `$env:PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE='false'; pnpm install --frozen-lockfile`。执行器更新后的新会话会自动使用该设置。
 
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
@@ -133,6 +137,12 @@ Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup
 如果用户在普通回合仍运行时创建目标，Wework 会保留该目标请求，等待当前回合明确结束后以 `initialGoal` 启动新的目标回合。active goal 会让任务继续显示为运行中，但不能阻止这次已排队的目标接力；普通排队消息仍然只能在任务真正空闲时发送。executor 只在目标已经于回合开始前处于 active 状态时等待 Codex 自动续轮；若目标是在普通回合中途创建，当前执行必须先正常收敛，让 Wework 能够启动排队的目标回合。该边界避免前端等待任务空闲、executor 同时等待并不存在的自动续轮所形成的死锁。
 
 为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
+
+恢复后的 Goal turn 使用新的原生 turn 身份，不得复用已持久化请求中的 `clientUserMessageId`、用户消息展示绑定或生成用户消息标记。原用户消息与原 turn 的映射保持不变；该规则同样适用于需要用户操作后的原生 Goal 恢复。
+
+executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `item/plan/delta`，按原生 item ID 更新条目。历史加载必须能读取尚未收到 `item/completed` 的部分文本；用户停止执行时，这些文本以中断状态持久化，后续追问或重新打开任务不能将其丢弃。最终 item 快照替换已累计文本，避免重复拼接。
+
+仍在流式累计且尚未标注 phase 的文本条目与实时流一样按过程文本展示，完成后再按终态投影；历史加载不能提前把它改成最终回答。Goal 恢复在原生 turn 建立前失败或取消时，终态事件也必须移除旧用户消息身份，且不能修改用于后端上报的原请求。
 
 Goal 的单个物理 turn 完成后，executor 会等待 Codex 自动创建下一轮。若等待超时，它会通过 `thread/goal/get` 和 `thread/read` 对账 provider 的权威状态：已有活跃 turn 时重新绑定并继续监听；目标仍为 active 且线程空闲时只尝试一次原生 `thread/resume`；仍无法继续时停止静默等待并向 Wework 暴露 `needsAttention`。Wework 使用 `running`、`recovering` 和 `needsAttention` 三种 Goal 执行状态分别显示正常运行、重启恢复和需要用户恢复，用户点击恢复时复用已保留的 Goal 请求，而不是发送一条普通聊天消息。
 

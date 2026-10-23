@@ -37,11 +37,17 @@ export function ComposerLinkChip({ payload }: ComposerLinkChipProps) {
       data-composer-link-url={payload.url}
       data-composer-link-provider={recognized?.provider ?? "external"}
       href={payload.url}
+      target="_blank"
+      rel="noopener noreferrer"
       className="composer-link-node composer-mention-link"
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        void openExternalUrl(payload.url);
+        void Promise.resolve(openExternalUrl(payload.url)).catch((error) => {
+          console.error("[Wework] Failed to open composer link", {
+            error: error instanceof Error ? error.name : typeof error,
+          });
+        });
       }}
       title={payload.url}
     >

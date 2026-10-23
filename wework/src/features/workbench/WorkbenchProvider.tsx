@@ -109,14 +109,15 @@ import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
-import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumePluginTrial,
   dismissTrialGuide,
@@ -163,6 +164,7 @@ import {
   settleRuntimeConversationGuidance,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
+import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -293,7 +295,6 @@ export function WorkbenchProvider({
     [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-  const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const runtimeTaskSettleSyncActiveRef = useRef(true)
@@ -372,6 +373,8 @@ export function WorkbenchProvider({
     runtimeWork: state.runtimeWork,
     lifecycleStore,
     lifecycleSnapshot,
+    standInApi: resolvedServices.standInApi,
+    runtimeApi: resolvedServices.runtimeWorkApi,
   })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
@@ -2042,11 +2045,18 @@ export function WorkbenchProvider({
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({
-        onRuntimeWorkChanged: () => {
+        onRuntimeWorkChanged: payload => {
+          if (payload.archiveCleanup?.errors.length) {
+            const { workspacePath, errors } = payload.archiveCleanup
+            reportArchivedCleanupFailure(
+              `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
+              t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
+            )
+          }
           void stableRefreshWorkLists()
         },
       }),
-    [resolvedServices.chatStream, stableRefreshWorkLists]
+    [resolvedServices.chatStream, stableRefreshWorkLists, t]
   )
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
@@ -2156,29 +2166,6 @@ export function WorkbenchProvider({
         })
       })
   })
-  const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
-    const normalizedTitle = title.trim()
-    if (!normalizedTitle) return
-    const trackingApi = projectTaskTrackingApi(resolvedServices, address)
-    if (!trackingApi) return
-    const key = `${address.deviceId}:${address.taskId}`
-    if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
-    trackingTitleSignaturesRef.current.set(key, normalizedTitle)
-    void trackingApi
-      .updateTaskTrackingTitle(address, normalizedTitle)
-      .then(result => {
-        if (result === null) {
-          trackingTitleSignaturesRef.current.delete(key)
-        }
-      })
-      .catch(error => {
-        trackingTitleSignaturesRef.current.delete(key)
-        console.warn('[Wework] Failed to synchronize project task title', {
-          address,
-          error,
-        })
-      })
-  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -2231,7 +2218,6 @@ export function WorkbenchProvider({
               address,
               title: payload.title,
             })
-            syncRuntimeTaskTitle(address, payload.title)
           },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
@@ -2263,7 +2249,6 @@ export function WorkbenchProvider({
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,
-      syncRuntimeTaskTitle,
       syncRuntimeTaskLifecycle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,
@@ -2286,12 +2271,26 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    const response = await executorClient.runtime.cancelRuntimeTask(address)
-    if (!response.accepted) {
-      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    logRuntimeQueueStage(address, 'queue-stop-requested', { source: 'execution-action' })
+    const restoreQueue = getRuntimeConversationQueueController(address).pauseForCancellation()
+    let accepted: boolean | null = null
+    try {
+      const response = await executorClient.runtime.cancelRuntimeTask(address)
+      accepted = response.accepted
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+      }
+      await notifyMainRuntimeWorkChanged(address)
+      await refreshWorkLists()
+    } catch (error) {
+      if (accepted !== true) restoreQueue()
+      throw error
+    } finally {
+      logRuntimeQueueStage(address, 'queue-stop-result', {
+        source: 'execution-action',
+        accepted,
+      })
     }
-    await notifyMainRuntimeWorkChanged(address)
-    await refreshWorkLists()
   })
   const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     const response = await executorClient.runtime.forceStartRuntimeTask(address)

@@ -8,6 +8,7 @@ import json
 import socket
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
@@ -24,6 +25,7 @@ class RedisSubscriptionServer:
         self.ready_callback: dict | None = None
         self.handlers: set[asyncio.Task] = set()
         self.subscribers: set[asyncio.StreamWriter] = set()
+        self.heartbeats: dict[asyncio.StreamWriter, asyncio.Task[None]] = {}
         self.connections_closed = asyncio.Event()
         self.connections_closed.set()
 
@@ -59,11 +61,22 @@ class RedisSubscriptionServer:
                 b"*3\r\n$7\r\nmessage\r\n$8\r\nsocketio\r\n$86732\r\n"
                 b'{"method":"emit","event":"chat:block_updated"}'
             )
-        elif self.subscriptions > 1 and self.ready_callback is not None:
-            writer.write(
-                self.message(b"socketio", json.dumps(self.ready_callback).encode())
-            )
+        elif self.subscriptions > 1:
+            if self.ready_callback is not None:
+                writer.write(
+                    self.message(b"socketio", json.dumps(self.ready_callback).encode())
+                )
+            if writer not in self.heartbeats:
+                self.heartbeats[writer] = asyncio.create_task(self.keep_alive(writer))
         await writer.drain()
+
+    @staticmethod
+    async def keep_alive(writer: asyncio.StreamWriter) -> None:
+        """Keep recovered connections healthy without generating Socket.IO events."""
+        while True:
+            await asyncio.sleep(0.05)
+            writer.write(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+            await writer.drain()
 
     async def publish_callback(self, channel: bytes, payload: bytes) -> None:
         emit = json.loads(payload)
@@ -112,17 +125,79 @@ class RedisSubscriptionServer:
                 await writer.drain()
         finally:
             self.subscribers.discard(writer)
-            writer.close()
-            await writer.wait_closed()
-            self.handlers.discard(task)
-            if not self.handlers:
-                self.connections_closed.set()
+            heartbeat = self.heartbeats.pop(writer, None)
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except ConnectionError:
+                # The client can reset or break a stalled connection while reconnecting.
+                pass
+            finally:
+                self.handlers.discard(task)
+                if not self.handlers:
+                    self.connections_closed.set()
 
     async def close(self) -> None:
         tasks = tuple(self.handlers)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_error", [None, ConnectionResetError, BrokenPipeError])
+async def test_subscription_cleanup_handles_peer_disconnect(
+    close_error: type[ConnectionError] | None,
+) -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = Mock(spec=asyncio.StreamWriter)
+    writer.wait_closed = AsyncMock(side_effect=close_error)
+    heartbeat = asyncio.create_task(asyncio.Event().wait())
+    stub.subscribers.add(writer)
+    stub.heartbeats[writer] = heartbeat
+
+    await stub.handle(reader, writer)
+
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert heartbeat.cancelled()
+    assert not stub.subscribers
+    assert not stub.heartbeats
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_error_type", [RuntimeError, asyncio.CancelledError])
+async def test_subscription_cleanup_preserves_unexpected_close_errors(
+    close_error_type: type[BaseException],
+) -> None:
+    stub = RedisSubscriptionServer(partial_response=False)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    writer = Mock(spec=asyncio.StreamWriter)
+    close_error = close_error_type("unexpected close failure")
+    writer.wait_closed = AsyncMock(side_effect=close_error)
+    heartbeat = asyncio.create_task(asyncio.Event().wait())
+    stub.subscribers.add(writer)
+    stub.heartbeats[writer] = heartbeat
+
+    with pytest.raises(close_error_type) as raised:
+        await stub.handle(reader, writer)
+    assert raised.value is close_error
+
+    writer.close.assert_called_once_with()
+    writer.wait_closed.assert_awaited_once_with()
+    assert heartbeat.cancelled()
+    assert not stub.subscribers
+    assert not stub.heartbeats
+    assert not stub.handlers
+    assert stub.connections_closed.is_set()
 
 
 @pytest_asyncio.fixture(params=[True, False], ids=["partial-response", "idle"])
@@ -172,6 +247,10 @@ async def test_stalled_subscription_resubscribes_and_receives_rpc_ack(
         except TimeoutError:
             pytest.fail("Socket.IO Redis listener did not recover from a stalled read")
 
+        # Recovery must survive a scheduling delay longer than the read timeout.
+        recovered_subscriptions = redis_subscription.subscriptions
+        await asyncio.sleep(socketio_core.settings.SOCKETIO_REDIS_SOCKET_TIMEOUT * 1.75)
+        assert redis_subscription.subscriptions == recovered_subscriptions
         result = await server.call(
             "runtime:rpc",
             {"method": "runtime.capacity.get", "payload": {}},

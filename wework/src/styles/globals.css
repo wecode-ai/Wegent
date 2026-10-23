@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /* Search and address inputs provide their own focus feedback in the chrome. */
+  .workbench-chrome-input:focus-visible {
+    outline-color: transparent;
+  }
+}
+
 .electron-titlebar-drag-region {
   -webkit-app-region: drag;
 }
@@ -70,8 +77,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-text-primary: 56 58 61;
   --color-sidebar-text-secondary: 87 88 91;
   --color-sidebar-text-muted: 128 129 131;
-  --color-sidebar-scrollbar: 0 0 0 / 0.08;
-  --color-sidebar-scrollbar-hover: 0 0 0 / 0.12;
+  --color-scrollbar-thumb: 0 0 0 / 0.08;
+  --color-scrollbar-thumb-hover: 0 0 0 / 0.12;
   --color-mobile-drawer: 238 242 247;
   --color-popover: 255 255 255;
   --color-code-bg: 243 244 246;
@@ -505,14 +512,14 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 .workbench-scrollbar-thumb,
 .project-board-scrollbar-thumb {
-  background-color: rgb(var(--color-sidebar-scrollbar));
+  background-color: rgb(var(--color-scrollbar-thumb));
 }
 
 .workbench-scrollbar:hover .workbench-scrollbar-thumb,
 .workbench-scrollbar:active .workbench-scrollbar-thumb,
 .project-board-scrollbar:hover .project-board-scrollbar-thumb,
 .project-board-scrollbar:active .project-board-scrollbar-thumb {
-  background-color: rgb(var(--color-sidebar-scrollbar-hover));
+  background-color: rgb(var(--color-scrollbar-thumb-hover));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -576,8 +583,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-text-primary: 242 242 242;
   --color-sidebar-text-secondary: 179 179 179;
   --color-sidebar-text-muted: 128 128 128;
-  --color-sidebar-scrollbar: 255 255 255 / 0.08;
-  --color-sidebar-scrollbar-hover: 255 255 255 / 0.16;
+  --color-scrollbar-thumb: 255 255 255 / 0.36;
+  --color-scrollbar-thumb-hover: 255 255 255 / 0.5;
   --color-mobile-drawer: 33 33 33;
   --color-popover: 40 40 40;
   --color-code-bg: 33 33 33;
@@ -671,6 +678,48 @@ button {
 
 button:disabled {
   cursor: not-allowed;
+}
+
+@layer base {
+  /* Native scroll regions and portals share the app theme. Component-specific
+     scrollbar rules, including hidden scrollbars, override these defaults. */
+  *,
+  .scrollbar-soft {
+    scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
+    scrollbar-width: thin;
+  }
+
+  /* Outrank DSH's late-injected universal rules while leaving component classes stronger. */
+  :is(html, html *)::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background-color: transparent;
+  }
+
+  :is(html, html *)::-webkit-scrollbar-track,
+  :is(html, html *)::-webkit-scrollbar-track-piece,
+  :is(html, html *)::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  :is(html, html *)::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    border: 0;
+    background-color: rgb(var(--color-scrollbar-thumb));
+  }
+
+  :is(html, html *)::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--color-scrollbar-thumb-hover));
+  }
+
+  /* Non-auto standard properties suppress WebKit thumb sizing and hover styles. */
+  @supports selector(::-webkit-scrollbar) {
+    *,
+    .scrollbar-soft {
+      scrollbar-color: auto;
+      scrollbar-width: auto;
+    }
+  }
 }
 
 @layer components {
@@ -838,40 +887,6 @@ button:disabled {
 
   .scrollbar-none::-webkit-scrollbar {
     display: none;
-  }
-
-  .scrollbar-soft {
-    scrollbar-color: rgb(170 170 170 / 0.85) transparent;
-    scrollbar-width: thin;
-  }
-
-  .scrollbar-soft::-webkit-scrollbar {
-    width: 7px;
-    height: 7px;
-    background-color: transparent;
-  }
-
-  .scrollbar-soft::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .scrollbar-soft::-webkit-scrollbar-track-piece {
-    background: transparent;
-  }
-
-  .scrollbar-soft::-webkit-scrollbar-corner {
-    background: transparent;
-  }
-
-  .scrollbar-soft::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    border: 1px solid transparent;
-    background-clip: content-box;
-    background-color: rgb(170 170 170 / 0.85);
-  }
-
-  .scrollbar-soft::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(140 140 140 / 0.95);
   }
 }
 

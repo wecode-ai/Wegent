@@ -5,6 +5,7 @@ import {
   ROLLOUT_CHAT_PROMPT,
 } from '../modules/codex-rollout-recovery.mjs'
 import { createSingleRootLocalProject, join, selectE2EModel } from '../modules/shared.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -259,6 +260,7 @@ export function createDesktopScenario({
       const chunks = []
       for await (const chunk of request) chunks.push(chunk)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (handleEmptyReplyPrediction(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS).find(candidate => requestText.includes(candidate))
       if (!prompt) return false
@@ -315,10 +317,15 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
+        enabled: true,
         timeoutMs: uiTimeoutMs,
       })
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '2',
+      })
+      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
       })
       assert.equal(
         await control.command('getValue', '[data-testid="general-max-concurrent-tasks-select"]'),

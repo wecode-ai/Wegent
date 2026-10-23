@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 CONTRACT = ROOT / "docs/zh/wegent/developer-guide/collaboration-permissions.md"
 APPROVED_CONTRACT_SHA256 = (
-    "da082f978b14c7fbb317893e49dc5e1e743ae7d654c7c946bf720d855d9d0e62"
+    "037f5eecef22ce5725e18f81dcdf86ba0e40a4353df1e63d9260777aa8b57d86"
 )
 
 

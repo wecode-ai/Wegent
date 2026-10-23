@@ -32,7 +32,6 @@ from app.models.user import User
 from app.schemas.kind import Bot, Task, Team, resolve_model_category
 from app.schemas.openapi_response import (
     ResponseCreateInput,
-    ResponseDeletedObject,
     ResponseError,
     ResponseObject,
 )
@@ -1343,10 +1342,11 @@ async def _create_streaming_response_unified(
             else:
                 # HTTP+Callback mode (ClaudeCode/Agno/Dify): subscribe to Redis
                 # pub/sub channel; the /internal/callback handler publishes events
-                pubsub_redis_client, pubsub_obj = (
-                    await session_manager.subscribe_callback_channel(
-                        assistant_subtask_id
-                    )
+                (
+                    pubsub_redis_client,
+                    pubsub_obj,
+                ) = await session_manager.subscribe_callback_channel(
+                    assistant_subtask_id
                 )
                 if pubsub_redis_client is None:
                     raise RuntimeError("Failed to subscribe to callback stream channel")
@@ -1942,94 +1942,3 @@ async def cancel_response(
         subtasks=subtasks,
         omit_mcp_binary_output=omit_mcp_binary_output,
     )
-
-
-# MIGRATION-CANDIDATE(api="DELETE /api/v1/responses/:response_id"): remove after final confirmation.
-# @router.delete("/{response_id}", response_model=ResponseDeletedObject)
-@limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
-async def delete_response(
-    request: Request,
-    response_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
-):
-    """
-    Delete a response.
-
-    For Chat Shell type tasks with running streams, this will stop the model request
-    before deleting.
-
-    Args:
-        response_id: Response ID in format "resp_{task_id}"
-
-    Returns:
-        ResponseDeletedObject confirming deletion
-    """
-    from app.services.chat.storage import session_manager
-
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task to check if it's a Chat Shell type with running stream
-    task_kind = task_store.get_task_by_states(
-        db,
-        task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
-    )
-
-    if task_kind:
-        # Check if this is a Chat Shell task (source="chat_shell")
-        task_crd = Task.model_validate(task_kind.json)
-        source_label = (
-            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
-        )
-        is_chat_shell = source_label == "chat_shell"
-
-        if is_chat_shell:
-            # For Chat Shell tasks, stop any running stream before deleting
-            running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
-                db,
-                task_id=task_id,
-                user_id=current_user.id,
-                statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
-            )
-
-            if running_subtask:
-                logger.info(
-                    f"[DELETE] Stopping running stream before delete: task_id={task_id}, subtask_id={running_subtask.id}"
-                )
-                # Cancel the stream (this sets the cancel event)
-                await session_manager.cancel_stream(running_subtask.id)
-                # Clean up streaming content from Redis
-                await session_manager.delete_streaming_content(running_subtask.id)
-                await session_manager.unregister_stream(running_subtask.id)
-                logger.info(f"[DELETE] Stream stopped for subtask {running_subtask.id}")
-
-    try:
-        task_kinds_service.delete_task(
-            db,
-            task_id=task_id,
-            user_id=current_user.id,
-        )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
-            )
-        raise
-
-    return ResponseDeletedObject(id=response_id)

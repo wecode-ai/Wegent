@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   APP_BASE_PATH,
   coreDshDeepLinkLocation,
+  desktopWindowLabel,
   injectRuntimeConfig,
   resolveBackendUrl,
   resolveSocketUrl,
@@ -65,6 +66,11 @@ test('redirects Wework deep links through the Core DSH root', () => {
   assert.equal(coreDshDeepLinkLocation('/wework/app/'), '/?__wework_route=%2Fwework%2Fapp%2F')
 })
 
+test('accepts the Process Explorer window label from the runtime config request', () => {
+  assert.equal(desktopWindowLabel('process-explorer'), 'process-explorer')
+  assert.equal(desktopWindowLabel('unknown-window'), 'main')
+})
+
 test('injects the Electron workspace window label', () => {
   const html = injectRuntimeConfig(
     '<html><head></head><body></body></html>',
@@ -76,7 +82,7 @@ test('injects the Electron workspace window label', () => {
 })
 
 test('injects Electron auxiliary window labels', () => {
-  for (const label of ['popout-window', 'system-drag-panel']) {
+  for (const label of ['popout-window', 'system-drag-panel', 'process-explorer']) {
     const html = injectRuntimeConfig('<html><head></head><body></body></html>', {}, label)
 
     assert.ok(html.includes(`"desktopWindowLabel":"${label}"`))

@@ -2248,12 +2248,12 @@ fn codex_launch_config_forwards_web_search_mode() {
 }
 
 #[test]
-fn codex_launch_config_defaults_context_window_to_256k() {
+fn codex_launch_config_preserves_catalog_context_window() {
     let _environment = environment::LaunchEnvironment::new();
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
         model_config: json!({
-            "model_id": "moonshot-kimi-k3",
+            "model_id": "gpt-6.1-sol",
         }),
         ..ExecutionRequest::default()
     };
@@ -2266,8 +2266,23 @@ fn codex_launch_config_defaults_context_window_to_256k() {
         .and_then(Value::as_object)
         .expect("thread config should be present");
 
-    assert_eq!(config.get("model_context_window"), Some(&json!(262_144)));
+    assert_eq!(config.get("model_context_window"), None);
     assert_eq!(config.get("model_auto_compact_token_limit"), None);
+}
+
+#[test]
+fn codex_output_budget_without_context_window_preserves_catalog_limits() {
+    let overrides = codex_model_config_overrides(&json!({
+        "model_id": "gpt-6.1-sol",
+        "max_output_tokens": 32_000,
+    }));
+
+    assert!(!overrides
+        .iter()
+        .any(|value| value.starts_with("model_context_window=")));
+    assert!(!overrides
+        .iter()
+        .any(|value| value.starts_with("model_auto_compact_token_limit=")));
 }
 
 #[test]
@@ -2725,7 +2740,7 @@ fn codex_worktree_launch_config_sets_pnpm_environment() {
     );
     assert_eq!(
         params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
-        "true"
+        "false"
     );
 }
 

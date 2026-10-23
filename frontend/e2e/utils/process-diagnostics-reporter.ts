@@ -23,7 +23,7 @@ export default class ProcessDiagnosticsReporter implements Reporter {
   }
 
   onExit(): Promise<void> {
-    console.log(`[e2e-process] Reporters completed: pid=${process.pid}`)
+    console.log(`[e2e-process] Reporter exit: pid=${process.pid}`, process.getActiveResourcesInfo())
     return Promise.resolve()
   }
 }

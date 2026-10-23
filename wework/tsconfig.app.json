@@ -3,9 +3,12 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
       "@/*": ["./src/*"],
       "@wecode/*": ["./wecode/*"],
-      "@extensions/*": ["./wecode/extensions/*", "./src/extensions/*"]
+      "@extensions/*": ["./wecode/extensions/*", "./src/extensions/*"],
+      "@wegent/process-explorer": ["../packages/process-explorer/src/index.ts"]
     },
     "ignoreDeprecations": "6.0",
     "target": "es2023",

@@ -640,77 +640,84 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     ])
   })
 
-  test('does not settle a newer turn from a repeated old terminal event', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.turnStarted(address, 'turn-1')
-    store.turnSettled(address, 'turn-1', 'succeeded')
-    let streamHandlers: ChatStreamHandlers = {}
-    const getRuntimeTranscript = vi.fn().mockResolvedValue({
-      ...runtimeTranscript(true),
-      turns: [
-        {
-          id: 'turn-1',
-          status: 'completed',
-          completedAt: 1_786_692_066_192,
-          items: [],
-        },
-        {
-          id: 'turn-2',
-          status: 'streaming',
-          items: [],
-        },
-      ],
-    })
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn(),
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatStart?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'turn-2',
+  test.each([true, false])(
+    'does not settle a newer turn from an old terminal event (current turn in history: %s)',
+    async currentTurnInHistory => {
+      const store = new RuntimeTaskLifecycleStore('test')
+      const address = runtimeTaskAddress()
+      store.syncRuntimeWork(runtimeWork(true))
+      store.turnStarted(address, 'turn-1')
+      store.turnSettled(address, 'turn-1', 'succeeded')
+      let streamHandlers: ChatStreamHandlers = {}
+      const getRuntimeTranscript = vi.fn().mockResolvedValue({
+        ...runtimeTranscript(currentTurnInHistory),
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            completedAt: 1_786_692_066_192,
+            items: [],
+          },
+          ...(currentTurnInHistory
+            ? [
+                {
+                  id: 'turn-2',
+                  status: 'streaming',
+                  items: [],
+                },
+              ]
+            : []),
+        ],
       })
-    })
-    expect(store.getTask(address)?.turn.id).toBe('turn-2')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+      const services = {
+        chatStream: {
+          subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+            streamHandlers = handlers
+            return vi.fn()
+          }),
+        },
+        executorClient: {
+          runtime: {
+            listRuntimeWork: vi.fn(),
+            getRuntimeTranscript,
+          },
+        },
+      } as unknown as WorkbenchServices
 
-    await act(async () => {
-      streamHandlers.onChatDone?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'turn-1',
-        result: { value: 'old answer' },
+      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      await act(async () => {
+        streamHandlers.onChatStart?.({
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          subtaskId: 'turn-2',
+        })
       })
-    })
+      expect(store.getTask(address)?.turn.id).toBe('turn-2')
+      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
 
-    await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-        includeFullContent: true,
+      await act(async () => {
+        streamHandlers.onChatDone?.({
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          subtaskId: 'turn-1',
+          result: { value: 'old answer' },
+        })
       })
-    )
-    expect(store.getTask(address)?.turn.id).toBe('turn-2')
-    expect(store.getTask(address)?.turn.outcome).toBeNull()
-    expect(store.getTask(address)?.execution.phase).toBe('running')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
-  })
+
+      await waitFor(() =>
+        expect(getRuntimeTranscript).toHaveBeenCalledWith({
+          ...address,
+          limit: 50,
+          refresh: true,
+          includeFullContent: true,
+        })
+      )
+      expect(store.getTask(address)?.turn.id).toBe('turn-2')
+      expect(store.getTask(address)?.turn.outcome).toBeNull()
+      expect(store.getTask(address)?.execution.phase).toBe('running')
+      expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    }
+  )
 
   test('reconciles terminal messages without settling a newer turn', async () => {
     const store = new RuntimeTaskLifecycleStore('test')

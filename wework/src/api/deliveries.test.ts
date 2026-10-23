@@ -57,7 +57,9 @@ describe('createDeliveryApi queue and assignment routes', () => {
     await api.getBoardSnapshot(123)
 
     expect(client.get).toHaveBeenCalledOnce()
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot', {
+      cache: 'no-store',
+    })
   })
 
   it('persists the runtime task model identity when binding a board task', async () => {
@@ -403,23 +405,6 @@ describe('createDeliveryApi task tracking', () => {
     expect(post).toHaveBeenNthCalledWith(2, '/v1/loop-items/NEW-1/tasks', {
       ...task,
       taskTitle: 'Runtime task',
-    })
-  })
-
-  test('synchronizes a friendly runtime title to the bound task', async () => {
-    const renamedItem = { ...trackedItem, title: '修复登录回调', version: 2 }
-    const context = { loop_item_id: trackedItem.id } as CloudTaskContext
-    const get = vi.fn().mockResolvedValueOnce(context).mockResolvedValueOnce(trackedItem)
-    const patch = vi.fn().mockResolvedValue(renamedItem)
-    const api = createDeliveryApi(clientWith({ get, patch }))
-
-    await expect(
-      api.updateTaskTrackingTitle({ deviceId: 'local-device', taskId: 'runtime-1' }, '修复登录回调')
-    ).resolves.toEqual(renamedItem)
-
-    expect(patch).toHaveBeenCalledWith('/v1/loop-items/WEG-1', {
-      version: 1,
-      title: '修复登录回调',
     })
   })
 })
