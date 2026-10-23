@@ -758,8 +758,13 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath])
 
-  // URL transform to allow wegent:// and attachment:// scheme URLs
-  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
+  // URL transform to allow wegent://, attachment://, and DingTalk deep links.
+  // Connector apps return dingtalk:// URLs (for example a created DingTalk log);
+  // stripping the scheme turns the anchor into a link to the current page.
+  const urlTransform = useMemo(
+    () => createSchemeAwareUrlTransform(['wegent:', 'attachment:', 'dingtalk:']),
+    []
+  )
 
   // Render markdown content
   const renderMarkdown = (content: string) => (
