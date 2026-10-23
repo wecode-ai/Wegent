@@ -175,7 +175,8 @@ def append_turn_guidance(prompt: Union[str, list], section: str) -> Union[str, l
     """
     block = f"{TURN_GUIDANCE_START}\n{section.strip()}\n{TURN_GUIDANCE_END}"
     if isinstance(prompt, str):
-        return f"{TURN_GUIDANCE_BLOCK.sub('', prompt).rstrip()}\n\n{block}"
+        cleaned = TURN_GUIDANCE_BLOCK.sub("", prompt).rstrip()
+        return "\n\n".join(part for part in (cleaned, block) if part)
     if not isinstance(prompt, list):
         return prompt
 
