@@ -31,6 +31,7 @@ import {
   PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
   DOCUMENT_EDITOR_CLASS,
 } from './ProjectChatComposerSurface'
+import { recordComposerDiagnostic } from './composerDiagnostics'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
@@ -178,6 +179,13 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
         allowEmptySubmit ||
         current.trim() ||
         (!requireText && (attachments.length || codeCommentCount))
+      recordComposerDiagnostic('submit-guard', {
+        hasContent: Boolean(hasContent),
+        isModelSelectionReady,
+        disabled,
+        submitDisabled: Boolean(submitDisabled),
+        valueLength: current.length,
+      })
       if (hasContent && isModelSelectionReady && !disabled && !submitDisabled)
         onSubmit(current, options)
     }

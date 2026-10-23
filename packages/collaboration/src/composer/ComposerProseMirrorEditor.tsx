@@ -547,6 +547,7 @@ export const ComposerProseMirrorEditor = forwardRef<
           composerId,
           key: diagnosticKey,
           code: event.code,
+          keyCode: event.keyCode,
           eventIsComposing: event.isComposing,
           viewIsComposing: view.composing,
           shiftKey: event.shiftKey,
