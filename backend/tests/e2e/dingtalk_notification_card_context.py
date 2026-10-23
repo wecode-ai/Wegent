@@ -280,7 +280,7 @@ def _assert_card(
         project.name,
         status,
         f"负责人：{assignee_name}",
-    ]
+    ], f"unexpected metaLine: {params['metaLine']!r}"
 
     web_url = (
         f"{settings.FRONTEND_URL.rstrip('/')}/collaboration/{project.id}"
@@ -632,7 +632,7 @@ async def run() -> None:
             LoopItemCreate(
                 title="协调本轮通知卡片",
                 description="先拆解再分配。",
-                status="in_review",
+                status="in_progress",
                 assignee_group_id=str(group["id"]),
             ),
         )
@@ -654,7 +654,7 @@ async def run() -> None:
             item_title=coordinated.title,
             item_key=coordinated.id,
             project=project,
-            status=REVIEW_STATUS,
+            status="处理中",
             assignee_name=owner.user_name,
             item_id=coordinated.id,
         )
