@@ -45,15 +45,14 @@ pub(super) async fn load_timeline_page(
         })
         .transpose()
         .map_err(str::to_owned)?;
-    let metadata = client
-        .request(
-            "thread/turns/list",
-            json!({
-                "threadId": thread_id, "limit": 100,
-                "sortDirection": "desc", "itemsView": "notLoaded",
-            }),
-        )
-        .await?;
+    let metadata = super::codex_transcript_page::request_codex_turn_page(
+        client,
+        json!({
+            "threadId": thread_id, "limit": 100,
+            "sortDirection": "desc", "itemsView": "notLoaded",
+        }),
+    )
+    .await?;
     let mut turns = previous
         .as_ref()
         .map(|cursor| cursor.turns.clone())

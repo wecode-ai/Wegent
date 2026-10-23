@@ -612,6 +612,23 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test.each(['complete', 'abort'])(
+    'publishes each live action only once when hydration ends with %s',
+    end => {
+      const listener = vi.fn()
+      const unsubscribe = subscribeRuntimeConversation(address, listener)
+      const token = beginRuntimeConversationHydration(address)
+      applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId: 'turn-once' })
+      if (end === 'complete') completeRuntimeConversationHydration(address, token, [])
+      else abortRuntimeConversationHydration(address, token)
+      expect(listener.mock.calls.map(([action]) => action?.type)).toEqual([
+        'assistant_started',
+        undefined,
+      ])
+      unsubscribe()
+    }
+  )
+
   test('notifies conversation subscribers when the follow-up queue pause changes', () => {
     let notifications = 0
     const unsubscribe = subscribeRuntimeConversation(address, () => {

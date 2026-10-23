@@ -319,7 +319,8 @@ export function completeRuntimeConversationHydration(
   )
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
-  notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
+  cancelPendingStreamingNotification(key)
+  notifyRuntimeConversation(key)
   return projectRuntimeConversationMessages(key, turns)
 }
 
@@ -334,7 +335,8 @@ export function abortRuntimeConversationHydration(
   const turns = turnsByConversation.get(key) ?? []
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
-  notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
+  cancelPendingStreamingNotification(key)
+  notifyRuntimeConversation(key)
   return projectRuntimeConversationMessages(key, turns)
 }
 
@@ -955,17 +957,6 @@ function scheduleStreamingConversationNotification(key: string): void {
 
 function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
   return action.type === 'assistant_chunk' || action.type === 'block_updated'
-}
-
-function notifyHydratedRuntimeConversation(
-  key: string,
-  bufferedActions: RuntimePaneMessageAction[]
-): void {
-  if (bufferedActions.length === 0) {
-    notifyRuntimeConversation(key)
-    return
-  }
-  bufferedActions.forEach(action => publishRuntimeConversationAction(key, action))
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

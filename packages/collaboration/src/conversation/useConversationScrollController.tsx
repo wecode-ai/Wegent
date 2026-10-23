@@ -374,6 +374,9 @@ export function useConversationScrollController({
     setConversationScrollSnapshot(currentScrollKey, {
       distanceFromBottomPx: existingSnapshot?.distanceFromBottomPx ?? 0,
       pinnedToBottom: existingSnapshot?.pinnedToBottom ?? isAtBottomRef.current,
+      ...(!existingSnapshot?.pinnedToBottom && existingSnapshot?.anchor
+        ? { anchor: existingSnapshot.anchor }
+        : {}),
     })
   }, [currentScrollKey, messages.length])
 
@@ -538,6 +541,7 @@ export function useConversationScrollController({
         snapshot: {
           distanceFromBottomPx: Math.max(0, distanceToBottom),
           pinnedToBottom: isScrolledToBottom,
+          ...(!isScrolledToBottom && snapshot.anchor ? { anchor: snapshot.anchor } : {}),
         },
       }
       isAtBottomRef.current = isAtBottom

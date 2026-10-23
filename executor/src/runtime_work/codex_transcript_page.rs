@@ -531,7 +531,7 @@ async fn load_turn_page(
     .await
 }
 
-async fn request_codex_turn_page(
+pub(super) async fn request_codex_turn_page(
     client: &CodexAppServerClient,
     params: Value,
 ) -> Result<Value, String> {

@@ -66,6 +66,14 @@ while IFS= read -r line; do
     printf '{{"id":%s,"result":{{}}}}\n' "$id"
     exit 0
   fi
+  error_file={directory}/"$method".error-once.json
+  if [ -f "$error_file" ]; then
+    printf '{{"id":%s,"error":' "$id"
+    cat "$error_file"
+    rm "$error_file"
+    printf '}}\n'
+    continue
+  fi
   printf '{{"id":%s,"result":' "$id"
   cat {directory}/"$method".json
   printf '}}\n'
@@ -89,6 +97,13 @@ done
     break
   }
   $method = $request.method.Replace('/', '_')
+  $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
+  if (Test-Path $errorFile) {
+    $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))
+    Remove-Item $errorFile
+    [Console]::WriteLine((@{id=$request.id;error=$failure} | ConvertTo-Json -Depth 100 -Compress))
+    continue
+  }
   $result = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $PSScriptRoot ($method + '.json'))))
   [Console]::WriteLine((@{id=$request.id;result=$result} | ConvertTo-Json -Depth 100 -Compress))
 }"#,

@@ -761,6 +761,12 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
             normalize_overload_recovery_thread(&mut thread, &link.runtime_handle);
+            let superseded = superseded_transcript_turn_ids(&link.runtime_handle);
+            if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
+                turns.retain(|turn| {
+                    string_field(turn, "id").map_or(true, |id| !superseded.contains(&id.as_str()))
+                });
+            }
         }
         let presentation_page_turn_ids = thread
             .get("turns")

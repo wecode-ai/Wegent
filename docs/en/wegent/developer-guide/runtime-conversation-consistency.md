@@ -22,9 +22,13 @@ An item identity shared by the native page and observed stream establishes a con
 
 Native normalization produces turns/items and presentation messages in one pass. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
 
+Edit/retry supersession markers filter native turns before normalization so both projections agree. Metadata reads reuse the existing startup retry only for explicit not-ready protocol errors; permanent errors still propagate to the caller.
+
 Task navigation, reconnection, and lifecycle reconciliation use `synchronizeRuntimeConversation`: identical requests coalesce, competing writes within a conversation serialize, and other conversations proceed independently. Archival invalidates outstanding writes. Navigation metadata reads do not mutate transcript content.
 
 Live updates continue publishing during a history read. Their observed state is retained for the commit. Append-only tool deltas are materialized against that state before reconciliation, avoiding duplicate appends when native history already contains them. Text reconciliation uses stable item identity and preserves complete prefixes already included in native history. This contract does not claim that the upstream protocol exposes an atomic revision or watermark.
+
+Each live action is published once on arrival. Completing or aborting hydration only notifies subscribers of the snapshot change; replaying actions would repeat their side effects.
 
 Paging and conversation-cache lifecycle own loaded native history. The provisional-output block limit cannot silently discard confirmed history. Goals project execution state; explicit transport gaps and recovery events belong to the synchronization layer.
 

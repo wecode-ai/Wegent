@@ -11,6 +11,9 @@ use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 mod native_history_test_support;
 use native_history_test_support::install_native_history;
 
+#[path = "native_timeline_tests.rs"]
+mod native_timeline_tests;
+
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
 

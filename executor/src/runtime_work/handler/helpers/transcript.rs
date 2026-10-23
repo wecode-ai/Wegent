@@ -106,11 +106,8 @@ fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: 
     }
 }
 
-pub(super) fn remove_superseded_transcript_turns(
-    messages: &mut Vec<Value>,
-    runtime_handle: &Value,
-) {
-    let superseded_turn_ids = runtime_handle
+pub(super) fn superseded_transcript_turn_ids(runtime_handle: &Value) -> Vec<&str> {
+    runtime_handle
         .get("supersededTranscriptTurnIds")
         .and_then(Value::as_array)
         .into_iter()
@@ -118,7 +115,14 @@ pub(super) fn remove_superseded_transcript_turns(
         .filter_map(Value::as_str)
         .map(str::trim)
         .filter(|turn_id| !turn_id.is_empty())
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+pub(super) fn remove_superseded_transcript_turns(
+    messages: &mut Vec<Value>,
+    runtime_handle: &Value,
+) {
+    let superseded_turn_ids = superseded_transcript_turn_ids(runtime_handle);
     if superseded_turn_ids.is_empty() {
         return;
     }

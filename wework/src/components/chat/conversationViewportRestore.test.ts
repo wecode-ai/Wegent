@@ -1,4 +1,11 @@
-import { describe, expect, test, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { useConversationScrollController } from '../../../../packages/collaboration/src/conversation/useConversationScrollController'
+import {
+  cacheConversationScrollSnapshot,
+  clearConversationViewportCache,
+  getConversationScrollSnapshot,
+} from '../../../../packages/collaboration/src/conversation/conversationViewportCache'
 import {
   createScrollSnapshot,
   restoreConversationAnchor,
@@ -21,6 +28,29 @@ function readingViewport() {
 }
 
 describe('conversation viewport restoration', () => {
+  afterEach(clearConversationViewportCache)
+
+  test.each([true, false])(
+    'retains the reading anchor on immediate unmount after restore=%s',
+    restore => {
+      const scroller = readingViewport()
+      const snapshot = createScrollSnapshot(scroller, true)
+      const key = `immediate-switch-${restore}`
+      cacheConversationScrollSnapshot(key, snapshot)
+      const hook = renderHook(() =>
+        useConversationScrollController({
+          messages: [
+            { id: 'message', role: 'assistant', content: 'Reading', status: 'done', createdAt: '' },
+          ],
+          externalScrollRef: { current: scroller },
+          conversationKey: key,
+        })
+      )
+      if (restore) act(() => hook.result.current.restoreSavedScrollPosition(key, snapshot))
+      hook.unmount()
+      expect(getConversationScrollSnapshot(key)?.anchor).toEqual(snapshot.anchor)
+    }
+  )
   test('restores the same runtime item after remount and preceding items change', () => {
     const original = readingViewport()
     const snapshot = createScrollSnapshot(original, true)
