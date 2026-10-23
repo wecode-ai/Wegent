@@ -2938,6 +2938,39 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.subscribeLocalExecutorEvents.mockResolvedValue(vi.fn())
   })
 
+  test('revalidates runtime work when a retained workspace tab is revealed again', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock()
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+    const cloudConnectionValue: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'test-disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    const renderTree = (workspaceTabRevealRevision: number) => (
+      <CloudConnectionContext.Provider value={cloudConnectionValue}>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          workspaceTabRevealRevision={workspaceTabRevealRevision}
+        >
+          <div />
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+
+    const { rerender } = render(renderTree(0))
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
+
+    rerender(renderTree(1))
+
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+  })
+
   test('keeps the workbench context value stable across activation-only flags', async () => {
     const services = createWorkbenchServices()
     const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
