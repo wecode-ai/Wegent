@@ -5,6 +5,7 @@ import {
   clearRuntimeConversationCacheForTests,
   evictRuntimeConversation,
   getRuntimeConversationTurns,
+  syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
 import { synchronizeRuntimeConversation } from './runtimeConversationSynchronization'
 
@@ -38,6 +39,41 @@ function deferred<T>() {
   return { promise, resolve }
 }
 afterEach(clearRuntimeConversationCacheForTests)
+
+test('a superseded alias read cannot switch the canonical conversation back to an old thread', async () => {
+  const oldResponse = deferred<RuntimeTranscriptResponse>()
+  const currentResponse = deferred<RuntimeTranscriptResponse>()
+  const oldAddress = { ...address, deviceId: 'device-alias', threadId: 'old' }
+  const currentAddress = { ...address, threadId: 'new' }
+  const oldRead = vi.fn(() => oldResponse.promise)
+  const currentRead = vi.fn(() => currentResponse.promise)
+  const old = synchronizeRuntimeConversation(oldRead, oldAddress)
+  const current = synchronizeRuntimeConversation(currentRead, currentAddress)
+  await vi.waitFor(() => {
+    expect(oldRead).toHaveBeenCalledTimes(1)
+    expect(currentRead).toHaveBeenCalledTimes(1)
+  })
+  syncRuntimeConversationDeviceAliases([
+    {
+      id: 1,
+      device_id: address.deviceId,
+      socket_device_id: 'device-alias',
+      runtime_instance_id: 'runtime',
+      name: 'Local Executor',
+      status: 'online',
+      is_default: true,
+      device_type: 'local',
+      bind_shell: 'codex',
+    },
+  ])
+  currentResponse.resolve({ ...response('Current branch'), threadId: 'new' })
+  await current
+  oldResponse.resolve({ ...response('Old branch'), threadId: 'old' })
+  await old
+  expect(getRuntimeConversationTurns(address)[0]?.items[0]).toMatchObject({
+    content: 'Current branch',
+  })
+})
 
 test('does not merge positions belonging to a replaced native thread', async () => {
   await synchronizeRuntimeConversation(

@@ -304,17 +304,18 @@ export function completeRuntimeConversationHydration(
   address: RuntimeTaskAddress,
   token: symbol,
   snapshotTurns: RuntimeConversationTurn[],
-  actionsAlreadyApplied = true
+  threadId?: string | null
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
+  const changedThread = adoptRuntimeConversationThread(address, threadId)
 
   const turns = hydrateRuntimeConversationTurns(
     turnsByConversation.get(key) ?? [],
     snapshotTurns,
     hydration.bufferedActions,
-    actionsAlreadyApplied
+    !changedThread
   )
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)

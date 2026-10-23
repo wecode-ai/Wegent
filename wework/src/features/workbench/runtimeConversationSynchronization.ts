@@ -66,8 +66,7 @@ export function synchronizeRuntimeConversation(
         throw new Error('Runtime transcript response is missing canonical turns')
       const transcript = projectRuntimePaneTranscript(response)
       if (token && operation.isCurrent()) {
-        const changed = adoptRuntimeConversationThread(address, transcript.threadId)
-        completeRuntimeConversationHydration(address, token, transcript.turns, !changed)
+        completeRuntimeConversationHydration(address, token, transcript.turns, transcript.threadId)
       } else if (token) {
         abortRuntimeConversationHydration(address, token)
       }
