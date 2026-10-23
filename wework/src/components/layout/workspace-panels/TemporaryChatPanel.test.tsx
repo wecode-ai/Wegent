@@ -98,6 +98,11 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRequestUserInputSubmit,
     onRequestUserInputIgnore,
     scrollOrigin,
+    hasMoreBefore,
+    loadingMoreBefore,
+    onLoadMoreBefore,
+    transcriptError,
+    onRetryTranscript,
   }: {
     messages: Array<{
       id: string
@@ -117,8 +122,30 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     }) => void
     onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
     scrollOrigin?: 'top' | 'bottom'
+    hasMoreBefore?: boolean
+    loadingMoreBefore?: boolean
+    onLoadMoreBefore?: () => void
+    transcriptError?: string | null
+    onRetryTranscript?: () => void
   }) => (
     <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
+      {messages.map(message => (
+        <span key={message.id}>{message.content}</span>
+      ))}
+      {hasMoreBefore && (
+        <button
+          data-testid="mock-load-older"
+          disabled={loadingMoreBefore}
+          onClick={onLoadMoreBefore}
+        >
+          Older messages
+        </button>
+      )}
+      {transcriptError && (
+        <button data-testid="mock-retry-history" onClick={onRetryTranscript}>
+          {transcriptError}
+        </button>
+      )}
       {messages.flatMap(message =>
         (message.attachments ?? []).map(messageAttachment => (
           <span key={messageAttachment.id} data-testid="sent-message-attachment">
@@ -381,6 +408,7 @@ vi.mock('@/features/workbench/runtimePaneStatus', () => ({
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   abortRuntimeConversationHydration: vi.fn(),
   getRuntimeConversationTurnIds: () => new Set<string>(),
+  reconcileRuntimeConversationSnapshot: () => mocks.conversationMessages,
   appendAcceptedRuntimeConversationMessage: (_address: RuntimeTaskAddress, message: unknown) => [
     message,
   ],
@@ -544,6 +572,56 @@ describe('TemporaryChatPanel', () => {
       finish({ running: false, messages: [], turns: [], contextUsage: usage(100) })
     )
     expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
+  })
+
+  it('loads earlier pages, keeps messages on failure and retries the same cursor', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'latest',
+        role: 'assistant',
+        content: 'Latest reply',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.loadRuntimeTranscriptForPane
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
+      .mockRejectedValueOnce(new Error('Transfer interrupted'))
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: null })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="paged-history"
+        sendEphemeral={false}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-load-older'))
+    expect(await screen.findByTestId('mock-retry-history')).toHaveTextContent(
+      'Transfer interrupted'
+    )
+    expect(screen.getByText('Latest reply')).toBeInTheDocument()
+    const older = {
+      id: 'older',
+      role: 'user' as const,
+      content: 'Earlier question',
+      status: 'done' as const,
+      createdAt: '',
+    }
+    mocks.conversationMessages = [older, ...mocks.conversationMessages]
+    await userEvent.click(screen.getByTestId('mock-retry-history'))
+    expect(await screen.findByText('Earlier question')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-retry-history')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(address, {
+      limit: 5,
+      beforeCursor: 'older-page',
+    })
+    expect(mocks.loadRuntimeTranscriptForPane.mock.calls.slice(1)).toEqual([
+      [address, { limit: 5, beforeCursor: 'older-page' }],
+      [address, { limit: 5, beforeCursor: 'older-page' }],
+    ])
   })
 
   it('shows a history error instead of an empty conversation and retries the bound address', async () => {

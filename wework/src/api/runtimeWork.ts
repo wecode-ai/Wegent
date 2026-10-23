@@ -1,4 +1,5 @@
 import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
+import { readRuntimeTranscript } from '@wegent/chat-core'
 import type { LocalRuntimeSidebarOptions } from '@/lib/local-runtime-sidebar-identity'
 import type {
   ArchivedConversationsListRequest,
@@ -132,7 +133,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
       return client.delete(`/runtime-work/device-workspaces?${params.toString()}`)
     },
     getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
-      return client.post('/runtime-work/transcript', request)
+      return readRuntimeTranscript({ ...request }, query =>
+        client.post('/runtime-work/transcript', query)
+      )
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)

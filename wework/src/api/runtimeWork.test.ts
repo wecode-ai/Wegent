@@ -1,8 +1,103 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createHash } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('reads every large project transcript chunk through the authorized HTTP route', async () => {
+    const content = Array.from({ length: 56_000 }, (_, index) =>
+      createHash('sha256').update(String(index)).digest('hex')
+    ).join('\n')
+    const response = {
+      taskId: 'task-1',
+      workspacePath: '/repo',
+      runtime: 'codex',
+      messages: [{ id: 'assistant', role: 'assistant', content }],
+      turns: [{ id: 'turn-1', items: [{ id: 'text', type: 'assistant_text', content }] }],
+      beforeCursor: 'older-turns',
+      hasMoreBefore: true,
+    }
+    const bytes = gzipSync(JSON.stringify({ transcript: response, strings: [], references: [] }))
+    expect(bytes.length).toBeGreaterThan(980_000)
+    const snapshotId = createHash('sha256').update(bytes).digest('hex')
+    const chunkSize = 360 * 1024
+    const post = vi.fn(async (_path, query) => {
+      const offset = query.transcriptTransfer?.offset ?? 0
+      const end = Math.min(offset + chunkSize, bytes.length)
+      return {
+        success: true,
+        transcriptProtocolVersion: 2,
+        transfer: {
+          snapshotId,
+          encoding: 'gzip+base64+json',
+          offset,
+          nextOffset: end < bytes.length ? end : null,
+          totalBytes: bytes.length,
+          payload: bytes.subarray(offset, end).toString('base64'),
+        },
+      }
+    })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+      limit: 5,
+      beforeCursor: 'page-cursor',
+      refresh: true,
+    }
+
+    await expect(api.getRuntimeTranscript(request)).resolves.toEqual(response)
+    expect(post).toHaveBeenCalledTimes(Math.ceil(bytes.length / chunkSize))
+    post.mock.calls.forEach((_, index) => {
+      expect(post).toHaveBeenNthCalledWith(index + 1, '/runtime-work/transcript', {
+        ...request,
+        transcriptProtocolVersion: 2,
+        ...(index ? { transcriptTransfer: { snapshotId, offset: index * chunkSize } } : {}),
+      })
+    })
+  })
+
+  test('keeps legacy transcript responses readable and surfaces transfer failures', async () => {
+    const response = { messages: [], turns: [] }
+    const post = vi.fn().mockResolvedValueOnce(response).mockRejectedValueOnce(new Error('403'))
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = { deviceId: 'device-1', taskId: 'task-1' }
+    await expect(api.getRuntimeTranscript(request)).resolves.toEqual(response)
+    await expect(api.getRuntimeTranscript(request)).rejects.toThrow('403')
+  })
+
+  test('rejects a page when project access is revoked between chunks', async () => {
+    const post = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        transcriptProtocolVersion: 2,
+        transfer: {
+          snapshotId: 'a'.repeat(64),
+          encoding: 'gzip+base64+json',
+          offset: 0,
+          nextOffset: 1,
+          totalBytes: 2,
+          payload: 'YQ==',
+        },
+      })
+      .mockRejectedValueOnce(new Error('Project access denied'))
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+    }
+    await expect(api.getRuntimeTranscript(request)).rejects.toThrow('Project access denied')
+    expect(post).toHaveBeenLastCalledWith('/runtime-work/transcript', {
+      ...request,
+      transcriptProtocolVersion: 2,
+      transcriptTransfer: { snapshotId: 'a'.repeat(64), offset: 1 },
+    })
+  })
+
   test('never sends qualified local sidebar mutations through the backend transport', async () => {
     const post = vi.fn()
     const api = createRuntimeWorkApi({ post } as unknown as HttpClient)

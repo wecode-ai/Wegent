@@ -35,12 +35,42 @@ sequenceDiagram
 - 新客户端显式请求 `transcriptProtocolVersion: 2`。新 Executor 对省略版本或版本 1
   的请求保留原响应格式；未知版本明确失败。
 - 旧 Executor 忽略新增请求字段时，新客户端接受其原始响应。旧版本的单次传输限制仍然存在；
-  升级客户端和 Executor 后才具备完整分块能力。后端继续转发现有 RPC，不增加公共 API。
-- 主会话界面默认请求最近 5 轮。Executor 对协议 2 的未指定页大小请求默认使用 5；
+  升级客户端和 Executor 后才具备完整分块能力。Issue 侧栏通过 HTTP 读取时，后端也需支持
+  现有 `POST /api/runtime-work/transcript` 的协议 2 字段和分块响应。
+- 主会话和 Issue 侧栏共用历史传输客户端，默认加载最近 5 轮，并通过游标加载更早历史。
+  Executor 对协议 2 的未指定页大小请求默认使用 5；
   显式 `limit` 仍遵守原有分页规则，保留导航和测试配置的语义。
 - Codex 的 turn/item 游标、旧版本读取方式和实时合并逻辑保持原有语义。
   协议 2 对读取到的历史页使用完整工具内容投影；`fullContent: false` 仍表示仅加载了一页。
   导出请求 `includeFullContent: true`，不再静默截断到 500 轮。
+
+### Issue 侧栏的 HTTP 链路
+
+带 `projectSession` 的 Issue 会话通过现有 HTTP 接口读取。后端对每块请求重新校验
+项目访问权限、Issue 和持久会话绑定，并使用绑定的执行设备、任务与会话地址转发 RPC。
+`transcriptProtocolVersion`、`transcriptTransfer`、分页及刷新字段完整转发；响应模型
+保留分块字段，再由共享客户端校验、解压。续读期间权限被撤销时，请求失败，不发布半页内容。
+
+```mermaid
+sequenceDiagram
+    participant UI as Issue 侧栏
+    participant Client as 共享历史传输客户端
+    participant API as Backend HTTP 接口
+    participant Runtime as 绑定的 Executor
+    UI->>Client: 加载历史页
+    loop 首块和后续分块
+        Client->>API: projectSession、协议 2、分页或分块游标
+        API->>API: 校验项目权限和持久会话绑定
+        API->>Runtime: 使用绑定地址请求 transcript
+        Runtime-->>API: 协议 2 分块
+        API-->>Client: 保留完整分块字段
+    end
+    Client-->>UI: 校验并恢复完整历史页
+    UI->>UI: 合并历史，保留向前翻页游标
+```
+
+分页加载失败时保留已显示消息和当前游标，重试仍读取同一页；切换或关闭侧栏后，旧请求不能
+写入新会话。每块请求都携带原 `projectSession`，不会绕过 HTTP 项目鉴权。
 
 每个响应包含 `success: true`、`transcriptProtocolVersion: 2` 和 `transfer`：
 
@@ -94,7 +124,9 @@ RPC 完成日志在外层响应编码后记录，编码超限不会再被记录�
 自动化覆盖在 Rust `transcript_transport` / `codex_transcript_page`、共享 TypeScript
 传输客户端、桌面 IPC 和会话组件测试中。已注册的桌面
 `running-conversation-history` 检查点加入高熵大工具输出，验证重启恢复、完整工具历史
-和多块快照内容，沿用现有 CI 入口。E2E 与 `ai:verify` 仅在明确要求时运行。
+和多块快照内容，沿用现有 CI 入口。HTTP 接口和项目权限测试覆盖分块字段、非法请求和
+续读时撤权；`collaboration-issue-task-discovery` 检查点覆盖超过传输上限的大工具输出经
+项目 HTTP 链路完整读取，并在刷新后重新打开 Issue 侧栏。E2E 与 `ai:verify` 仅在明确要求时运行。
 
 ### 真实历史文件验证（2026-10-09）
 

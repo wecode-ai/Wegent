@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.schemas.runtime_transcript_transport import RuntimeTranscriptTransferResponse
 from app.schemas.runtime_work import (
     ArchivedConversationsListRequest,
     ArchivedConversationsListResponse,
@@ -331,7 +332,7 @@ async def search_runtime_workspace_endpoint(
 
 @router.post(
     "/transcript",
-    response_model=RuntimeTranscriptResponse,
+    response_model=RuntimeTranscriptResponse | RuntimeTranscriptTransferResponse,
     response_model_by_alias=True,
 )
 async def get_runtime_transcript_endpoint(

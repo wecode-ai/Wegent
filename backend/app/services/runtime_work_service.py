@@ -32,6 +32,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.device import DeviceType
 from app.schemas.project import ProjectConfig
+from app.schemas.runtime_transcript_transport import RuntimeTranscriptTransferResponse
 from app.schemas.runtime_work import (
     ArchivedConversationItem,
     ArchivedConversationProjectGroup,
@@ -441,7 +442,7 @@ async def get_runtime_transcript(
     db: Session,
     user_id: int,
     address: RuntimeTranscriptRequest,
-) -> RuntimeTranscriptResponse:
+) -> RuntimeTranscriptResponse | RuntimeTranscriptTransferResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
     if getattr(address, "project_session", None) is not None:
@@ -509,11 +510,16 @@ async def get_runtime_transcript(
         result.get("hasMoreBefore"),
         result.get("beforeCursor"),
     )
-    if not isinstance(result.get("turns"), list):
-        raise HTTPException(
-            502, "Runtime transcript response is missing canonical turns"
-        )
     try:
+        if (
+            getattr(address, "transcript_protocol_version", None) == 2
+            and "transcriptProtocolVersion" in result
+        ):
+            return RuntimeTranscriptTransferResponse.model_validate(result)
+        if not isinstance(result.get("turns"), list):
+            raise HTTPException(
+                502, "Runtime transcript response is missing canonical turns"
+            )
         return RuntimeTranscriptResponse.model_validate(result)
     except ValidationError as exc:
         logger.error(
@@ -3894,6 +3900,16 @@ def _runtime_transcript_payload(
         payload["includeFullContent"] = True
     if conversation_context_only:
         payload["conversationContextOnly"] = True
+    if getattr(request, "refresh", False):
+        payload["refresh"] = True
+    if getattr(request, "navigation_only", False):
+        payload["navigationOnly"] = True
+    protocol_version = getattr(request, "transcript_protocol_version", None)
+    if protocol_version is not None:
+        payload["transcriptProtocolVersion"] = protocol_version
+    transfer = getattr(request, "transcript_transfer", None)
+    if transfer is not None:
+        payload["transcriptTransfer"] = transfer.model_dump(by_alias=True)
     return payload
 
 
