@@ -4,6 +4,7 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { isMainWindowFocused } from '@/desktop/windowFocus'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { useTranslation } from '@/hooks/useTranslation'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { WeworkInbox } from '@/api/notifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
@@ -95,6 +96,19 @@ export function useStandInNotifications(
         firstObservation && Date.parse(state.updatedAt) <= observedTasks.current.startedAt
       const version = standInVersion(state)
       const deliveredVersion = delivered.getSnapshot()[item.runtimeItem.key]?.version
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('stand-in-alert', {
+          taskKey: item.runtimeItem.key,
+          version,
+          deliveredVersion,
+          readVersion: versions[item.runtimeItem.key]?.version,
+          runtimeUnread: source?.unreadTaskKeys.has(item.runtimeItem.key),
+          firstObservation,
+          historical,
+          systemEnabled,
+          currentTaskId: source?.currentAddress?.taskId,
+        })
+      }
       if (deliveredVersion === version) continue
       const alreadyDelivered = matchesStandInVersion(deliveredVersion, state)
       const readVersion = versions[item.runtimeItem.key]?.version
