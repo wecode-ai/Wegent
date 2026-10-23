@@ -3,12 +3,19 @@ import { join } from 'node:path'
 
 import { mcpElicitationConfigToml } from '../modules/desktop-build-flows.mjs'
 import {
+  currentTurnHasToolOutput,
+  currentTurnHasToolSearchResult,
+} from '../modules/runtime-input-answer-model.mjs'
+import {
   assistantMessage,
   createSse,
-  mcpToolRequestEvents,
-  requestContainsToolOutput,
+  handleEmptyReplyPrediction,
+  namespacedFunctionCall,
   responseCompleted,
   responseCreated,
+  selectMcpTool,
+  selectToolSearch,
+  toolSearchResponseEvents,
 } from '../modules/response-protocol.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -21,6 +28,7 @@ import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 
 const PROMPT = 'WEWORK_E2E_INPUT_ANSWER_PERSISTENCE: confirm the inner-site access audience.'
 const COMPLETION = 'WEWORK_E2E_INPUT_ANSWER_PERSISTENCE_COMPLETE'
+const TOOL_NAMESPACE = 'wegent_sites_interactions'
 const TOOL_NAME = 'confirm_inner_site_access'
 const SEARCH_CALL_ID = 'wework-e2e-input-answer-elicitation-search'
 const TOOL_CALL_ID = 'wework-e2e-input-answer-elicitation-call'
@@ -168,10 +176,11 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       return false
     }
     const body = await readJson(request)
+    if (handleEmptyReplyPrediction(body, response)) return true
     if (!JSON.stringify(body).includes(PROMPT)) return false
     modelRequestCount += 1
     const responseId = `wework-input-answer-${modelRequestCount}-${Date.now()}`
-    if (requestContainsToolOutput(body, TOOL_CALL_ID)) {
+    if (currentTurnHasToolOutput(body, TOOL_CALL_ID)) {
       assert.ok(
         JSON.stringify(body).includes('E2E_MCP_ELICITATION_ACCEPTED:owner'),
         'The real MCP server did not return the accepted audience to the model'
@@ -189,16 +198,18 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       )
       return true
     }
-    const selection = mcpToolRequestEvents(body, {
-      toolName: TOOL_NAME,
-      argumentsValue: {},
-      searchCallId: SEARCH_CALL_ID,
-      toolCallId: TOOL_CALL_ID,
-    })
-    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-    response.end(
-      createSse([responseCreated(responseId), ...selection.events, responseCompleted(responseId)])
+    let events
+    const namespaceAdvertised = (Array.isArray(body.tools) ? body.tools : []).some(
+      tool => tool?.type === 'namespace' && tool.name === TOOL_NAMESPACE
     )
+    if (namespaceAdvertised || currentTurnHasToolSearchResult(body, TOOL_NAMESPACE)) {
+      const tool = selectMcpTool(body, TOOL_NAMESPACE, TOOL_NAME, {})
+      events = namespacedFunctionCall(TOOL_CALL_ID, tool.namespace, tool.name, tool.arguments)
+    } else {
+      events = toolSearchResponseEvents(SEARCH_CALL_ID, selectToolSearch(body, TOOL_NAME))
+    }
+    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+    response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
     return true
   }
 
