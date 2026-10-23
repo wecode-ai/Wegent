@@ -9,8 +9,8 @@ describe('Jest worker resource policy', () => {
     const config = await resolveJestConfig()
 
     expect(config.workerIdleMemoryLimit).toBe('512MB')
-    expect(config.testTimeout).toBeUndefined()
-    expect(config.bail).toBeUndefined()
+    expect(config).not.toHaveProperty('testTimeout')
+    expect(config).not.toHaveProperty('bail')
     expect(config.testMatch).toEqual([
       '<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}',
       '<rootDir>/src/features/collaboration/shared-api/**/*.test.{ts,tsx}',
