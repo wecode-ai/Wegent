@@ -18,6 +18,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { CHECKPOINT_TASK_PROMPT, MODEL_PROVIDER_ID } from './shared.mjs'
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
+import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 import {
   packagedResourcesRoot,
   verifyWorkbenchSchemaCompatibility,
@@ -50,12 +51,34 @@ async function runNativeTurn(fixture, home, resumeId) {
   args.push('-c', `model_provider=${JSON.stringify(MODEL_PROVIDER_ID)}`)
   const execution = promisify(execFile)(fixture.codexBinary, args, {
     cwd: fixture.workspace,
-    env: { ...fixture.environment, CODEX_HOME: home, WEGENT_CODEX_HOME: home },
+    env: {
+      ...fixture.environment,
+      CODEX_HOME: home,
+      WEGENT_CODEX_HOME: home,
+      RUST_LOG: 'error,codex_rollout::state_db=warn,codex_state=warn',
+    },
     timeout: 120_000,
     maxBuffer: 4 * 1024 * 1024,
   })
   execution.child.stdin.end()
-  const { stdout } = await execution
+  let stdout
+  try {
+    stdout = (await execution).stdout
+  } catch (error) {
+    // Retain storage evidence from the active migration Home before runner cleanup.
+    await writeFile(
+      join(fixture.resultDir, 'native-migration-turn-failure.json'),
+      JSON.stringify({
+        home,
+        realHome: await realpath(home),
+        resumeId,
+        code: error.code,
+        stderr: error.stderr,
+        sqlite: await collectCodexSqliteDiagnostics(home, resumeId),
+      })
+    )
+    throw error
+  }
   const events = stdout
     .trim()
     .split('\n')
@@ -291,6 +314,7 @@ export function createWorkbenchHomeMigrationScenario({
       const attachment = await lstat(attachmentPath, { bigint: true })
       const source = await lstat(sourceHome, { bigint: true })
       fixture = {
+        resultDir,
         namespace: namespace || 'default',
         desktopRoot,
         legacyDatabase,
