@@ -131,7 +131,7 @@ export function useComposerInputEvents({
     }
     if (event.key === "Enter") {
       const recordDecision = (reason: string) =>
-        recordComposerDiagnostic("submit-key", {
+        recordComposerDiagnostic("keyboard-policy", {
           reason,
           keyCode: event.keyCode,
           canSend,

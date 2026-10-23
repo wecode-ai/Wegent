@@ -98,6 +98,13 @@ export interface StandInExecutorApi {
     proposalId: string,
     accept: boolean
   ): Promise<PersonalStandInSettings>
+  notifyAssignment(
+    projectId: string,
+    issueId: string,
+    assignmentId: string,
+    userId: number,
+    deviceId: string
+  ): Promise<void>
   personalAgents(userId: number, deviceId: string): Promise<PersonalStandInAgent[]>
   personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
   personalSave(
@@ -168,6 +175,13 @@ export function createStandInExecutorApi(request: Request): StandInExecutorApi {
       )
       publishPersonalStandIn(saved)
       return saved
+    },
+    notifyAssignment: async (projectId, itemId, assignmentId, recipientUserId, deviceId) => {
+      await request(
+        'runtime.stand_in.assignment',
+        { projectId, itemId, assignmentId, recipientUserId },
+        deviceId
+      )
     },
     personalAgents: async (userId, deviceId) =>
       (

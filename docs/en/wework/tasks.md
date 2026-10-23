@@ -132,6 +132,10 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
+### Answer AI questions
+
+Question cards show the full question above the answer field. Long questions wrap, and oversized cards scroll. Questions without options remain visible while you type. Enter your answer in the field labeled “Type your answer”, then click **Submit**.
+
 ## Use the personal supervisor
 
 Open the composer's **+** menu in a new Codex conversation or an existing Codex task and select **Personal supervisor**. While the main AI is working, the executor periodically reads its recent progress in the background and evaluates goal drift, missed constraints, destructive actions, and obvious blocked loops with a lightweight read-only call. Supervision is a regular feature and does not require **Experimental features**. It does not fork the original task, and checks continue without keeping the task view open.

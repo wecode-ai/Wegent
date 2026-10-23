@@ -19,15 +19,6 @@ const SAFE_DETAIL_KEYS = new Set([
   "frameDelayMs",
   "inputType",
   "key",
-  "keyCode",
-  "canSend",
-  "sendKey",
-  "stateIsComposing",
-  "suppressEnterUntilKeyUp",
-  "hasContent",
-  "isModelSelectionReady",
-  "disabled",
-  "submitDisabled",
   "metaKey",
   "reason",
   "selectionEnd",
@@ -39,6 +30,15 @@ const SAFE_DETAIL_KEYS = new Set([
   "transactionMs",
   "valueLength",
   "viewIsComposing",
+  "canSend",
+  "disabled",
+  "isModelSelectionReady",
+  "hasContent",
+  "submitDisabled",
+  "stateIsComposing",
+  "suppressEnterUntilKeyUp",
+  "keyCode",
+  "sendKey",
 ]);
 
 export type ComposerDiagnosticEventName =
@@ -53,8 +53,8 @@ export type ComposerDiagnosticEventName =
   | "external-value-apply"
   | "input-frame"
   | "keyboard"
-  | "submit-key"
-  | "submit-guard"
+  | "keyboard-policy"
+  | "submit-policy"
   | "transaction"
   | "value-set";
 

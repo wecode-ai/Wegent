@@ -1,3 +1,4 @@
+import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
@@ -15,7 +16,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
+import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
@@ -903,6 +904,7 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
+  const taskComposerCatalogsRequired = loadTaskComposerCatalogs || taskComposerCatalogsRequested
   const taskComposerCatalogsEnabled =
     taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
@@ -1054,7 +1056,9 @@ export function WorkbenchProvider({
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
-    isWorkbenchShellReady && modelSelection.isSelectionReady && !skillSelection.isLoading
+    isWorkbenchShellReady &&
+    (!taskComposerCatalogsRequired || modelSelection.isSelectionReady) &&
+    !skillSelection.isLoading
 
   useEffect(() => {
     onStartupReadyChange?.(isWorkbenchShellReady)
@@ -1322,55 +1326,27 @@ export function WorkbenchProvider({
     state.devices,
   ])
 
-  useEffect(() => {
-    if (!debugSnapshotEnabled || !publishDebugSnapshots) return
-
-    let timeout: number | null = null
-    const schedule = () => {
-      if (timeout !== null) return
-      timeout = window.setTimeout(() => {
-        timeout = null
-        updateWorkbenchDebugSnapshot({
-          state,
-          lifecycle: lifecycleSnapshot,
-          taskReminders: runtimeTaskReminders,
-          cloudWorkStatus,
-          composer: {
-            scopeKey: projectChatScopeKey,
-            standaloneChatKey: state.standaloneChatKey,
-            availableModelNames: modelSelection.models.map(model => model.name),
-            currentInputLength: draftInput.length,
-            scopedInputLengths: Object.fromEntries(
-              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-            ),
-            attachmentCount: attachmentSelection.attachments.length,
-            contextUsagePercent: currentContextUsage
-              ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
-              : undefined,
-          },
-        })
-      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
-    }
-    schedule()
-    return () => {
-      if (timeout !== null) {
-        clearTimeout(timeout)
-      }
-    }
-  }, [
-    attachmentSelection.attachments.length,
-    cloudWorkStatus,
-    currentContextUsage,
-    debugSnapshotEnabled,
-    draftInput.length,
-    lifecycleSnapshot,
-    draftInputByScope,
-    modelSelection.models,
-    publishDebugSnapshots,
-    projectChatScopeKey,
-    runtimeTaskReminders,
-    state,
-  ])
+  useDebugSnapshotPublisher(debugSnapshotEnabled && publishDebugSnapshots, () => {
+    updateWorkbenchDebugSnapshot({
+      state,
+      lifecycle: lifecycleSnapshot,
+      taskReminders: runtimeTaskReminders,
+      cloudWorkStatus,
+      composer: {
+        scopeKey: projectChatScopeKey,
+        standaloneChatKey: state.standaloneChatKey,
+        availableModelNames: modelSelection.models.map(model => model.name),
+        currentInputLength: draftInput.length,
+        scopedInputLengths: Object.fromEntries(
+          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+        ),
+        attachmentCount: attachmentSelection.attachments.length,
+        contextUsagePercent: currentContextUsage
+          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
+          : undefined,
+      },
+    })
+  })
 
   const { upgradingDevices, upgradeDevice } = useWorkbenchDeviceUpgrades({
     state,

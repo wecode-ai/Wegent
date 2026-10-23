@@ -25,6 +25,7 @@ core_segments=(
   stand-in-cloud
   stand-in-notifications
 
+  stand-in-assignment-notifications
   stand-in-personal-task
   stand-in-permissions
   collaboration-remote-agent-dispatch
@@ -209,7 +210,7 @@ core_shards=(
   claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
   harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
   collaboration-shared-core
 )
@@ -386,6 +387,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-controls"
   select_target "core:stand-in-project-enable"
   select_target "core:stand-in-cloud"
+  select_target "core:stand-in-assignment-notifications"
   select_target "core:stand-in-personal-task"
   select_target "core:stand-in-permissions"
   select_target "core:collaboration-remote-agent-dispatch"
@@ -732,6 +734,7 @@ classify_wework_path() {
 
     wework/src/features/notifications/* | \
       wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
+      select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
@@ -744,6 +747,7 @@ classify_wework_path() {
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
       if [[ "$path" == wework/src/features/workbench/runtimeTaskReminders* ]]; then
+        select_target "core:stand-in-assignment-notifications"
         select_target "core:stand-in-notifications"
         select_target "core:stand-in-cloud"
       fi
@@ -817,11 +821,17 @@ classify_wework_path() {
     wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
       select_target "core:stand-in-identities"
       select_target "core:stand-in-action-confirmation"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs)
+      select_target "core:stand-in-assignment-notifications"
+      return
       ;;
     wework/e2e/desktop/scenarios/stand-in-personal-task.scenario.mjs)
       select_target "core:stand-in-personal-task"
       return
       ;;
+
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
@@ -834,6 +844,7 @@ classify_wework_path() {
       select_target "core:stand-in-controls"
       select_target "core:stand-in-project-enable"
       select_target "core:stand-in-cloud"
+      select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-personal-task"
       select_target "core:stand-in-permissions"
       return
@@ -1004,6 +1015,9 @@ classify_wework_path() {
       if [[ "$path" == wework/src/api/local/localServices* || \
         "$path" == wework/src/api/hybrid/hybridServices* ]]; then
         select_target "core:background-terminals"
+      fi
+      if [[ "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:stand-in-assignment-notifications"
       fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"

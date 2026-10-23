@@ -8,7 +8,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { createXtermWebLinksAddon } from './xtermLinks'
-import { observeTerminalDiagnostics, traceTerminal } from '@/e2e/terminal-diagnostics'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { registerNativeTerminalViewport } from '@/e2e/native-key-observation'
 
 export function BackgroundTerminalPanel({
   terminal,
@@ -43,7 +44,32 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
-    const disposeDiagnostics = observeTerminalDiagnostics(xterm)
+    const disposeViewport =
+      import.meta.env.VITE_WEWORK_E2E === 'true'
+        ? registerNativeTerminalViewport(container, () => xterm.buffer.active.viewportY + 1)
+        : null
+    let lastHistoryKeyAt = 0
+    const logViewport = (stage: string) =>
+      logRuntimeTaskCreateStage(stage, {
+        terminalId: terminal?.id,
+        viewportY: xterm.buffer.active.viewportY,
+        baseY: xterm.buffer.active.baseY,
+      })
+    const scrollDiagnostic =
+      import.meta.env.VITE_WEWORK_E2E === 'true'
+        ? xterm.onScroll(() => {
+            if (Date.now() - lastHistoryKeyAt < 2000) logViewport('background-terminal-scroll')
+          })
+        : null
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      xterm.attachCustomKeyEventHandler(event => {
+        if (event.type === 'keydown' && ['PageUp', 'PageDown'].includes(event.key)) {
+          lastHistoryKeyAt = Date.now()
+          logViewport(`background-terminal-${event.key}`)
+        }
+        return true
+      })
+    }
     const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
     resourceRef.current = { terminal: xterm, fit, output: '' }
     const observer = new ResizeObserver(() => {
@@ -52,9 +78,10 @@ export function BackgroundTerminalPanel({
     observer.observe(container)
     return () => {
       observer.disconnect()
+      scrollDiagnostic?.dispose()
+      disposeViewport?.()
       disposeTheme()
       resourceRef.current = null
-      disposeDiagnostics()
       xterm.dispose()
     }
   }, [hasOutput, terminal?.id, appearance.codeFont, appearance.codeFontSize])
@@ -64,18 +91,17 @@ export function BackgroundTerminalPanel({
     if (!resource) return
     if (output.startsWith(resource.output)) {
       const delta = output.slice(resource.output.length)
-      if (delta.length > 0) {
-        traceTerminal(resource.terminal, 'append', {
-          oldLength: resource.output.length,
-          nextLength: output.length,
-        })
-        resource.terminal.write(delta)
-      }
+      if (delta.length > 0) resource.terminal.write(delta)
     } else {
-      traceTerminal(resource.terminal, 'reset', {
-        oldLength: resource.output.length,
-        nextLength: output.length,
-      })
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('background-terminal-output-reset', {
+          terminalId: terminal?.id,
+          previousLength: resource.output.length,
+          nextLength: output.length,
+          viewportY: resource.terminal.buffer.active.viewportY,
+          baseY: resource.terminal.buffer.active.baseY,
+        })
+      }
       resource.terminal.reset()
       resource.terminal.write(output)
     }
@@ -90,6 +116,7 @@ export function BackgroundTerminalPanel({
     >
       <div
         ref={containerRef}
+        data-testid="background-terminal-xterm"
         className="h-full min-h-0 w-full overflow-hidden py-3 pl-3"
         role="region"
         aria-label={

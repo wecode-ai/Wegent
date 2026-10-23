@@ -19,6 +19,7 @@ import type {
   ComposerFollowUpBehavior,
 } from './composerInputTypes'
 import { primaryComposerSubmitOptions } from './composerInputTypes'
+import { recordComposerDiagnostic } from './composerDiagnostics'
 import {
   browserComposerTransferServices,
   workspacePathReferenceText,
@@ -31,7 +32,6 @@ import {
   PROJECT_CHAT_SCROLL_CONTAINER_CLASS,
   DOCUMENT_EDITOR_CLASS,
 } from './ProjectChatComposerSurface'
-import { recordComposerDiagnostic } from './composerDiagnostics'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 
 export interface ProjectComposerBodyProps {
@@ -179,7 +179,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
         allowEmptySubmit ||
         current.trim() ||
         (!requireText && (attachments.length || codeCommentCount))
-      recordComposerDiagnostic('submit-guard', {
+      recordComposerDiagnostic('submit-policy', {
         hasContent: Boolean(hasContent),
         isModelSelectionReady,
         disabled,

@@ -1,6 +1,7 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
   app,
@@ -422,10 +423,7 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
-    if (
-      process.env.VITE_WEWORK_E2E === 'true' &&
-      (message.startsWith('[desktop-e2e-key] ') || message.startsWith('[desktop-e2e-terminal] '))
-    ) {
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
       console.info(redactLog(message).slice(0, 1024))
     }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
@@ -1271,6 +1269,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       webviewTag: true,
     },
   })
+  installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
