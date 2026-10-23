@@ -457,6 +457,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       completedDebugSnapshot.workbench?.runningState ?? null
     )}`
   )
+  assert.equal(completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalStatus, 'complete')
+  assert.equal(
+    completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalExecutionStatus,
+    null,
+    'The completed Goal retained its obsolete autonomous execution hint'
+  )
   await waitForSnapshot(
     control,
     snapshot =>
