@@ -96,6 +96,42 @@ async def test_runtime_error_does_not_override_terminal_async_card_poll() -> Non
 
 
 @pytest.mark.asyncio
+async def test_retryable_error_defers_terminal_status_update() -> None:
+    from app.services.execution.emitters.status_updating import (
+        RETRYABLE_ERROR_MARKERS_ATTR,
+        StatusUpdatingEmitter,
+    )
+
+    wrapped = AsyncMock()
+    setattr(wrapped, RETRYABLE_ERROR_MARKERS_ATTR, ("stale session",))
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    event = ExecutionEvent(
+        type=EventType.ERROR.value,
+        task_id=101,
+        subtask_id=202,
+        error="stale session unavailable",
+    )
+
+    with (
+        patch.object(emitter, "_handle_error", new=AsyncMock()) as handle_error,
+        patch.object(
+            emitter, "_update_status_failed", new=AsyncMock()
+        ) as update_status,
+    ):
+        await emitter.emit(event)
+        await emitter.emit_error(
+            task_id=101,
+            subtask_id=202,
+            error="stale session unavailable",
+        )
+
+    handle_error.assert_not_awaited()
+    update_status.assert_not_awaited()
+    wrapped.emit.assert_awaited_once_with(event)
+    wrapped.emit_error.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_done_event_is_forwarded_when_async_card_poll_owns_status() -> None:
     from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 

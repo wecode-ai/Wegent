@@ -12,11 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.subscription.unified_executor import (
+    STALE_SESSION_ERROR,
     SubscriptionExecutionData,
     _build_subscription_execution_request,
     _execute_http_callback,
+    _execute_sse_sync,
     execute_subscription_unified,
 )
+from shared.models import EventType
 
 
 class _FakeEmitter:
@@ -28,6 +31,18 @@ class _FakeEmitter:
 
     async def collect(self):
         return "", None
+
+
+class _FakeStaleEventEmitter:
+    """Emitter stub returning an error terminal event."""
+
+    def __init__(self, task_id: int, subtask_id: int):
+        self.task_id = task_id
+        self.subtask_id = subtask_id
+
+    async def collect(self):
+        event = SimpleNamespace(type=EventType.ERROR.value, error=STALE_SESSION_ERROR)
+        return "", event
 
 
 @pytest.mark.asyncio
@@ -130,6 +145,298 @@ async def test_subscription_request_includes_selected_device_id():
         await _build_subscription_execution_request(execution_data)
 
     assert build_request.await_args.kwargs["device_id"] == "local-device-1"
+    assert build_request.await_args.kwargs["new_session"] is True
+
+
+@pytest.mark.asyncio
+async def test_preserved_history_stale_session_retries_with_new_session():
+    """History-preserving subscriptions self-heal when the native session is stale."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    stale_error = RuntimeError(
+        "Existing task session is missing or ambiguous; "
+        "refusing to start a new conversation"
+    )
+    build_calls = []
+
+    async def fake_execute(request, execution_data, retry_stale_session=False):
+        if request is build_calls[0]:
+            return str(stale_error)
+        return None
+
+    async def fake_build(*args, **kwargs):
+        request = object()
+        build_calls.append(request)
+        return request
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert len(build_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_stale_session_does_not_retry_again():
+    """A failed new-session retry remains the authoritative terminal result."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    build_calls = []
+    retry_flags = []
+
+    async def fake_build(*args, **kwargs):
+        request = object()
+        build_calls.append(request)
+        return request
+
+    async def fake_execute(request, execution_data, retry_stale_session=False):
+        retry_flags.append(retry_stale_session)
+        return STALE_SESSION_ERROR
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert len(build_calls) == 2
+    assert retry_flags == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_non_preserved_history_disables_stale_session_retry():
+    """History-disabled subscriptions keep the original failure path."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    retry_flags = []
+
+    async def fake_build(*args, **kwargs):
+        return object()
+
+    async def fake_execute(request, execution_data, retry_stale_session=False):
+        retry_flags.append(retry_stale_session)
+        return STALE_SESSION_ERROR
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert retry_flags == [False]
+
+
+@pytest.mark.asyncio
+async def test_sse_error_event_propagates_stale_session():
+    """A stale-session terminal event must reach the subscription retry wrapper."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+
+    async def dispatch(request, **kwargs):
+        return None
+
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=_FakeStaleEventEmitter)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "app.services.execution": fake_execution_module,
+            "app.services.execution.emitters": fake_emitters_module,
+        },
+    ):
+        result = await _execute_sse_sync(
+            request=object(),
+            execution_data=execution_data,
+            retry_stale_session=True,
+        )
+
+    assert result == STALE_SESSION_ERROR
+
+
+@pytest.mark.asyncio
+async def test_sse_error_event_without_retry_uses_terminal_error():
+    """A repeated stale-session failure does not produce another retry signal."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+
+    async def dispatch(request, **kwargs):
+        return None
+
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=_FakeStaleEventEmitter)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "app.services.execution": fake_execution_module,
+            "app.services.execution.emitters": fake_emitters_module,
+        },
+    ):
+        result = await _execute_sse_sync(
+            request=object(),
+            execution_data=execution_data,
+            retry_stale_session=False,
+        )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_other_subscription_errors_do_not_retry_new_session():
+    """Only the stale native-session failure triggers subscription self-healing."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id=None,
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=True,
+        history_message_count=10,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    build_calls = []
+
+    async def fake_build(*args, **kwargs):
+        request = object()
+        build_calls.append(request)
+        return request
+
+    async def fake_execute(request, execution_data, retry_stale_session=False):
+        raise RuntimeError("model unavailable")
+
+    with (
+        patch(
+            "app.services.subscription.unified_executor._build_subscription_execution_request",
+            side_effect=fake_build,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_subscription_request",
+            side_effect=fake_execute,
+        ),
+        pytest.raises(RuntimeError, match="model unavailable"),
+    ):
+        await execute_subscription_unified(execution_data)
+
+    assert len(build_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -173,7 +480,7 @@ async def test_unified_executor_closes_loader_session_before_sse_execution(
         finally:
             fake_session.close()
 
-    async def fake_execute_sse_sync(request, execution_data):
+    async def fake_execute_sse_sync(request, execution_data, retry_stale_session=False):
         assert fake_session.rolled_back is True
         assert fake_session.closed is True
 

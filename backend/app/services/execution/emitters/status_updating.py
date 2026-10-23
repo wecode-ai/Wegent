@@ -58,6 +58,8 @@ STREAM_TERMINAL_EVENT_TYPES = {
     EventType.CANCELLED.value,
 }
 
+RETRYABLE_ERROR_MARKERS_ATTR = "_retryable_error_markers"
+
 
 def _async_card_job_owns_status(result: Optional[Dict[str, Any]]) -> bool:
     """Return whether an asynchronous card poll owns the terminal status."""
@@ -220,6 +222,11 @@ class StatusUpdatingEmitter(ResultEmitter):
 
         await session_manager.touch_task_streaming_activity(self._task_id)
         self._last_task_activity_touch = now
+
+    def _is_retryable_error(self, error: Optional[str]) -> bool:
+        """Return whether the wrapped emitter defers this terminal error."""
+        markers = getattr(self._wrapped, RETRYABLE_ERROR_MARKERS_ATTR, ())
+        return bool(error) and any(marker in error for marker in markers)
 
     async def _cancel_pending_storage_flush_task(self) -> None:
         """Cancel a scheduled delayed flush after a synchronous flush."""
@@ -389,6 +396,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 if final_result is not None:
                     event.result = final_result
             elif event.type == EventType.ERROR.value:
+                if self._is_retryable_error(event.error):
+                    await self._wrapped.emit(event)
+                    return
                 final_result = await self._handle_error(event)
                 if final_result is not None:
                     event.result = final_result
@@ -450,6 +460,9 @@ class StatusUpdatingEmitter(ResultEmitter):
         """Update status to FAILED and forward error event."""
         await self._flush_stream_storage()
         await self._cancel_pending_storage_flush_task()
+        if self._is_retryable_error(error):
+            await self._wrapped.emit_error(task_id, subtask_id, error, **kwargs)
+            return
         if not self._status_updated:
             error_code = kwargs.get("error_code")
             await self._update_status_failed(error, error_code=error_code)
