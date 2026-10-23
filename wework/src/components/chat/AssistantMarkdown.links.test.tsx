@@ -49,6 +49,24 @@ test('opens external markdown links without navigating the current page', () => 
   expect(window.location.href).toBe(originalLocation)
 })
 
+test('opens DingTalk mini-app links through the DingTalk client', () => {
+  const url =
+    'https://n.dingtalk.com/dingding/dd-todo/detail/index.html?taskId=58547524601&bizTag=teambition#/detail'
+  const clientUrl = `dingtalk://dingtalkclient/page/link?url=${encodeURIComponent(url)}&pc_slide=true`
+  const openExternalUrl = vi.fn().mockResolvedValue(true)
+  render(
+    <MarkdownServicesProvider value={{ ...browserMarkdownServices, openExternalUrl }}>
+      <SharedAssistantMarkdown content={`[待办](${url})`} />
+    </MarkdownServicesProvider>
+  )
+
+  const link = screen.getByTestId('assistant-markdown-link')
+  expect(link).toHaveAttribute('href', clientUrl)
+
+  fireEvent.click(link)
+  expect(openExternalUrl).toHaveBeenCalledWith(clientUrl)
+})
+
 test.each(['default', 'document', 'user'] as const)(
   'preserves SQL regex text in code and copied code for %s messages',
   async variant => {
