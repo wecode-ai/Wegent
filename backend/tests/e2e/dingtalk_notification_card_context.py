@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Callable
 from typing import Any
 
 from fastapi import HTTPException
@@ -30,6 +29,7 @@ from app.api.endpoints import loop_item_executions
 from app.core import async_utils
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.provider_credentials import store_provider_config
 from app.db.session import SessionLocal
 from app.models.delivery import (
     CloudProject,
@@ -67,7 +67,10 @@ from app.services.notification_copy import WEB_LINK_LABEL, WEWORK_LINK_LABEL
 from app.services.wework_notifications import send_wework_notification
 from app.services.workspaces.service import workspace_service
 from shared.utils.crypto import encrypt_sensitive_data
-from tests.e2e._dingtalk_card_server import RecordingDingTalkServer
+from tests.e2e._dingtalk_card_server import (
+    RecordingDingTalkServer,
+    RecordingGitLabServer,
+)
 from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 CHANNEL_ID = 770002
@@ -119,6 +122,7 @@ def _make_project(
     name: str = PROJECT_NAME,
     project_key: str | None = None,
     task_provider: str = "local",
+    provider_config: dict[str, object] | None = None,
 ) -> CloudProject:
     public_id = str(uuid.uuid4())
     metadata: dict[str, Any] = {
@@ -128,7 +132,7 @@ def _make_project(
         metadata.update(
             {
                 "task_provider": task_provider,
-                "provider_config": {"repository": "wegent/card-e2e"},
+                "provider_config": provider_config or {"repository": "wegent/card-e2e"},
             }
         )
     project = CloudProject(
@@ -361,55 +365,6 @@ def _make_manager_execution(
     )
 
 
-def _mock_external_issue(
-    *,
-    title: str,
-    description: str,
-) -> Callable[[], None]:
-    """Replace only the GitLab HTTP calls with one in-memory Issue."""
-
-    state: dict[str, dict[str, Any]] = {
-        "issue": {
-            "iid": 1,
-            "title": title,
-            "description": description,
-            "state": "opened",
-            "labels": ["wegent:status:in_review"],
-            "created_at": "2026-10-23T00:00:00Z",
-            "updated_at": "2026-10-23T00:00:00Z",
-            "closed_at": None,
-        }
-    }
-    original_get = external_loop_item_provider._get_issue
-    original_update = external_loop_item_provider._update_issue
-
-    def get_issue(_project: CloudProject, _number: int) -> dict[str, Any]:
-        return dict(state["issue"])
-
-    def update_issue(
-        _project: CloudProject,
-        _number: int,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        issue = dict(state["issue"])
-        if "labels" in payload:
-            issue["labels"] = list(payload["labels"])
-        if "title" in payload:
-            issue["title"] = payload["title"]
-        issue["updated_at"] = "2026-10-23T00:01:00Z"
-        state["issue"] = issue
-        return dict(issue)
-
-    external_loop_item_provider._get_issue = get_issue
-    external_loop_item_provider._update_issue = update_issue
-
-    def restore() -> None:
-        external_loop_item_provider._get_issue = original_get
-        external_loop_item_provider._update_issue = original_update
-
-    return restore
-
-
 async def _delete_sessions(
     *,
     sessions: list[IMPrivateSession],
@@ -505,6 +460,12 @@ def _cleanup(
 async def run() -> None:
     server = RecordingDingTalkServer()
     server.start()
+    gitlab_server = RecordingGitLabServer(
+        title="远端 Issue 的标题",
+        description="确认远端 Issue 的验收结果。",
+        labels=["wegent:status:in_review"],
+    )
+    gitlab_server.start()
     original_base_url = DingTalkRobotSender.BASE_URL
     original_main_loop = async_utils.get_main_event_loop()
     DingTalkRobotSender.BASE_URL = server.base_url
@@ -515,7 +476,6 @@ async def run() -> None:
     created_project_ids: list[str] = []
     device_names: list[str] = []
     sessions: list[IMPrivateSession] = []
-    restore_external: Callable[[], None] | None = None
 
     try:
         owner = _make_user(db, "owner")
@@ -808,6 +768,14 @@ async def run() -> None:
             name=EXTERNAL_PROJECT_NAME,
             project_key="123EXT",
             task_provider="gitlab",
+            provider_config=store_provider_config(
+                "gitlab",
+                {
+                    "repository": "wegent/card-e2e",
+                    "api_base": gitlab_server.api_base,
+                    "token": "card-e2e-provider-token",
+                },
+            ),
         )
         created_project_ids.append(str(external_project.id))
         _add_member(db, external_project, external_assignee, BaseRole.Developer)
@@ -815,10 +783,6 @@ async def run() -> None:
         sessions.append(await _connect_dingtalk(db, external_assignee))
         external_item_id = f"{external_project.project_key}-1"
         external_title = "远端 Issue 的标题"
-        restore_external = _mock_external_issue(
-            title=external_title,
-            description="确认远端 Issue 的验收结果。",
-        )
 
         cards_before = len(server.cards())
         external_loop_item_provider.assign(
@@ -854,8 +818,10 @@ async def run() -> None:
             item_id=external_item_id,
         )
         assert external_notification.payload["itemTitle"] == external_title
-        restore_external()
-        restore_external = None
+        assert [(method, path) for method, path, _body in gitlab_server.requests] == [
+            ("GET", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
+            ("PUT", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
+        ]
 
         # 6. A non-member cannot send a project notification, and the rejected
         #    request must not create an inbox row or a card.
@@ -890,8 +856,6 @@ async def run() -> None:
             == notifications_before
         )
     finally:
-        if restore_external is not None:
-            restore_external()
         try:
             await _delete_sessions(sessions=sessions, user_ids=created_user_ids)
         finally:
@@ -909,6 +873,7 @@ async def run() -> None:
             DingTalkRobotSender.BASE_URL = original_base_url
             async_utils.set_main_event_loop(original_main_loop)
             server.stop()
+            gitlab_server.stop()
 
 
 if __name__ == "__main__":
