@@ -34,6 +34,7 @@ fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
 
 #[test]
 fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
+    let root = tempfile::tempdir().unwrap();
     let request = serde_json::from_value(
         json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true}}),
     )
@@ -43,16 +44,52 @@ fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
         "mcp_servers.business.tools.send.approval_mode=\"approve\"".into(),
         "mcp_servers.wework_stand_in.url=\"http://127.0.0.1/stand-in/mcp\"".into(),
     ];
-    let result = stand_in_mcp_approval_overrides(&request, &overrides, &Map::new());
+    let result =
+        stand_in_mcp_approval_overrides(&request, root.path(), &overrides, &Map::new()).unwrap();
     assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
     assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
     assert!(result
         .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"writes\"".into()));
     let identity = serde_json::from_value(json!({"origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true}})).unwrap();
-    let result = stand_in_mcp_approval_overrides(&identity, &overrides, &Map::new());
+    let result =
+        stand_in_mcp_approval_overrides(&identity, root.path(), &overrides, &Map::new()).unwrap();
     assert!(result
         .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"approve\"".into()));
     assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+}
+
+#[test]
+fn stand_in_confirmation_covers_mcp_servers_in_default_and_named_homes() {
+    let _environment = environment::LaunchEnvironment::new();
+    for team_id in [0, 12] {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "user_name":"synthetic", "team_namespace":"default", "team_name":"review",
+            "team_id":team_id, "bot":[{"id":31,"shell_type":"Codex"}],
+            "origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true}
+        }))
+        .unwrap();
+        let home =
+            crate::agents::instance_home::request_home(&request).unwrap_or_else(wework_codex_home);
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("config.toml"),
+            r#"
+[mcp_servers.home_only]
+command = "node"
+default_tools_approval_mode = "approve"
+[mcp_servers.home_only.tools.send]
+approval_mode = "approve"
+"#,
+        )
+        .unwrap();
+        let config = build_codex_launch_config(&request).unwrap();
+        assert!(config
+            .config_overrides
+            .contains(&"mcp_servers.home_only.default_tools_approval_mode=\"writes\"".into()));
+        assert!(config
+            .config_overrides
+            .contains(&"mcp_servers.home_only.tools.send.approval_mode=\"writes\"".into()));
+    }
 }
 
 #[test]

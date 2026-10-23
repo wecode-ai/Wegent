@@ -146,6 +146,8 @@ use text_generation::configure_text_generation;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+mod stand_in_approval;
+use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/overload_recovery.rs"]
 mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
@@ -3928,9 +3930,10 @@ fn build_codex_launch_config_with_route_scope(
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         let approvals = stand_in_mcp_approval_overrides(
             request,
+            &codex_home,
             &launch_config.config_overrides,
             &launch_config.thread_config,
-        );
+        )?;
         launch_config.config_overrides.extend(approvals);
     }
 
@@ -3939,60 +3942,6 @@ fn build_codex_launch_config_with_route_scope(
     }
 
     Ok(launch_config)
-}
-
-fn stand_in_mcp_approval_overrides(
-    request: &ExecutionRequest,
-    overrides: &[String],
-    thread_config: &Map<String, Value>,
-) -> Vec<String> {
-    let mut servers = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
-    let entries = overrides.iter().cloned().chain(
-        thread_config
-            .iter()
-            .map(|(key, value)| format!("{key}={}", toml_json_value(value))),
-    );
-    for entry in entries {
-        let Ok(value) = toml_edit::de::from_str::<Value>(&entry) else {
-            continue;
-        };
-        for (name, config) in value["mcp_servers"].as_object().into_iter().flatten() {
-            let tools = servers.entry(name.clone()).or_default();
-            tools.extend(
-                config["tools"]
-                    .as_object()
-                    .into_iter()
-                    .flatten()
-                    .map(|(name, _)| name.clone()),
-            );
-        }
-    }
-    let mut result = Vec::new();
-    for (name, tools) in servers {
-        let mode = if name == crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
-            && request
-                .extra
-                .get("origin")
-                .is_some_and(|origin| origin["type"] == "stand_in_identity")
-        {
-            "approve"
-        } else {
-            "writes"
-        };
-        result.push(format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", &name, "default_tools_approval_mode"]),
-            toml_value(mode)
-        ));
-        for tool in tools {
-            result.push(format!(
-                "{}={}",
-                toml_key_path(&["mcp_servers", &name, "tools", &tool, "approval_mode"]),
-                toml_value(mode)
-            ));
-        }
-    }
-    result
 }
 
 fn build_codex_launch_config_for_prepared_request(
