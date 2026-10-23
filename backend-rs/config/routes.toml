@@ -53,9 +53,9 @@ path = "/api/runtime-work/im-notifications"
 # LLM proxy gateway (`llm_proxy::llm_responses_proxy`). The `/chat/completions`
 # and `/messages` physical siblings have no recorded contract cases yet and
 # still fall back to Python.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/runtime-work/llm-responses-proxy/responses"
+[[routes]]
+methods = ["POST"]
+path = "/api/runtime-work/llm-responses-proxy/responses"
 [[routes]]
 methods = ["PUT"]
 path = "/api/runtime-work/im-notifications/presence"
@@ -65,9 +65,9 @@ path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/auth/login"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/cloud-projects/:project_id/members"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/members"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/loop-items"
@@ -85,9 +85,9 @@ path = "/api/v1/cloud-projects"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/cloud-projects/:project_id/execution-environments"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/workspaces"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/workspaces"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/workspaces/:workspace_id/members"
@@ -161,9 +161,9 @@ path = "/api/users/welcome-config"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id/pipeline-stage-info"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/projects"
+[[routes]]
+methods = ["GET"]
+path = "/api/projects"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/projects/:project_id/tasks"
@@ -173,9 +173,9 @@ path = "/api/tasks/:task_id/pipeline-stage-info"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/automations"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/groups"
+[[routes]]
+methods = ["GET"]
+path = "/api/groups"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/loop-item-pages"
@@ -190,9 +190,9 @@ path = "/api/v1/loop-item-executions/claim-my-next"
 methods = ["GET"]
 path = "/api/v1/kinds/skills/:skill_id/download"
 # `GET /api/v1/kinds/skills/unified` is served by the `skills_unified` handler.
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/kinds/skills/unified"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/kinds/skills/unified"
 # `GET /api/internal/skills/{skill_id}/binary` is the service-to-service
 # binary download served by the `skills::internal_binary` handler.
 [[routes]]
@@ -241,15 +241,15 @@ path = "/api/tasks/lite/personal"
 # `/api/tasks` (the paginated list, `get_tasks`) is a literal sibling of both
 # `/api/tasks/:task_id` and the static `/api/tasks/lite*`/`/api/tasks/search`
 # routes; the static route wins dispatch.
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/tasks"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/shutdown/status"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/internal/chat/history/:session_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/internal/chat/history/:session_id"
 # `POST /api/internal/chat/guidance/{task_id}/{subtask_id}/consume` — pop the
 # next queued Chat Shell guidance item for one subtask
 # (`app/api/endpoints/internal/chat_storage.py:consume_guidance`).
@@ -265,15 +265,15 @@ path = "/api/internal/chat/guidance/:task_id/:subtask_id/expire"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/all-grouped"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/attachments/:attachment_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/attachments/:attachment_id"
 [[routes]]
 methods = ["GET"]
 path = "/api/attachments/:attachment_id/executor-download"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/attachments/:attachment_id/download"
+[[routes]]
+methods = ["GET"]
+path = "/api/attachments/:attachment_id/download"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/attachments/:attachment_id/download-token"
@@ -283,9 +283,9 @@ path = "/api/attachments/:attachment_id/executor-download"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/attachments/download/shared"
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/attachments/upload"
+[[routes]]
+methods = ["POST"]
+path = "/api/attachments/upload"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id/runtime-check"
@@ -310,9 +310,9 @@ path = "/api/users/quick-launch"
 [[routes]]
 methods = ["GET"]
 path = "/api/attachments/task/:task_id/all"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/loop-items/:item_id/tasks"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/tasks"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/loop-items/:item_id/attachments"
@@ -393,9 +393,9 @@ path = "/api/tasks/:task_id"
 #[[routes]]
 #methods = ["PUT"]
 #path = "/api/tasks/:task_id"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/connector-runtime/tools"
+[[routes]]
+methods = ["GET"]
+path = "/api/connector-runtime/tools"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/board-snapshot"
@@ -488,20 +488,20 @@ path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/knowledge/sse"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/mcp/subscription/sse"
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/mcp/subscription/sse"
+[[routes]]
+methods = ["GET"]
+path = "/api/mcp/subscription/sse"
+[[routes]]
+methods = ["POST"]
+path = "/api/mcp/subscription/sse"
 # `POST /api/api/mcp/system`: the source's `get_mcp_system_config` advertises
 # the system MCP URL with a doubled `/api` prefix (`BACKEND_INTERNAL_URL` ends
 # in `/api` and `API_PREFIX` prefixes `/api` again), so FastAPI answers the
 # real path with `404 {"detail":"Not Found"}`. Route it to Rust to reproduce
 # that not-found behavior instead of proxying to Python (which would 502).
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/api/mcp/system"
+[[routes]]
+methods = ["POST"]
+path = "/api/api/mcp/system"
 [[routes]]
 methods = ["GET"]
 path = "/api/users/me/mcps/providers/:provider_id/services"
@@ -609,9 +609,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 
 # `GET /api/v1/loop-items/{item_id}/assignments` is served by the
 # `loop_tasks::assignments` handler.
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/v1/loop-items/:item_id/assignments"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assignments"
 
 # `GET /api/v1/loop-items/{item_id}/comments` is selected from the traffic-E2E
 # recording; the Rust handler is still pending. Keep Python fallback until the
@@ -625,9 +625,9 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 [[routes]]
 methods = ["POST"]
 path = "/api/wework-transcripts/:transcript_id/lease"
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/wework-transcripts/:transcript_id/lease/release"
+[[routes]]
+methods = ["POST"]
+path = "/api/wework-transcripts/:transcript_id/lease/release"
 
 # Candidates observed in all 50 backend Pod fallback logs on 2026-10-10.
 # Keep disabled until the Rust handlers pass compatibility verification.
@@ -715,18 +715,18 @@ path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
 methods = ["POST"]
 path = "/api/internal/api-keys/lookup" # app/api/endpoints/internal/api_keys.py:29
 # Deferred: numeric pipeline stages must preserve manual confirmation semantics.
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/internal/chat/history/:session_id/subtasks" # app/api/endpoints/internal/chat_storage.py:1140
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/internal/chat/history/:session_id/subtasks/:subtask_id" # app/api/endpoints/internal/chat_storage.py:1183
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/internal/workspace-archives/:task_id/restore-sandbox" # app/api/endpoints/internal/workspace_archives.py:141
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/workspace-archives/:task_id/restore-sandbox" # app/api/endpoints/internal/workspace_archives.py:141
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/knowledge-bases" # app/api/endpoints/knowledge.py:506
@@ -785,9 +785,9 @@ path = "/api/knowledge-bases/:knowledge_base_id/folders" # app/api/endpoints/kno
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/mcp/interactive-form-question/sse" # app/mcp_server/server.py:1032
-#[[routes]]
-#methods = ["POST"]
-#path = "/api/mcp/interactive-form-question/sse" # app/mcp_server/server.py:1032
+[[routes]]
+methods = ["POST"]
+path = "/api/mcp/interactive-form-question/sse" # app/mcp_server/server.py:1032
 [[routes]]
 methods = ["GET"]
 path = "/api/mcp/knowledge-external/documents/:document_id/file" # app/mcp_server/external_knowledge_app.py:59
@@ -935,9 +935,9 @@ path = "/api/tasks/share/public" # app/api/endpoints/adapter/tasks.py:894
 [[routes]]
 methods = ["POST"]
 path = "/api/users/me/wegent-runtime-token"
-#[[routes]]
-#methods = ["GET"]
-#path = "/api/utils/url-metadata" # app/api/endpoints/utils.py:17
+[[routes]]
+methods = ["GET"]
+path = "/api/utils/url-metadata" # app/api/endpoints/utils.py:17
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/v1/attachments/upload" # app/api/endpoints/attachments_open.py:119
@@ -1035,3 +1035,11 @@ path = "/api/api/v1/kinds/skills/:skill_id/download"
 # GET /api/knowledge-bases/:knowledge_base_id: private_runtime_ignores_static_cutover_exclusions.
 # DELETE /api/tasks/bulk: no_exact_progress_ledger.
 # GET /api/tasks/:task_id/remote-workspace/file: recent_replay_not_passing.
+
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/robot-queue/emit-runtime-rpc"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/executions/statuses"

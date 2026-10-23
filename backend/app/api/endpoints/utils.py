@@ -13,7 +13,8 @@ from app.services.url_metadata import UrlMetadataResult, fetch_url_metadata
 router = APIRouter()
 
 
-@router.get("/url-metadata", response_model=UrlMetadataResult)
+# MIGRATION-CANDIDATE(api="GET /api/utils/url-metadata"): remove after final confirmation.
+# @router.get("/url-metadata", response_model=UrlMetadataResult)
 async def get_url_metadata(
     url: str = Query(..., description="The URL to fetch metadata from"),
 ) -> UrlMetadataResult:

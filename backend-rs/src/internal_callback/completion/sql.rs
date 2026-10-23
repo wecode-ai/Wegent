@@ -12,7 +12,7 @@ use crate::admin_subscription_monitor_errors::EXECUTION_COLUMNS;
 use crate::task_store_listing::subtask_context_columns;
 use crate::task_store_statements::{
     assistant_subtasks_by_task_statement, subtask_by_id_statement,
-    update_subtask_terminal_statement,
+    update_subtask_running_statement, update_subtask_terminal_statement,
 };
 
 pub(crate) use crate::task_store_statements::{
@@ -77,6 +77,12 @@ pub(crate) fn assistant_subtasks(tables: Tables) -> String {
     assistant_subtasks_by_task_statement(tables.subtasks)
 }
 
+/// `subtask_store.update_fields` flush for the RUNNING status transition
+/// (`execution/dispatcher.py:_update_subtask_to_running`).
+pub(crate) fn update_subtask_running(tables: Tables) -> String {
+    update_subtask_running_statement(tables.subtasks)
+}
+
 /// `subtask_store.update_fields` flush for a terminal subtask update.
 pub(crate) fn update_subtask_terminal(
     tables: Tables,
@@ -128,6 +134,24 @@ pub(crate) fn kind_refresh_by_id() -> &'static str {
     "SELECT kinds.id, kinds.user_id, kinds.kind, kinds.name, kinds.namespace, \
      kinds.json, kinds.is_active, kinds.created_at, kinds.updated_at \n\
      FROM kinds WHERE kinds.id = ?"
+}
+
+/// `subtask_store.list_not_executor_deleted_by_task`: the full subtask
+/// projection of one task whose executor runtime is still recorded as alive.
+pub(crate) fn subtasks_not_executor_deleted_by_task(tables: Tables) -> String {
+    let table = tables.subtasks;
+    format!(
+        "SELECT {} \nFROM {table} \n\
+         WHERE {table}.task_id = ? AND {table}.executor_deleted_at = false",
+        crate::task_store_statements::subtask_projection(table)
+    )
+}
+
+/// `subtask_store.update_fields(subtask, executor_deleted_at=True)`'s flush:
+/// the mapper orders `executor_deleted_at` before the `updated_at` audit clock.
+pub(crate) fn update_subtask_executor_deleted(tables: Tables) -> String {
+    let table = tables.subtasks;
+    format!("UPDATE {table} SET executor_deleted_at=?, updated_at=? WHERE {table}.id = ?")
 }
 
 /// `_find_execution_by_task_id`'s active-execution read.

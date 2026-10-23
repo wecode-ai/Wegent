@@ -144,3 +144,414 @@ fn channel_prefixes_are_dingtalk_then_telegram() {
         ]
     );
 }
+
+/// `finalize_and_get_blocks` mirrors `session_manager.finalize_and_get_blocks`:
+/// every failed or empty block read yields an empty list, which leaves the
+/// terminal result without a `blocks` member.
+mod block_read_tests {
+    use super::session;
+    use brz_redis::{
+        EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisValues, Value,
+    };
+
+    /// `LRANGE` is an arbitrary command here, so the default `command` path
+    /// rejects it like a failed dependency read.
+    struct FailingListRedis;
+
+    /// `LRANGE` succeeds but the stored list is empty.
+    struct EmptyListRedis;
+
+    /// `LRANGE` returns one block that references a content key, and `MGET`
+    /// fails while hydrating it.
+    struct FailingHydrationRedis;
+
+    fn block_entry() -> String {
+        r#"{"id":"b1","type":"text","content":"","status":"done","timestamp":1,"_content_key":"chat:streaming:block_content:5:b1"}"#.to_string()
+    }
+
+    macro_rules! required_redis_items {
+        () => {
+            async fn get<K, R>(&self, _key: K) -> brz_redis::RedisResult<Option<R>>
+            where
+                K: EncodeRedisArg + Send,
+                R: FromRedisBulk + Send,
+            {
+                Ok(None)
+            }
+
+            async fn set<K, V>(&self, _key: K, _value: V) -> brz_redis::RedisResult<()>
+            where
+                K: EncodeRedisArg + Send,
+                V: EncodeRedisArg + Send,
+            {
+                Ok(())
+            }
+
+            async fn del_many<K>(&self, _keys: K) -> brz_redis::RedisResult<i64>
+            where
+                K: EncodeRedisArgs + Send,
+            {
+                Ok(0)
+            }
+
+            async fn pfcount<K>(&self, _keys: K) -> brz_redis::RedisResult<i64>
+            where
+                K: EncodeRedisArgs + Send,
+            {
+                Ok(0)
+            }
+
+            async fn hget<K, F, R>(&self, _key: K, _field: F) -> brz_redis::RedisResult<Option<R>>
+            where
+                K: EncodeRedisArg + Send,
+                F: EncodeRedisArg + Send,
+                R: FromRedisBulk + Send,
+            {
+                Ok(None)
+            }
+
+            async fn hmget<K, F, R>(
+                &self,
+                _key: K,
+                _fields: F,
+            ) -> brz_redis::RedisResult<RedisValues<R>>
+            where
+                K: EncodeRedisArg + Send,
+                F: EncodeRedisArgs + Send,
+                R: FromRedisBulk + Send,
+            {
+                Err(brz_redis::RedisError::new(
+                    brz_redis::ErrorKind::ClientError,
+                    "stub does not serve HMGET",
+                ))
+            }
+        };
+    }
+
+    impl brz_redis::Redis for FailingListRedis {
+        required_redis_items!();
+
+        async fn mget<K, R>(&self, _keys: K) -> brz_redis::RedisResult<Vec<Option<R>>>
+        where
+            K: EncodeRedisArgs + Send,
+            R: FromRedisBulk + Send,
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    impl brz_redis::Redis for EmptyListRedis {
+        required_redis_items!();
+
+        async fn mget<K, R>(&self, _keys: K) -> brz_redis::RedisResult<Vec<Option<R>>>
+        where
+            K: EncodeRedisArgs + Send,
+            R: FromRedisBulk + Send,
+        {
+            Ok(Vec::new())
+        }
+
+        async fn lrange<K, R>(
+            &self,
+            _key: K,
+            _start: i64,
+            _stop: i64,
+        ) -> brz_redis::RedisResult<Vec<R>>
+        where
+            K: EncodeRedisArg + Send,
+            R: FromRedisValue + Send,
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    impl brz_redis::Redis for FailingHydrationRedis {
+        required_redis_items!();
+
+        async fn lrange<K, R>(
+            &self,
+            _key: K,
+            _start: i64,
+            _stop: i64,
+        ) -> brz_redis::RedisResult<Vec<R>>
+        where
+            K: EncodeRedisArg + Send,
+            R: FromRedisValue + Send,
+        {
+            R::from_redis_value(&Value::BulkString(block_entry().into_bytes().into()))
+                .map(|block| vec![block])
+        }
+
+        async fn mget<K, R>(&self, _keys: K) -> brz_redis::RedisResult<Vec<Option<R>>>
+        where
+            K: EncodeRedisArgs + Send,
+            R: FromRedisBulk + Send,
+        {
+            Err(brz_redis::RedisError::new(
+                brz_redis::ErrorKind::ClientError,
+                "stub read failure",
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_block_read_yields_no_blocks() {
+        let redis = FailingListRedis;
+        assert!(session::get_blocks(&redis, 5).await.is_empty());
+        assert!(
+            session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED"))
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_block_list_yields_no_blocks() {
+        let redis = EmptyListRedis;
+        assert!(session::get_blocks(&redis, 5).await.is_empty());
+        assert!(
+            session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED"))
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_content_hydration_yields_no_blocks() {
+        let redis = FailingHydrationRedis;
+        assert!(session::get_blocks(&redis, 5).await.is_empty());
+        assert!(
+            session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED"))
+                .await
+                .is_empty()
+        );
+    }
+}
+
+/// Block finalize behavior. The source's `_finalize_current_text_block` and
+/// `_finalize_current_thinking_block` wrap their whole body in `try/except`
+/// and only log a warning (`session.py:1251-1282`, `:1288-1318`), so a failed
+/// dependency read must not abort the caller's following data write.
+///
+/// `session_manager.add_tool_block` also finalizes the current text and
+/// thinking blocks itself (`session.py:930-931`) before `add_block` repeats
+/// the pair (`session.py:1041-1042`); the recorded tool-start traffic is two
+/// consecutive text/thinking `GET`s before the block `LRANGE`.
+mod session_finalize_tests {
+    use super::session;
+    use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisValues};
+
+    /// Records each command as `<COMMAND> <key>`. `failing_key` answers its
+    /// `GET` with an error (a rejected dependency read); the other
+    /// current-block key answers `current_block` when one is set.
+    #[derive(Default)]
+    struct RecordingRedis {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        failing_key: Option<&'static str>,
+        current_block: Option<&'static str>,
+    }
+
+    impl RecordingRedis {
+        /// A stub whose `failing_key` read fails and whose other block read
+        /// reports `current_block` as the active block id.
+        fn with_failing_read(failing_key: &'static str, current_block: &'static str) -> Self {
+            Self {
+                calls: Default::default(),
+                failing_key: Some(failing_key),
+                current_block: Some(current_block),
+            }
+        }
+
+        fn key_name<K: EncodeRedisArg>(key: &K) -> String {
+            key.as_encoded_bytes()
+                .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                .unwrap_or_default()
+        }
+
+        fn record<K: EncodeRedisArg>(&self, command: &str, key: &K) {
+            let name = Self::key_name(key);
+            self.calls
+                .lock()
+                .expect("calls")
+                .push(format!("{command} {name}"));
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    impl brz_redis::Redis for RecordingRedis {
+        async fn get<K, R>(&self, key: K) -> brz_redis::RedisResult<Option<R>>
+        where
+            K: EncodeRedisArg + Send,
+            R: FromRedisBulk + Send,
+        {
+            let name = Self::key_name(&key);
+            self.record("GET", &key);
+            if self.failing_key == Some(name.as_str()) {
+                return Err(brz_redis::RedisError::new(
+                    brz_redis::ErrorKind::ClientError,
+                    "rejected dependency read",
+                ));
+            }
+            let is_current_block = name.starts_with("chat:streaming:text_block:")
+                || name.starts_with("chat:streaming:thinking_block:");
+            if is_current_block && let Some(block) = self.current_block {
+                return R::from_redis_bulk(brz_redis::RedisBytes::from(block.as_bytes().to_vec()))
+                    .map(Some);
+            }
+            Ok(None)
+        }
+
+        async fn set<K, V>(&self, key: K, _value: V) -> brz_redis::RedisResult<()>
+        where
+            K: EncodeRedisArg + Send,
+            V: EncodeRedisArg + Send,
+        {
+            self.record("SET", &key);
+            Ok(())
+        }
+
+        async fn del_many<K>(&self, _keys: K) -> brz_redis::RedisResult<i64>
+        where
+            K: EncodeRedisArgs + Send,
+        {
+            Ok(0)
+        }
+
+        async fn mget<K, R>(&self, _keys: K) -> brz_redis::RedisResult<Vec<Option<R>>>
+        where
+            K: EncodeRedisArgs + Send,
+            R: FromRedisBulk + Send,
+        {
+            Ok(Vec::new())
+        }
+
+        async fn pfcount<K>(&self, _keys: K) -> brz_redis::RedisResult<i64>
+        where
+            K: EncodeRedisArgs + Send,
+        {
+            Ok(0)
+        }
+
+        async fn hget<K, F, R>(&self, _key: K, _field: F) -> brz_redis::RedisResult<Option<R>>
+        where
+            K: EncodeRedisArg + Send,
+            F: EncodeRedisArg + Send,
+            R: FromRedisBulk + Send,
+        {
+            Ok(None)
+        }
+
+        async fn hmget<K, F, R>(
+            &self,
+            _key: K,
+            _fields: F,
+        ) -> brz_redis::RedisResult<RedisValues<R>>
+        where
+            K: EncodeRedisArg + Send,
+            F: EncodeRedisArgs + Send,
+            R: FromRedisBulk + Send,
+        {
+            Err(brz_redis::RedisError::new(
+                brz_redis::ErrorKind::ClientError,
+                "stub does not serve HMGET",
+            ))
+        }
+
+        async fn append<K, V>(&self, key: K, _value: V) -> brz_redis::RedisResult<i64>
+        where
+            K: EncodeRedisArg + Send,
+            V: EncodeRedisArg + Send,
+        {
+            self.record("APPEND", &key);
+            Ok(0)
+        }
+
+        async fn lrange<K, R>(
+            &self,
+            key: K,
+            _start: i64,
+            _stop: i64,
+        ) -> brz_redis::RedisResult<Vec<R>>
+        where
+            K: EncodeRedisArg + Send,
+            R: FromRedisValue + Send,
+        {
+            self.record("LRANGE", &key);
+            Ok(Vec::new())
+        }
+
+        async fn rpush<K, V>(&self, key: K, _values: V) -> brz_redis::RedisResult<i64>
+        where
+            K: EncodeRedisArg + Send,
+            V: EncodeRedisArgs + Send,
+        {
+            self.record("RPUSH", &key);
+            Ok(1)
+        }
+
+        async fn expire<K>(&self, key: K, _seconds: u64) -> brz_redis::RedisResult<bool>
+        where
+            K: EncodeRedisArg + Send,
+        {
+            self.record("EXPIRE", &key);
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn add_tool_block_finalizes_text_then_thinking_before_the_block_add() {
+        let redis = RecordingRedis::default();
+        session::add_tool_block(&redis, 5, "toolu_1", "search", None, None, None, None)
+            .await
+            .expect("add tool block");
+
+        let calls = redis.calls();
+        assert_eq!(
+            &calls[..6],
+            [
+                "GET chat:streaming:text_block:5",
+                "GET chat:streaming:thinking_block:5",
+                "GET chat:streaming:text_block:5",
+                "GET chat:streaming:thinking_block:5",
+                "LRANGE chat:streaming:blocks:5",
+                "RPUSH chat:streaming:blocks:5",
+            ],
+            "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_text_content_appends_after_a_failed_thinking_finalize() {
+        let redis = RecordingRedis::with_failing_read("chat:streaming:thinking_block:5", "text-1");
+        session::add_text_content(&redis, 5, "hello")
+            .await
+            .expect("the failed finalize must not abort the append");
+
+        let calls = redis.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == "APPEND chat:streaming:block_content:5:text-1"),
+            "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_thinking_content_appends_after_a_failed_text_finalize() {
+        let redis = RecordingRedis::with_failing_read("chat:streaming:text_block:5", "thinking-1");
+        session::add_thinking_content(&redis, 5, "reason")
+            .await
+            .expect("the failed finalize must not abort the append");
+
+        let calls = redis.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == "APPEND chat:streaming:block_content:5:thinking-1"),
+            "{calls:?}"
+        );
+    }
+}

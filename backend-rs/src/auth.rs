@@ -44,6 +44,21 @@ impl AppAuthenticator {
 #[derive(Debug)]
 pub struct SessionUser(pub UserRow);
 
+/// Session principal for endpoints whose source `get_current_user` shares the
+/// request-scoped SQLAlchemy session with the endpoint body.
+///
+/// FastAPI caches `Depends(get_db)` per request, so `get_current_user`'s
+/// `db.query(User)` is the *same* session transaction as the endpoint's own
+/// reads and writes: the user row is loaded on the transaction's connection
+/// before the first business statement. [`SessionUser`] resolves that row on a
+/// pooled connection before the handler, which splits the one Source
+/// transaction across two sockets. This principal verifies the bearer token
+/// only; the handler completes the lookup with
+/// [`session_user_in_transaction`] on its own transaction.
+pub struct TransactionSessionUser {
+    pub user_name: String,
+}
+
 /// Session principal for endpoints whose source optional dependency treats
 /// every absent or invalid credential as anonymous.
 pub struct OptionalSessionUser(pub UserRow);
@@ -105,6 +120,39 @@ impl brz_http_server::Authenticator<SessionUser> for AppAuthenticator {
 
     fn api_log_id<'a>(&'a self, principal: &'a SessionUser) -> Option<&'a dyn std::fmt::Display> {
         Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+
+        crate::http_compat::FastApiError::unauthorized(session_auth_detail(failure))
+            .into_http_error(arena)
+    }
+}
+
+impl brz_http_server::Authenticator<TransactionSessionUser> for AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<TransactionSessionUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        verify_session_token(&self.state.auth, authorization)
+            .map(|user_name| TransactionSessionUser { user_name })
+            .map_err(session_auth_failure)
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a TransactionSessionUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.user_name)
     }
 
     fn reject(
@@ -333,19 +381,57 @@ pub async fn get_current_user<M>(
 where
     M: brz_mysql::Mysql,
 {
+    let user_name = verify_session_token(config, authorization)?;
+    let user: Option<UserRow> = mysql
+        .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
+        .await
+        .map_err(|_| AuthFailure::InvalidCredentials)?;
+    select_active_user(user)
+}
+
+/// The credential half of `get_current_user`: the Bearer token must decode to
+/// a non-empty user-session `sub`.
+pub fn verify_session_token(
+    config: &AuthConfig,
+    authorization: Option<&str>,
+) -> Result<String, AuthFailure> {
     let Some(token) = bearer_credential(authorization) else {
         return Err(AuthFailure::NotAuthenticated);
     };
-    let username = verify_token(config, token).map_err(|_| AuthFailure::InvalidCredentials)?;
-    let user: Option<UserRow> = mysql
-        .fetch_optional(USER_BY_NAME_QUERY, (username,))
+    verify_token(config, token).map_err(|_| AuthFailure::InvalidCredentials)
+}
+
+/// The lookup half of `get_current_user`, run on a writer transaction for
+/// endpoints whose source shares `Depends(get_db)` with the endpoint body.
+pub async fn session_user_in_transaction<T>(
+    transaction: &mut T,
+    user_name: &str,
+) -> Result<UserRow, AuthFailure>
+where
+    T: brz_mysql::MysqlTransaction,
+{
+    let user: Option<UserRow> = transaction
+        .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
         .await
         .map_err(|_| AuthFailure::InvalidCredentials)?;
+    select_active_user(user)
+}
+
+/// `get_current_user`'s missing or inactive user rejection.
+fn select_active_user(user: Option<UserRow>) -> Result<UserRow, AuthFailure> {
     match user {
         None => Err(AuthFailure::InvalidCredentials),
         Some(user) if user.is_active == 0 => Err(AuthFailure::UserNotActivated),
         Some(user) => Ok(user),
     }
+}
+
+/// Render a deferred session lookup failure exactly like
+/// [`AppAuthenticator`]'s `reject` path.
+pub(crate) fn session_auth_error(failure: AuthFailure) -> crate::http_compat::FastApiError {
+    crate::http_compat::FastApiError::unauthorized(session_auth_detail(session_auth_failure(
+        failure,
+    )))
 }
 
 /// Authentication failure classification for source-compatible 401 mapping.
@@ -478,6 +564,30 @@ mod tests {
 
         let wework = token_for(serde_json::json!({"sub": "u", "token_use": "wework_access"}));
         assert_eq!(verify_token(&config(), &wework).unwrap(), "u");
+    }
+
+    /// The deferred principal resolves only the credential; the handler runs
+    /// the user lookup on its writer transaction with the same 401 mapping.
+    #[test]
+    fn deferred_session_principal_keeps_the_source_credential_failures() {
+        assert!(matches!(
+            verify_session_token(&config(), None),
+            Err(AuthFailure::NotAuthenticated)
+        ));
+        assert!(matches!(
+            verify_session_token(&config(), header("Basic abc")),
+            Err(AuthFailure::NotAuthenticated)
+        ));
+        assert!(matches!(
+            verify_session_token(&config(), header("Bearer not-a-jwt")),
+            Err(AuthFailure::InvalidCredentials)
+        ));
+        let token = token_for(serde_json::json!({"sub": "shangpeng"}));
+        let authorization = format!("Bearer {token}");
+        assert_eq!(
+            verify_session_token(&config(), Some(authorization.as_str())).ok(),
+            Some("shangpeng".to_string())
+        );
     }
 
     #[test]

@@ -177,7 +177,8 @@ def fork_task(
     return {"task_id": forked_task.id, "task": task_detail}
 
 
-@router.get("", response_model=TaskListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/tasks"): remove after final confirmation.
+# @router.get("", response_model=TaskListResponse)
 def get_tasks(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),

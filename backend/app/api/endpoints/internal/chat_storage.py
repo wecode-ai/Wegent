@@ -855,7 +855,8 @@ async def health_check():
     return HealthResponse(status="ok")
 
 
-@router.get("/history/{session_id}", response_model=HistoryResponse)
+# MIGRATION-CANDIDATE(api="GET /api/internal/chat/history/*"): remove after final confirmation.
+# @router.get("/history/{session_id}", response_model=HistoryResponse)
 @trace_async(
     "internal.chat_storage.get_history",
     "internal.chat_storage",

@@ -653,8 +653,9 @@ mod tests {
         assert_eq!(document.spec.private_key_encrypted, "ciphertext");
     }
 
+    /// Deferred APIs retain Python ownership and registered Rust implementations.
     #[test]
-    fn registered_route_keeps_python_ownership() {
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
         const PATH: &str = "/api/v1/token-issuers/:issuer_id/issue";
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const POST: u16 = 1 << 5;
@@ -665,13 +666,22 @@ mod tests {
                 .any(|route| route.path == PATH && route.methods & POST != 0);
         assert!(registered, "POST {PATH} must be registered by the router");
 
-        // The handler stays registered while its unverified cutover remains on Python.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&path).expect("the route file loads");
         let table = crate::RouteTable::compile(config).expect("the route table compiles");
-        let method = http::Method::POST;
-        assert!(!table.matches(&method, "/api/v1/token-issuers/402/issue"));
-        assert!(!table.matches(&http::Method::GET, "/api/v1/token-issuers/402/issue"));
+        assert!(
+            !table.matches(&http::Method::POST, "/api/v1/token-issuers/402/issue"),
+            "POST {PATH} must remain on Python"
+        );
+        // Other methods also retain Python ownership.
+        for method in [
+            http::Method::GET,
+            http::Method::PUT,
+            http::Method::PATCH,
+            http::Method::DELETE,
+        ] {
+            assert!(!table.matches(&method, "/api/v1/token-issuers/402/issue"));
+        }
     }
 
     #[test]

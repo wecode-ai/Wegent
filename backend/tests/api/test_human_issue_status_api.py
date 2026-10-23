@@ -380,3 +380,12 @@ def test_assigned_task_binding_survives_normal_status_changes(
     )
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["human_task_binding"] == binding
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("execution_statuses",)) as client:
+        yield client

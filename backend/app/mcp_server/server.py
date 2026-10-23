@@ -91,6 +91,7 @@ class McpAppSpec:
     log_prefix: str
     include_root_metadata: bool = True
     allow_user_token: bool = False
+    transport_methods: tuple[str, ...] = tuple(MCP_TRANSPORT_METHODS)
 
 
 @dataclass(frozen=True)
@@ -925,7 +926,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                 spec.server.streamable_http_app(),
                 target_path="/",
             ),
-            methods=MCP_TRANSPORT_METHODS,
+            methods=list(spec.transport_methods),
         ),
     ]
 
@@ -976,7 +977,7 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
             app.add_route(
                 effective_spec.mount_path,
                 _ASGIPathAdapter(mcp_app, target_path="/"),
-                methods=MCP_TRANSPORT_METHODS,
+                methods=list(effective_spec.transport_methods),
             )
 
         app.mount(effective_spec.mount_path, mcp_app)
@@ -1107,10 +1108,33 @@ def _normalize_prefix(prefix: str) -> str:
 
 
 def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
-    if not prefix:
-        return spec
+    effective_spec = replace(spec, mount_path=f"{prefix}{spec.mount_path}")
+    # Restrict only the migrated API mount; unprefixed aliases remain Python-owned.
+    if effective_spec.mount_path == "/api/mcp/interactive-form-question":
+        return replace(
+            effective_spec,
+            transport_methods=(
+                "GET",
+                # MIGRATION-CANDIDATE(api="POST /api/mcp/interactive-form-question/sse"): remove after final confirmation.
+                # "POST",
+                "DELETE",
+                "OPTIONS",
+            ),
+        )
+    if effective_spec.mount_path == "/api/mcp/subscription":
+        return replace(
+            effective_spec,
+            transport_methods=(
+                # MIGRATION-CANDIDATE(api="GET /api/mcp/subscription/sse"): remove after final confirmation.
+                # "GET",
+                # MIGRATION-CANDIDATE(api="POST /api/mcp/subscription/sse"): remove after final confirmation.
+                # "POST",
+                "DELETE",
+                "OPTIONS",
+            ),
+        )
 
-    return replace(spec, mount_path=f"{prefix}{spec.mount_path}")
+    return effective_spec
 
 
 def _build_streamable_http_config(

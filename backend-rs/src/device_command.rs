@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use brz_http_server::StatusCode;
 use brz_mysql::MysqlError;
-use brz_redis::{Redis as _, RedisBytes};
+use brz_redis::Redis as _;
 use serde_json::{Map, Value};
 
 use crate::auth::SessionUser;
@@ -34,7 +34,7 @@ use crate::device_commands::{
     resolve_local_device_command, response_from_result, unhandled,
 };
 use crate::device_identity::{DeviceKindRow, resolve_owned_device_alias};
-use crate::devices::online_key;
+use crate::device_online_state::read_online_state;
 use crate::http_compat::FastApiError;
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message_with_callback};
 use crate::socketio_rpc::RpcError;
@@ -186,7 +186,7 @@ async fn execute_owned_command(
     )
     .await?;
 
-    let online = read_online_state(state, user_id, &dispatch_device_id).await?;
+    let online = read_online_state::<Value>(state, user_id, &dispatch_device_id).await?;
     let Some(online) = online.filter(python_truthy) else {
         return Err(device_command_error(format!(
             "Device '{dispatch_device_id}' is offline"
@@ -304,7 +304,7 @@ async fn resolve_dispatch_device_id(
                     device_type.title()
                 )));
             }
-            let online = read_online_state(state, user_id, &dispatch_device_id).await?;
+            let online = read_online_state::<Value>(state, user_id, &dispatch_device_id).await?;
             if !online.as_ref().is_some_and(python_truthy) {
                 return Err(device_command_error(format!(
                     "{} device '{device_id}' is offline or unavailable",
@@ -444,36 +444,6 @@ fn cloud_runtime_device_id(device: &DeviceKindRow) -> Result<String, FastApiErro
         return Ok(python_str(value));
     }
     Ok(device.name.clone())
-}
-
-/// `cache_manager.get`: one `GET device:online:<user_id>:<device_id>` decoded
-/// as JSON. Missing/empty keys are `None`; failures are unhandled 500s.
-async fn read_online_state(
-    state: &AppState,
-    user_id: i64,
-    device_id: &str,
-) -> Result<Option<Value>, FastApiError> {
-    let Some(redis) = state.redis.as_ref() else {
-        tracing::error!("device online state unavailable: no Redis service");
-        return Err(unhandled());
-    };
-    match redis
-        .get::<_, RedisBytes>(online_key(user_id, device_id))
-        .await
-    {
-        Ok(None) => Ok(None),
-        Ok(Some(bytes)) if bytes.as_ref().is_empty() => Ok(None),
-        Ok(Some(bytes)) => serde_json::from_slice(bytes.as_ref())
-            .map(Some)
-            .map_err(|error| {
-                tracing::error!(%error, "device online state decode failure");
-                unhandled()
-            }),
-        Err(error) => {
-            tracing::error!(%error, "device online state read failure");
-            Err(unhandled())
-        }
-    }
 }
 
 /// The `execute_command` payload in the source dict's insertion order.
