@@ -129,9 +129,14 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     'Installing other plugins must preserve the existing plugin and its sync generation'
   )
   await Promise.all(
-    parallelInstalls.map(installation =>
-      request(`/plugins/installed/${installation.plugin.metadata.labels.id}`, 'DELETE')
-    )
+    parallelInstalls.map(async installation => {
+      // Uninstall answers 204 No Content, so the JSON helper cannot parse it.
+      const removed = await fetch(
+        `${env.backendUrl}/api/plugins/installed/${installation.plugin.metadata.labels.id}`,
+        { method: 'DELETE', headers }
+      )
+      assert.equal(removed.status, 204)
+    })
   )
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`, {
