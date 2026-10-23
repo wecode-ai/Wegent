@@ -172,12 +172,56 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide
-suite-level parallelism across runners. Shards are balanced from observed CI
-durations and capped to bound the complete suite's critical path; a new or
+Core and Cloud matrix jobs also provide suite-level parallelism across runners.
+Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+Combining short shards reuses container initialization, checkout, artifact
+downloads, and runtime preparation without increasing checkpoint concurrency
+within a runner. The two Core benchmark shards and three Cloud account-auth and
+long-plugin-list shards remain separate. The concurrency limit must accommodate
+the complete matrix in one scheduling wave; classifier regression tests enforce
+both the shard budget and this constraint. Shared runner capacity can still
+introduce external queueing.
+Lint, unit-test, platform E2E, and desktop E2E summary jobs use
+`always() && !cancelled()`: failures still produce a summary, while cancellation
+stops superseded summaries from waiting for runners and blocking newer runs.
+Cleanup and diagnostic upload steps retain their existing cancellation handling.
+
+Step timings from successful runs `39920301020` and `39920742402` separate test
+work from setup overhead. In the first sample, non-test steps across 42 shards
+consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
+was higher in the second sample. The final 18 shards remove 24 setup cycles.
+
+Checkpoint timings from `39930854745` drive the final allocation: longest tasks
+start first and cumulative work is balanced, while CLI and Electron preparation
+remain shared. That run's `workspace-tabs` failed early because Issue creation
+did not wait for readiness after navigating to the board. Its successful
+116-second duration from `39920301020` supplies the estimate instead of its
+incomplete failure duration. The click uses the existing `clickWhenEnabled`
+with the default ten-second timeout and preserves all business assertions.
+The 112 ordinary Core checkpoints total 10,246 seconds, distributed into eight
+shards of 14 tasks with four concurrent workers each. Predicted durations are
+323–332 seconds; a ninth shard only reduces the maximum to 320 seconds.
+The 37 ordinary Cloud checkpoints total 5,769 seconds, distributed into five
+shards with predicted durations of 291–339 seconds; a sixth shard only reduces
+the maximum to 321 seconds. Two Core and three Cloud shards remain isolated.
+These scheduling estimates exclude per-shard setup and runtime resource
+variation and are not measured savings.
+Background-terminal history verification reads the first visible xterm row's
+`aria-posinset`, then waits for each native PageUp to strictly decrease that row
+until reaching the start of history. Each operation retains the default
+ten-second timeout, all twelve initial output lines are asserted, and native
+PageDown restores the viewport. A single ten-second deadline cannot bound many
+page operations: control latency under concurrent CI can exhaust it while
+history remains intact. Focused regressions cover a slow control channel, stalled
+scrolling, and missing history.
+Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
+The newly merged `stand-in-project-enable` checkpoint has no historical sample.
+It shares preparation with the stand-in configuration flows in Core shard 3,
+which now contains 15 tasks; other ordinary Core shards contain 14. The estimates
+above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
 - `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.

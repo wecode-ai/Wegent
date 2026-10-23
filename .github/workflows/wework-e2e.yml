@@ -1081,7 +1081,7 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
-    if: always()
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
 
     steps:
