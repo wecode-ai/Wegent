@@ -18,6 +18,10 @@ The Executor stores local ownership; the backend stores cloud ownership. A colla
 
 When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
 
+## Create a collaboration project
+
+New local and cloud collaboration projects include only the current user by default. Agents are added only when you select them through the collaborator picker. You can also create the project first and add Agents from its settings. Importing a local code project does not automatically add the current-device Agent.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.

@@ -61,7 +61,6 @@ import {
 } from '@/components/layout/DesktopSidebarAccount'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
-import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import {
   issueDispatchPersonalTaskInput,
   type IssueTaskDispatchInput,
@@ -1753,21 +1752,6 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                       name: projectName,
                       roots: workspaceRoots,
                     })
-                    const localAgentApi =
-                      props.services.projectSpaceDetailServices?.local?.localProjectChatAgentApi ??
-                      props.services.localProjectChatAgentApi
-                    if (localAgentApi) {
-                      await ensureDefaultLocalAgent(
-                        localAgentApi,
-                        String(importedProject.id),
-                        locale
-                      ).catch(error => {
-                        console.warn(
-                          `[Wework] Failed to ensure the default local Agent for imported project ${importedProject.id}`,
-                          error
-                        )
-                      })
-                    }
                     if (!localProjectApi) {
                       throw new Error(
                         locale === 'zh-CN'
