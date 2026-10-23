@@ -135,6 +135,12 @@ describe("native conversation ordering contract", () => {
     expect(page.messages.map((message) => message.content)).toEqual([
       "Original prompt",
     ]);
+    expect(page.turns).toHaveLength(1);
+    expect(page.turns[0]).toMatchObject({ id: null, status: "done" });
+    expect(page.turns[0].items[0]).toMatchObject({
+      type: "user_message",
+      message: { content: "Original prompt" },
+    });
   });
   it("preserves a legacy display projection when the remote schema returns no runtime overlay", () => {
     const page = projectRuntimePaneTranscript({

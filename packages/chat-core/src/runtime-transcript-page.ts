@@ -1,3 +1,4 @@
+import { seedRuntimeConversationTurns } from "./runtime-turn-updates";
 import {
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
@@ -42,10 +43,21 @@ export interface RuntimePaneTranscript {
 export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse,
 ): RuntimePaneTranscript {
-  const turns = mergeRuntimeConversationTurns(
+  const messages = runtimeMessagesToWorkbenchMessages(
+    transcript.messages ?? [],
+  );
+  let turns = mergeRuntimeConversationTurns(
     runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
     runtimeTranscriptTurnsToConversationTurns(transcript.runtimeTurns ?? []),
   );
+  // Legacy previews own a user presentation but have no provider turn identity.
+  // Represent them in the same store without inventing a native turn.
+  if (turns.length === 0) {
+    turns = seedRuntimeConversationTurns(messages, []).map((turn) => ({
+      ...turn,
+      status: "done",
+    }));
+  }
   return {
     supersededTurnIds: transcript.supersededTurnIds ?? [],
     threadId: transcript.threadId,
@@ -55,7 +67,7 @@ export function projectRuntimePaneTranscript(
     messages:
       Array.isArray(transcript.runtimeTurns) && turns.length > 0
         ? projectRuntimeConversationTurns(turns)
-        : runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+        : messages,
     turns,
     contextUsage: transcript.contextUsage ?? null,
     turnNavigation: transcript.turnNavigation ?? [],
