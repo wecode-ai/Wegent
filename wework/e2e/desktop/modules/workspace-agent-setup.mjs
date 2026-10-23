@@ -378,16 +378,17 @@ export async function verifyWorkspaceAgentDisplayNames(
   await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
     timeoutMs,
   })
-  const option = scoped(`[data-testid="project-agent-option-${agent.team_id}"]`)
-  await control.command('waitFor', option, { timeoutMs })
+  // The picker renders in a portal outside the workbench tab content.
+  const option = `[data-testid="project-agent-option-${agent.team_id}"]`
+  const candidatesSelector = '[data-testid="project-agent-wegent-team"]'
+  await control.command('waitFor', candidatesSelector, { timeoutMs })
+  await control.command('scrollIntoView', option)
   assert.equal(
     await control.command('getAttribute', option, { value: 'aria-label' }),
     displayName,
     'The Agent picker exposed the internal Agent name'
   )
-  const candidates = JSON.parse(
-    await control.command('snapshot', scoped('[data-testid="project-agent-wegent-team"]'))
-  )
+  const candidates = JSON.parse(await control.command('snapshot', candidatesSelector))
   assert.ok(!candidates.text.includes(team.name), 'The Agent picker listed the internal Team name')
   await control.command('click', '[data-testid="project-agent-dialog-close"]')
   await control.command('waitFor', '[data-testid="project-agent-dialog"]', {
@@ -429,6 +430,12 @@ export async function verifyWorkspaceAgentDisplayNames(
     visible: true,
     timeoutMs,
   })
+  // The editor resolves its saved routing before a rename can be submitted.
+  await control.command(
+    'waitFor',
+    '[data-testid="wework-agent-model"] option:not([value=""]):checked',
+    { timeoutMs }
+  )
   await control.command('fill', '[data-testid="wework-agent-display-name"]', {
     value: renamedDisplayName,
   })
