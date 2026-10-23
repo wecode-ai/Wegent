@@ -735,6 +735,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         uiTimeoutMs
       )
       assert.equal(personal.selectionErrors.length, 0)
+      await control.command('waitFor', '[data-testid="stand-in-settings"]')
+      await control.command('click', '[data-testid="stand-in-cancel"]')
+      await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
       await requestExecutor(
         control,
         'runtime.stand_in.personal.save',

@@ -451,7 +451,7 @@ export function StandInSettingsPage({
             </button>
           )}
         </header>
-        {!!draft?.selectionErrors?.length && (
+        {!initialProject && !!draft?.selectionErrors?.length && (
           <div
             role="alert"
             data-testid="stand-in-selection-errors"
@@ -467,7 +467,7 @@ export function StandInSettingsPage({
               type="button"
               data-testid="stand-in-selection-retry"
               disabled={saving}
-              onClick={() => void save()}
+              onClick={() => void state.save()}
               className="mt-2 text-primary"
             >
               {t('standIn.personal.selection_retry')}

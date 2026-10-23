@@ -73,6 +73,34 @@ describe('Personal stand-in settings', () => {
     expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
   })
 
+  it('keeps global selection recovery out of the project-only picker', async () => {
+    const { props, personalSave } = fixture({
+      selectionErrors: [
+        { issueId: 'failed', title: 'Failed selection', error: 'Invalid model selection' },
+      ],
+    })
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    await screen.findByTestId('stand-in-project-select')
+    expect(screen.queryByTestId('stand-in-selection-retry')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
+  it('retries personal selection without navigating away or changing connected projects', async () => {
+    const { props, personalSave } = fixture({
+      selectionErrors: [
+        { issueId: 'failed', title: 'Failed selection', error: 'Invalid model selection' },
+      ],
+    })
+    const onSaved = vi.fn()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} onSaved={onSaved} />)
+    await user.click(await screen.findByTestId('stand-in-selection-retry'))
+    await waitFor(() => expect(personalSave).toHaveBeenCalledTimes(1))
+    expect(personalSave.mock.calls[0][1].roles[0].collaboration.projects).toEqual([])
+    expect(personalSave.mock.calls[0][1].roles[0].collaboration.enabled).toBe(false)
+    expect(onSaved).not.toHaveBeenCalled()
+  })
+
   it('does not request cloud agents or show login warnings when disconnected', async () => {
     const { props } = fixture()
     render(
