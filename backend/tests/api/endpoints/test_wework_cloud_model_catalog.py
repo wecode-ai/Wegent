@@ -115,3 +115,12 @@ def test_gateway_rejects_passthrough_for_non_responses_models(
         "Codex passthrough requires an OpenAI Responses model"
     )
     upstream.assert_not_called()
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("llm_responses",)) as client:
+        yield client

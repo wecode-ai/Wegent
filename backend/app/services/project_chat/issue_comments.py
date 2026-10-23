@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.schemas.project_chat import (
+    ProjectChatMention,
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -26,6 +27,7 @@ def _comment_view(message: ProjectChatMessageView) -> dict[str, Any]:
         "created_at": message.created_at,
         "updated_at": message.updated_at,
         "sequence_number": message.sequence_number,
+        "mentions": message.metadata.get("mentions", []),
     }
 
 
@@ -59,6 +61,7 @@ def add_issue_comment(
     project_id: str,
     item_id: str,
     body: str,
+    mentions: list[ProjectChatMention] | None = None,
 ) -> dict[str, Any]:
     result = project_chat_service.send(
         db,
@@ -69,6 +72,7 @@ def add_issue_comment(
             project_id=project_id,
             task_id=item_id,
             content=body,
+            mentions=mentions or [],
         ),
     )
     push_project_chat_message(result.message.model_dump(mode="json", by_alias=True))

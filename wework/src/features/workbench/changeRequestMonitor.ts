@@ -16,7 +16,7 @@ interface CachedSnapshots {
 }
 
 function targetKey(target: TaskChangeRequestTarget): string {
-  return `${target.deviceId}\0${target.remoteUrl}\0${target.branch}`
+  return `${target.deviceId}\0${target.remoteUrl}\0${target.changeRequestUrl ?? target.branch}`
 }
 
 function gitInfoString(task: RuntimeTaskSummary, keys: string[]): string | null {
@@ -90,6 +90,7 @@ export class ChangeRequestMonitor {
     { target: TaskChangeRequestTarget; references: number }
   >()
   private readonly listeners = new Set<() => void>()
+  private revision = 0
   private refreshPromise: Promise<void> | null = null
   private refreshTimer: number | null = null
   private refreshScheduled = false
@@ -123,6 +124,10 @@ export class ChangeRequestMonitor {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  getRevision(): number {
+    return this.revision
   }
 
   getSnapshot(target: TaskChangeRequestTarget): TaskChangeRequestSnapshot | null {
@@ -159,6 +164,7 @@ export class ChangeRequestMonitor {
           changed = true
         }
         if (!changed) return
+        this.revision += 1
         writeCache(this.snapshots)
         this.listeners.forEach(listener => listener())
       })
@@ -219,17 +225,26 @@ export function useTaskChangeRequest(
   const workspacePath = target?.workspacePath ?? null
   const remoteUrl = target?.remoteUrl ?? null
   const branch = target?.branch ?? null
+  const changeRequestUrl = target?.changeRequestUrl
 
   useEffect(() => {
-    if (!monitor || !deviceId || !taskId || !workspacePath || !remoteUrl || !branch) return
+    if (
+      !monitor ||
+      !deviceId ||
+      !taskId ||
+      !remoteUrl ||
+      (!changeRequestUrl && (!workspacePath || !branch))
+    )
+      return
     return monitor.register({
       deviceId,
       taskId,
-      workspacePath,
+      workspacePath: workspacePath ?? '',
       remoteUrl,
-      branch,
+      branch: branch ?? '',
+      ...(changeRequestUrl ? { changeRequestUrl } : {}),
     })
-  }, [branch, deviceId, monitor, remoteUrl, taskId, workspacePath])
+  }, [branch, changeRequestUrl, deviceId, monitor, remoteUrl, taskId, workspacePath])
 
   return useSyncExternalStore(
     listener => monitor?.subscribe(listener) ?? (() => undefined),

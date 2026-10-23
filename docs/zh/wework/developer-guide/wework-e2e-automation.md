@@ -4,6 +4,10 @@ sidebar_position: 34
 
 # E2E 自动化
 
+桌面 E2E 共享 fixture 使用 `GPT 5.6 Luna`。真实运行时目录同时存在 `GPT-5.6 Luna` 和 `GPT 5.6 Luna` 两种显示名称，默认模型选择断言接受这两种名称，同时继续核对模型 ID 和供应商。任务恢复断言继续核对 fixture 原有的显示名称。
+
+桌面检查点清理结果目录时保留 `backend-rs-logs/`，供 CI 上传 Rust 网关启动日志。设置页按当前全局路由显示，同时保留原标签页的应用路由，返回时恢复原应用。
+
 Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口，用于在 CI 中稳定操作 Wework 的 Vite/React 前端。默认入口运行在浏览器模式，适合覆盖大多数前端交互；原生窗口与任务执行链路由下文的桌面端全链路 E2E 覆盖。
 
 ## 运行方式
@@ -98,6 +102,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 9. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实 provider 账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行文本回复以及“发送 → `apply_patch` → 工具结果回传 → 完成回复”，工具调用仍由真实 Codex 在隔离工作区内执行。
+
+回复预测及其图片描述请求独立于前台场景分发。切换到协议矩阵后，上一会话的后台图片描述仍可能到达；模型服务先识别这类请求，沿用图片描述的协议校验和响应，不推进矩阵状态。`desktop-reply-prediction-fixture.test.mjs` 覆盖这条跨场景请求路径，前台模型的端点与模型 ID 断言保持不变。
 
 模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
 
@@ -598,6 +604,8 @@ const route = await app.route();
 新增 E2E 用例应优先使用该 helper 和 `data-testid` 定位，不要依赖易变的 CSS 选择器或可见文案。
 
 ## CI 建议
+
+平台 E2E 基础镜像 `docker/wework-e2e/browser.Dockerfile` 通过 `docker.io` 预装 Docker CLI，并在构建时执行 `docker --version`。各分片准备远程工作区 Executor 时直接使用镜像内的 CLI，不再运行 apt 更新和安装。Dockerfile 的内容哈希决定镜像标签，修改后 CI 会构建新镜像并在后续运行中复用。
 
 本地列表启动读取和手动刷新共享同一版本号。启动读取若已被后续刷新取代，必须在写入列表和发起云端同步之前一并退出，避免过期启动请求重新开启同步并覆盖已选择的本地项目。原任务发现 E2E 的执行模式和本地运行断言保持不变。
 

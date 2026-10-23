@@ -356,12 +356,16 @@ pub(crate) async fn get_sandbox_payload(
         config.executor_manager_url, task_id
     );
     let response = http
-        .get(&url)
+        .endpoint_named(
+            &url,
+            crate::executor_manager::sandbox_metric_name(&config.executor_manager_url),
+        )
         .map_err(|error| {
             tracing::warn!(%error, url = %url, "[remote_workspace] sandbox query build failed");
             error
         })
         .ok()?
+        .get()
         .send()
         .await
         .map_err(|error| {

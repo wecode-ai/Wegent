@@ -289,7 +289,7 @@ impl<'a> TurnTranscriptProjector<'a> {
             self.created_at,
             self.fold_commentary,
             self.turn_cancelled && self.fold_commentary,
-            has_later_process,
+            has_later_process || self.assistant_status == "streaming",
             &mut self.assistant,
             self.options,
         );

@@ -24,13 +24,14 @@ describe('reply prediction settings', () => {
     save.mockResolvedValue(defaultAppPreferences)
   })
   it('enables predictions without a model catalog or model selector', async () => {
-    setup()
+    setup({ replyPredictionsEnabled: false })
     fireEvent.click(screen.getByTestId('reply-prediction-enabled'))
     await waitFor(() => expect(save).toHaveBeenCalledWith({ replyPredictionsEnabled: true }))
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
   })
-  it('keeps only the toggle when enabled and can disable predictions', async () => {
-    setup({ replyPredictionsEnabled: true })
+  it('enables predictions by default and can disable them', async () => {
+    setup()
+    expect(screen.getByTestId('reply-prediction-enabled')).toHaveAttribute('aria-checked', 'true')
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('reply-prediction-enabled'))
     await waitFor(() => expect(save).toHaveBeenCalledWith({ replyPredictionsEnabled: false }))

@@ -14028,40 +14028,68 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('does not reuse a migrated default browser label after switching panes', async () => {
     runtimeMocks.electron = true
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const browser = await import('@/lib/embedded-browser')
+    const listen = browser.listenEmbeddedBrowserOpenRequests
+    const releaseSubscriptions: (() => void)[] = []
+    // Keep native subscription setup pending across the pane switch.
+    const subscription = vi
+      .spyOn(browser, 'listenEmbeddedBrowserOpenRequests')
+      .mockImplementation(handler => {
+        const listener = listen(handler)
+        return (
+          listener?.then(
+            unlisten =>
+              new Promise<typeof unlisten>(resolve => {
+                releaseSubscriptions.push(() => resolve(unlisten))
+              })
+          ) ?? null
+        )
+      })
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     desktopHostMocks.invoke.mockClear()
     const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    await waitFor(() => {
-      expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
-    })
-    await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+    try {
+      await waitFor(() => {
+        expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
+      })
+      await waitFor(() => {
+        expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+          'browser.open',
+          expect.objectContaining({
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          })
+        )
+      })
+
+      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+      await waitFor(() => {
+        expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
+      })
+      await waitFor(() => {
+        expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+          'browser.open',
+          expect.objectContaining({
+            label: 'workspace-browser-runtime-b',
+            url: 'https://example.org/',
+          })
+        )
+      })
+      expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
         'browser.open',
         expect.objectContaining({
-          label: 'workspace-browser-runtime-a',
-          url: 'https://example.com/',
-        })
-      )
-    })
-
-    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
-
-    await waitFor(() => {
-      expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
-    })
-    await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
-        'browser.open',
-        expect.objectContaining({
-          label: 'workspace-browser-runtime-b',
+          label: expect.stringMatching(/^workspace-browser-runtime-a(?:-|$)/),
           url: 'https://example.org/',
         })
       )
-    })
-
-    unmount()
-    await new Promise(resolve => setTimeout(resolve, 1_100))
+    } finally {
+      unmount()
+      releaseSubscriptions.forEach(release => release())
+      subscription.mockRestore()
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+    }
   }, 10_000)
 
   test('opens an embedded browser requested by an inactive runtime task', async () => {
@@ -14197,7 +14225,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('preserves the open file when switching runtime tasks', async () => {
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     const workspaceFileApi = {
       listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
         Promise.resolve({

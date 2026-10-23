@@ -2,7 +2,11 @@ import { useState } from 'react'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { runnerModelKey, type WorkspaceStandInSettings } from '@wegent/collaboration'
+import {
+  runnerModelKey,
+  type WorkspaceStandInSettings,
+  type WorkspaceProjectAgent,
+} from '@wegent/collaboration'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import '@/i18n'
 import { installDshUiTestContributions } from '@/test/setup'
@@ -44,10 +48,14 @@ function Fixture({
   save,
   initial,
   services,
+  selectedAgent,
+  showPrompt = true,
 }: {
   save: ReturnType<typeof vi.fn>
   initial?: WorkspaceStandInSettings['workspace']
   services?: WorkbenchServices
+  selectedAgent?: WorkspaceProjectAgent
+  showPrompt?: boolean
 }) {
   const [draft, setDraft] = useState<WorkspaceStandInSettings>({
     enabled: false,
@@ -61,6 +69,8 @@ function Fixture({
     <>
       <StandInComposer
         draft={draft}
+        selectedAgent={selectedAgent}
+        showPrompt={showPrompt}
         onChange={setDraft}
         onSave={async prompt => save({ ...draft, prompt })}
         onValidityChange={setValid}
@@ -93,7 +103,58 @@ describe('Stand-in configuration composer', () => {
       }
     )
   })
-  it('waits for the model catalog before allowing settings to be saved', async () => {
+  it('persists a fixed agent model when agent details arrive after the default model', async () => {
+    const save = vi.fn()
+    const model = {
+      runtime: 'codex' as const,
+      provider: 'local',
+      model_id: 'default',
+      is_default: true,
+    }
+    const services = {
+      standInApi: { catalog: vi.fn(async () => ({ models: [model] })) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const { rerender } = render(<Fixture save={save} services={services} />)
+    await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
+    const fixed = { runtime: 'codex' as const, provider: 'local', model_id: 'fixed' }
+    rerender(
+      <Fixture
+        save={save}
+        services={services}
+        selectedAgent={{
+          id: 'reviewer',
+          name: 'Reviewer',
+          runtime: 'codex',
+          modelPolicy: { mode: 'fixed', model: fixed },
+        }}
+      />
+    )
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: fixed }))
+  })
+
+  it('keeps advanced settings unchanged when the default model catalog arrives', async () => {
+    const save = vi.fn()
+    const model = {
+      runtime: 'codex' as const,
+      provider: 'local',
+      model_id: 'default',
+      is_default: true,
+    }
+    const services = {
+      standInApi: { catalog: vi.fn(async () => ({ models: [model] })) },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    render(<Fixture save={save} services={services} showPrompt={false} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('default')
+    )
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save.mock.calls[0][0].model).toBeUndefined()
+  })
+
+  it('allows settings to be saved while the model catalog is loading', async () => {
     const save = vi.fn(async () => true)
     const model = {
       runtime: 'codex' as const,
@@ -111,7 +172,9 @@ describe('Stand-in configuration composer', () => {
       modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
     } as unknown as WorkbenchServices
     render(<Fixture save={save} services={services} />)
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledOnce()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     await act(async () => finishCatalog({ models: [model] }))
     await waitFor(() => expect(screen.getByTestId('stand-in-save')).toBeEnabled())
@@ -236,7 +299,7 @@ describe('Stand-in configuration composer', () => {
     render(<Fixture save={save} />)
     expect(screen.getByTestId('stand-in-prompt')).toHaveAttribute('contenteditable', 'true')
     expect(screen.getByText('本地项目')).toBeInTheDocument()
-    expect(screen.getByText('沿用项目环境')).toBeInTheDocument()
+    expect(screen.getByText('设备默认工作区')).toBeInTheDocument()
     expect(screen.getByTestId('stand-in-workspace-bar')).toContainElement(
       screen.getByTestId('model-selector-button')
     )
@@ -336,10 +399,11 @@ describe('Stand-in configuration composer', () => {
     )
   })
 
-  it('prevents saving an unavailable selected project instead of using another directory', () => {
+  it('saves an unavailable project selection without substituting another directory', async () => {
+    const save = vi.fn(async () => true)
     render(
       <Fixture
-        save={vi.fn()}
+        save={save}
         initial={{
           projectKey: 'removed',
           workspacePath: '/gone',
@@ -347,7 +411,11 @@ describe('Stand-in configuration composer', () => {
         }}
       />
     )
-    expect(screen.getByTestId('stand-in-save')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace: expect.objectContaining({ workspacePath: '/gone' }) })
+    )
     expect(screen.getByTestId('stand-in-prompt')).toHaveAttribute('contenteditable', 'true')
   })
   it('uses the ordinary plus menu for Goal without offering unsupported attachment actions', async () => {

@@ -22,26 +22,10 @@ export interface ProjectTaskRuntimeApi {
     title: string,
     description: string
   ): Promise<{ item: CloudLoopItem }>
-  updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string): Promise<CloudLoopItem | null>
 }
 
 function runtimeTaskKey(address: RuntimeTaskAddress) {
   return `${address.deviceId}:${address.taskId}`
-}
-
-function runtimeTaskProjectStore(address: RuntimeTaskAddress): 'backend' | 'local' | undefined {
-  const handle = address.runtimeHandle
-  const origin =
-    handle?.origin && typeof handle.origin === 'object'
-      ? (handle.origin as Record<string, unknown>)
-      : null
-  const projectStore =
-    handle?.projectStore ??
-    handle?.project_store ??
-    origin?.projectStore ??
-    origin?.project_store ??
-    projectStoreByRuntimeTask.get(runtimeTaskKey(address))
-  return projectStore === 'backend' || projectStore === 'local' ? projectStore : undefined
 }
 
 function toCloudProject(
@@ -102,10 +86,6 @@ export function createCloudProjectTaskRuntimeApi(
       )
       return { item: toCloudLoopItem(result.issue) }
     },
-    async updateTaskTrackingTitle(task, title) {
-      const issue = await port.updateTrackedTaskTitle(toWorkspaceRuntimeTaskAddress(task), title)
-      return issue ? toCloudLoopItem(issue) : null
-    },
   }
   cloudRuntimeApis.set(port, api)
   return api
@@ -143,13 +123,4 @@ export function rememberProjectTaskStore(
   if (projectStoreByRuntimeTask.get(key) === projectStore) return false
   projectStoreByRuntimeTask.set(key, projectStore)
   return true
-}
-
-export function projectTaskTrackingApi(services: WorkbenchServices, address: RuntimeTaskAddress) {
-  const projectStore = runtimeTaskProjectStore(address)
-  if (projectStore === 'backend') return cloudProjectTaskRuntimeApi(services) ?? null
-  if (projectStore === 'local') return localProjectTaskRuntimeApi(services) ?? null
-  return services.projectSpaceApis?.defaultLocation === 'cloud'
-    ? (cloudProjectTaskRuntimeApi(services) ?? null)
-    : (localProjectTaskRuntimeApi(services) ?? null)
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
+import { verifyLinkedTasksScrolling } from '../modules/issue-linked-tasks.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -47,14 +48,6 @@ const CALLS = {
 
 function scoped(selector) {
   return `${CONTENT} ${selector}`
-}
-
-async function setExecutionDetailsExpanded(control, expanded) {
-  const toggle = scoped('[data-testid="cloud-todo-toggle-tasks"]')
-  await control.command('scrollIntoView', toggle)
-  const current = await control.command('getAttribute', toggle, { value: 'aria-expanded' })
-  if (current !== String(expanded)) await control.command('click', toggle, { visible: true })
-  await control.command('waitFor', `${toggle}[aria-expanded="${expanded}"]`, { visible: true })
 }
 
 function writeEvents(response, responseId, events) {
@@ -798,7 +791,6 @@ export function createDesktopScenario({
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
-      await setExecutionDetailsExpanded(control, true)
       const boundTask = scoped(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
       await control.command('waitFor', boundTask)
       await control.command('scrollIntoView', boundTask)
@@ -820,7 +812,6 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
-      await setExecutionDetailsExpanded(control, false)
       await changeIssueStatus(control, ownerRequest, issue.id, 'completed', uiTimeoutMs)
       await captureScreenshot(control, 'assignment-05-human-completed.png', CONTENT)
       await control.command('click', '[data-testid="wework-notifications-button"]')
@@ -857,6 +848,11 @@ export function createDesktopScenario({
         waitForValue,
         uiTimeoutMs,
         capture: filename => captureScreenshot(control, filename, CONTENT),
+      })
+      await verifyLinkedTasksScrolling(control, {
+        request: ownerRequest,
+        projectId: project.id,
+        issueId: issue.id,
       })
     },
 

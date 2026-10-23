@@ -31,6 +31,7 @@ use crate::plugins_marketplace::db::{
     InstalledKindRow, KIND_COLUMNS, NamespaceRow, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
     RELEASE_COLUMNS, ResourceMemberRow, UserRepository,
 };
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 
 use super::auth;
@@ -547,20 +548,29 @@ pub(super) fn can_access_plugin(
     })
 }
 
-/// `_load_user_plugin_access_context`: load namespace membership once, then
-/// resolve registered external-entity grants for the eligible plugins.
-pub(super) async fn load_access_context<M, R>(
+/// Load the access catalog before pinning the auto-update write transaction.
+async fn load_access_context<M: Mysql, R: brz_redis::Redis>(
     mysql: &M,
+    redis: Option<&R>,
+    resolvers: &EntityResolvers<R>,
+    user_id: i64,
+    grants_by_plugin_id: &HashMap<i64, Vec<ResourceMemberRow>>,
+) -> MysqlResult<Option<AccessContext>> {
+    load_access_context_on(&mut &*mysql, redis, resolvers, user_id, grants_by_plugin_id).await
+}
+
+pub(super) async fn load_access_context_on<Q, R>(
+    mysql: &mut Q,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     user_id: i64,
     grants_by_plugin_id: &HashMap<i64, Vec<ResourceMemberRow>>,
 ) -> MysqlResult<Option<AccessContext>>
 where
-    M: Mysql,
+    Q: PluginQuery,
     R: brz_redis::Redis,
 {
-    let user_namespaces = UserRepository::list_user_namespaces(mysql, user_id).await?;
+    let user_namespaces = UserRepository::list_user_namespaces_on(mysql, user_id).await?;
     let mut granted_namespace_ids: Vec<i64> = Vec::new();
     for grant in grants_by_plugin_id.values().flatten() {
         if grant.entity_type != "namespace"
@@ -576,7 +586,7 @@ where
         }
     }
     let namespace_rows =
-        UserRepository::list_namespaces_by_ids(mysql, &granted_namespace_ids).await?;
+        UserRepository::list_namespaces_by_ids_on(mysql, &granted_namespace_ids).await?;
 
     let external_entity_types: HashSet<String> =
         resolvers.external_types().map(ToOwned::to_owned).collect();
@@ -589,7 +599,7 @@ where
         {
             continue;
         }
-        let entity_ids = crate::plugins_marketplace::db::distinct_entity_resource_ids(
+        let entity_ids = crate::plugins_marketplace::db::distinct_entity_resource_ids_on(
             mysql,
             "Plugin",
             entity_type,
@@ -608,7 +618,7 @@ where
             )
             .await?;
         external_plugin_ids.extend(
-            crate::plugins_marketplace::db::resource_ids_by_entity_ids(
+            crate::plugins_marketplace::db::resource_ids_by_entity_ids_on(
                 mysql,
                 "Plugin",
                 entity_type,
@@ -824,3 +834,7 @@ use brz_json::adapters::python_truthy as truthy;
 #[cfg(test)]
 #[path = "auto_update_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "auto_update_mysql_tests.rs"]
+mod auto_update_mysql_tests;

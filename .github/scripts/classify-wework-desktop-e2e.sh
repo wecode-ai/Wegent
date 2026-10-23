@@ -21,6 +21,7 @@ core_segments=(
   stand-in-cloud
   stand-in-notifications
 
+  stand-in-personal-task
   stand-in-permissions
   collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
@@ -78,6 +79,7 @@ core_segments=(
   release-package-startup
   component-update
   native-window-startup
+  renderer-crash-recovery
   native-window-chrome
   renderer-storage
   application-menu
@@ -102,6 +104,7 @@ core_segments=(
   streaming-message-order
   streaming-subagents
   background-terminals
+  collaboration-issue-badges
   change-request-status
   git-commit-generation
   claude-runtime
@@ -172,6 +175,7 @@ cloud_segments=(
   plugin-registration-coordination
   plugin-account-auth-coordination
   plugin-composer-long-list
+  plugin-runtime-path-recovery
   plugin-workspace-publication
   plugin-toggle-persistence
 )
@@ -192,7 +196,7 @@ cloud_shards=(
   supervisor-lifecycle,conversation-state
   model-routing,cloud-model-recovery,cloud-model-presets,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
-  cloud-worktree-queued-cancel
+  cloud-worktree-queued-cancel,plugin-runtime-path-recovery
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
   cloud-device-lifecycle,plugin-uninstall-lost-response,plugin-uninstall-unknown-result
   plugin-composer-long-list
@@ -210,22 +214,24 @@ core_shards=(
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
   send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,git-commit-generation,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,collaboration-issue-badges,change-request-status,git-commit-generation,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-worktree-policy,collaboration-group-onboarding,collaboration-local-agent-dispatch,stand-in,stand-in-workspace,stand-in-controls,collaboration-local-group-coordinate,collaboration-human-round-resume
-  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
+  resilience,environment-panel-scroll,collaboration-issue-task-discovery,collaboration-app-queue-identity,collaboration-issue-archive,collaboration-board-sorting,collaboration-board-move-recovery,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,project-member-overrides,priority-filter,collaboration-issue-comment-mention,collaboration-issue-assignment-activity,collaboration-issue-comment-attachments,stand-in-notifications
   transcript-sync,background-terminals
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-crash-recovery,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,running-sidebar-state,native-window-chrome,collaboration-issue-comment-notification,collaboration-issue-mcp-comments,latest-conversation-history
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,model-overload-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
-  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-permissions
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-personal-task,stand-in-permissions
   rendering-extensions,streaming-content,streaming-tools,streaming-timers
   streaming-scroll,streaming-message-order,streaming-subagents
   # Preserve the fixed interaction latency budget without CPU contention from other apps.
   split-workbench
+  # Drawer frame assertions also require a runner without competing Electron apps.
+  collaboration-shared-core
 )
 
 validate_core_shards() {
@@ -397,6 +403,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
   select_target "core:stand-in-cloud"
+  select_target "core:stand-in-personal-task"
   select_target "core:stand-in-permissions"
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
@@ -818,6 +825,10 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in-personal-task.scenario.mjs)
+      select_target "core:stand-in-personal-task"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
@@ -827,6 +838,7 @@ classify_wework_path() {
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-cloud"
+      select_target "core:stand-in-personal-task"
       select_target "core:stand-in-permissions"
       return
       ;;
@@ -1214,6 +1226,13 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/collaboration-issue-badges.scenario.mjs | \
+      wework/src/features/todo/IssueBadges* | \
+      wework/src/features/change-requests/*)
+      select_target "core:collaboration-issue-badges"
+      return
+      ;;
+
     # Git hosting preferences and explicit device synchronization share one
     # independently bootstrapped desktop checkpoint.
     wework/src/api/devices* | \
@@ -1281,6 +1300,15 @@ classify_wework_path() {
 
 classify_path() {
   local path="$1"
+
+  case "$path" in
+    wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs | \
+      wework/scripts/plugin-runtime-path-fixture.test.mjs)
+      select_target "cloud:plugin-runtime-path-recovery"
+      return
+      ;;
+  esac
 
   case "$path" in
     backend/app/core/distributed_lock.py | \

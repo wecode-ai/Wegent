@@ -1,3 +1,4 @@
+import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -30,7 +31,12 @@ async function clickVisibleControl(control, target) {
   })
 }
 
-export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  workspacePath,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  captureScreenshot,
+}) {
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -53,9 +59,20 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+        connect: true,
+      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
+      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
+      const beforeSave = await requestExecutor(
+        control,
+        'runtime.stand_in.get',
+        { projectId: project.id, userId: USER_ID, projectStore: 'local' },
+        uiTimeoutMs
+      )
+      assert.equal(beforeSave.enabled, false, 'Automatic handling must wait for explicit save')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+      await control.command('click', '[data-testid="stand-in-advanced-open"]')
       assert.ok(
         await control.command('getValue', '[data-testid="stand-in-device"]'),
         'Current device must be selected by default'
@@ -70,11 +87,17 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         'project-option-',
         SOURCE
       )
+      await captureScreenshot(control, 'stand-in-workspace-project-menu.png')
       await clickVisibleControl(control, selector(option))
       await control.command('click', '[data-testid="execution-mode-button"]')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="execution-mode-git-worktree-button"]'
+      )
+      await captureScreenshot(
+        control,
+        'stand-in-workspace-execution-settings.png',
+        '[data-testid="stand-in-settings"]'
       )
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
@@ -103,6 +126,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         'The device model must not appear under cloud models'
       )
       await control.command('clickWhenEnabled', selector(`model-option-${modelKey}`))
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-agent"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command(
         'click',
         '[data-testid="stand-in-settings"] [data-testid="add-context-button"]'
@@ -124,16 +151,32 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.equal(saved.model.model_id, model.model_id)
 
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
-      await control.command('clickWhenEnabled', selector(`stand-in-list-edit-${project.id}`))
+      await control.command('waitFor', '[data-testid="stand-in-overview"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
+      await control.command('click', '[data-testid="stand-in-advanced-open"]')
       await control.command('waitFor', '[data-testid="project-work-button"]', {
         text: SOURCE,
       })
+      await control.command('click', '[data-testid="stand-in-back"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       // Goal persistence is asserted above; ordinary completion uses one model response.
       await control.command('click', '[data-testid="cancel-goal-draft-button"]')
       await control.command('click', '[data-testid="stand-in-auto"]')
+      await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+      const beforeDisableSave = await requestExecutor(
+        control,
+        'runtime.stand_in.get',
+        { projectId: project.id, userId: USER_ID, projectStore: 'local' },
+        uiTimeoutMs
+      )
+      assert.equal(beforeDisableSave.enabled, true, 'Disabling must also wait for explicit save')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      await control.command('waitFor', '[data-testid="stand-in-overview-status"]', {
+        text: '未开启',
+      })
       saved = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -207,7 +250,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
           '---\nname: stand-in-catalog\ndescription: Verify the stand-in composer catalog.\n---\nInspect the current task.\n'
         )
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+        await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', {
           value: `${MARKER}_UNSAVED /`,
@@ -224,14 +267,38 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         await control.command('waitFor', `${CONTENT} [data-testid="plugins-page-content"]`)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('waitFor', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+        await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         assert.equal(
           (await control.command('getValue', '[data-testid="stand-in-prompt"]')).trim(),
           `${MARKER}_UNSAVED`
         )
-        await control.command('click', '[data-testid="stand-in-cancel"]')
+        await discardStandInDraft(control)
       } finally {
         await rm(skillDirectory, { recursive: true, force: true })
       }
+      const beforeProject = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      await createLocalCollaborationProject(control, CONTENT, '替身复用-' + process.pid)
+      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
+      assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
+      const afterProject = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      assert.equal(
+        afterProject.version,
+        beforeProject.version,
+        'Opening another project must reuse personal configuration without copying it'
+      )
+      assert.deepEqual(afterProject.roles[0].workspace, saved.workspace)
+      assert.equal(afterProject.roles.length, beforeProject.roles.length)
+      await control.command('click', '[data-testid="stand-in-cancel"]')
     },
   }
 }

@@ -78,9 +78,10 @@ export async function openWorkspaceAgentConfiguration(control, contentSelector, 
   const sidebar = selector => inCollaborationSidebar(selector, contentSelector)
   const workspaceTree = sidebar(`[data-testid="collaboration-workspace-tree-${workspaceId}"]`)
   await control.command('hover', `${workspaceTree} .collaboration-workspace-row`)
+  // Only the active Workspace exposes the untagged trigger, so match both forms.
   await control.command(
     'clickWhenEnabled',
-    `${workspaceTree} [data-testid="collaboration-workspace-actions"]`
+    `${workspaceTree} [data-testid^="collaboration-workspace-actions"]`
   )
   await control.command('clickWhenEnabled', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(
@@ -284,4 +285,178 @@ export async function assertCreatedWorkspaceIssueAgent(request, { projectId, sou
     1,
     'Recovering the create draft duplicated the Issue'
   )
+}
+
+async function assertWorkspaceAgentLabel(
+  control,
+  scoped,
+  agent,
+  { displayName, internalName, timeoutMs }
+) {
+  const row = scoped(`[data-testid="project-agent-row-${agent.team_id}"]`)
+  await control.command('waitFor', row, { text: displayName, timeoutMs })
+  const snapshot = JSON.parse(await control.command('snapshot', row))
+  assert.ok(
+    !snapshot.text.includes(internalName),
+    `The Workspace Agent row rendered the internal Team name ${internalName}`
+  )
+}
+
+async function waitForWorkspaceAgent(request, workspaceId, predicate, message, timeoutMs) {
+  return waitForValue(
+    async () => (await request(`/api/v1/workspaces/${workspaceId}/agents`)).items ?? [],
+    agents => agents.find(predicate),
+    message,
+    timeoutMs
+  )
+}
+
+/**
+ * Creating an Agent only names the Team; the Workspace catalog must resolve the
+ * user-facing label from the Team display name without touching its identity.
+ */
+export async function verifyWorkspaceAgentDisplayNames(
+  control,
+  request,
+  { contentSelector, workspaceId, displayName, renamedDisplayName, modelName, timeoutMs }
+) {
+  const scoped = selector => `${contentSelector} ${selector}`
+  await openWorkspaceAgentConfiguration(control, contentSelector, workspaceId)
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
+  )
+  await openProjectAgentCreator(
+    control,
+    scoped('[data-testid="project-agent-add"]'),
+    timeoutMs,
+    'wework-agent-resource-creator'
+  )
+  await control.command('fill', '[data-testid="wework-agent-display-name"]', {
+    value: displayName,
+  })
+  await selectCloudAgentModel(control, request, modelName, timeoutMs)
+  await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+    visible: false,
+    timeoutMs,
+  })
+
+  const agent = await waitForWorkspaceAgent(
+    request,
+    workspaceId,
+    candidate => candidate.name === displayName,
+    'The Workspace Agent lost its display name after creation',
+    timeoutMs
+  )
+  const team = await request(`/api/teams/${agent.team_id}`)
+  assert.notEqual(
+    team.name,
+    displayName,
+    'The Agent display name replaced the Team resource identity'
+  )
+  await assertWorkspaceAgentLabel(control, scoped, agent, {
+    displayName,
+    internalName: team.name,
+    timeoutMs,
+  })
+
+  const personal = (await request('/api/v1/resources')).agents?.find(
+    candidate => candidate.team_id === agent.team_id
+  )
+  assert.ok(personal, 'The personal resource catalog is missing the Workspace Agent')
+  assert.equal(
+    personal.name,
+    displayName,
+    'The personal resource catalog exposed the internal Agent name'
+  )
+
+  // The picker merges personal resources with Workspace Agents, so it is the
+  // user-facing proof that both catalogs resolve the same display name.
+  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
+    timeoutMs,
+  })
+  // The picker renders in a portal outside the workbench tab content.
+  const option = `[data-testid="project-agent-option-${agent.team_id}"]`
+  const candidatesSelector = '[data-testid="project-agent-wegent-team"]'
+  await control.command('waitFor', candidatesSelector, { timeoutMs })
+  await control.command('scrollIntoView', option)
+  assert.equal(
+    await control.command('getAttribute', option, { value: 'aria-label' }),
+    displayName,
+    'The Agent picker exposed the internal Agent name'
+  )
+  const candidates = JSON.parse(await control.command('snapshot', candidatesSelector))
+  assert.ok(!candidates.text.includes(team.name), 'The Agent picker listed the internal Team name')
+  await control.command('click', '[data-testid="project-agent-dialog-close"]')
+  await control.command('waitFor', '[data-testid="project-agent-dialog"]', {
+    visible: false,
+    timeoutMs,
+  })
+
+  // Leaving and re-entering the settings page re-reads the persisted Team.
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-workspace-nav-projects"]'),
+    { timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-workspace-project-create"]'),
+    {
+      timeoutMs,
+    }
+  )
+  await openWorkspaceAgentConfiguration(control, contentSelector, workspaceId)
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="collaboration-workspace-participants-tab-agents"]')
+  )
+  await assertWorkspaceAgentLabel(control, scoped, agent, {
+    displayName,
+    internalName: team.name,
+    timeoutMs,
+  })
+
+  // Renaming through the real editor must follow the same read path.
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="project-agent-edit-${agent.team_id}"]`),
+    { timeoutMs }
+  )
+  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+    visible: true,
+    timeoutMs,
+  })
+  // The editor resolves its saved routing before a rename can be submitted.
+  await control.command(
+    'waitFor',
+    '[data-testid="wework-agent-model"] option:not([value=""]):checked',
+    { timeoutMs }
+  )
+  await control.command('fill', '[data-testid="wework-agent-display-name"]', {
+    value: renamedDisplayName,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="wework-agent-resource-create"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+    visible: false,
+    timeoutMs,
+  })
+  const renamed = await waitForWorkspaceAgent(
+    request,
+    workspaceId,
+    candidate => candidate.team_id === agent.team_id && candidate.name === renamedDisplayName,
+    'The Workspace Agent did not reload the renamed display name',
+    timeoutMs
+  )
+  await assertWorkspaceAgentLabel(control, scoped, renamed, {
+    displayName: renamedDisplayName,
+    internalName: team.name,
+    timeoutMs,
+  })
+  return { agent: renamed, team }
 }

@@ -4057,7 +4057,7 @@ fn explicit_codex_upstream(
         .expect("explicit model config should produce an upstream")
 }
 
-fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
+pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
     task_identity_env(request)
         .into_iter()
         .map(|(key, value)| {

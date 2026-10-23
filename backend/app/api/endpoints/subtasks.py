@@ -26,6 +26,9 @@ from app.schemas.turn_file_changes import (
     TurnFileChangesDiffResponse,
     TurnFileChangesRevertResponse,
 )
+from app.services.adapters.task_kinds.task_detail_helpers import (
+    filter_conversation_contexts_on_subtasks,
+)
 from app.services.chat.storage import session_manager
 from app.services.subtask import subtask_service
 from app.services.turn_file_changes import turn_file_changes_service
@@ -67,6 +70,9 @@ def list_subtasks(
         from_latest=from_latest,
         before_message_id=before_message_id,
     )
+    filter_conversation_contexts_on_subtasks(
+        db, subtasks=items, user_id=current_user.id
+    )
 
     total = subtask_store.count_by_task_for_user(
         db,
@@ -85,9 +91,13 @@ def get_subtask(
     db: Session = Depends(get_db),
 ):
     """Get specified subtask details"""
-    return subtask_service.get_subtask_by_id(
+    subtask = subtask_service.get_subtask_by_id(
         db=db, subtask_id=subtask_id, user_id=current_user.id
     )
+    filter_conversation_contexts_on_subtasks(
+        db, subtasks=[subtask], user_id=current_user.id
+    )
+    return subtask
 
 
 @router.get(

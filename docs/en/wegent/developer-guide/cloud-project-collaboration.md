@@ -320,7 +320,8 @@ Agent configuration visibility controls whether members can select an Agent. Col
 A human assignment in a collaboration round exposes **Reply and create a new task** to its assignee. The acknowledgement is saved as a comment; the new personal task uses the round assignment instructions and retains its assignment binding.
 
 - A reply to an AI thread saves a reference to the original activity but does not require Backend to continue the old Runtime session. When execution is requested, it creates a new root-Issue Run for an Executor to claim.
-- A new top-level comment uses an explicitly mentioned available Agent, or the Issue's assigned Agent. The root-Issue queue creates an independent Run and preserves approval and configuration-waiting states.
+- Comments and replies mentioning only members, without an Agent mention, save the comment and notify authorized readers without starting or continuing the assigned Agent. Runner availability is irrelevant; the comment persists this intent so retries behave consistently.
+- Other new top-level comments use an explicitly mentioned available Agent, or the Issue's assigned Agent. The root-Issue queue creates an independent Run and preserves approval and configuration-waiting states.
 - Without an assigned or mentioned agent, the comment is saved without execution. Retrying that request after reassignment does not start AI unexpectedly.
 - Mentioning another agent still requires picker visibility. Comments do not change the Issue assignee.
 
@@ -329,15 +330,21 @@ flowchart TD
     UI[Web or desktop client] --> Save[Save member comment]
     Save --> Execute[Project comment execution service]
     Execute --> Auth[Check project role and comment author]
-    Auth --> Agent{Mentioned or assigned Agent?}
+    Auth --> Human{Only member mentions?}
+    Human -->|Yes| Comment[Save comment only]
+    Human -->|No| Agent{Mentioned or assigned Agent?}
     Agent -->|Yes| Queue[Queue an independent session]
-    Agent -->|No| Comment[Save comment only]
-    Queue --> Claim[Executor pull + claim]
+    Agent -->|No| Comment
+    Queue --> Prepare[Prepare execution while consuming the queue]
+    Prepare -->|Configuration conflict| Failed[Fail the Run and preserve the comment]
+    Prepare -->|Valid configuration, including offline devices| Claim[Executor reconnects and claims]
     Claim --> Activity[Project status and results into the thread]
     Activity --> UI
 ```
 
 Clients send project, Issue, saved comment, and attachment IDs through `wework:project_chat:comment:execute`; they do not send device configuration. Comment locks and existing response records prevent duplicate Runs. Execution failures are surfaced without resending saved comments. Backend persists only a claimable execution intent, and the claiming Executor creates the Runtime session.
+
+Agent candidates follow visibility and use authority; device liveness, Issue runner affinity and model readiness do not hide candidates. New comments and queued session replies validate project, Issue and Agent use authority, then persist an execution request. Queue consumers reuse execution preparation to check runner affinity, models and runtime configuration. Conflicts fail the Run and update its AI activity while the saved user comment remains successful. Offline devices do not prevent admission: valid Runs wait for a runner to reconnect and claim them. Replies to unclaimed sessions also queue and resume the original task after it becomes ready. Manual approval remains mandatory, and claims revalidate current authority. The UI displays actual Run state rather than inferring Agent receipt from mention text.
 
 Focused checks cover hidden admin Agents, independent root Runs, reassignment, duplicate requests, comment-only behavior, and cross-project, read-only, and other-author rejection. Desktop regression coverage belongs to the existing `collaboration-shared-core` scenario; E2E runs require an explicit request.
 

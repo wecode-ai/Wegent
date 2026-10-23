@@ -178,6 +178,7 @@ def _exchange_sync(
     data: Any,
 ) -> dict:
     with SessionLocal() as db:
+        db.info["plugin_write_operation"] = operation
         configure_plugin_session(db)
         identity = resolve_runtime_route_identity(
             db, user_id=user_id, submitted_device_id=device_id

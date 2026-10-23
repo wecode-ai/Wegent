@@ -55,6 +55,49 @@ impl TaskBulkDeleteRequest {
     }
 }
 
+/// `cancel_task`'s returned dict (`app/api/endpoints/adapter/tasks.py:679`):
+/// `{"message": ..., "status": ...}` in declaration order.
+#[derive(Debug, Serialize)]
+pub(crate) struct TaskCancelResponse {
+    pub message: &'static str,
+    pub status: &'static str,
+}
+
+impl TaskCancelResponse {
+    /// `_cancel_chat_shell_task` with a running assistant subtask.
+    pub(crate) const fn chat_stopped() -> Self {
+        Self {
+            message: "Chat stopped successfully",
+            status: "CANCELLED",
+        }
+    }
+
+    /// `_cancel_chat_shell_task` without a running stream; the task is
+    /// finalized as COMPLETED.
+    pub(crate) const fn no_running_stream() -> Self {
+        Self {
+            message: "No running stream to cancel",
+            status: "COMPLETED",
+        }
+    }
+
+    /// `cancel_task` while a cancellation is already in progress.
+    pub(crate) const fn already_cancelling() -> Self {
+        Self {
+            message: "Task is already being cancelled",
+            status: "CANCELLING",
+        }
+    }
+
+    /// `_cancel_executor_task`'s accepted request.
+    pub(crate) const fn cancel_accepted() -> Self {
+        Self {
+            message: "Cancel request accepted",
+            status: "CANCELLED",
+        }
+    }
+}
+
 /// `TaskUpdate` (`app/schemas/task.py`): the fields `update_task` consumes.
 #[brz_json::model]
 #[derive(Debug, Default, Deserialize)]

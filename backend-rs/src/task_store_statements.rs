@@ -538,7 +538,7 @@ pub fn non_deleted_subtasks_by_message_ordered_statement(table: &str) -> String 
 }
 
 /// The `subtasks` column projection every subtask statement selects.
-const SUBTASK_COLUMNS: &str = "id, user_id, task_id, team_id, title, bot_ids, `role`, \
+pub(crate) const SUBTASK_COLUMNS: &str = "id, user_id, task_id, team_id, title, bot_ids, `role`, \
     executor_namespace, executor_name, executor_deleted_at, prompt, message_id, parent_id, \
     status, progress, result, error_message, created_at, updated_at, completed_at, \
     sender_type, sender_user_id, reply_to_subtask_id";
@@ -916,6 +916,14 @@ pub fn assistant_subtasks_by_task_statement(table: &str) -> String {
          WHERE {table}.task_id = ? AND {table}.`role` = 'ASSISTANT' \n\
          ORDER BY {table}.message_id ASC"
     )
+}
+
+/// `subtask_store.update_fields(status=RUNNING)` (`execution/dispatcher.py:347`
+/// → `chat/storage/db.py:199`): the status-only flush. SQLAlchemy's `onupdate`
+/// also refreshes `updated_at`, which is why the recorded statement carries
+/// both columns.
+pub fn update_subtask_running_statement(table: &str) -> String {
+    format!("UPDATE {table} SET status=?, updated_at=? WHERE {table}.id = ?")
 }
 
 /// `subtask_store.update_fields` flush for a terminal subtask update

@@ -14,6 +14,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',
   'stand-in-permissions',
@@ -74,6 +75,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-runtime-path-recovery',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
   'project-ai-settings',
@@ -110,6 +112,7 @@ export const DESKTOP_CHECKPOINTS = [
   'release-package-startup',
   'app-update-full',
   'component-update',
+  'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
@@ -133,6 +136,7 @@ export const DESKTOP_CHECKPOINTS = [
   'streaming-message-order',
   'streaming-subagents',
 
+  'collaboration-issue-badges',
   'change-request-status',
   'git-commit-generation',
   'claude-runtime',

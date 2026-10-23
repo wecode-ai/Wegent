@@ -440,14 +440,6 @@ export function IssueChatMessage({
       </div>
     );
   }
-  const mentionedAgents = Array.isArray(message.metadata.mentions)
-    ? message.metadata.mentions.filter(
-        (mention) =>
-          typeof mention === "object" &&
-          mention !== null &&
-          (mention as Record<string, unknown>).type === "agent",
-      )
-    : [];
   const messageContent =
     plain || isAgent ? (
       <IssueActivityMarkdown
@@ -501,11 +493,6 @@ export function IssueChatMessage({
       {isAgent && !compact && isSucceeded ? (
         <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
           <Check className="h-3 w-3" /> {t("activity.project_chat_completed")}
-        </span>
-      ) : null}
-      {!isAgent && mentionedAgents.length > 0 ? (
-        <span className="mt-1 inline-flex items-center gap-1 text-xs text-violet-600">
-          <Bot className="h-3 w-3" /> {t("activity.project_chat_ai_received")}
         </span>
       ) : null}
       {isAgent && !compact && isStreaming ? (

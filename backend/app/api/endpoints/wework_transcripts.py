@@ -89,7 +89,8 @@ def renew_lease_endpoint(
     return _lease_response(transcript)
 
 
-@router.post("/{transcript_id}/lease/release")
+# MIGRATION-CANDIDATE(api="POST /api/wework-transcripts/*/lease/release"): remove after final confirmation.
+# @router.post("/{transcript_id}/lease/release")
 def release_lease_endpoint(
     transcript_id: str,
     request: TranscriptLeaseReleaseRequest,

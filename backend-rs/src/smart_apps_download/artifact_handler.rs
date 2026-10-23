@@ -19,21 +19,6 @@ use super::link;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
-/// `_raise_storage_unavailable`: `503 {"detail": {"code":
-/// "smart_app_storage_unavailable", "message": "Smart app file storage is
-/// unavailable"}}`.
-fn storage_unavailable() -> FastApiError {
-    FastApiError::json_body(
-        StatusCode::SERVICE_UNAVAILABLE,
-        serde_json::json!({
-            "detail": {
-                "code": "smart_app_storage_unavailable",
-                "message": "Smart app file storage is unavailable",
-            }
-        }),
-    )
-}
-
 /// `quote(artifact.filename, safe="")` (`urllib.parse.quote`): percent-encode
 /// everything except the RFC 3986 unreserved set.
 fn percent_encode(filename: &str) -> String {
@@ -105,7 +90,7 @@ async fn download_marketplace_artifact(
     let config = artifact::plugin_storage_config();
     let bytes = artifact::open_download(&state.attachment_http, &config, &artifact.storage_key)
         .await
-        .map_err(|_| storage_unavailable())?;
+        .map_err(|_| artifact::storage_unavailable())?;
 
     // `StreamingResponse(media_type="application/zip", headers={...})`: the
     // source streams the object with the recorded download headers. The
@@ -164,7 +149,7 @@ mod tests {
 
     #[test]
     fn storage_unavailable_renders_the_source_503_body() {
-        let error = storage_unavailable();
+        let error = artifact::storage_unavailable();
         let body = serde_json::to_vec(&serde_json::json!({
             "detail": {
                 "code": "smart_app_storage_unavailable",
