@@ -2717,7 +2717,7 @@ async fn auto_approved_mcp_tool_does_not_clear_another_pending_user_question() {
         .find(|task| task["taskId"] == task_id)
         .unwrap();
     assert_eq!(task["running"], true);
-    assert_eq!(task["interactionStatus"], "waiting_for_user_input");
+    assert_eq!(task["interactionStatus"], "waitingForUserInput");
     assert_no_mcp_approval_history(&handler, task_id).await;
 
     let sent = handler.handle_runtime_rpc(json!({
