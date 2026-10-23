@@ -7,9 +7,9 @@ settings:
 packageExtensionsChecksum: sha256-7xSR3ISjHMO1s2SGAymiUIjUjIMF2cWdsXI0XROK3UY=
 
 patchedDependencies:
-  '@xterm/xterm@6.0.0': 43de79b5c64b7e957d7a1efd43c4f6a2a78ae028e5d3983aa2e49dbfff61f0fe
-  mermaid@11.15.0: 2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3
   '@file-viewer/renderer-drawing@2.1.26': 96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c
+  '@xterm/xterm@6.0.0': b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb
+  mermaid@11.15.0: 2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3
 
 importers:
 
@@ -774,7 +774,7 @@ importers:
         version: 0.12.0
       '@xterm/xterm':
         specifier: ^6.0.0
-        version: 6.0.0(patch_hash=43de79b5c64b7e957d7a1efd43c4f6a2a78ae028e5d3983aa2e49dbfff61f0fe)
+        version: 6.0.0(patch_hash=b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb)
       '@xyflow/react':
         specifier: ^12.11.2
         version: 12.11.2(@types/react-dom@19.2.4(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -13730,7 +13730,7 @@ snapshots:
 
   '@xterm/addon-web-links@0.12.0': {}
 
-  '@xterm/xterm@6.0.0(patch_hash=43de79b5c64b7e957d7a1efd43c4f6a2a78ae028e5d3983aa2e49dbfff61f0fe)': {}
+  '@xterm/xterm@6.0.0(patch_hash=b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb)': {}
 
   '@xyflow/react@12.11.2(@types/react-dom@19.2.4(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
