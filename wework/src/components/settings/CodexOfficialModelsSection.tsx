@@ -239,7 +239,7 @@ export function CodexOfficialModelsSection({
   modelList: CodexOfficialModelList | null
   loading: boolean
   error: string | null
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
   const models = useMemo(() => modelList?.models ?? [], [modelList])
@@ -296,7 +296,7 @@ export function CodexOfficialModelsSection({
     })
   }, [])
 
-  const restartAfterCatalogChange = async (slug: string) => {
+  const restartAfterCatalogChange = async (slug: string): Promise<boolean> => {
     const restart = await requestLocalExecutor<{
       restarted: boolean
       requiresConfirmation: boolean
@@ -304,10 +304,12 @@ export function CodexOfficialModelsSection({
     if (restart.restarted) {
       setPendingCatalogRestart(null)
       setCatalogRestartConfirmation(null)
-      onRefresh()
+      await onRefresh()
+      return true
     } else if (restart.requiresConfirmation) {
       setPendingCatalogRestart(slug)
       setCatalogRestartConfirmation(slug)
+      return false
     } else {
       throw new Error(t('workbench.local_model_catalog_restart_failed'))
     }
@@ -319,10 +321,12 @@ export function CodexOfficialModelsSection({
     setCatalogEditorError(null)
     try {
       await saveLocalCodexModelCatalogOverride(editingCatalog.catalog.slug, entry)
-      await loadCatalogModels()
       const slug = editingCatalog.catalog.slug
-      setEditingCatalog(null)
-      await restartAfterCatalogChange(slug)
+      const applied = await restartAfterCatalogChange(slug)
+      await loadCatalogModels()
+      if (applied) {
+        setEditingCatalog(null)
+      }
     } catch (saveError) {
       setCatalogEditorError(getErrorMessage(saveError, t('workbench.codex_catalog_save_failed')))
     } finally {
@@ -334,8 +338,8 @@ export function CodexOfficialModelsSection({
     setCatalogError(null)
     try {
       await deleteLocalCodexModelCatalogOverride(slug)
-      await loadCatalogModels()
       await restartAfterCatalogChange(slug)
+      await loadCatalogModels()
     } catch (restoreError) {
       setCatalogError(getErrorMessage(restoreError, t('workbench.codex_catalog_restore_failed')))
     }
@@ -348,7 +352,9 @@ export function CodexOfficialModelsSection({
       await requestLocalExecutor('runtime.codex.app_server.restart', { force: true })
       setPendingCatalogRestart(null)
       setCatalogRestartConfirmation(null)
-      onRefresh()
+      await onRefresh()
+      await loadCatalogModels()
+      setEditingCatalog(null)
     } catch (restartError) {
       setCatalogError(
         getErrorMessage(restartError, t('workbench.local_model_catalog_restart_failed'))

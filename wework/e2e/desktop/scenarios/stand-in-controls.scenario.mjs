@@ -23,6 +23,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-empty-project"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)

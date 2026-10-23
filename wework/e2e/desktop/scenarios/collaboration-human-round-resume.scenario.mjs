@@ -296,7 +296,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
   await control.command(
     'waitFor',
     scoped(`[data-testid="collaboration-group-detail-${group.id}"]`),
-    { text: GROUP, timeoutMs: uiTimeoutMs }
+    { visible: true, text: GROUP, timeoutMs: uiTimeoutMs }
   )
   await control.command('click', scoped('[data-testid="collaboration-group-detail-tab-rules"]'))
   await control.command('fill', scoped('[data-testid="collaboration-group-detail-instructions"]'), {

@@ -9,8 +9,8 @@
 //! resolves explicit and inherited grants, a unique active parent, provenance,
 //! and read-only public discovery. Historical creators receive no implicit grant.
 //!
-//! Unselected route bodies remain migration candidates. The shared point-access
-//! guard uses the same policy; route ownership is defined by config/routes.toml.
+//! Unselected route bodies remain migration candidates. Route ownership is
+//! defined by config/routes.toml.
 use brz_http_server::StatusCode;
 use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
@@ -546,30 +546,39 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn cp13_project_detail_uses_the_list_policy_and_denies_missing_access() {
+    async fn cp06_cp13_detail_uses_catalog_authorization_and_denies_missing_access() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let error = match cloud_project(&mysql, "1001", 52, "member").await {
-            Ok(_) => panic!("a project without access must not be returned"),
-            Err(error) => error,
-        };
+        let result = cloud_project(&mysql, "1001", 52, "historical-creator").await;
+        let error = result
+            .err()
+            .expect("missing authorization must deny access");
         assert_eq!(error.status(), StatusCode::NOT_FOUND);
+        assert_eq!(error.detail_message(), Some("Cloud project not found"));
+
         let queries = mysql.queries();
         assert_eq!(queries.len(), 1);
-        let expected = collaboration_access::access_sql(52, Some(1001), None);
-        assert_eq!(
-            queries[0].sql,
-            expected.split_whitespace().collect::<Vec<_>>().join(" ")
-        );
+        let expected = collaboration_access::access_sql(52, Some(1001), None)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(queries[0].sql, expected);
     }
 
     #[tokio::test]
-    async fn invalid_project_detail_id_is_rejected_before_querying_permissions() {
+    async fn detail_rejects_invalid_project_id_before_querying_permissions() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let error = match cloud_project(&mysql, "invalid", 52, "member").await {
-            Ok(_) => panic!("invalid project ids must not be accepted"),
-            Err(error) => error,
-        };
+        let result = cloud_project(&mysql, "invalid", 52, "reader").await;
+        let error = result.err().expect("invalid project ID must be rejected");
         assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&error.validation_detail()).unwrap(),
+            json!([{
+                "type": "int_parsing",
+                "loc": ["path", "project_id"],
+                "msg": "Input should be a valid integer, unable to parse string as an integer",
+                "input": "invalid",
+            }])
+        );
         assert!(mysql.queries().is_empty());
     }
 
