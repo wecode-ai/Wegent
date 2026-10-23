@@ -47,6 +47,10 @@ function nodeText(node: Root | RootContent): string {
     .join(BLOCK_TYPES.has(node.type) ? '\n' : '')
 }
 
+function assistantSearchText(source: string): string {
+  return nodeText(parser.parse(stripUnsupportedContentReferenceCitations(source)))
+}
+
 export function conversationSearchText(
   message: WorkbenchMessage,
   replyQuestions?: AsyncRequestUserInputReply[]
@@ -55,13 +59,10 @@ export function conversationSearchText(
   if (message.role === 'user' && replyQuestions?.length) {
     return replyQuestions.map(row => `${row.question}\n${row.answer}`).join('\n')
   }
-  const sources =
-    message.role === 'user'
-      ? [getUserMessageTextContent(message.content)]
-      : getAssistantSearchTextSources(message)
-          .filter(Boolean)
-          .map(stripUnsupportedContentReferenceCitations)
-  return sources.map(text => nodeText(parser.parse(text))).join('\n')
+  if (message.role === 'user') {
+    return nodeText(parser.parse(getUserMessageTextContent(message.content)))
+  }
+  return getAssistantSearchTextSources(message).filter(Boolean).map(assistantSearchText).join('\n')
 }
 
 export function findConversationMatches(
@@ -130,7 +131,7 @@ function searchUnits(message: WorkbenchMessage, text?: string): SearchUnit[] | n
       ? [
           {
             itemId: item.id,
-            text: nodeText(parser.parse(stripUnsupportedContentReferenceCitations(source))),
+            text: assistantSearchText(source),
           },
         ]
       : []

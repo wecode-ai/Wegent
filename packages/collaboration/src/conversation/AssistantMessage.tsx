@@ -12,7 +12,6 @@ import type {
   RuntimeConversationTurn,
 } from "@wegent/chat-core/runtime-conversation";
 import { getRuntimeMessageActiveThinking } from "@wegent/chat-core/runtime-thinking";
-import { stripPluginWorkspaceResultMarkers } from "@wegent/chat-core/plugin-workspace-result";
 import {
   AssistantMarkdown,
   type AssistantMarkdownProps,
@@ -47,8 +46,7 @@ import {
   getStoppedElapsedDuration,
   getProcessingSummaryStartMs,
   isCancelledAssistantMessage,
-  isCancelledPlaceholderContent,
-  shouldHideFailedAssistantContent,
+  getAssistantContentPresentation,
   getDisplayProcessingBlocks,
   getWebSearchToolBlocks,
   getMessageDisplayStateKey,
@@ -134,12 +132,8 @@ export function AssistantMessage({
       : null;
   const shouldShowStoppedNotice =
     isCancelled && message.stoppedNotice !== false;
-  const shouldHideContent =
-    shouldHideFailedAssistantContent(message) ||
-    (isCancelled && isCancelledPlaceholderContent(message.content));
-  const visibleContent = shouldHideContent
-    ? ""
-    : stripPluginWorkspaceResultMarkers(message.content);
+  const { content: visibleContent, hidden: shouldHideContent } =
+    getAssistantContentPresentation(message);
   const hiddenErrorContent =
     message.status === "failed" && shouldHideContent
       ? message.content.trim()

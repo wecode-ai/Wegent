@@ -110,6 +110,12 @@ describe('visible process text in terminal conversation search', () => {
     const index = deduplicateConversationSearchIndex([
       { messageId: projected.id, message: projected, text: conversationSearchText(projected) },
     ])
+    expect(conversationSearchText(projected)).toBe('needle needle\nneedle\n')
+    expect(index.map(({ itemId, text }) => ({ itemId, text }))).toEqual([
+      { itemId: 'first-block', text: 'needle needle' },
+      { itemId: 'second-block', text: 'needle' },
+      { itemId: 'final-item', text: '' },
+    ])
     expect(findConversationMatches(index, 'needle').matches).toEqual([
       { messageId: 'first-block', occurrence: 0 },
       { messageId: 'first-block', occurrence: 1 },
