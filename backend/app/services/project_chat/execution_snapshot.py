@@ -14,6 +14,7 @@ from app.models.delivery import LoopItem, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
+from app.schemas.project_chat import ProjectChatMessageView
 from app.schemas.runtime_execution_snapshot import (
     RuntimeExecutionSnapshot,
     RuntimeExecutionTurnSnapshot,
@@ -49,6 +50,50 @@ def completed_activity_for_turn(
         )
         .with_for_update()
         .one_or_none()
+    )
+
+
+def restore_reconciled_execution_content(
+    db: Session, *, execution_id: int, event_name: str, payload: dict
+) -> tuple[ProjectChatMessageView, str] | None:
+    """Recover final text when a snapshot wins between event execution lookups."""
+    if event_name != "response.completed":
+        return None
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.id == execution_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if execution is None or execution.status != "completed":
+        return None
+    sequence = payload.get("eventSeq", payload.get("event_seq"))
+    if isinstance(sequence, bool):
+        return None
+    try:
+        if int(sequence) <= execution.last_event_seq:
+            return None
+    except (TypeError, ValueError):
+        return None
+    activity = completed_activity_for_turn(
+        db,
+        device_ids=[execution.runtime_device_id],
+        task_id=execution.runtime_task_id,
+        turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+    )
+    metadata = (activity.metadata_json or {}) if activity is not None else {}
+    if (
+        str(metadata.get("execution_id")) != str(execution.id)
+        or "runtime_completed_at" not in metadata
+    ):
+        return None
+    return project_chat_service.project_runtime_event(
+        db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name=event_name,
+        payload=payload,
     )
 
 
@@ -166,7 +211,10 @@ def _persist_outcome(
     user_id: int,
     device_ids: list[str],
 ) -> bool:
-    from app.services.loop_item_executions.service import loop_item_execution_service
+    from app.services.loop_item_executions.service import (
+        CAPACITY_STATUSES,
+        loop_item_execution_service,
+    )
 
     status = TERMINAL_STATUSES[turn.status]
     metadata = dict(row.metadata_json or {})
@@ -209,6 +257,17 @@ def _persist_outcome(
         return False
     metadata = dict(row.metadata_json or {})
     if execution is not None:
+        if execution.status != status and execution.status not in CAPACITY_STATUSES:
+            return False
+        # Reconciliation commits the terminal root and activity. Persist their
+        # turn binding in that same commit so a final event can recover text
+        # even when it arrives before this outcome-only report returns.
+        row.metadata_json = {
+            **metadata,
+            "runtime_turn_id": turn.id,
+            "runtime_completed_at": turn.completed_at,
+        }
+        db.flush()
         # Managed runs have their own aggregate root. Never update a different
         # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(

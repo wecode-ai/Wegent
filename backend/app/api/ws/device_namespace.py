@@ -940,6 +940,20 @@ def _project_chat_runtime_event_sync(
             allow_unsequenced_terminal=trusted_terminal_snapshot,
         )
         if execution is not None and matched_execution is None:
+            from app.services.project_chat.execution_snapshot import (
+                restore_reconciled_execution_content,
+            )
+
+            restored = restore_reconciled_execution_content(
+                db, execution_id=execution.id, event_name=event_name, payload=payload
+            )
+            if restored is not None:
+                message, mode = restored
+                return {
+                    "message": message.model_dump(mode="json", by_alias=True),
+                    "mode": mode,
+                    "workflow_continuation": None,
+                }
             logger.info(
                 "[ProjectChat] Runtime event projection rejected by execution truth: "
                 "device_id=%s task_id=%s event=%s",
