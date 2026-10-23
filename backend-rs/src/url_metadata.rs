@@ -576,4 +576,104 @@ mod tests {
             "{\"url\": \"https://example.com\", \"title\": \"T\", \"description\": null, \"favicon\": \"https://example.com/favicon.ico\", \"success\": true}"
         );
     }
+
+    /// The cutover and the handler registration must agree. An inactive route
+    /// entry sends `GET /api/utils/url-metadata` to the Python fallback (the
+    /// hybrid gateway answers `fallback upstream unavailable` in Replay), so
+    /// the recorded metadata document is never served by this handler.
+    #[test]
+    fn selected_route_is_registered_in_the_shared_group() {
+        const PATH: &str = "/api/utils/url-metadata";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).unwrap();
+        assert!(
+            config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must be selected for Rust"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(table.matches(&http::Method::GET, PATH));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
+    }
+
+    /// `httpx` follows exactly these statuses with `follow_redirects=True`;
+    /// every other status is a terminal response even when it carries a
+    /// `Location` header.
+    #[test]
+    fn redirects_follow_the_httpx_status_set() {
+        for status in [301, 302, 303, 307, 308] {
+            let status = brz_http::StatusCode::from_u16(status).unwrap();
+            assert!(is_redirect(status), "httpx follows {status}");
+        }
+        for status in [200, 204, 304, 404, 500] {
+            let status = brz_http::StatusCode::from_u16(status).unwrap();
+            assert!(!is_redirect(status), "httpx stops at {status}");
+        }
+    }
+
+    /// `_redirect_url`: a relative `Location` joins the request URL, an
+    /// absolute one passes through, and a non-HTTP target fails the fetch.
+    #[test]
+    fn relative_redirect_location_joins_the_request_url() {
+        assert_eq!(
+            resolve_redirect("https://example.com/u/1", "/next").as_deref(),
+            Some("https://example.com/next")
+        );
+        assert_eq!(
+            resolve_redirect("https://example.com/a/page", "https://other.example/b").as_deref(),
+            Some("https://other.example/b")
+        );
+        assert_eq!(
+            resolve_redirect("https://example.com/a/page", "ftp://example.com/x"),
+            None
+        );
+    }
+
+    /// The source opens a fresh `httpx.AsyncClient` per call, so each redirect
+    /// chain starts with an empty cookie jar: a `Set-Cookie` from one leg is
+    /// sent on the following leg for its domain, and nowhere else.
+    #[test]
+    fn redirect_chain_replays_the_per_call_cookie_jar() {
+        let mut jar = Vec::new();
+        extract_cookie(
+            "session=abc123; Path=/; Domain=.example.com; Secure",
+            "https://www.example.com/page",
+            &mut jar,
+        );
+        assert_eq!(
+            cookie_header(&jar, "https://www.example.com/next").as_deref(),
+            Some("session=abc123")
+        );
+        assert_eq!(cookie_header(&jar, "https://other.example.net/next"), None);
+
+        // A host-only cookie is sent back to its own host only.
+        extract_cookie("host_only=1; Path=/", "https://api.example.org/a", &mut jar);
+        assert_eq!(
+            cookie_header(&jar, "https://api.example.org/b").as_deref(),
+            Some("host_only=1")
+        );
+        assert_eq!(cookie_header(&jar, "https://example.org/b"), None);
+
+        // Re-setting the same name and domain replaces the stored value; a
+        // host-only cookie for the same name is a distinct jar entry.
+        extract_cookie(
+            "session=def456; Domain=.example.com",
+            "https://www.example.com/page",
+            &mut jar,
+        );
+        assert_eq!(
+            cookie_header(&jar, "https://www.example.com/next").as_deref(),
+            Some("session=def456")
+        );
+    }
 }

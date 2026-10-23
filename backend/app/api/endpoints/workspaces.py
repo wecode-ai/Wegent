@@ -99,7 +99,8 @@ def create_workspace(
     return _response(db, workspace, current_user)
 
 
-@router.get("", response_model=WorkspaceListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/v1/workspaces"): remove after final confirmation.
+# @router.get("", response_model=WorkspaceListResponse)
 def list_workspaces(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),

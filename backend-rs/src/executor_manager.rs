@@ -30,6 +30,14 @@ use brz_json::OpaqueJson;
 /// `settings.EXECUTOR_MANAGER_URL`'s source default (`app/core/config.py`).
 pub const DEFAULT_EXECUTOR_MANAGER_URL: &str = "http://localhost:8001";
 
+/// `settings.EXECUTOR_CANCEL_TASK_URL`'s source default
+/// (`app/core/config.py`).
+pub const DEFAULT_EXECUTOR_CANCEL_TASK_URL: &str =
+    "http://localhost:8001/executor-manager/tasks/cancel";
+
+/// `_call_executor_cancel`'s httpx timeout.
+const CANCEL_TASK_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// `_ExecutorRuntimeClient.get_sandbox`'s httpx timeout.
 const GET_SANDBOX_TIMEOUT: Duration = Duration::from_secs(30);
 /// `delete_sandbox` / `cleanup_sandbox_by_task_id`'s httpx timeout.
@@ -59,6 +67,12 @@ struct CleanupByTaskRequest {
     archive_before_delete: bool,
 }
 
+/// `_call_executor_cancel`'s request body.
+#[derive(Serialize)]
+struct ExecutorCancelRequest {
+    task_id: i64,
+}
+
 /// `executor_kinds_service.delete_executor_task_sync`'s request body.
 #[derive(Serialize)]
 struct ExecutorDeleteRequest<'a> {
@@ -77,23 +91,44 @@ struct ExecutorRestoreRequest<'a> {
 }
 
 /// The retained executor-manager client and its resolved base URL.
+///
+/// Cloning shares the retained HTTP client; request-scoped code takes a clone
+/// of the startup-owned instance instead of building a new pool.
+#[derive(Clone)]
 pub struct ExecutorManager {
     client: Client,
     base: String,
+    /// `settings.EXECUTOR_CANCEL_TASK_URL`, which the source keeps as an
+    /// independent absolute URL rather than deriving it from the manager base.
+    cancel_url: String,
 }
 
 impl ExecutorManager {
-    /// Build the client from `EXECUTOR_MANAGER_URL`, falling back to the
-    /// source default when unset.
+    /// Build the client from `EXECUTOR_MANAGER_URL` and
+    /// `EXECUTOR_CANCEL_TASK_URL`, falling back to the source defaults when
+    /// either is unset.
     pub fn from_env() -> Result<Self> {
         let base = std::env::var("EXECUTOR_MANAGER_URL")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_EXECUTOR_MANAGER_URL.to_owned());
-        Self::new(base)
+        let cancel_url = std::env::var("EXECUTOR_CANCEL_TASK_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_EXECUTOR_CANCEL_TASK_URL.to_owned());
+        Self::with_cancel_url(base, cancel_url)
     }
 
     pub fn new(base: impl Into<String>) -> Result<Self> {
+        let base = base.into();
+        let cancel_url = format!(
+            "{}/executor-manager/tasks/cancel",
+            base.trim_end_matches('/')
+        );
+        Self::with_cancel_url(base, cancel_url)
+    }
+
+    fn with_cancel_url(base: impl Into<String>, cancel_url: String) -> Result<Self> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .build()
@@ -101,6 +136,7 @@ impl ExecutorManager {
         Ok(Self {
             client,
             base: base.into().trim_end_matches('/').to_owned(),
+            cancel_url,
         })
     }
 
@@ -109,7 +145,7 @@ impl ExecutorManager {
         self.client
             .endpoint_named(
                 format!("{}/executor-manager/sandboxes/{task_id}", self.base),
-                "http://executor-manager/executor-manager/sandboxes/:task_id",
+                sandbox_metric_name(&self.base),
             )
             .map_err(anyhow::Error::from)
     }
@@ -165,7 +201,7 @@ impl ExecutorManager {
     pub async fn cleanup_sandbox_by_task(&self, task_id: i64) {
         let Ok(endpoint) = self.client.endpoint_named(
             format!("{}/executor-manager/sandboxes/cleanup-by-task", self.base),
-            "http://executor-manager/executor-manager/sandboxes/cleanup-by-task",
+            format!("{}/executor-manager/sandboxes/cleanup-by-task", self.base),
         ) else {
             return;
         };
@@ -182,6 +218,52 @@ impl ExecutorManager {
             .await;
     }
 
+    /// `_call_executor_cancel`: `POST {EXECUTOR_CANCEL_TASK_URL}` with
+    /// `{"task_id": task_id}`. The source logs an HTTP error (status plus the
+    /// first 1000 characters of the body) or a transport error and never
+    /// propagates it, so a failure cannot change the cancel response.
+    pub async fn cancel_task(&self, task_id: i64) {
+        let endpoint = match self
+            .client
+            .endpoint_named(self.cancel_url.clone(), self.cancel_url.clone())
+        {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                tracing::error!(%task_id, %error, "executor cancel endpoint unavailable");
+                return;
+            }
+        };
+        let response = match endpoint
+            .post()
+            .json(&ExecutorCancelRequest { task_id })
+            .timeout(CANCEL_TASK_TIMEOUT)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::error!(
+                    %task_id,
+                    %error,
+                    "error calling executor_manager to cancel task"
+                );
+                return;
+            }
+        };
+        let status = response.status().as_u16();
+        if (200..300).contains(&status) {
+            return;
+        }
+        let body = response.text().await.unwrap_or_default();
+        let preview: String = body.chars().take(1000).collect();
+        tracing::error!(
+            %task_id,
+            status,
+            body = %preview,
+            "executor_manager rejected the task cancel"
+        );
+    }
+
     /// `executor_kinds_service.delete_executor_task_sync`: a synchronous POST
     /// to `EXECUTOR_DELETE_TASK_URL`. A failure is reported to the caller,
     /// which logs and continues.
@@ -194,7 +276,7 @@ impl ExecutorManager {
             .client
             .endpoint_named(
                 format!("{}/executor-manager/executor/delete", self.base),
-                "http://executor-manager/executor-manager/executor/delete",
+                format!("{}/executor-manager/executor/delete", self.base),
             )
             .map_err(anyhow::Error::from)?;
         let body = ExecutorDeleteRequest {
@@ -232,7 +314,7 @@ impl ExecutorManager {
             .client
             .endpoint_named(
                 format!("{}/executor-manager/executor/restore", self.base),
-                "http://executor-manager/executor-manager/executor/restore",
+                format!("{}/executor-manager/executor/restore", self.base),
             )
             .ok()?;
         let body = ExecutorRestoreRequest {
@@ -253,5 +335,24 @@ impl ExecutorManager {
             return None;
         }
         response.json::<serde_json::Value>().await.ok()
+    }
+}
+
+/// Groups sandbox requests by configured service address rather than task ID.
+pub(crate) fn sandbox_metric_name(base: &str) -> String {
+    format!(
+        "{}/executor-manager/sandboxes/:task_id",
+        base.trim_end_matches('/')
+    )
+}
+
+#[cfg(test)]
+mod metric_name_tests {
+    #[test]
+    fn sandbox_metric_preserves_service_address_and_templates_id() {
+        assert_eq!(
+            super::sandbox_metric_name("https://manager.example:8443/prefix/"),
+            "https://manager.example:8443/prefix/executor-manager/sandboxes/:task_id"
+        );
     }
 }

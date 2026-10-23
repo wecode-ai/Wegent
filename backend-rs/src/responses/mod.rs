@@ -27,4 +27,4 @@ mod delete;
 mod generation_output;
 mod handler;
 mod shell_output;
-mod stream_state;
+pub(crate) mod stream_state;

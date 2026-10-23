@@ -1333,3 +1333,24 @@ def test_mounted_decorator_tool_servers_expose_request_context():
     assert mounted - MCP_CONTEXT_SERVER_NAMES == {_SYSTEM_MCP_SPEC.name}
     assert "wiki" not in mounted
     assert "wiki" not in MCP_CONTEXT_SERVER_NAMES
+
+
+@pytest.mark.parametrize(
+    ("spec_name", "expected_methods"),
+    [
+        ("subscription", {"DELETE", "OPTIONS"}),
+        ("interactive_form_question", {"GET", "HEAD", "DELETE", "OPTIONS"}),
+        ("system", {"GET", "HEAD", "POST", "DELETE", "OPTIONS"}),
+    ],
+)
+def test_migrated_mcp_methods_leave_other_python_routes_registered(
+    spec_name, expected_methods
+):
+    spec = next(spec for spec in MCP_APP_SPECS if spec.name == spec_name)
+    app = _build_mcp_app(spec)
+    transport = next(route for route in app.routes if route.path == spec.transport_path)
+
+    assert transport.methods == expected_methods
+    assert any(
+        route.path == "/health" and "GET" in route.methods for route in app.routes
+    )

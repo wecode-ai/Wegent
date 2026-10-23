@@ -15,13 +15,15 @@
 //! that subsystem; the wrapped emitter's `chat:done` and `task:status` frames
 //! are emitted from here, in the source's order.
 mod channel;
-mod completion;
-mod emitter;
-mod event;
-mod parser;
+pub(crate) mod completion;
+pub(crate) mod emitter;
+pub(crate) mod event;
+pub(crate) mod parser;
 pub(crate) mod py_json;
-mod session;
+pub(crate) mod session;
 mod socketio;
+
+pub(crate) use session::is_cancelled;
 
 #[cfg(test)]
 mod tests;
@@ -100,7 +102,8 @@ async fn handle_callback(
 
     let terminal_status = completion::terminal_status(&event.event_type);
 
-    let mut emitter = StatusUpdatingEmitter::new(redis, request.task_id, request.subtask_id);
+    let mut emitter =
+        StatusUpdatingEmitter::new(redis.to_owned(), request.task_id, request.subtask_id);
     if terminal_status.is_none()
         && let Err(error) = emitter.emit(&mut event).await
     {
@@ -113,6 +116,7 @@ async fn handle_callback(
             mysql: &state.mysql,
             redis,
             tables: tables(state),
+            executor_manager: &state.executor_manager,
         };
         let (final_result, user_id) = completion::complete_terminal(
             &ctx,
@@ -146,7 +150,7 @@ async fn handle_callback(
 }
 
 /// The deployment's task/subtask table templates.
-fn tables(state: &AppState) -> completion::Tables {
+pub(crate) fn tables(state: &AppState) -> completion::Tables {
     let templates = state.task_store.table_templates();
     completion::Tables {
         tasks: templates.tasks,

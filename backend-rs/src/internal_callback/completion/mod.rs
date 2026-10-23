@@ -31,6 +31,9 @@ use brz_mysql::Mysql;
 use brz_redis::Redis;
 use serde_json::Value;
 
+use crate::executor_manager::ExecutorManager;
+
+pub(crate) use persist::mark_subtask_running;
 pub(crate) use sql::Tables;
 
 /// The deployment inputs one completion flow renders.
@@ -38,6 +41,9 @@ pub(crate) struct Completion<'a, M: Mysql, R: Redis> {
     pub(crate) mysql: &'a M,
     pub(crate) redis: &'a R,
     pub(crate) tables: Tables,
+    /// The retained executor-manager client the subscription handler's
+    /// auto-delete cleanup calls.
+    pub(crate) executor_manager: &'a ExecutorManager,
 }
 
 /// One `TaskCompletedEvent` (`app/core/events.py`).
@@ -115,6 +121,69 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
     // frame can address `user:{id}`. The source reads it before the emit step;
     // that step is Redis-only here, so the read keeps its wire position.
     let user_id = task_status_user_id(ctx.mysql, ctx.tables, task_id).await;
+    let final_result = finish_terminal(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        result,
+        error,
+        error_code,
+        executor_name,
+        executor_namespace,
+    )
+    .await;
+
+    (final_result, user_id)
+}
+
+/// `StatusUpdatingEmitter`'s terminal branch without the callback's owner
+/// pre-read.
+///
+/// The create flow's synchronous dispatch wraps an `SSEResultEmitter` (no
+/// Socket.IO `task:status` frame), so the source never runs
+/// `callback.py:_get_task_status_user_id` there; only the
+/// `_publish_task_completed_event` owner read (`is_active_query()`) happens,
+/// inside [`finish_terminal`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete_terminal_event<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+    error_code: Option<&str>,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+) -> Option<Value> {
+    finish_terminal(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        result,
+        error,
+        error_code,
+        executor_name,
+        executor_namespace,
+    )
+    .await
+}
+
+/// The shared terminal steps: collect, persist, publish `TaskCompletedEvent`.
+#[allow(clippy::too_many_arguments)]
+async fn finish_terminal<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+    error_code: Option<&str>,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+) -> Option<Value> {
     let final_result =
         collect::collect_completed_result(ctx, subtask_id, status, result, error, error_code).await;
 
@@ -132,5 +201,5 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
 
     events::publish_task_completed(ctx, task_id, status).await;
 
-    (final_result, user_id)
+    final_result
 }

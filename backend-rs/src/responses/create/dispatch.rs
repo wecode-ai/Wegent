@@ -20,6 +20,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// `AsyncOpenAI(api_key="dummy")`'s bearer header
+/// (`chat_shell_client.py:44`, `dispatcher.py:675`): the SDK sends a fixed
+/// placeholder credential, which the recorded dependency request carries.
+pub(crate) const OPENAI_DUMMY_AUTHORIZATION: &str = "Bearer dummy";
+
+/// The OpenAI client's `Accept` header for the JSON/SSE create requests.
+pub(crate) const OPENAI_ACCEPT: &str = "application/json";
+
 /// The `/v1/responses` request body. Keys serialize in this order, matching the
 /// recorded body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +38,10 @@ pub struct DispatchPayload {
     pub instructions: String,
     #[serde(default)]
     pub tools: Vec<Value>,
-    pub background: bool,
+    /// The executor-manager dispatch sends `background: true`; the chat-shell
+    /// SSE dispatch does not include the key at all, so it stays absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<bool>,
     pub metadata: Map<String, Value>,
     pub model_config: Map<String, Value>,
 }
@@ -45,7 +56,7 @@ impl DispatchPayload {
             input: String::new(),
             instructions: String::new(),
             tools: Vec::new(),
-            background: false,
+            background: None,
             metadata: Map::new(),
             model_config: Map::new(),
         }
@@ -68,6 +79,7 @@ pub const METADATA_KEY_ORDER: &[&str] = &[
     "team_id",
     "team_name",
     "team_namespace",
+    "team_owner",
     "bot",
     "bot_name",
     "bot_namespace",
@@ -112,6 +124,7 @@ pub const METADATA_KEY_ORDER: &[&str] = &[
     "skip_git_clone",
     "fork_runtime",
     "inherited_sessions",
+    "legacy_session_bindings",
     "executor_image",
     "executor_type",
     "type",
@@ -165,6 +178,8 @@ pub struct ExecutionRequest {
     pub team_id: i64,
     pub team_name: String,
     pub team_namespace: Option<String>,
+    /// `ExecutionRequest.team_owner` (`default_factory=dict`).
+    pub team_owner: Value,
     pub subtask_title: Option<String>,
     pub task_title: Option<String>,
     pub user: Value,
@@ -213,6 +228,8 @@ pub struct ExecutionRequest {
     pub skip_git_clone: Option<bool>,
     pub fork_runtime: Option<Value>,
     pub inherited_sessions: Vec<Value>,
+    /// `ExecutionRequest.legacy_session_bindings` (`default_factory=list`).
+    pub legacy_session_bindings: Vec<Value>,
     pub executor_image: Option<String>,
     pub executor_type: Option<String>,
     pub r#type: Option<String>,
@@ -245,6 +262,7 @@ impl Default for ExecutionRequest {
             team_id: 0,
             team_name: String::new(),
             team_namespace: None,
+            team_owner: Value::Object(Map::new()),
             subtask_title: None,
             task_title: None,
             user: Value::Object(Map::new()),
@@ -293,6 +311,7 @@ impl Default for ExecutionRequest {
             skip_git_clone: None,
             fork_runtime: None,
             inherited_sessions: Vec::new(),
+            legacy_session_bindings: Vec::new(),
             executor_image: None,
             executor_type: None,
             r#type: None,
@@ -360,6 +379,7 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
         "team_namespace".into(),
         serde_json::json!(request.team_namespace),
     );
+    metadata.insert("team_owner".into(), request.team_owner.clone());
     metadata.insert("bot".into(), request.bot.clone());
     metadata.insert("bot_name".into(), serde_json::json!(request.bot_name));
     metadata.insert(
@@ -503,6 +523,10 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
         serde_json::json!(request.inherited_sessions),
     );
     metadata.insert(
+        "legacy_session_bindings".into(),
+        serde_json::json!(request.legacy_session_bindings),
+    );
+    metadata.insert(
         "executor_image".into(),
         serde_json::json!(request.executor_image),
     );
@@ -561,7 +585,9 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
         input: prompt_text,
         instructions: request.system_prompt.clone(),
         tools,
-        background,
+        // Only the executor-manager dispatch carries `background=true`; the
+        // chat-shell body has no such key.
+        background: background.then_some(true),
         metadata,
         model_config: match &request.model_config {
             Value::Object(map) => map.clone(),
@@ -624,7 +650,7 @@ mod tests {
             input: "prompt".to_string(),
             instructions: "system".to_string(),
             tools: vec![json!({"type": "mcp"})],
-            background: true,
+            background: Some(true),
             metadata: Map::new(),
             model_config: Map::new(),
         };
@@ -647,6 +673,48 @@ mod tests {
     }
 
     #[test]
+    fn chat_shell_envelope_omits_background_and_keeps_recorded_metadata() {
+        // Recorded chat-shell body keys: model, stream, input, instructions,
+        // tools, metadata, model_config — no `background` (the executor
+        // dispatch is the only caller that sends it).
+        let request = ExecutionRequest {
+            model_config: json!({"model_id": "qwen3.7-flash"}),
+            ..ExecutionRequest::default()
+        };
+        let payload = assemble(&request, true, false);
+        assert_eq!(payload.background, None);
+        let value = serde_json::to_value(&payload).expect("serialize");
+        let keys: Vec<&str> = value
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "model",
+                "stream",
+                "input",
+                "instructions",
+                "tools",
+                "metadata",
+                "model_config",
+            ]
+        );
+        // `ExecutionRequest.team_owner` / `legacy_session_bindings` defaults.
+        assert_eq!(value["metadata"]["team_owner"], json!({}));
+        assert_eq!(value["metadata"]["legacy_session_bindings"], json!([]));
+        let metadata_keys: Vec<&str> = value["metadata"]
+            .as_object()
+            .expect("metadata")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(metadata_keys, METADATA_KEY_ORDER);
+    }
+
+    #[test]
     fn assemble_orders_metadata_after_the_recorded_keys() {
         let request = ExecutionRequest {
             model_config: json!({"model_id": "qwen3.7-plus"}),
@@ -658,7 +726,7 @@ mod tests {
         let payload = assemble(&request, false, true);
         assert_eq!(payload.model, "qwen3.7-plus");
         assert!(!payload.stream);
-        assert!(payload.background);
+        assert_eq!(payload.background, Some(true));
         assert_eq!(payload.input, "prompt");
         assert_eq!(payload.instructions, "system");
         let keys: Vec<&str> = payload.metadata.keys().map(String::as_str).collect();
@@ -690,9 +758,10 @@ mod tests {
 
     #[test]
     fn recorded_key_orders_are_documented() {
-        assert_eq!(METADATA_KEY_ORDER.len(), 70);
+        // The recorded chat-shell body carries 72 metadata keys.
+        assert_eq!(METADATA_KEY_ORDER.len(), 72);
         assert_eq!(METADATA_KEY_ORDER[0], "task_id");
-        assert_eq!(METADATA_KEY_ORDER[69], "collaboration_model");
+        assert_eq!(METADATA_KEY_ORDER[71], "collaboration_model");
         assert_eq!(MODEL_CONFIG_KEY_ORDER.len(), 17);
         assert_eq!(MODEL_CONFIG_KEY_ORDER[0], "api_key");
         assert_eq!(MODEL_CONFIG_KEY_ORDER[16], "reasoning");

@@ -442,15 +442,24 @@ fn image_metadata(binary_data: &[u8], extension: &str) -> Option<ParseResult> {
             (format, width, height, mode, has_exif, base64)
         }
         ".jpg" | ".jpeg" => {
-            let image = model_jpeg::prepare(binary_data)?;
-            (
-                image.format.to_owned(),
-                image.width,
-                image.height,
-                image.mode.to_owned(),
-                image.has_exif,
-                image.image_base64,
-            )
+            if let Some(image) = model_jpeg::prepare(binary_data) {
+                (
+                    image.format.to_owned(),
+                    image.width,
+                    image.height,
+                    image.mode.to_owned(),
+                    image.has_exif,
+                    image.image_base64,
+                )
+            } else {
+                // `Image.open` detects the content format from the bytes, not
+                // the filename: a PNG upload named `.jpg` is decoded as PNG
+                // while the extension's MIME keeps JPEG as the output format.
+                let (format, width, height, mode, has_exif) = png_metadata(binary_data)?;
+                let (base64, prepared_size) = model_jpeg::prepare_png_as_jpeg(binary_data);
+                let (width, height) = prepared_size.unwrap_or((width, height));
+                (format, width, height, mode, has_exif, base64)
+            }
         }
         _ => return None,
     };
