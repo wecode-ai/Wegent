@@ -1,0 +1,143 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+import pytest
+
+from app.services.subscription.notification_directives import (
+    append_group_notification_instruction,
+    parse_notification_directives,
+    strip_notification_directives,
+)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Nothing changed today.", "Nothing changed today."),
+        ("Nothing changed today.\n\n", "Nothing changed today."),
+        (
+            "Today's report is attached.\n\n[静默]",
+            "Today's report is attached.",
+        ),
+        ("No changes today. 【静默】", "No changes today."),
+        ("No changes today. [silent]", "No changes today."),
+        ("No changes today. 【silent】", "No changes today."),
+        (
+            "Please review the alert.\n\n[@列表:41068,220750]",
+            "Please review the alert.",
+        ),
+        (
+            "Please review the alert.\n\n【@列表:41068,220750】",
+            "Please review the alert.",
+        ),
+        (
+            "Please review the alert.\n\n[mention: 41068, 220750]",
+            "Please review the alert.",
+        ),
+        (
+            "Please review the alert.\n\n【mention:41068,220750】",
+            "Please review the alert.",
+        ),
+        (
+            "Please review the alert.\n\n[静默] [@列表:41068]",
+            "Please review the alert.",
+        ),
+    ],
+)
+def test_parse_notification_directives_strips_trailing_controls(
+    message: str, expected: str
+) -> None:
+    directives = parse_notification_directives(message)
+
+    assert directives.content == expected
+
+
+def test_parse_notification_directives_extracts_silent_and_mentions() -> None:
+    directives = parse_notification_directives(
+        "Alert needs attention.\n\n[静默] [@列表:41068, 220750, 41068]"
+    )
+
+    assert directives.silent is True
+    assert directives.mention_staff_ids == ("41068", "220750")
+    assert directives.content == "Alert needs attention."
+
+
+def test_parse_notification_directives_keeps_body_mentions() -> None:
+    message = "Please ask @41068 to review.\nThis is still the body."
+
+    directives = parse_notification_directives(message)
+
+    assert directives.content == message
+    assert directives.silent is False
+    assert directives.mention_staff_ids == ()
+
+
+def test_parse_notification_directives_normalizes_mention_display_names() -> None:
+    directives = parse_notification_directives(
+        "Alert needs attention.\n\n[@列表:41068：张三,220750:李四]"
+    )
+
+    assert directives.mention_staff_ids == ("41068:张三", "220750:李四")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Nothing changed today.\n静默",
+        "Nothing changed today. (静默)",
+        "Please ask @41068 to review.",
+        "Please ask @41068 @220750",
+    ],
+)
+def test_parse_notification_directives_requires_bracketed_controls(
+    message: str,
+) -> None:
+    directives = parse_notification_directives(message)
+
+    assert directives.content == message
+    assert directives.silent is False
+    assert directives.mention_staff_ids == ()
+
+
+def test_parse_notification_directives_ignores_controls_inside_body() -> None:
+    message = "The previous run printed [静默] in its output."
+
+    assert strip_notification_directives(message) == message
+
+
+def test_append_group_notification_instruction_requires_bound_group() -> None:
+    prompt = "Check the service."
+
+    assert append_group_notification_instruction(prompt, {}) == prompt
+    assert (
+        append_group_notification_instruction(
+            prompt,
+            {
+                "_internal": {
+                    "notification_channel_bindings": {
+                        "1": {"bind_group": True, "group_conversation_id": ""}
+                    }
+                }
+            },
+        )
+        == prompt
+    )
+
+    appended = append_group_notification_instruction(
+        prompt,
+        {
+            "_internal": {
+                "notification_channel_bindings": {
+                    "1": {
+                        "bind_group": True,
+                        "group_conversation_id": "conversation-1",
+                    }
+                }
+            }
+        },
+    )
+
+    assert appended.startswith("Check the service.")
+    assert "[静默]" in appended
+    assert "[@列表:staffId1,staffId2]" in appended

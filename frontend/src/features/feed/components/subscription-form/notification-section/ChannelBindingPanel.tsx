@@ -191,6 +191,17 @@ export function ChannelBindingPanel({
                       '开启后，通知会发送到当前已绑定的群聊会话'
                     )}
               </p>
+              {groupBound && (
+                <p
+                  className="text-xs text-text-muted"
+                  data-testid={`group-directive-hint-${channelId}`}
+                >
+                  {t(
+                    'notification_settings.group_directive_hint',
+                    'AI 可在消息末尾输出 [静默] 跳过本次群通知，或输出 [@列表:staffId] / [mention:staffId] 指定本次 @ 的用户；标记会在发送前清理'
+                  )}
+                </p>
+              )}
             </div>
             <Switch
               id={`enable-group-${channelId}`}

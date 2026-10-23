@@ -92,6 +92,15 @@ You can override the agent's default model:
 | **Timeout** | Maximum time for AI to complete task | 10 minutes |
 | **Preserve History** | AI can see previous execution records | Off |
 
+#### On-demand group silence and mentions
+
+After a subscription is bound to a group chat, the AI can control that run's group notification. The system appends the control instructions to the execution Prompt. The AI ends its answer with one of these lines:
+
+- `[silent]`: send the private notification normally, but skip the bound group chat.
+- `[@列表:41068,220750]` or `[mention:41068,220750]`: mention these DingTalk staffIds in the group chat for this run, overriding the default mentioned users from notification settings. `【】` may replace the square brackets.
+
+Both markers may be present; silence takes precedence. The markers control routing only and are removed from group messages, webhook payloads and execution history before use.
+
 #### Visibility Settings
 
 | Visibility | Description |
