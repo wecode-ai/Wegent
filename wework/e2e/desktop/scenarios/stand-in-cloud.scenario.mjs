@@ -243,7 +243,7 @@ export function createDesktopScenario({
           `[data-testid="stand-in-agent"] option[value=${JSON.stringify(agentValue)}]`
         )
         await control.command('select', '[data-testid="stand-in-agent"]', { value: agentValue })
-        await control.command('click', '[data-testid="stand-in-requirements-open"]')
+        await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -271,7 +271,7 @@ export function createDesktopScenario({
           REMOTE_DOCKER_DEVICE_ID
         )
         await control.command('click', '[data-testid="stand-in-close"]')
-        await control.command('waitFor', '[data-testid="stand-in-dialog"]', { visible: false })
+        await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
 
         const onlineDevices = await request('/devices/online')
         const desktop = onlineDevices.items.find(device =>

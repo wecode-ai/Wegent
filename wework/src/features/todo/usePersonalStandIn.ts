@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { dequal } from 'dequal'
 import type {
   PersonalStandInAgent,
   PersonalStandInSettings,
@@ -9,7 +10,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 export function usePersonalStandIn(
   services: WorkbenchServices,
   userId: number,
-  initialDeviceId?: string
+  initialDeviceId?: string,
+  loadAgents = true
 ) {
   const [saved, setSaved] = useState<PersonalStandInSettings | null>(null)
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
@@ -17,10 +19,12 @@ export function usePersonalStandIn(
   const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
   const [agents, setAgents] = useState<PersonalStandInAgent[]>([])
   const [agentError, setAgentError] = useState<string | null>(null)
+  const [agentReload, setAgentReload] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reload, setReload] = useState(0)
+  const loaded = useRef<{ key: string; settings: PersonalStandInSettings } | null>(null)
 
   useEffect(() => {
     let active = true
@@ -30,9 +34,14 @@ export function usePersonalStandIn(
       const target = deviceId || identity.deviceId
       const settings = await services.standInApi!.personalGet(userId, target)
       if (!active) return
+      const key = JSON.stringify([userId, target, reload])
+      const previous = loaded.current
+      loaded.current = { key, settings }
       setCurrentDeviceId(identity.deviceId)
       setSaved(settings)
-      setDraft(settings)
+      setDraft(current =>
+        previous?.key === key && current && !dequal(current, previous.settings) ? current : settings
+      )
       setError(null)
     })()
       .catch(cause => {
@@ -47,6 +56,7 @@ export function usePersonalStandIn(
   }, [services, userId, deviceId, reload])
 
   useEffect(() => {
+    if (!loadAgents) return
     let active = true
     void (async () => {
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
@@ -65,7 +75,7 @@ export function usePersonalStandIn(
     return () => {
       active = false
     }
-  }, [services, userId, deviceId])
+  }, [services, userId, deviceId, agentReload, loadAgents])
 
   const updateRole = useCallback((id: string, update: (role: StandInRole) => StandInRole) => {
     setDraft(
@@ -83,6 +93,7 @@ export function usePersonalStandIn(
     setError(null)
     try {
       const result = await services.standInApi!.personalSave(userId, value)
+      if (loaded.current) loaded.current = { ...loaded.current, settings: result }
       setSaved(result)
       setDraft(result)
       return result
@@ -98,8 +109,9 @@ export function usePersonalStandIn(
     draft,
     setDraft,
     updateRole,
-    agents,
-    agentError,
+    agents: loadAgents ? agents : [],
+    agentError: loadAgents ? agentError : null,
+    reloadAgents: () => setAgentReload(value => value + 1),
     error,
     setError,
     loading,

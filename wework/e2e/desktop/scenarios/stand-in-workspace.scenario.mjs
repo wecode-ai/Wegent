@@ -97,7 +97,7 @@ export function createDesktopScenario({
       await captureScreenshot(
         control,
         'stand-in-workspace-execution-settings.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
@@ -128,7 +128,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', selector(`model-option-${modelKey}`))
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-agent"]')
-      await control.command('click', '[data-testid="stand-in-requirements-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command(
         'click',
@@ -151,13 +151,16 @@ export function createDesktopScenario({
       assert.equal(saved.model.model_id, model.model_id)
 
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('waitFor', '[data-testid="stand-in-overview"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('click', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
       await control.command('waitFor', '[data-testid="project-work-button"]', {
         text: SOURCE,
       })
       await control.command('click', '[data-testid="stand-in-back"]')
-      await control.command('click', '[data-testid="stand-in-requirements-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       // Goal persistence is asserted above; ordinary completion uses one model response.
       await control.command('click', '[data-testid="cancel-goal-draft-button"]')
@@ -171,7 +174,9 @@ export function createDesktopScenario({
       )
       assert.equal(beforeDisableSave.enabled, true, 'Disabling must also wait for explicit save')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-saved"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview-status"]', {
+        text: '未开启',
+      })
       saved = await requestExecutor(
         control,
         'runtime.stand_in.get',
@@ -262,6 +267,7 @@ export function createDesktopScenario({
         await control.command('waitFor', `${CONTENT} [data-testid="plugins-page-content"]`)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('waitFor', `${CONTENT} [data-testid="collaboration-primary-home"]`)
+        await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         assert.equal(
           (await control.command('getValue', '[data-testid="stand-in-prompt"]')).trim(),
           `${MARKER}_UNSAVED`

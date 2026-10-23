@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { useContext, useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { ArrowLeft, Bot, ChevronRight, Folder, Plus, X } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
@@ -19,12 +19,14 @@ import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStandInProjectAgents, projectAgentChoiceValue } from './useStandInProjectAgents'
 import { usePersonalStandIn } from './usePersonalStandIn'
+import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInConnections } from './StandInConnections'
 import { StandInRoleScheduling } from './StandInRoleScheduling'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 
-type View = 'main' | 'connections' | 'scheduling' | 'advanced' | 'create'
+type View = 'project' | 'main' | 'connections' | 'scheduling' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
   requestClose(): void
 }
@@ -41,6 +43,7 @@ export function StandInSettingsPage({
   onCancel,
   onSaved,
   onSavingChange,
+  onOpenPersonalSettings,
   ref,
 }: {
   api: SharedWorkspaceApi
@@ -54,15 +57,20 @@ export function StandInSettingsPage({
   onCancel?(): void
   onSaved?(settings: WorkspaceStandInSettings): void
   onSavingChange?(saving: boolean): void
+  onOpenPersonalSettings?(roleId: string, deviceId: string): void
   ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
-  const state = usePersonalStandIn(services, userId, initialDeviceId)
+  const cloudConnection = useContext(CloudConnectionContext)
+  const canLoadPersonalAgents = cloudConnection?.isConnected ?? true
+  const state = usePersonalStandIn(services, userId, initialDeviceId, canLoadPersonalAgents)
   const { draft, saved, setDraft, updateRole, loading, saving, setError } = state
   const executionDeviceId = draft?.executionDeviceId
   const [selectedId, setSelectedId] = useState(initialProfileId ?? '')
-  const [view, setView] = useState<View>(initialProject ? 'connections' : 'main')
-  const [beforeView, setBeforeView] = useState<PersonalStandInSettings | null>(null)
+  const [view, setView] = useState<View>(initialProject ? 'project' : 'main')
+  const [history, setHistory] = useState<{ view: View; draft: PersonalStandInSettings | null }[]>(
+    []
+  )
   const [notice, setNotice] = useState(false)
   const [roleNameError, setRoleNameError] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
@@ -71,8 +79,21 @@ export function StandInSettingsPage({
     agent: WorkspaceProjectAgent
   } | null>(null)
   const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
+  const projectRef = initialProject && {
+    id: initialProject.id,
+    store: initialProject.project_store === 'local' ? ('local' as const) : ('cloud' as const),
+  }
+  const connectedRole = projectRef && draft?.roles.find(row => roleIncludesProject(row, projectRef))
+  const firstProjectRole =
+    projectRef &&
+    draft?.roles.find(
+      row =>
+        !row.agentProject ||
+        (row.agentProject.id === projectRef.id && row.agentProject.store === projectRef.store)
+    )
+  const projectRoleId = selectedId || connectedRole?.id || firstProjectRole?.id || ''
   const role =
-    draft?.roles.find(role => role.id === selectedId) ??
+    draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
     (initialProject &&
       draft?.roles.find(role =>
         roleIncludesProject(role, {
@@ -130,7 +151,7 @@ export function StandInSettingsPage({
 
   const openView = (next: View) => {
     setRoleNameError(false)
-    setBeforeView(draft)
+    setHistory(current => [...current, { view, draft }])
     setView(next)
     setNotice(false)
   }
@@ -141,11 +162,13 @@ export function StandInSettingsPage({
   const close = () => {
     if (saving) return
     setRoleNameError(false)
-    if (view !== 'main') {
-      const previous = beforeView ?? saved
+    if (view !== (initialProject ? 'project' : 'main')) {
+      const entry = history.at(-1)
+      const previous = entry?.draft ?? saved
       if (previous) setDraft(previous)
       setSelectedId(previous?.roles.some(row => row.id === selectedId) ? selectedId : '')
-      setView('main')
+      setHistory(current => current.slice(0, -1))
+      setView(entry?.view ?? (initialProject ? 'project' : 'main'))
     } else if (dirty) setConfirmDiscard(true)
     else onCancel?.()
   }
@@ -162,16 +185,59 @@ export function StandInSettingsPage({
       return
     }
     setRoleNameError(false)
-    const result = await state.save()
+    if (initialProject && view === 'advanced') {
+      setView(history.at(-1)?.view ?? 'project')
+      setHistory(current => current.slice(0, -1))
+      return
+    }
+    if (view === 'project' && !projectRoleId) return
+    const value =
+      projectRef && (view === 'project' || view === 'create' || view === 'main')
+        ? {
+            ...draft,
+            roles: draft.roles.map(row =>
+              row.id !== role.id
+                ? row
+                : {
+                    ...row,
+                    collaboration: {
+                      ...row.collaboration,
+                      enabled: true,
+                      allProjects: row.collaboration.enabled && row.collaboration.allProjects,
+                      projects: row.collaboration.projects.some(
+                        item => item.id === projectRef.id && item.store === projectRef.store
+                      )
+                        ? row.collaboration.projects
+                        : [...row.collaboration.projects, projectRef],
+                      excludedProjects: row.collaboration.excludedProjects.filter(
+                        item => item.id !== projectRef.id || item.store !== projectRef.store
+                      ),
+                    },
+                  }
+            ),
+          }
+        : draft
+    const result = await state.save(value)
     if (!result) return
-    setBeforeView(result)
+    setHistory([])
     setNotice(true)
-    if (view !== 'main') setView('main')
+    if (initialProject && ['project', 'main', 'create'].includes(view))
+      onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
+    else if (view !== 'main') setView('main')
     else onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
   }
   const createRole = () => {
     if (!draft) return
     const added = newStandInRole(draft.executionDeviceId)
+    if (projectRef && initialProject) {
+      added.name = t('standIn.personal.project_role_name', { project: initialProject.name })
+      added.collaboration = {
+        ...added.collaboration,
+        enabled: true,
+        allProjects: false,
+        projects: [projectRef],
+      }
+    }
     setRoleNameError(false)
     const roles = draft.roles.map((row, index) =>
       row.name
@@ -181,7 +247,7 @@ export function StandInSettingsPage({
             name: standInRoleName(row, index, projects, t('standIn.personal.default_role')),
           }
     )
-    setBeforeView(draft)
+    setHistory(current => [...current, { view, draft }])
     setDraft({ ...draft, roles: [...roles, added] })
     setSelectedId(added.id)
     setView('create')
@@ -191,7 +257,16 @@ export function StandInSettingsPage({
     project =>
       project.project_store !== 'local' || draft?.executionDeviceId === state.currentDeviceId
   )
-  const projectCatalog = useStandInProjectAgents(api, availableProjects)
+  const projectCatalog = useStandInProjectAgents(
+    api,
+    initialProject
+      ? availableProjects.filter(
+          project =>
+            project.id === initialProject.id &&
+            project.project_store === initialProject.project_store
+        )
+      : availableProjects
+  )
   const selectedProjectValue =
     role?.agentId && role.agentProject
       ? projectAgentChoiceValue({ id: role.agentId, project: role.agentProject })
@@ -206,9 +281,15 @@ export function StandInSettingsPage({
     : []
   const selectedAgentMissing =
     role?.agentResourceId && !state.agents.some(agent => agent.id === role.agentResourceId)
-  const title = view === 'main' ? 'title' : `personal.${view}_title`
+  const title = view === 'main' ? 'personal.settings_title' : `personal.${view}_title`
   const agentField = role && (
-    <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
+    <div
+      className={
+        initialProject && view === 'create'
+          ? 'space-y-2'
+          : 'grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1'
+      }
+    >
       <label htmlFor="stand-in-agent" className="flex min-h-8 items-center text-text-secondary">
         {t('standIn.personal.execution_agent')}
       </label>
@@ -282,31 +363,35 @@ export function StandInSettingsPage({
             })}
           </p>
         )}
-        {state.agentError && (
+        {canLoadPersonalAgents && state.agentError && (
           <p className="mt-1 text-xs text-text-muted" role="status">
             {t('standIn.personal.catalog_unavailable')}
+            <button
+              type="button"
+              data-testid="stand-in-agents-retry"
+              disabled={saving}
+              onClick={state.reloadAgents}
+              className="ml-2 underline"
+            >
+              {t('standIn.reload')}
+            </button>
           </p>
         )}
-        <StandInRequirements
-          key={role.id}
-          role={role}
-          services={services}
-          onChange={update => updateRole(role.id, update)}
-          disabled={saving}
-          onSave={() => void save()}
-        />
       </div>
     </div>
   )
 
   return (
     <section
-      className="h-full min-h-0 overflow-y-auto text-sm text-text-primary"
+      className={`min-h-0 overflow-y-auto text-base text-text-primary ${initialProject ? '' : 'h-full bg-muted/30 p-5'}`}
       data-testid="stand-in-page"
     >
-      <div className="mx-auto w-full max-w-2xl" data-testid="stand-in-settings">
+      <div
+        className={`mx-auto w-full max-w-xl ${initialProject ? '' : 'rounded-2xl border border-border bg-background shadow-sm'}`}
+        data-testid="stand-in-settings"
+      >
         <header className="flex items-start gap-3 px-5 pb-5 pt-5">
-          {view !== 'main' && (
+          {view !== (initialProject ? 'project' : 'main') && (
             <button
               type="button"
               onClick={close}
@@ -319,28 +404,35 @@ export function StandInSettingsPage({
             </button>
           )}
           <div className="min-w-0 flex-1">
-            <h1 className="heading-sm">{t(`standIn.${title}`)}</h1>
+            <h1 className="heading-sm">
+              {initialProject && (view === 'project' || view === 'create')
+                ? t('standIn.personal.project_title', { project: initialProject.name })
+                : t(`standIn.${title}`)}
+            </h1>
             <p className="mt-1 text-sm text-text-muted">
               {t(
-                view === 'main'
-                  ? 'standIn.personal.description'
-                  : view === 'connections'
-                    ? 'standIn.personal.connections_help'
-                    : view === 'scheduling'
-                      ? 'standIn.personal.scheduling_help'
-                      : view === 'create'
-                        ? 'standIn.personal.create_help'
-                        : 'standIn.personal.advanced_help'
+                initialProject && (view === 'project' || view === 'create')
+                  ? 'standIn.personal.project_description'
+                  : view === 'main'
+                    ? 'standIn.personal.description'
+                    : view === 'connections'
+                      ? 'standIn.personal.connections_help'
+                      : view === 'scheduling'
+                        ? 'standIn.personal.scheduling_help'
+                        : view === 'create'
+                          ? 'standIn.personal.create_help'
+                          : 'standIn.personal.advanced_help',
+                { project: initialProject?.name }
               )}
             </p>
           </div>
-          {view === 'main' && (
+          {view === 'main' && !initialProject && (
             <button
               type="button"
               data-testid="stand-in-list-configure"
               disabled={saving || loading}
               onClick={createRole}
-              className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-40 md:min-h-8"
+              className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted disabled:opacity-40"
             >
               <Plus className="h-4 w-4" />
               {t('standIn.personal.add_role')}
@@ -389,7 +481,7 @@ export function StandInSettingsPage({
         ) : draft && role ? (
           <>
             <div className="space-y-5 px-5 pb-5">
-              {multiple && view !== 'create' && view !== 'scheduling' && (
+              {multiple && view === 'main' && !initialProject && (
                 <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
                   <span className="text-text-secondary">{t('standIn.personal.current_role')}</span>
                   <select
@@ -407,9 +499,51 @@ export function StandInSettingsPage({
                   </select>
                 </label>
               )}
+              {initialProject && (view === 'project' || view === 'create') && (
+                <StandInProjectSetup
+                  project={initialProject}
+                  projects={projects}
+                  roles={draft.roles.filter(row => view !== 'create' || row.id !== role.id)}
+                  projectRoleId={projectRoleId}
+                  role={role}
+                  agents={state.agents}
+                  projectAgents={projectCatalog.choices}
+                  onOpenSettings={
+                    onOpenPersonalSettings
+                      ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
+                      : undefined
+                  }
+                  saving={saving}
+                  creating={view === 'create'}
+                  onChoose={value => {
+                    if (value === '__new') createRole()
+                    else {
+                      if (view === 'create') {
+                        const previous = history.at(-1)?.draft
+                        if (previous) setDraft(previous)
+                        setHistory(current => current.slice(0, -1))
+                      }
+                      setSelectedId(value)
+                      setView('project')
+                    }
+                  }}
+                />
+              )}
               {view === 'create' && (
-                <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
-                  <span className="text-text-secondary">{t('standIn.personal.role_name')}</span>
+                <label
+                  className={
+                    initialProject
+                      ? 'flex flex-col gap-2'
+                      : 'grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3'
+                  }
+                >
+                  <span className="text-text-secondary">
+                    {t(
+                      initialProject
+                        ? 'standIn.personal.stand_in_name'
+                        : 'standIn.personal.role_name'
+                    )}
+                  </span>
                   <input
                     autoFocus
                     data-testid="stand-in-role-name"
@@ -444,6 +578,19 @@ export function StandInSettingsPage({
                 </p>
               )}
               {(view === 'main' || view === 'create') && agentField}
+              {(view === 'main' || view === 'create') && (
+                <div className="space-y-2">
+                  <h2 className="font-medium">{t('standIn.personal.requirements')}</h2>
+                  <StandInRequirements
+                    key={role.id}
+                    role={role}
+                    services={services}
+                    onChange={update => updateRole(role.id, update)}
+                    disabled={saving}
+                    onSave={() => void save()}
+                  />
+                </div>
+              )}
               {view === 'main' && (
                 <>
                   <div className="border-t border-border pt-4">
@@ -462,7 +609,7 @@ export function StandInSettingsPage({
                     </div>
                     {role.collaboration.enabled ? (
                       <div
-                        className="flex items-start gap-3 py-2"
+                        className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-4"
                         data-testid="stand-in-source-summary"
                       >
                         <Folder className="mt-0.5 h-4 w-4 shrink-0" />
@@ -488,12 +635,16 @@ export function StandInSettingsPage({
                       data-testid="stand-in-add-source"
                       disabled={saving}
                       onClick={() => openView('connections')}
-                      className="mt-2 inline-flex min-h-9 items-center gap-1 text-text-secondary hover:text-text-primary"
+                      className="mt-2 inline-flex min-h-9 items-center gap-1 text-primary"
                     >
                       <Plus className="h-4 w-4" />
                       {t('standIn.personal.add_source')}
                     </button>
                   </div>
+                </>
+              )}
+              {(view === 'main' || (view === 'create' && initialProject)) && (
+                <>
                   <div className="border-t border-border pt-4">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{t('standIn.personal.automatic')}</span>
@@ -512,19 +663,14 @@ export function StandInSettingsPage({
                         />
                       </button>
                     </div>
-                    <p className="mt-1 text-xs text-text-muted">
+                    <p
+                      className="mt-1 text-xs text-text-muted"
+                      data-testid={dirty ? 'stand-in-pending-save' : undefined}
+                    >
                       {t('standIn.personal.automatic_help')}
                     </p>
-                    {dirty && (
-                      <p
-                        className="mt-1 text-xs text-text-muted"
-                        data-testid="stand-in-pending-save"
-                      >
-                        {t('standIn.personal.pending_save')}
-                      </p>
-                    )}
                   </div>
-                  {multiple && (
+                  {multiple && view === 'main' && (
                     <button
                       type="button"
                       data-testid="stand-in-scheduling-open"
@@ -617,7 +763,7 @@ export function StandInSettingsPage({
                       value={draft.executionDeviceId}
                       disabled={saving || dirty}
                       onChange={event => {
-                        setBeforeView(null)
+                        setHistory(current => current.map(entry => ({ ...entry, draft: null })))
                         setSelectedId('')
                         setNotice(false)
                         state.setDeviceId(event.target.value)
@@ -693,9 +839,17 @@ export function StandInSettingsPage({
             </div>
             <footer className="flex items-center gap-3 border-t border-border px-5 py-4">
               <span className="mr-auto text-xs text-text-muted">
-                {view === 'scheduling'
-                  ? t('standIn.personal.shared_scheduling')
-                  : t('standIn.personal.personal_only')}
+                {view === 'scheduling' ? (
+                  t('standIn.personal.shared_scheduling')
+                ) : view === 'connections' ? (
+                  t('standIn.personal.connections_only')
+                ) : initialProject && view === 'create' ? (
+                  <span data-testid="stand-in-project-auto-connect">
+                    {t('standIn.personal.project_connect_help', { project: initialProject.name })}
+                  </span>
+                ) : (
+                  ''
+                )}
               </span>
               <button
                 type="button"
@@ -709,18 +863,20 @@ export function StandInSettingsPage({
               <button
                 type="button"
                 data-testid="stand-in-save"
-                disabled={saving}
+                disabled={saving || (view === 'project' && !projectRoleId)}
                 onClick={() => void save()}
                 className="min-h-9 rounded-md bg-text-primary px-4 font-medium text-background disabled:opacity-40"
               >
                 {t(
                   saving
                     ? 'standIn.saving'
-                    : view === 'create'
-                      ? 'standIn.personal.create_role'
-                      : view === 'connections'
-                        ? 'standIn.personal.save_connections'
-                        : 'standIn.save'
+                    : view === 'project'
+                      ? 'standIn.personal.use_this_stand_in'
+                      : view === 'create' && !initialProject
+                        ? 'standIn.personal.create_role'
+                        : view === 'connections'
+                          ? 'standIn.personal.save_connections'
+                          : 'standIn.save'
                 )}
               </button>
             </footer>

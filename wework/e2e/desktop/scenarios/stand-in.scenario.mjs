@@ -111,6 +111,65 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         uiTimeoutMs
       )
       await captureScreenshot(control, 'stand-in-01-project-entry.png')
+      assert.equal(
+        await control.command(
+          'getElementCount',
+          '[data-testid="stand-in-open"] svg[data-state="disabled"]'
+        ),
+        '1'
+      )
+      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('waitFor', '[data-testid="stand-in-project-select"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-project-select"]'),
+        'default'
+      )
+      await captureScreenshot(
+        control,
+        'stand-in-project-01-picker.png',
+        '[data-testid="stand-in-settings"]'
+      )
+      await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-role-name"]'),
+        `${PROJECT} 替身`
+      )
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
+      assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
+      await captureScreenshot(
+        control,
+        'stand-in-project-02-new-draft.png',
+        '[data-testid="stand-in-settings"]'
+      )
+      await control.command('click', '[data-testid="stand-in-cancel"]')
+      await control.command('waitFor', '[data-testid="stand-in-project-select"]')
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-role-name"]'),
+        '0'
+      )
+      const cancelled = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      assert.equal(cancelled.roles.length, 1, 'Cancel must not create a personal stand-in')
+      assert.equal(
+        cancelled.roles[0].collaboration.enabled,
+        false,
+        'Cancel must not connect the project'
+      )
+      await control.command('select', '[data-testid="stand-in-project-select"]', {
+        value: cancelled.roles[0].id,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-project-summary"]')
+      await captureScreenshot(
+        control,
+        'stand-in-project-03-existing-summary.png',
+        '[data-testid="stand-in-settings"]'
+      )
+      await control.command('click', '[data-testid="stand-in-close"]')
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         requirements: false,
       })
@@ -118,21 +177,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await captureScreenshot(
         control,
         'stand-in-02-single-role-main.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
-      await control.command('click', '[data-testid="stand-in-requirements-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await captureScreenshot(
         control,
         'stand-in-03-requirements.png',
-        '[data-testid="stand-in-dialog"]'
-      )
-      assert.equal(
-        await control.command(
-          'getElementCount',
-          '[data-testid="stand-in-open"] svg[data-state="disabled"]'
-        ),
-        '1'
+        '[data-testid="stand-in-settings"]'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
@@ -153,7 +205,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
           captureScreenshot(
             control,
             'stand-in-04-connections.png',
-            '[data-testid="stand-in-dialog"]'
+            '[data-testid="stand-in-settings"]'
           ),
       })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
@@ -302,10 +354,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await captureScreenshot(
         control,
         'stand-in-09-project-agent-scope.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-dialog"]', { visible: false })
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       const scoped = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -500,35 +552,38 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
           uiTimeoutMs
         )
       }
-      // Create a reusable personal role through the actual shared project entry.
-      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
-        requirements: false,
-      })
-      await control.command('click', '[data-testid="stand-in-list-configure"]')
+      // Create a personally owned stand-in through the project picker.
+      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('waitFor', '[data-testid="stand-in-project-select"]')
+      await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
       await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目协调' })
       await captureScreenshot(
         control,
         'stand-in-06-add-role.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+        requirements: false,
+      })
       await control.command('waitFor', '[data-testid="stand-in-role-select"]')
       await captureScreenshot(
         control,
         'stand-in-07-multiple-roles.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
       await control.command('click', '[data-testid="stand-in-scheduling-open"]')
       await control.command('click', '[data-testid="stand-in-auto-select"]')
       await captureScreenshot(
         control,
         'stand-in-08-role-scheduling.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-role-select"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-dialog"]', { visible: false })
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       let personal = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -667,7 +722,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await captureScreenshot(
         control,
         'stand-in-10-selection-failure-recovery.png',
-        '[data-testid="stand-in-dialog"]'
+        '[data-testid="stand-in-settings"]'
       )
       invalidSelection = false
       await control.command('clickWhenEnabled', '[data-testid="stand-in-selection-retry"]')
@@ -692,6 +747,40 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         },
         uiTimeoutMs
       )
+      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('waitFor', '[data-testid="stand-in-project-select"]')
+      await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
+      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用替身' })
+      await control.command('fill', '[data-testid="stand-in-prompt"]', {
+        value: '仅为此项目处理分配给我的任务',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      const created = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      const newRole = created.roles.find(row => row.name === '项目专用替身')
+      assert.ok(newRole, 'A project-created stand-in must belong to the personal document')
+      assert.equal(created.userId, USER_ID)
+      assert.equal(newRole.enabled, false)
+      assert.equal(newRole.collaboration.allProjects, false)
+      assert.deepEqual(newRole.collaboration.projects, [{ id: project.id, store: 'local' }])
+      await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
+      await control.command('waitFor', '[data-testid="stand-in-overview"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('waitFor', '[data-testid="stand-in-activity"]', { text: PROJECT })
+      await captureScreenshot(control, 'stand-in-project-05-overview.png')
+      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-role-select"]')
+      await control.command('select', '[data-testid="stand-in-role-select"]', { value: newRole.id })
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-prompt"]'),
+        newRole.prompt
+      )
+      await captureScreenshot(control, 'stand-in-project-04-personal-ownership.png')
     },
     diagnostics() {
       return { project: PROJECT, requests, agentRequests, selectionRequests, tagRequests }

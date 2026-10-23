@@ -42,7 +42,7 @@ function Fixture() {
 it('preserves newer fields when an earlier composer callback publishes a delayed prompt', async () => {
   const user = userEvent.setup()
   render(<Fixture />)
-  await user.click(screen.getByTestId('stand-in-requirements-open'))
+  expect(screen.getByTestId('stand-in-prompt')).toBeInTheDocument()
   const delayed = publishPrompt
   await user.click(screen.getByTestId('toggle-enabled'))
   act(() => delayed('Review carefully'))

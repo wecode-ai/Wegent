@@ -50,19 +50,23 @@ function fixture() {
 }
 
 describe('Project personal stand-in entry', () => {
-  it('opens the shared personal connection page for the current project, including for viewers', async () => {
+  it('opens stand-in selection for the current project, including for viewers', async () => {
     const { props, personalGet } = fixture()
+    const onOpenPersonalSettings = vi.fn()
     const user = userEvent.setup()
-    render(<StandInPopover {...props} />)
+    render(<StandInPopover {...props} onOpenPersonalSettings={onOpenPersonalSettings} />)
     await user.click(screen.getByTestId('stand-in-open'))
-    expect(await screen.findByTestId('stand-in-connections')).toBeInTheDocument()
-    await user.click(screen.getByTestId('stand-in-source-collaboration'))
-    expect(screen.getByTestId('stand-in-connect-project-one')).toBeInTheDocument()
+    expect(await screen.findByTestId('stand-in-project-select')).toHaveValue('default')
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
+    expect(screen.queryByTestId('stand-in-connections')).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByTestId('stand-in-project-select'), 'default')
+    expect(screen.getByTestId('stand-in-project-summary')).toBeInTheDocument()
     expect(personalGet).toHaveBeenCalledWith(7, 'mac')
     expect(props.api.projects.list).toHaveBeenCalledOnce()
-    await user.click(screen.getByTestId('stand-in-back'))
-    expect(await screen.findByTestId('stand-in-agent')).toBeInTheDocument()
-    expect(screen.getByTestId('stand-in-list-configure')).toBeEnabled()
+    expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-personal-settings-link'))
+    expect(onOpenPersonalSettings).toHaveBeenCalledWith('default', 'mac')
+    expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument()
   })
 
   it('keeps edits until explicit save and closes the modal after a successful connection save', async () => {
@@ -71,10 +75,8 @@ describe('Project personal stand-in entry', () => {
     const user = userEvent.setup()
     render(<StandInPopover {...props} onSaved={onSaved} />)
     await user.click(screen.getByTestId('stand-in-open'))
-    await user.click(await screen.findByTestId('stand-in-source-collaboration'))
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), 'default')
     expect(personalSave).not.toHaveBeenCalled()
-    await user.click(screen.getByTestId('stand-in-save'))
-    await screen.findByTestId('stand-in-agent')
     await user.click(screen.getByTestId('stand-in-save'))
     await waitFor(() => expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument())
     expect(onSaved).toHaveBeenCalledOnce()
@@ -82,7 +84,13 @@ describe('Project personal stand-in entry', () => {
       7,
       expect.objectContaining({
         roles: [
-          expect.objectContaining({ collaboration: expect.objectContaining({ enabled: true }) }),
+          expect.objectContaining({
+            collaboration: expect.objectContaining({
+              enabled: true,
+              allProjects: false,
+              projects: [{ id: 'one', store: 'local' }],
+            }),
+          }),
         ],
       })
     )
@@ -93,7 +101,7 @@ describe('Project personal stand-in entry', () => {
     const user = userEvent.setup()
     render(<StandInPopover {...props} />)
     await user.click(screen.getByTestId('stand-in-open'))
-    await user.click(await screen.findByTestId('stand-in-back'))
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
     await user.click(screen.getByTestId('stand-in-auto'))
     await user.keyboard('{Escape}')
     expect(screen.getByTestId('stand-in-dialog')).toBeInTheDocument()
@@ -139,41 +147,26 @@ describe('Project personal stand-in entry', () => {
     expect(screen.queryByTestId('stand-in-enabled')).not.toBeInTheDocument()
   })
 
-  it('reopens the device whose personal settings were explicitly saved', async () => {
-    const { props, personalGet, personalSave } = fixture()
-    personalGet.mockImplementation(async (...args: unknown[]) => {
-      const device = String(args[1])
-      return {
-        userId: 7,
-        executionDeviceId: device,
-        version: 0,
-        autoSelect: false,
-        roles: [newStandInRole(device, 'default')],
-      }
-    })
+  it('routes personal settings to the explicitly requested device without changing project connections', async () => {
+    const { props, personalSave, personalGet, settings } = fixture()
+    personalGet.mockImplementation(async (...args: unknown[]) => ({
+      ...settings,
+      executionDeviceId: String(args[1]),
+    }))
+    const onOpenPersonalSettings = vi.fn()
     const user = userEvent.setup()
     render(
       <StandInPopover
         {...props}
-        devices={[{ id: 2, device_id: 'remote', name: 'Remote', status: 'online' }]}
+        initialDeviceId="remote"
+        onOpenPersonalSettings={onOpenPersonalSettings}
       />
     )
     await user.click(screen.getByTestId('stand-in-open'))
-    await user.click(await screen.findByTestId('stand-in-back'))
-    await user.click(screen.getByTestId('stand-in-advanced-open'))
-    await user.selectOptions(screen.getByTestId('stand-in-device'), 'remote')
-    await waitFor(() => expect(screen.getByTestId('stand-in-device')).toHaveValue('remote'))
-    await user.click(screen.getByTestId('stand-in-back'))
-    await user.click(screen.getByTestId('stand-in-save'))
-    await waitFor(() => expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument())
-    expect(personalSave).toHaveBeenCalledWith(
-      7,
-      expect.objectContaining({ executionDeviceId: 'remote' })
-    )
-    await user.click(screen.getByTestId('stand-in-open'))
-    await user.click(await screen.findByTestId('stand-in-back'))
-    await user.click(screen.getByTestId('stand-in-advanced-open'))
-    expect(screen.getByTestId('stand-in-device')).toHaveValue('remote')
+    await user.click(await screen.findByTestId('stand-in-personal-settings-link'))
+    expect(onOpenPersonalSettings).toHaveBeenCalledWith('default', 'remote')
+    expect(personalSave).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('stand-in-dialog')).not.toBeInTheDocument()
   })
 
   it('does not expose an unusable project entry without personal services or identity', () => {

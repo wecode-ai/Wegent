@@ -15,9 +15,9 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
-import { StandInIcon } from './StandInIcon'
+import { StandInIcon } from '@wegent/collaboration'
 
-/** Project and Issue entries open the same personal settings, focused on this project's source. */
+/** Project entries select or create a personally owned stand-in for this project. */
 export function StandInPopover({
   api,
   project,
@@ -31,6 +31,7 @@ export function StandInPopover({
   embedded = false,
   userId,
   projects = [],
+  onOpenPersonalSettings,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
@@ -45,6 +46,7 @@ export function StandInPopover({
   embedded?: boolean
   userId?: number
   projects?: CollaborationProject[]
+  onOpenPersonalSettings?(roleId: string, deviceId: string): void
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(embedded)
@@ -120,6 +122,14 @@ export function StandInPopover({
       initialProject={project}
       initialDeviceId={editorDeviceId}
       initialProfileId={initialProfileId}
+      onOpenPersonalSettings={
+        onOpenPersonalSettings
+          ? (roleId, deviceId) => {
+              setOpen(false)
+              onOpenPersonalSettings(roleId, deviceId)
+            }
+          : undefined
+      }
       onCancel={() => {
         setOpen(false)
         onCancel?.()
@@ -172,7 +182,7 @@ export function StandInPopover({
               aria-modal="true"
               aria-label={t('standIn.title')}
               data-testid="stand-in-dialog"
-              className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
+              className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
             >
               {editor}
             </section>

@@ -7,6 +7,10 @@ import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStan
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
 import { StandInSettingsPage } from './StandInSettingsPage'
+import {
+  CloudConnectionContext,
+  type CloudConnectionContextValue,
+} from '@/features/cloud-connection/CloudConnectionContext'
 
 vi.mock('./StandInComposer', () => ({
   StandInComposer: ({ deviceControl }: { deviceControl?: ReactNode }) => (
@@ -59,6 +63,200 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('preserves unsaved changes when the workbench recreates services for the same owner and device', async () => {
+    const { props, personalGet } = fixture()
+    const user = userSetup()
+    const { rerender } = render(<StandInSettingsPage {...props} />)
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    rerender(<StandInSettingsPage {...props} services={{ ...props.services }} />)
+    await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('does not request cloud agents or show login warnings when disconnected', async () => {
+    const { props } = fixture()
+    render(
+      <CloudConnectionContext.Provider
+        value={{ isConnected: false } as CloudConnectionContextValue}
+      >
+        <StandInSettingsPage {...props} />
+      </CloudConnectionContext.Provider>
+    )
+    expect(await screen.findByTestId('stand-in-agent')).toBeEnabled()
+    expect(props.services.standInApi.personalAgents).not.toHaveBeenCalled()
+    expect(screen.queryByText(/登录|加载个人智能体/)).not.toBeInTheDocument()
+  })
+
+  it('keeps secondary settings scoped to the selected stand-in without another picker', async () => {
+    const { props } = fixture({
+      roles: [newStandInRole('mac', 'first'), newStandInRole('mac', 'second')],
+    })
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
+    await user.click(screen.getByTestId('stand-in-advanced-open'))
+    expect(screen.queryByTestId('stand-in-role-select')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-project-select')).not.toBeInTheDocument()
+    expect(screen.getByTestId('execution-settings')).toBeInTheDocument()
+  })
+
+  it('defaults to the stand-in already connected to the current project without saving on open', async () => {
+    const first = newStandInRole('mac', 'first')
+    const connected = {
+      ...newStandInRole('mac', 'connected'),
+      name: 'Connected stand-in',
+      prompt: 'Project-specific instructions',
+    }
+    connected.collaboration = {
+      ...connected.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [{ id: 'one', store: 'local' }],
+    }
+    const { props, personalSave } = fixture({ roles: [first, connected] })
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    expect(await screen.findByTestId('stand-in-project-select')).toHaveValue('connected')
+    expect(screen.getByTestId('stand-in-project-summary')).toHaveTextContent(
+      'Project-specific instructions'
+    )
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
+  it('defaults to the first eligible personal stand-in and does not select another project’s agent', async () => {
+    const other = {
+      ...newStandInRole('mac', 'other'),
+      agentId: 'agent',
+      agentProject: { id: 'two', store: 'local' as const },
+    }
+    const { props, personalSave } = fixture({ roles: [other, newStandInRole('mac', 'personal')] })
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    expect(await screen.findByTestId('stand-in-project-select')).toHaveValue('personal')
+    expect(screen.getByTestId('stand-in-save')).toBeEnabled()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
+  it('retries a failed agent catalog without overwriting unsaved stand-in settings', async () => {
+    const { props } = fixture()
+    vi.mocked(props.services.standInApi.personalAgents).mockRejectedValueOnce(new Error('offline'))
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    await user.click(await screen.findByTestId('stand-in-auto'))
+    await user.click(await screen.findByTestId('stand-in-agents-retry'))
+    await screen.findByRole('option', { name: 'Personal reviewer' })
+    expect(screen.queryByTestId('stand-in-agents-retry')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('reuses a personal stand-in without changing its instructions or enabled state', async () => {
+    const existing = {
+      ...newStandInRole('mac', 'review'),
+      name: 'Reviewer',
+      prompt: 'Review carefully',
+      enabled: true,
+    }
+    existing.collaboration = {
+      ...existing.collaboration,
+      allProjects: false,
+      projects: [{ id: 'two', store: 'local' }],
+    }
+    const { props, personalSave } = fixture({ roles: [existing] })
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), 'review')
+    expect(screen.getByTestId('stand-in-project-summary')).toHaveTextContent('Review carefully')
+    expect(screen.queryByTestId('stand-in-auto')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        roles: [
+          expect.objectContaining({
+            id: 'review',
+            name: 'Reviewer',
+            prompt: 'Review carefully',
+            enabled: true,
+            collaboration: expect.objectContaining({
+              enabled: true,
+              allProjects: false,
+              projects: [
+                { id: 'two', store: 'local' },
+                { id: 'one', store: 'local' },
+              ],
+            }),
+          }),
+        ],
+      })
+    )
+  })
+
+  it('creates a personally owned stand-in scoped to this project only on Save', async () => {
+    const { props, personalSave } = fixture()
+    const onSaved = vi.fn()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} onSaved={onSaved} />)
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('First project 替身')
+    expect(screen.getByTestId('stand-in-project-select')).toHaveValue('__new')
+    expect(screen.queryByTestId('execution-settings')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-auto'))
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        userId: 7,
+        roles: [
+          expect.objectContaining({ id: 'default' }),
+          expect.objectContaining({
+            name: 'First project 替身',
+            enabled: true,
+            collaboration: expect.objectContaining({
+              enabled: true,
+              allProjects: false,
+              projects: [{ id: 'one', store: 'local' }],
+            }),
+          }),
+        ],
+      })
+    )
+    expect(onSaved).toHaveBeenCalledOnce()
+  })
+
+  it('returns from advanced settings to the new stand-in and cancels without persisting it', async () => {
+    const { props, personalSave } = fixture()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
+    await user.click(screen.getByTestId('stand-in-advanced-open'))
+    await user.click(screen.getByTestId('stand-in-back'))
+    expect(screen.getByTestId('stand-in-project-select')).toHaveValue('__new')
+    await user.click(screen.getByTestId('stand-in-cancel'))
+    expect(screen.getByTestId('stand-in-project-select')).toHaveValue('default')
+    expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'First project 替身' })).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
+  it('excludes stand-ins tied to another project agent and discards a new draft when choosing an existing one', async () => {
+    const other = {
+      ...newStandInRole('mac', 'other'),
+      name: 'Other project',
+      agentId: 'agent',
+      agentProject: { id: 'two', store: 'local' as const },
+    }
+    const { props, personalSave } = fixture({ roles: [newStandInRole('mac', 'default'), other] })
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProject={props.projects[0]} />)
+    await screen.findByTestId('stand-in-project-select')
+    expect(screen.queryByRole('option', { name: 'Other project' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByTestId('stand-in-project-select'), '__new')
+    await user.selectOptions(screen.getByTestId('stand-in-project-select'), 'default')
+    expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave.mock.calls[0][1].roles).toHaveLength(2)
+  })
+
   it('keeps the single-role screen simple and always exposes Add role', async () => {
     const { props, personalGet } = fixture()
     render(<StandInSettingsPage {...props} />)
@@ -77,7 +275,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-list-configure'))
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('请填写每个角色的名称')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写替身名称')
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-role-name'))
     await user.paste('Review')
@@ -85,7 +283,7 @@ describe('Personal stand-in settings', () => {
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByTestId('stand-in-role-select')).toHaveDisplayValue('Review')
     expect(screen.getByTestId('stand-in-scheduling-open')).toHaveTextContent(
-      '所有角色、所有工作来源共用'
+      '所有替身、所有工作来源共用'
     )
     expect(personalSave).toHaveBeenCalledWith(
       7,
@@ -201,7 +399,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-list-configure'))
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('请填写每个角色的名称')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写替身名称')
     expect(screen.queryByTestId('stand-in-reload')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-cancel'))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -251,7 +449,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-auto'))
     expect(personalSave).not.toHaveBeenCalled()
-    expect(screen.getByTestId('stand-in-pending-save')).toHaveTextContent('保存后生效')
+    expect(screen.getByTestId('stand-in-pending-save')).toHaveTextContent('开启并保存后')
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByRole('alert')).toHaveTextContent('version_conflict')
     expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
@@ -277,7 +475,7 @@ describe('Personal stand-in settings', () => {
   it('focuses the current project through the project entry without creating project-owned settings', async () => {
     const { props, personalGet } = fixture()
     render(<StandInSettingsPage {...props} initialProject={props.projects[1]} />)
-    expect(await screen.findByTestId('stand-in-connections')).toBeInTheDocument()
+    expect(await screen.findByTestId('stand-in-project-setup')).toBeInTheDocument()
     expect(personalGet).toHaveBeenCalledExactlyOnceWith(7, 'mac')
     expect(screen.queryByTestId('stand-in-agent')).not.toBeInTheDocument()
   })

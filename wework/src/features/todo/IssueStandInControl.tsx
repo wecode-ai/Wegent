@@ -7,7 +7,7 @@ import type {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { StandInIcon } from './StandInIcon'
+import { StandInIcon } from '@wegent/collaboration'
 import { StandInPopover } from './StandInPopover'
 
 export function IssueStandInControl({

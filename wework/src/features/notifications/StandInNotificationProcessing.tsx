@@ -14,7 +14,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { useTranslation } from '@/hooks/useTranslation'
-import { StandInIcon } from '@/features/todo/StandInIcon'
+import { StandInIcon } from '@wegent/collaboration'
 import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 
 const ACTION_CLASS =

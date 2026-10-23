@@ -775,6 +775,7 @@ async function change(
 }
 
 function PlatformHarness({
+  refreshKey,
   cloudAccess,
   api,
   navigationApis,
@@ -796,6 +797,7 @@ function PlatformHarness({
   loadProjectCollaborationGroupGenerationModels,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
+  refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
@@ -842,6 +844,7 @@ function PlatformHarness({
       <CollaborationPlatformApp
         api={api}
         navigationApis={navigationApis}
+        refreshKey={refreshKey}
         host={host}
         locale={locale}
         onReady={onReady}
@@ -2625,6 +2628,45 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       byTestId("collaboration-primary-stand-in").getAttribute("aria-current"),
     ).toBe("page");
+  });
+
+  it("keeps the personal Stand-in editor mounted while navigation refreshes", async () => {
+    const { api } = createApi();
+    const renderStandInPage = () => (
+      <input data-testid="stand-in-draft" defaultValue="saved" />
+    );
+    await render(
+      <PlatformHarness
+        api={api}
+        refreshKey="active"
+        renderStandInPage={renderStandInPage}
+      />,
+    );
+    await click(byTestId("collaboration-primary-stand-in"));
+    const editor = byTestId("stand-in-draft") as HTMLInputElement;
+    editor.value = "unsaved";
+    let finishRefresh!: (value: CollaborationWorkspace[]) => void;
+    vi.mocked(api.workspaces!.list).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = resolve;
+        }),
+    );
+    await render(
+      <PlatformHarness
+        api={api}
+        refreshKey="inactive"
+        renderStandInPage={renderStandInPage}
+      />,
+    );
+    expect(byTestId("stand-in-draft")).toBe(editor);
+    expect(editor.value).toBe("unsaved");
+    await act(async () => {
+      finishRefresh([workspace]);
+    });
+    await flush();
+    expect(byTestId("stand-in-draft")).toBe(editor);
+    expect(editor.value).toBe("unsaved");
   });
 
   it("creates a personal Issue and retries Stand-in without creating it again", async () => {
