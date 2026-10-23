@@ -30,6 +30,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
@@ -3343,7 +3344,10 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      const diagnostic = { commandId: command.id, action: command.action, clientId }
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
       await postDesktopControlStarted(url, command, clientId)
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3357,7 +3361,9 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
+        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
         await postDesktopControlResult(url, result)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
         console.error('[Wework] Desktop E2E result acknowledgement failed:', {
           commandId: command.id,

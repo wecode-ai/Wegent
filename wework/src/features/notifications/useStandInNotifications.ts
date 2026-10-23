@@ -43,6 +43,9 @@ export function useStandInNotifications(
     [items]
   )
   useEffect(() => {
+    observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
+  }, [storageKey])
+  useEffect(() => {
     const current = store.getSnapshot()
     const next = { ...current }
     let changed = false
@@ -56,7 +59,14 @@ export function useStandInNotifications(
         (existing.version === version || !matchesStandInVersion(existing.version, state))
       )
         continue
-      const unread = source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting'
+      const liveSettlement =
+        !existing &&
+        state.status !== 'running' &&
+        Date.parse(state.updatedAt) > observedTasks.current.startedAt
+      const unread =
+        source?.unreadTaskKeys.has(item.runtimeItem.key) ||
+        state.status === 'waiting' ||
+        liveSettlement
       next[item.runtimeItem.key] = {
         version: !existing && unread ? '' : version,
         savedAt: Date.now(),
@@ -64,7 +74,7 @@ export function useStandInNotifications(
       changed = true
     }
     if (changed) store.write(next)
-  }, [trackedItems, source?.unreadTaskKeys, store])
+  }, [trackedItems, source?.unreadTaskKeys, store, observedTasks])
 
   const isUnread = (item: StandInNotification) => {
     if (!item.read_at) return true
@@ -77,9 +87,6 @@ export function useStandInNotifications(
   }
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
-    if (observedTasks.current.storageKey !== storageKey) {
-      observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
-    }
     const observedTaskKeys = observedTasks.current.keys
     const currentKeys = new Set(trackedItems.map(item => item.runtimeItem?.key))
     for (const key of observedTaskKeys) {
@@ -100,7 +107,9 @@ export function useStandInNotifications(
       const readVersion = versions[item.runtimeItem.key]?.version
       const unread =
         readVersion == null
-          ? source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting'
+          ? source?.unreadTaskKeys.has(item.runtimeItem.key) ||
+            state.status === 'waiting' ||
+            (firstObservation && !historical)
           : !matchesStandInVersion(readVersion, state)
       if (!unread && !firstObservation && !alreadyDelivered) continue
       delivered.write({
@@ -128,6 +137,7 @@ export function useStandInNotifications(
     source?.currentAddress,
     delivered,
     storageKey,
+    observedTasks,
     systemEnabled,
     t,
   ])
