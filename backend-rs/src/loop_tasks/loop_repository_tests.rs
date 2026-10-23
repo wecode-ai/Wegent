@@ -3,6 +3,7 @@
 //! Extracted from [`super`] to keep the module within the file-size bound.
 
 use super::*;
+use crate::loop_tasks::loop_columns::CLOUD_CONTEXT_COLUMNS;
 
 #[test]
 fn splits_external_item_ids() {
@@ -35,7 +36,7 @@ async fn find_external_project_uses_the_labeled_projection() {
     assert_eq!(
         queries[0].sql,
         normalize(&format!(
-            "SELECT {LOOP_ITEMS_COLUMNS} FROM loop_items \
+            "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS} FROM loop_items \
              WHERE loop_items.project_key = ? \
              AND loop_items.resource_type IN ('project') LIMIT 1"
         ))
@@ -114,6 +115,11 @@ fn role_hierarchy() {
     assert!(has_permission("Maintainer", "Reporter"));
     assert!(!has_permission("Reporter", "Developer"));
     assert!(!has_permission("Unknown", "Reporter"));
+    // `BaseRole` orders Viewer above RestrictedAnalyst; the Viewer gate admits
+    // a Viewer and rejects a RestrictedAnalyst.
+    assert!(has_permission("Viewer", "Viewer"));
+    assert!(has_permission("Owner", "Viewer"));
+    assert!(!has_permission("RestrictedAnalyst", "Viewer"));
 }
 
 #[test]
@@ -126,7 +132,7 @@ fn workflow_node_id_reads_metadata() {
         device_id: "d".to_string(),
         task_id: "t".to_string(),
         task_title: None,
-        backend_task_id: 0,
+        backend_task_id: Some(0),
         linked_by_user_id: 1,
         linked_at: None,
         unlinked_at: None,
@@ -141,4 +147,35 @@ fn workflow_node_id_reads_metadata() {
         None
     );
     assert_eq!(binding(serde_json::json!({})).workflow_node_id(), None);
+}
+
+/// SQLAlchemy applies each model's discriminator to the single-table subqueries.
+#[tokio::test]
+async fn related_item_probe_uses_current_schema_and_all_five_permission_branches() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let related = LoopItemRepository::new(&mysql)
+        .is_related_item("item-'quoted", 17)
+        .await
+        .expect("captured");
+    assert!(!related);
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    let query = &queries[0];
+    assert_eq!(query.args, 1);
+    assert!(!query.sql.contains("item-'quoted"));
+    assert!(!query.sql.contains("loop_item_collaborators"));
+    assert_eq!(query.sql.matches("FROM loop_items").count(), 4);
+    for expected in [
+        "WHERE loop_items.id = ? AND (loop_items.created_by_user_id = 17",
+        "OR loop_items.assignee_user_id = 17",
+        "WHERE loop_items.task_user_id = 17 AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('execution')",
+        "WHERE loop_items.user_id = 17 AND loop_items.resource_type IN ('collaborator')",
+        "WHERE loop_items.created_by_user_id = 17 AND loop_items.status = 'active' AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('chat_agent')",
+        "AND loop_items.resource_type IN ('task') LIMIT 1",
+    ] {
+        assert!(
+            query.sql.contains(expected),
+            "missing permission scope: {expected}"
+        );
+    }
 }

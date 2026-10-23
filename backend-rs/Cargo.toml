@@ -15,13 +15,13 @@ base64 = "0.23.1"
 bcrypt = "0.19"
 cbc = { version = "0.1", features = ["alloc", "block-padding"] }
 brz-http = { version = "=0.0.13", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-gateway = { version = "=0.2.10", features = ["fallback-log"] }
+brz-http-gateway = { version = "=0.2.11", features = ["fallback-log"] }
 brz-http-server = { version = "=0.0.32", features = ["macros", "metrics", "api-log", "slow-log"] }
 brz-logs = { version = "=0.0.16", features = ["metrics"] }
 # Keep the Breeze components on exact published versions and one metrics
 # registry revision in the final backend binary.
 brz-metrics = { version = "=0.0.12", features = ["tokio"] }
-brz-mysql = { version = "=0.0.20", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.24", features = ["metrics", "slow-log"] }
 brz-redis = { version = "=0.0.16", features = ["metrics", "slow-log"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }

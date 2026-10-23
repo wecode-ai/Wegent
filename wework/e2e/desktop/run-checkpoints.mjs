@@ -50,6 +50,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-uninstall-reinstall-race': './scenarios/plugin-uninstall-resilience.scenario.mjs',
 
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
+  'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
@@ -79,7 +80,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
-  'model-overload-recovery': './scenarios/model-overload-recovery.scenario.mjs',
+  'model-overload-recovery': './scenarios/goal-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'latest-conversation-history': './scenarios/latest-conversation-history.scenario.mjs',
@@ -118,6 +119,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-permissions': './scenarios/stand-in-permissions.scenario.mjs',
   'stand-in-workspace': './scenarios/stand-in-workspace.scenario.mjs',
   'stand-in-controls': './scenarios/stand-in-controls.scenario.mjs',
+  'stand-in-project-enable': './scenarios/stand-in-project-enable.scenario.mjs',
   'stand-in-notifications': './scenarios/stand-in-notifications.scenario.mjs',
   'collaboration-remote-agent-dispatch':
     './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
@@ -192,6 +194,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-runtime-path-recovery',
   'codex-account-login',
   'cloud-space-mention',
   'collaboration-issue-badges',
@@ -218,6 +221,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-permissions',
   'stand-in-workspace',
   'stand-in-controls',
+  'stand-in-project-enable',
   'stand-in-notifications',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',

@@ -53,7 +53,8 @@ ClientOriginQuery = Annotated[
 ]
 
 
-@router.get("", response_model=ProjectListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/projects"): remove after final confirmation.
+# @router.get("", response_model=ProjectListResponse)
 def list_projects(
     include_tasks: bool = Query(
         True, description="Whether to include tasks in response"

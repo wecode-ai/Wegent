@@ -256,13 +256,24 @@ pub(crate) async fn assemble_items(
         });
     }
 
-    // `get_tasks_related_data_batch`: workspaces, then teams, then the user
-    // cache; `_add_group_chat_info` runs with the projection.
+    // `get_tasks_related_data_batch`: workspaces, then teams, then the Device
+    // display-name lookup, then the user cache; `_add_group_chat_info` runs
+    // with the projection.
     let candidates: Vec<TaskCandidateRow> = ordered.iter().map(TaskListRow::candidate).collect();
     let workspace_refs = collect_workspace_refs(&candidates);
     let workspaces = batch_workspace_git(state, user_id, &workspace_refs).await?;
     let team_refs = TeamRefs::from_page(&candidates);
     let team_data = batch_query_teams(&state.mysql, &team_refs, user_id).await?;
+    // `_batch_query_devices`: the page's `spec.device_id` references. The
+    // `TaskInDB` response does not carry device fields, but the source still
+    // issues this read inside `get_tasks_related_data_batch`.
+    let device_ids = collect_device_ids(&candidates);
+    let _device_data = crate::tasks_lite_personal::lite_projection::device_display_names(
+        &state.mysql,
+        user_id,
+        &device_ids,
+    )
+    .await?;
     let user_name = state
         .user_reader
         .get_by_id(user_id)
@@ -289,6 +300,27 @@ pub(crate) async fn assemble_items(
         ));
     }
     Ok(TaskListResponse { total, items })
+}
+
+/// The distinct `spec.device_id` references of the page's tasks (the source
+/// collects them into a set; the statement only needs the membership).
+fn collect_device_ids(rows: &[TaskCandidateRow]) -> Vec<String> {
+    let mut device_ids: Vec<String> = Vec::new();
+    for row in rows {
+        let crd = CrdDocument::project(&row.json);
+        if let Some(device_id) = crd
+            .spec
+            .as_ref()
+            .and_then(|spec| {
+                crate::tasks_lite_personal::lite_projection::opaque_string(&spec.device_id)
+            })
+            .filter(|value| !value.is_empty())
+            && !device_ids.iter().any(|id| id == &device_id)
+        {
+            device_ids.push(device_id);
+        }
+    }
+    device_ids
 }
 
 /// The `(name, namespace)` workspace references of the page's tasks.
@@ -548,6 +580,39 @@ fn numeric_id(value: &crate::crd::NumericId) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn candidate(device_id: Option<&str>) -> TaskCandidateRow {
+        let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+        TaskCandidateRow {
+            id: 1,
+            user_id: 159,
+            json: match device_id {
+                Some(device_id) => serde_json::json!({"spec": {"device_id": device_id}}),
+                None => serde_json::json!({"spec": {}}),
+            },
+            created_at: epoch,
+            updated_at: epoch,
+            project_id: Some(0),
+            client_origin: None,
+            is_group_chat: false,
+        }
+    }
+
+    #[test]
+    fn device_ids_are_distinct_and_skip_missing_references() {
+        // `_batch_query_devices` receives the page's distinct `spec.device_id`
+        // values; an empty set skips the statement entirely.
+        assert_eq!(
+            collect_device_ids(&[
+                candidate(Some("device-a")),
+                candidate(None),
+                candidate(Some("device-a")),
+                candidate(Some("device-b")),
+            ]),
+            vec!["device-a".to_string(), "device-b".to_string()]
+        );
+        assert!(collect_device_ids(&[candidate(None)]).is_empty());
+    }
 
     #[test]
     fn workspace_git_reads_the_repository_projection() {

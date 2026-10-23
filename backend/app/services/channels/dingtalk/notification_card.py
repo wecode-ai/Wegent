@@ -24,6 +24,7 @@ MAX_CARD_DETAIL_CHARS = 240
 KIND_PRESENTATION = {
     "mention": ("评论提及", "blue"),
     "assignment": ("任务分配", "blue"),
+    "issue_dispatch_assignment": ("任务分配", "blue"),
 }
 EXECUTION_PRESENTATION = {
     "queued": ("已入队", "blue"),

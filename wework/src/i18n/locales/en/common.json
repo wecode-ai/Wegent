@@ -1936,6 +1936,7 @@
     "plugins_update": "Update",
     "plugins_update_confirm": "This update syncs to the current device. If it fails, the installed version on this device stays unchanged. Continue?",
     "plugins_update_available": "Update available",
+    "plugins_runtime_recovery_required": "Repair required",
     "plugins_auto_update_progress": "Automatically updating plugins: {{updated}} processed, {{remaining}} remaining",
     "plugins_auto_update_complete_one": "Automatically updated {{count}} plugin",
     "plugins_auto_update_complete_other": "Automatically updated {{count}} plugins",
@@ -5380,7 +5381,10 @@
       "requirements_summary": "Instructions",
       "open_personal_settings": "Change stand-in settings",
       "shared_settings_help": "Changes also affect other projects using this stand-in.",
-      "use_this_stand_in": "Use for this project",
+      "enable_and_use": "Enable and use for this project",
+      "disable_project": "Disable for this project",
+      "disable_project_help": "Disabling affects only new tasks in this project. Other projects and running tasks are unaffected.",
+      "enable_and_use_help": "Saving enables automatic handling for this stand-in, including its other connected projects. Only new assignments after enablement are handled.",
       "settings_title": "Personal stand-in settings",
       "automatic_summary": "Auto handling"
     }

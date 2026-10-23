@@ -61,7 +61,8 @@ from shared.telemetry.decorators import trace_sync
 router = APIRouter()
 
 
-@router.get("", response_model=GroupListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/groups"): remove after final confirmation.
+# @router.get("", response_model=GroupListResponse)
 def list_groups(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(100, ge=1, le=100, description="Items per page"),

@@ -40,6 +40,12 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
             .await
             .context("failed to connect models-unified dependencies")?;
 
+    // `POST /api/runtime-work/llm-responses-proxy/responses` forwards every
+    // `x-wegent-upstream-header-*` header, which the function API's named-header
+    // parameters cannot express; it is therefore a hand-written handler merged
+    // into the same router.
+    let llm_responses_proxy = crate::llm_proxy::LlmResponsesProxyRoute::new(Arc::clone(&app));
+
     let handler = brz_http_server::handlers!(state = app)
         .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?
         .merge(
@@ -57,7 +63,8 @@ pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuth
         .merge(
             brz_http_server::handlers!(mu = models_unified_state; group = models_unified)
                 .map_err(|error| anyhow::anyhow!("API route registration failed: {error}"))?,
-        );
+        )
+        .merge(llm_responses_proxy);
 
     Ok(handler)
 }

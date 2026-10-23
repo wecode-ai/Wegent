@@ -91,6 +91,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
 
     app = FastAPI(lifespan=lifespan)
     register_mcp_apps(app)
+    register_mcp_apps(app, "/api")
 
     with TestClient(app) as client:
         for request_id, spec in enumerate(MCP_APP_SPECS, start=1):
@@ -112,6 +113,25 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
                 token=test_task_token,
             )
             assert initialized["result"]["serverInfo"]["name"] == spec.service_name
+
+        for name in ("interactive-form-question", "subscription"):
+            path = f"/mcp/{name}/sse"
+            tools = _rpc(
+                client,
+                request_id=30,
+                path=path,
+                method="tools/list",
+                params={},
+            )["result"]["tools"]
+            assert tools
+            if name == "interactive-form-question":
+                assert {tool["name"] for tool in tools} == {"interactive_form_question"}
+            removed = client.post(
+                f"/api{path}",
+                headers=MCP_HEADERS,
+                json={"jsonrpc": "2.0", "id": 31, "method": "tools/list"},
+            )
+            assert removed.status_code == 405
 
         listed = _rpc(
             client,

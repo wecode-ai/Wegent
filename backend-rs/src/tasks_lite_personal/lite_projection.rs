@@ -223,17 +223,20 @@ fn execution_workspace_field(spec: Option<&CrdSpec>, source: bool) -> Option<Str
 }
 
 /// `_batch_query_devices`: display names for the page's device references.
+///
+/// The source's ORM read raises on a database failure; callers that can still
+/// render a page decide whether to surface it.
 pub async fn device_display_names<M>(
     mysql: &M,
     user_id: i64,
     device_ids: &[String],
-) -> HashMap<String, String>
+) -> brz_mysql::MysqlResult<HashMap<String, String>>
 where
     M: Mysql,
 {
     let mut result = HashMap::new();
     if device_ids.is_empty() {
-        return result;
+        return Ok(result);
     }
     let placeholders = vec!["?"; device_ids.len()].join(", ");
     let sql = format!(
@@ -255,28 +258,26 @@ where
             .iter()
             .map(|id| crate::task_store::StatementArg::Str(id.clone())),
     );
-    let rows: Result<Vec<TeamKindRow>, _> = mysql.fetch_all(sql.as_str(), args).await;
-    if let Ok(rows) = rows {
-        for row in rows {
-            let display_name = row
-                .json
-                .as_ref()
-                .and_then(|json| {
-                    json.get("spec")
-                        .and_then(|spec| spec.get("displayName"))
-                        .and_then(Json::as_str)
-                        .or_else(|| {
-                            json.get("metadata")
-                                .and_then(|metadata| metadata.get("displayName"))
-                                .and_then(Json::as_str)
-                        })
-                })
-                .map(str::to_string)
-                .unwrap_or_else(|| row.name.clone());
-            result.insert(row.name, display_name);
-        }
+    let rows: Vec<TeamKindRow> = mysql.fetch_all(sql.as_str(), args).await?;
+    for row in rows {
+        let display_name = row
+            .json
+            .as_ref()
+            .and_then(|json| {
+                json.get("spec")
+                    .and_then(|spec| spec.get("displayName"))
+                    .and_then(Json::as_str)
+                    .or_else(|| {
+                        json.get("metadata")
+                            .and_then(|metadata| metadata.get("displayName"))
+                            .and_then(Json::as_str)
+                    })
+            })
+            .map(str::to_string)
+            .unwrap_or_else(|| row.name.clone());
+        result.insert(row.name, display_name);
     }
-    result
+    Ok(result)
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 import { createStandInRecordStore, STAND_IN_RECORD_LIMIT } from './standInNotificationStorage'
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { isMainWindowFocused } from '@/desktop/windowFocus'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
@@ -8,6 +8,7 @@ import type { WeworkInbox } from '@/api/notifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
   mergeStandInNotifications,
+  matchesStandInVersion,
   standInVersion,
   type StandInNotification,
 } from './standInNotifications'
@@ -25,6 +26,7 @@ export function useStandInNotifications(
   const store = useMemo(() => createStandInRecordStore(storageKey), [storageKey])
   const versions = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const delivered = useMemo(() => createStandInRecordStore(`${storageKey}:delivered`), [storageKey])
+  const observedTasks = useRef({ storageKey: '', startedAt: 0, keys: new Set<string>() })
   const items = useMemo(
     () => mergeStandInNotifications(inbox?.items ?? [], enabled ? (source?.items ?? []) : []),
     [inbox, source?.items, enabled]
@@ -45,12 +47,18 @@ export function useStandInNotifications(
     const next = { ...current }
     let changed = false
     for (const item of trackedItems) {
-      if (!item.runtimeItem || !item.payload.standIn || item.runtimeItem.key in next) continue
-      const unread =
-        source?.unreadTaskKeys.has(item.runtimeItem.key) ||
-        item.payload.standIn.status === 'waiting'
+      if (!item.runtimeItem || !item.payload.standIn) continue
+      const state = item.payload.standIn
+      const existing = next[item.runtimeItem.key]
+      const version = standInVersion(state)
+      if (
+        existing &&
+        (existing.version === version || !matchesStandInVersion(existing.version, state))
+      )
+        continue
+      const unread = source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting'
       next[item.runtimeItem.key] = {
-        version: unread ? '' : standInVersion(item.payload.standIn),
+        version: !existing && unread ? '' : version,
         savedAt: Date.now(),
       }
       changed = true
@@ -65,25 +73,42 @@ export function useStandInNotifications(
     const readVersion = versions[item.runtimeItem.key]?.version
     return readVersion == null
       ? Boolean(source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting')
-      : readVersion !== standInVersion(state)
+      : !matchesStandInVersion(readVersion, state)
   }
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
+    if (observedTasks.current.storageKey !== storageKey) {
+      observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
+    }
+    const observedTaskKeys = observedTasks.current.keys
+    const currentKeys = new Set(trackedItems.map(item => item.runtimeItem?.key))
+    for (const key of observedTaskKeys) {
+      if (!currentKeys.has(key)) observedTaskKeys.delete(key)
+    }
     for (const item of trackedItems) {
       const state = item.payload.standIn
-      if (!state || !item.runtimeItem || state.status === 'running') continue
+      if (!state || !item.runtimeItem) continue
+      const firstObservation = !observedTaskKeys.has(item.runtimeItem.key)
+      observedTaskKeys.add(item.runtimeItem.key)
+      if (state.status === 'running') continue
+      const historical =
+        firstObservation && Date.parse(state.updatedAt) <= observedTasks.current.startedAt
       const version = standInVersion(state)
-      if (delivered.getSnapshot()[item.runtimeItem.key]?.version === version) continue
+      const deliveredVersion = delivered.getSnapshot()[item.runtimeItem.key]?.version
+      if (deliveredVersion === version) continue
+      const alreadyDelivered = matchesStandInVersion(deliveredVersion, state)
       const readVersion = versions[item.runtimeItem.key]?.version
       const unread =
         readVersion == null
           ? source?.unreadTaskKeys.has(item.runtimeItem.key) || state.status === 'waiting'
-          : readVersion !== version
-      if (!unread) continue
+          : !matchesStandInVersion(readVersion, state)
+      if (!unread && !firstObservation && !alreadyDelivered) continue
       delivered.write({
         ...delivered.getSnapshot(),
         [item.runtimeItem.key]: { version, savedAt: Date.now() },
       })
+      // Baseline older settlements, but retain live completions that beat task discovery.
+      if (historical || alreadyDelivered || !unread) continue
       const viewingTask =
         source?.currentAddress?.deviceId === state.deviceId &&
         source?.currentAddress?.taskId === state.taskId &&
@@ -102,6 +127,7 @@ export function useStandInNotifications(
     source?.unreadTaskKeys,
     source?.currentAddress,
     delivered,
+    storageKey,
     systemEnabled,
     t,
   ])

@@ -122,6 +122,22 @@ fn the_owner_reload_follows_the_image_upload_gate() {
     assert!(!USER_ENTITY_BY_ID_QUERY.contains("LIMIT"));
 }
 
+/// The upload endpoint is registered exactly once by the router that
+/// `Application` builds; the route table selects the same method and path.
+#[test]
+fn the_upload_route_is_registered_once() {
+    // `method_bit`: POST.
+    const POST: u16 = 1 << 5;
+    let methods: Vec<u16> =
+        brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+            .into_iter()
+            .flat_map(|entry| (entry.0.routes)())
+            .filter(|route| route.path == "/api/attachments/upload")
+            .map(|route| route.methods)
+            .collect();
+    assert_eq!(methods, [POST], "the upload endpoint is registered once");
+}
+
 /// A failing object write must not fall through to the MySQL `binary_data`
 /// column: the source `save` raises, the session never commits, and the
 /// endpoint renders 500 `Failed to upload attachment`.

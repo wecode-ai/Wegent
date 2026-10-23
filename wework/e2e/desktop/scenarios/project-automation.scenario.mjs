@@ -2,13 +2,14 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  inProjectCreateDialog,
   openDirectProjectCreation,
   openProjectAgentCreator,
-  inProjectCreateDialog,
   selectCollaborationDomain,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { verifyWorkspaceAgentDisplayNames } from '../modules/workspace-agent-setup.mjs'
 import {
   assertSavedCloudRouting,
   readBasicCloudDefault,
@@ -23,6 +24,8 @@ const WORKSPACE_GROUP_NAME = '空间交付协作组'
 const PROJECT_GROUP_NAME = '项目响应协作组'
 const DELETABLE_GROUP_NAME = '待删除协作小组'
 const PROJECT_AGENT_NAME = '项目 Codex 负责人'
+const WORKSPACE_AGENT_DISPLAY_NAME = '123'
+const WORKSPACE_AGENT_RENAMED_NAME = '代码评审'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -667,6 +670,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           timeoutMs: uiTimeoutMs,
         })
         await verifyLocalBasicDefaultSave(control, uiTimeoutMs, proxy)
+
+        await verifyWorkspaceAgentDisplayNames(control, request, {
+          contentSelector: ACTIVE_WORKBENCH_SELECTOR,
+          workspaceId: workspace.id,
+          displayName: WORKSPACE_AGENT_DISPLAY_NAME,
+          renamedDisplayName: WORKSPACE_AGENT_RENAMED_NAME,
+          modelName: selectableModels[0].name,
+          timeoutMs: uiTimeoutMs,
+        })
       } finally {
         try {
           await archiveFixture()

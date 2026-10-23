@@ -194,7 +194,10 @@ export async function verifyCollaborationLocalProjectImport(
       1,
       'Reload must not duplicate imported Task projects'
     )
-    assert.equal(Number(await control.command('getElementCount', `${row} svg`)), 0)
+    assert.equal(
+      Number(await control.command('getElementCount', `${row} svg:not(.stand-in-icon)`)),
+      0
+    )
     const projectRows = inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]')
     if (pass === 0) {
       await createLocalCollaborationProject(control, scoped('').trim(), importedProjectName)

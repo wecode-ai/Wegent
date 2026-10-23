@@ -4,11 +4,12 @@
 
 //! Typed `loop_items` / `resource_members` rows for the board-snapshot read.
 //!
-//! Mirrors the single-table `LoopNode` mapping (`app.models.delivery`) and
-//! the `resource_members` membership row used by
-//! `cloud_project_service.list_members`. The `loop_items` table holds
-//! project (`resource_type='project'`), task (`'task'`), execution
-//! (`'execution'`), and chat-agent (`'chat_agent'`) rows.
+//! Mirrors the single-table `LoopNode` mapping (`app.models.delivery`). The
+//! `loop_items` table holds project (`resource_type='project'`), task
+//! (`'task'`), execution (`'execution'`), and chat-agent (`'chat_agent'`)
+//! rows. The roster's `resource_members` reads live in
+//! [`super::members`].
+use brz_json::adapters::python_truthy as truthy;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
@@ -42,6 +43,14 @@ pub(crate) struct ProjectMetadata {
     default_issue_security: Option<String>,
     #[serde(default)]
     provider_config: Option<brz_json::RawJson>,
+    /// `CloudProject.membership_mode`: `inherit` (default) or `restricted`.
+    /// Inherited workspace grants apply only in `inherit` mode.
+    #[serde(default)]
+    membership_mode: Option<String>,
+    /// `CloudProjectService._member_capabilities`: the per-member
+    /// capability descriptions stored inside the project metadata.
+    #[serde(default)]
+    member_capabilities: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Read a string field from a typed project metadata row.
@@ -95,7 +104,15 @@ pub(crate) struct BotConfig<'a> {
     metadata: Option<&'a serde_json::Map<String, serde_json::Value>>,
 }
 
-impl BotConfig<'_> {
+impl<'a> BotConfig<'a> {
+    /// Borrow the robot configuration stored in a `ProjectChatAgent.metadata`
+    /// JSON object.
+    pub(crate) fn from_metadata(
+        metadata: Option<&'a serde_json::Map<String, serde_json::Value>>,
+    ) -> Self {
+        Self { metadata }
+    }
+
     fn raw(&self, key: &str) -> Option<&serde_json::Value> {
         self.metadata.and_then(|metadata| metadata.get(key))
     }
@@ -221,6 +238,26 @@ impl BotConfig<'_> {
         self.raw_array("additional_skills")
     }
 
+    /// `bot_config(row)["permission_migration_reason"]` when it is a string.
+    pub(crate) fn permission_migration_reason(&self) -> Option<String> {
+        self.raw_string("permission_migration_reason")
+    }
+
+    /// `(metadata or {}).get("authorization_version")`: whether the agent is
+    /// an authorization-versioned definition.
+    pub(crate) fn has_authorization_version(&self) -> bool {
+        self.raw("authorization_version").is_some_and(truthy)
+    }
+
+    /// `project_agent_visible`: the raw metadata `visibility` differs from
+    /// `private`. An absent or unknown value is visible.
+    pub(crate) fn not_private(&self) -> bool {
+        !matches!(
+            self.raw("visibility").and_then(serde_json::Value::as_str),
+            Some("private")
+        )
+    }
+
     /// `bot_config(row)["mcp_servers"]`: the stored object, else `{}`.
     pub(crate) fn mcp_servers(&self) -> serde_json::Map<String, serde_json::Value> {
         match self.raw("mcp_servers") {
@@ -257,9 +294,6 @@ impl BotConfig<'_> {
         }
     }
 }
-
-/// Python `bool(value)`: `None` and empty/false scalars are falsy.
-use brz_json::adapters::python_truthy as truthy;
 
 /// `str(value)` for a non-null JSON scalar, matching the source's
 /// `str(config["default_runtime_profile_id"])`.
@@ -341,21 +375,34 @@ impl ProjectRow {
     pub fn provider_config(&self) -> Option<&brz_json::RawJson> {
         project_provider_config(&self.metadata)
     }
-}
 
-/// `resource_members` row joined with `users` for `list_members`.
-#[derive(Debug, FromMysqlRow)]
-pub struct MemberRow {
-    #[mysql(rename = "resource_members_id")]
-    pub member_id: i32,
-    #[mysql(rename = "users_id")]
-    pub user_id: i32,
-    #[mysql(rename = "users_user_name")]
-    pub user_name: String,
-    #[mysql(rename = "users_email")]
-    pub email: Option<String>,
-    #[mysql(rename = "resource_members_role")]
-    pub role: String,
+    /// `CloudProject.membership_mode`: `inherit` when the metadata omits it.
+    pub fn membership_mode(&self) -> &str {
+        self.metadata
+            .as_ref()
+            .and_then(|json| json.0.membership_mode.as_deref())
+            .unwrap_or("inherit")
+    }
+
+    /// `CloudProjectService._member_capabilities(project)`: the metadata
+    /// `member_capabilities` object reduced to trimmed, non-empty string
+    /// descriptions keyed by member id.
+    pub fn member_capabilities(&self) -> std::collections::HashMap<String, String> {
+        let Some(values) = self
+            .metadata
+            .as_ref()
+            .and_then(|json| json.0.member_capabilities.as_ref())
+        else {
+            return std::collections::HashMap::new();
+        };
+        values
+            .iter()
+            .filter_map(|(member_id, description)| {
+                let description = description.as_str()?.trim();
+                (!description.is_empty()).then(|| (member_id.clone(), description.to_string()))
+            })
+            .collect()
+    }
 }
 
 /// `loop_items` execution/binding row (`LoopItemTaskBinding`,
@@ -378,7 +425,7 @@ pub struct BindingRow {
     #[mysql(rename = "loop_items_task_title")]
     pub task_title: Option<String>,
     #[mysql(rename = "loop_items_backend_task_id")]
-    pub backend_task_id: i64,
+    pub backend_task_id: Option<i64>,
     #[mysql(rename = "loop_items_linked_by_user_id")]
     pub linked_by_user_id: i32,
     #[mysql(rename = "loop_items_linked_at")]
@@ -532,12 +579,6 @@ impl AgentRow {
             metadata: self.metadata.as_ref().and_then(|json| json.0.as_object()),
         }
     }
-
-    /// `bot_config(row).get("visibility")` with the default
-    /// (`creator_admin`).
-    pub fn visibility(&self) -> String {
-        self.bot_config().visibility()
-    }
 }
 
 /// `ROLE_HIERARCHY` (`app.schemas.base_role`) inverted into `ROLES_BY_PRIORITY`
@@ -555,10 +596,11 @@ fn role_by_priority(priority: i64) -> MysqlResult<String> {
         })
 }
 
-/// Raw `project_access_query` row: the labeled `loop_items` projection plus
-/// the aggregated role priority. The projection is re-declared here because
-/// [`ProjectRow`] serves the plain project reads of the other board routes
-/// and its rows do not carry `anon_1_priority`.
+/// Raw `project_access_query` row: the labeled `loop_items` projection, the
+/// project's parent workspace id (the `CloudProject.workspace_id` column
+/// property), and the aggregated role priority. The projection is re-declared
+/// here because [`ProjectRow`] serves the plain project reads of the other
+/// board routes and its rows do not carry `anon_1`/`anon_3_priority`.
 #[derive(Debug, FromMysqlRow)]
 struct ProjectAccessRecord {
     #[mysql(rename = "loop_items_id")]
@@ -583,15 +625,20 @@ struct ProjectAccessRecord {
     updated_at: Option<NaiveDateTime>,
     #[mysql(rename = "loop_items_metadata")]
     metadata: Option<Json<ProjectMetadata>>,
-    #[mysql(rename = "anon_1_priority")]
+    /// The leading scalar subquery column property (the single approved
+    /// `workspace` parent), or NULL when the project has no unique parent.
+    #[mysql(rename = "anon_1")]
+    workspace_id: Option<i64>,
+    #[mysql(rename = "anon_3_priority")]
     priority: i64,
 }
 
-/// The `require_cloud_project_role` result: the accessible active project row
-/// and the caller's effective role.
+/// The `require_cloud_project_role` result: the accessible active project row,
+/// the caller's effective role, and the project's parent workspace id.
 pub struct ProjectAccess {
     pub project: ProjectRow,
     pub role: String,
+    pub workspace_id: Option<i64>,
 }
 
 impl ProjectAccessRecord {
@@ -611,9 +658,15 @@ impl ProjectAccessRecord {
                 metadata: self.metadata,
             },
             role: role_by_priority(self.priority)?,
+            workspace_id: self.workspace_id,
         })
     }
 }
+
+pub(crate) use super::permissions::{
+    ProjectEntityRow, WorkspaceKindRow, project_agent_grant, project_entity,
+    record_project_sources, team_binding_exists, team_bound_agents, team_grant, workspace_kind,
+};
 
 /// Board-snapshot repositories for the read path.
 pub struct BoardSnapshotRepository<'a, M> {
@@ -628,10 +681,10 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
     /// `require_cloud_project_role(db, project_id, user_id, required_role)`
     /// (`app.services.cloud_projects.access`): resolve the caller's effective
     /// role for one active project through the set-based
-    /// `project_access_query`. The project row and the caller's role come
-    /// from the single statement, so a caller that is not the creator and not
-    /// an approved member only reaches the project when the public-visibility
-    /// or workspace-inherited grant applies.
+    /// `project_access_query`. The project row, its parent workspace id, and
+    /// the caller's role come from the single statement. A caller without a
+    /// direct grant only reaches the project through an inherited workspace
+    /// grant or the public (`authenticated_users`) grant.
     ///
     /// Returns `None` when no permission source grants the caller access to
     /// an active project with that id; the source raises
@@ -643,77 +696,47 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
         project_id: i64,
         user_id: i32,
     ) -> MysqlResult<Option<ProjectAccess>> {
+        self.require_cloud_project_role_as(project_id, user_id, user_id)
+            .await
+    }
+
+    /// `require_cloud_project_role` for a subject other than the
+    /// authenticated caller (the source's direct-human reviewer check). The
+    /// caller's `users` row is already loaded, every other subject is read.
+    pub async fn require_cloud_project_role_as(
+        &self,
+        project_id: i64,
+        user_id: i32,
+        authenticated_user_id: i32,
+    ) -> MysqlResult<Option<ProjectAccess>> {
         // The source inlines the user and project ids into the statement, so it
         // carries no bind parameters. This is the recorded
         // `project_access_query` point form: the direct, workspace-inherited,
-        // public (`authenticated_users`) and owned grants reduced to
-        // `min(priority)` and joined to the active project row.
+        // and public (`authenticated_users`) grants reduced to
+        // `min(priority)`, joined to the active project row and its active
+        // parent workspace.
         let statement = project_access_point_statement(user_id, project_id);
         let record: Option<ProjectAccessRecord> = self.mysql.fetch_optional(statement, ()).await?;
-        match record {
-            None => Ok(None),
-            Some(record) => record.into_access().map(Some),
-        }
+        let Some(record) = record else {
+            return Ok(None);
+        };
+        let access = record.into_access()?;
+        // `check` resolves provenance after the role query; those reads are
+        // request-owned even when the caller ignores the returned sources.
+        record_project_sources(
+            self.mysql,
+            project_id,
+            user_id,
+            access.workspace_id,
+            authenticated_user_id,
+        )
+        .await?;
+        Ok(Some(access))
     }
 
-    /// `cloud_project_visibility.explicit_project_member_ids(db, project)`:
-    /// the approved direct member entity ids (creator excluded; that id comes
-    /// from the project row). The recorded COM_QUERY inlines the snowflake
-    /// `resource_id` and only the project member roles.
-    pub async fn explicit_member_ids(&self, project_id: &str) -> MysqlResult<Vec<String>> {
-        #[derive(Debug, FromMysqlRow)]
-        struct IdRow {
-            #[mysql(rename = "resource_members_entity_id")]
-            entity_id: String,
-        }
-        let sql = format!(
-            "SELECT resource_members.entity_id AS resource_members_entity_id \n\
-             FROM resource_members \n\
-             WHERE resource_members.resource_type = 'CloudProject' \
-             AND resource_members.resource_id = '{project_id}' \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.status = 'approved' \
-             AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer')",
-        );
-        let rows: Vec<IdRow> = self.mysql.fetch_all(sql, ()).await?;
-        Ok(rows.into_iter().map(|row| row.entity_id).collect())
-    }
-
-    /// `cloud_project_service.list_members`: approved `resource_members`
-    /// joined with `users`, ordered by `resource_members.id`. The recorded
-    /// COM_QUERY inlines the numeric `resource_id` and selects the full
-    /// labeled `users` projection (SQLAlchemy's `db.query(ResourceMember, User)`
-    /// join), so the statement carries no bind parameters.
-    pub async fn list_members(&self, project_id: &str) -> MysqlResult<Vec<MemberRow>> {
-        let sql = format!(
-            "SELECT resource_members.id AS resource_members_id, \
-             resource_members.resource_type AS resource_members_resource_type, \
-             resource_members.resource_id AS resource_members_resource_id, \
-             resource_members.entity_type AS resource_members_entity_type, \
-             resource_members.entity_id AS resource_members_entity_id, \
-             resource_members.entity_display_name AS resource_members_entity_display_name, \
-             resource_members.user_id AS resource_members_user_id, \
-             resource_members.`role` AS resource_members_role, \
-             resource_members.status AS resource_members_status, \
-             resource_members.invited_by_user_id AS resource_members_invited_by_user_id, \
-             resource_members.share_link_id AS resource_members_share_link_id, \
-             resource_members.reviewed_by_user_id AS resource_members_reviewed_by_user_id, \
-             resource_members.reviewed_at AS resource_members_reviewed_at, \
-             resource_members.copied_resource_id AS resource_members_copied_resource_id, \
-             resource_members.requested_at AS resource_members_requested_at, \
-             resource_members.created_at AS resource_members_created_at, \
-             resource_members.updated_at AS resource_members_updated_at, \
-             {} \
-             FROM resource_members INNER JOIN users \
-             ON users.id = resource_members.user_id \
-             WHERE resource_members.resource_type = 'CloudProject' \
-             AND resource_members.resource_id = {project_id} \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.status = 'approved' \
-             ORDER BY resource_members.id",
-            crate::user_reader::users_projection(),
-        );
-        self.mysql.fetch_all(sql, ()).await
+    /// `db.get(CloudProject, str(project_id))` inside the access helper.
+    pub async fn project_entity(&self, project_id: i64) -> MysqlResult<Option<ProjectEntityRow>> {
+        project_entity(self.mysql, project_id).await
     }
 
     /// `loop_item_service.list_project_task_bindings`: active execution
@@ -746,16 +769,30 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
         self.mysql.fetch_all(sql, ()).await
     }
 
-    /// `project_chat_service.list_agents`: active chat-agent rows for the
-    /// project, ordered by `created_at ASC`. The recorded COM_QUERY selects
-    /// the full `LOOP_ITEMS_COLUMNS` projection (all mapped `loop_items`
-    /// columns labeled `loop_items_<column>`) with `cloud_project_id` inlined
-    /// as a string literal, matching SQLAlchemy's query rendering for replay.
-    pub async fn list_agents(&self, project_id: &str) -> MysqlResult<Vec<AgentRow>> {
+    /// `project_chat_service.list_agents`: chat-agent rows for the project,
+    /// ordered by `created_at ASC`. The recorded COM_QUERY selects the full
+    /// `LOOP_ITEMS_COLUMNS` projection (all mapped `loop_items` columns
+    /// labeled `loop_items_<column>`) with `cloud_project_id` inlined as a
+    /// string literal, matching SQLAlchemy's query rendering for replay.
+    /// `include_archived` adds `archived` to the status filter.
+    pub async fn list_agents(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+    ) -> MysqlResult<Vec<AgentRow>> {
+        // `ProjectChatAgent.status.in_(["active"])` renders an `IN` list, not
+        // an equality predicate, so the statement only matches the recorded
+        // exchange with `status IN ('active')`. `include_archived` renders
+        // `status IN ('active', 'archived')`.
+        let statuses = if include_archived {
+            "('active', 'archived')"
+        } else {
+            "('active')"
+        };
         let sql = format!(
             "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
              WHERE loop_items.cloud_project_id = '{project_id}' \
-             AND loop_items.status = 'active' \
+             AND loop_items.status IN {statuses} \
              AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
                  ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
              AND loop_items.resource_type IN ('chat_agent') \
@@ -766,8 +803,7 @@ impl<'a, M: Mysql> BoardSnapshotRepository<'a, M> {
 }
 
 /// Base role hierarchy (`app.schemas.base_role`); lower is more privileged.
-#[allow(dead_code)]
-fn role_level(role: &str) -> i32 {
+pub(crate) fn role_level(role: &str) -> i32 {
     match role {
         "Owner" => 0,
         "Maintainer" => 1,
