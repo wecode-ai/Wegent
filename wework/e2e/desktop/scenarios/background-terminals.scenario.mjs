@@ -113,6 +113,7 @@ export function createDesktopScenario({
   let launched = false
   const toolResults = []
   return {
+    appEnvironment: { WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir },
     async handleHttp(request, response, url) {
       if (
         !active ||
