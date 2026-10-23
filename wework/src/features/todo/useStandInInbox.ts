@@ -4,17 +4,19 @@ import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskRe
 
 export function inboxRuntimeItem(
   work: StandInInboxWork,
-  deviceId: string
+  deviceId: string,
+  runtimeItem?: RuntimeTaskReminderItem
 ): RuntimeTaskReminderItem {
-  const task = work.task ?? {
-    taskId: work.taskId,
-    title: work.title,
-    runtime: 'codex' as const,
-    workspacePath: '',
-    status: 'pending',
-    running: false,
-    updatedAt: work.updatedAt,
-  }
+  const task = runtimeItem?.task ??
+    work.task ?? {
+      taskId: work.taskId,
+      title: work.title,
+      runtime: 'codex' as const,
+      workspacePath: '',
+      status: 'pending',
+      running: false,
+      updatedAt: work.updatedAt,
+    }
   const origin = {
     ...(task.runtimeHandle?.origin as Record<string, unknown>),
     initiatedBy: 'stand_in',
@@ -33,6 +35,7 @@ export function inboxRuntimeItem(
       runtimeHandle: { ...task.runtimeHandle, origin },
     },
     projectName: work.source.name,
+    lifecycle: runtimeItem?.lifecycle,
     workspace: { deviceId, available: true, workspacePath: task.workspacePath, tasks: [task] },
   }
 }

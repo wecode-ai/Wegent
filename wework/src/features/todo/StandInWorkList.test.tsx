@@ -5,6 +5,9 @@ import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 import '@/i18n'
 import { inboxRuntimeItem } from './useStandInInbox'
 import { StandInWorkList } from './StandInWorkList'
+import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
+import { standInState } from '@/features/notifications/standInNotifications'
+import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 
 function work(id = 'work'): StandInInboxWork {
   return {
@@ -97,4 +100,21 @@ it('limits manual message moves to this role and sends the durable record ID', a
 it('supports an empty original association after its last message moves elsewhere', () => {
   const empty = { ...work(), messageCount: 0, latestMessage: null }
   expect(inboxRuntimeItem(empty, 'device').task.title).toBe('评审方案')
+})
+
+it('keeps authoritative turn completion when inbox task metadata still says active', () => {
+  const item = work(runtimeItem.task.taskId)
+  const machine = new RuntimeTaskMachine(runtimeItem.address)
+  machine.dispatch({
+    type: 'executor_snapshot_received',
+    address: runtimeItem.address,
+    task: { ...runtimeItem.task, status: 'done', running: false },
+  })
+  const current = { ...runtimeItem, lifecycle: machine.getSnapshot() }
+  const stale = {
+    ...item,
+    status: 'sent' as const,
+    task: { ...runtimeItem.task, status: 'active', running: false },
+  }
+  expect(standInState(inboxRuntimeItem(stale, 'device', current)).status).toBe('completed')
 })

@@ -89,7 +89,8 @@ export function StandInOverviewPage({
   )
   const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
   if (deviceId)
-    for (const work of visibleInbox) merged.set(work.taskId, inboxRuntimeItem(work, deviceId))
+    for (const work of visibleInbox)
+      merged.set(work.taskId, inboxRuntimeItem(work, deviceId, merged.get(work.taskId)))
   const items = [...merged.values()]
     .filter(item => standInWorkRole(item) !== null)
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))

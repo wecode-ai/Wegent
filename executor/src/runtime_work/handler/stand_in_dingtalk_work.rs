@@ -325,6 +325,7 @@ fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
 }
 
 fn set_dingtalk_message_presentation(payload: &mut Value, messages: &[Value]) {
+    payload["restoreUserMessageContent"] = json!(true);
     payload["message"] = json!(messages
         .iter()
         .map(|message| format!(
@@ -362,6 +363,14 @@ mod tests {
             user_message_presentation(&payload).unwrap()["content"],
             payload["message"]
         );
+        let mut transcript = vec![
+            json!({"role":"user","clientUserMessageId":"batch","content":"Internal orchestration"}),
+        ];
+        attach_user_message_presentations(
+            &mut transcript,
+            vec![user_message_presentation(&payload).unwrap()],
+        );
+        assert_eq!(transcript[0]["content"], payload["message"]);
     }
 
     #[tokio::test]
