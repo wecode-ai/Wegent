@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { createXtermWebLinksAddon } from './xtermLinks'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 export function BackgroundTerminalPanel({
   terminal,
@@ -42,6 +43,28 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    let lastHistoryKeyAt = 0
+    const logViewport = (stage: string) =>
+      logRuntimeTaskCreateStage(stage, {
+        terminalId: terminal?.id,
+        viewportY: xterm.buffer.active.viewportY,
+        baseY: xterm.buffer.active.baseY,
+      })
+    const scrollDiagnostic =
+      import.meta.env.VITE_WEWORK_E2E === 'true'
+        ? xterm.onScroll(() => {
+            if (Date.now() - lastHistoryKeyAt < 2000) logViewport('background-terminal-scroll')
+          })
+        : null
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      xterm.attachCustomKeyEventHandler(event => {
+        if (event.type === 'keydown' && ['PageUp', 'PageDown'].includes(event.key)) {
+          lastHistoryKeyAt = Date.now()
+          logViewport(`background-terminal-${event.key}`)
+        }
+        return true
+      })
+    }
     const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
     resourceRef.current = { terminal: xterm, fit, output: '' }
     const observer = new ResizeObserver(() => {
@@ -50,6 +73,7 @@ export function BackgroundTerminalPanel({
     observer.observe(container)
     return () => {
       observer.disconnect()
+      scrollDiagnostic?.dispose()
       disposeTheme()
       resourceRef.current = null
       xterm.dispose()
@@ -63,6 +87,15 @@ export function BackgroundTerminalPanel({
       const delta = output.slice(resource.output.length)
       if (delta.length > 0) resource.terminal.write(delta)
     } else {
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('background-terminal-output-reset', {
+          terminalId: terminal?.id,
+          previousLength: resource.output.length,
+          nextLength: output.length,
+          viewportY: resource.terminal.buffer.active.viewportY,
+          baseY: resource.terminal.buffer.active.baseY,
+        })
+      }
       resource.terminal.reset()
       resource.terminal.write(output)
     }
