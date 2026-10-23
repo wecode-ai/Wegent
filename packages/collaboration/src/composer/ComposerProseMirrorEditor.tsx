@@ -80,6 +80,7 @@ export interface ComposerEditorSnapshot {
 }
 
 export interface ComposerEditorHandle {
+  captureInsertion: () => { insertText(text: string): boolean };
   element: HTMLElement | null;
   focus: () => void;
   getSnapshot: () => ComposerEditorSnapshot;
@@ -136,6 +137,7 @@ export const ComposerProseMirrorEditor = forwardRef<
 >(function ComposerProseMirrorEditor(props, forwardedRef) {
   const mountRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const documentRevisionRef = useRef(0);
   const pendingFocusRef = useRef(false);
   const textareaRefRef = useRef(props.textareaRef);
   const resolvedProps = {
@@ -174,6 +176,33 @@ export const ComposerProseMirrorEditor = forwardRef<
         return viewRef.current
           ? readComposerSnapshot(viewRef.current.state)
           : emptySnapshot();
+      },
+      captureInsertion() {
+        const view = viewRef.current;
+        const revision = documentRevisionRef.current;
+        const selection = view?.state.selection;
+        let inserted = false;
+        return {
+          insertText(text) {
+            if (
+              !view ||
+              !selection ||
+              inserted ||
+              viewRef.current !== view ||
+              documentRevisionRef.current !== revision ||
+              callbacksRef.current.disabled
+            )
+              return false;
+            inserted = true;
+            view.dispatch(
+              view.state.tr
+                .insertText(text, selection.from, selection.to)
+                .scrollIntoView(),
+            );
+            view.focus();
+            return true;
+          },
+        };
       },
       insertLineBreak() {
         const view = viewRef.current;
@@ -322,6 +351,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       dispatchTransaction(transaction) {
         const transactionStartedAt = performance.now();
         const nextState = view.state.apply(transaction);
+        if (nextState.doc !== view.state.doc) documentRevisionRef.current++;
         view.updateState(nextState);
         const snapshot = readComposerSnapshot(nextState);
         internalValueRef.current = snapshot.value;
