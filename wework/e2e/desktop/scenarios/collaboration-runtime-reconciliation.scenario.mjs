@@ -353,11 +353,12 @@ export async function createDesktopScenario({
     await control.command('waitFor', toggle)
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true')
       await control.command('click', toggle)
-    await control.command(
-      'click',
-      `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
-    )
-    await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
+    const projectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+    await control.command('waitFor', projectRow, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('click', projectRow, { visible: true })
+    const boardTab = `${CONTENT} [data-testid="collaboration-tab-board"]`
+    await control.command('waitFor', boardTab, { visible: true, timeoutMs: uiTimeoutMs })
+    await control.command('click', boardTab, { visible: true })
     const card = `${CONTENT} [data-testid="cloud-todo-card-${testCase.issue.id}"]`
     await control.command('waitFor', card)
     await control.command('click', card)
