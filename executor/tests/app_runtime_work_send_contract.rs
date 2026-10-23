@@ -2409,10 +2409,35 @@ async fn runtime_tasks_forward_and_accept_mcp_form_elicitation() {
         event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
     })
     .expect("MCP form should be emitted as request_user_input");
+    let render_payload = &block_event["payload"]["data"]["block"]["render_payload"];
     assert_eq!(
-        block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["options"][1],
+        render_payload["questions"][0]["options"][1],
         json!({"label": "仅自己", "description": "owner"})
     );
+    assert_eq!(render_payload["interactionScope"], "turn-input");
+    let mut response = json!({
+        "requestId": render_payload["requestId"],
+        "answers": {"audience": {"answers": ["仅自己"]}}
+    });
+    for scope in [None, Some("previous-turn")] {
+        let mut invalid_response = response.clone();
+        if let Some(scope) = scope {
+            invalid_response["interactionScope"] = json!(scope);
+        }
+        let rejected = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.send",
+                "payload": {
+                    "taskId": "local-task-mcp-elicitation",
+                    "requestUserInputResponse": invalid_response
+                }
+            }))
+            .await
+            .expect("invalid MCP answer should return a rejection");
+        assert_eq!(rejected["success"], false, "{rejected}");
+        assert_eq!(rejected["code"], "stale_request_user_input", "{rejected}");
+    }
+    response["interactionScope"] = render_payload["interactionScope"].clone();
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -2424,18 +2449,13 @@ async fn runtime_tasks_forward_and_accept_mcp_form_elicitation() {
                     "taskId": "local-task-mcp-elicitation"
                 },
                 "message": "仅自己",
-                "requestUserInputResponse": {
-                    "requestId": 99,
-                    "answers": {
-                        "audience": {"answers": ["仅自己"]}
-                    }
-                }
+                "requestUserInputResponse": response
             }
         }))
         .await
         .expect("MCP form answer should be accepted");
 
-    assert_eq!(sent["success"], true);
+    assert_eq!(sent["success"], true, "{sent}");
     assert_eq!(sent["accepted"], true);
     wait_until_task_idle(&handler, "local-task-mcp-elicitation").await;
 
