@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
@@ -159,6 +160,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'voice-input',
   'archived-worktree-cleanup',
   'plugin-toggle-persistence',
   'streaming-content',

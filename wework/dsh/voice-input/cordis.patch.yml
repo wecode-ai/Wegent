@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-voice-input
+      name: '@wegent/dsh-voice-input'

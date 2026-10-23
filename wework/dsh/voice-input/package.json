@@ -1,0 +1,32 @@
+{
+  "name": "@wegent/dsh-voice-input",
+  "displayName": "Voice input",
+  "description": "Mounts official DSH voice input in the Wework composer and settings.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-experimental-client-ui-voice-input",
+        "@wegent/dsh-app-wework"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-experimental-client-ui-voice-input": "0.2.0-rc.2"
+  }
+}

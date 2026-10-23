@@ -3,6 +3,7 @@
 set -euo pipefail
 
 core_segments=(
+  voice-input
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
@@ -599,6 +600,12 @@ classify_wework_path() {
         select_target "core:temporary-chat"
         select_target "core:background-terminals"
       fi
+      return
+      ;;
+
+    wework/dsh/voice-input/* | \
+      wework/e2e/desktop/scenarios/voice-input.scenario.mjs)
+      select_target "core:voice-input"
       return
       ;;
 
