@@ -30,6 +30,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
@@ -1106,16 +1107,30 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   return element.textContent?.trim() ?? ''
 }
 
+function logNativeTerminalKeyPhase(selector: string, key: string, phase: string) {
+  if (!selector.includes('.xterm-helper-textarea')) return
+  logRuntimeTaskCreateStage('native-terminal-key', {
+    key,
+    phase,
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+  })
+}
+
 async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
   phase: 'press' | 'down' | 'up' = 'press'
 ): Promise<string> {
+  const record = (step: string) => logNativeTerminalKeyPhase(selector, key, step)
+  record('start')
   const windowLabel = getDesktopWindowLabel()
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
+  record('window-focused')
   await waitForDesktopControlTick()
+  record('focus-tick-finished')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
@@ -1126,13 +1141,16 @@ async function pressNativeDesktopControlKey(
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
+    record('sending-key')
     await invokeDesktopHost('e2e.pressKey', {
       windowLabel,
       key,
       phase,
       focus: false,
     })
+    record('key-sent')
     await waitForDesktopControlTick()
+    record('key-tick-finished')
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
         `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +

@@ -794,6 +794,13 @@ jobs:
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
+              Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |
+                Select-Object Name, Length, Attributes | Format-Table | Out-String | Write-Host
+              if (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue) {
+                Get-MpThreatDetection -ErrorAction Continue |
+                  Select-Object InitialDetectionTime, ActionSuccess, Resources |
+                  ConvertTo-Json -Depth 3 | Write-Host
+              }
               throw "Missing Windows Wework desktop E2E resource: $path"
             }
           }
