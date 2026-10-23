@@ -4,6 +4,7 @@ import {
   PROVIDER_NATIVE_MARKERS,
 } from '../../fixtures/provider-native-knowledge'
 import { ProviderNativeKnowledgePage } from '../../pages/tasks/provider-native-knowledge.page'
+import { hasCompletedProviderNativeTurn } from '../../utils/provider-native-task-turn'
 import {
   authHeaders,
   clearToolScenario,
@@ -461,8 +462,17 @@ test.describe('Provider-native binding state and contracts', () => {
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
     if (expectedTaskId) expect(taskId).toBe(expectedTaskId)
-    await waitForTaskTerminal(resources.token, taskId)
-    return getTask(request, resources.token, taskId)
+    let task: unknown
+    await expect
+      .poll(
+        async () => {
+          task = await getTask(request, resources.token, taskId)
+          return hasCompletedProviderNativeTurn(task, prompt)
+        },
+        { timeout: 60_000, message: `Task ${taskId} should complete the turn for ${prompt}` }
+      )
+      .toBe(true)
+    return task
   }
 })
 
