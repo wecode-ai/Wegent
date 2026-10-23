@@ -3301,12 +3301,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
-async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
+function traceDesktopControlTransport(
+  stage: string,
+  context: { clientId: string; commandId?: string; action?: string; status?: number }
+): void {
+  console.info(
+    `[desktop-e2e-control] ${JSON.stringify({ ...context, stage, at: new Date().toISOString() })}`
+  )
+}
+
+async function postDesktopControlResult(
+  url: string,
+  result: DesktopControlResult,
+  action: string
+): Promise<void> {
+  const context = { clientId: result.clientId, commandId: result.id, action }
+  traceDesktopControlTransport('result-post', context)
   const response = await fetch(`${url}/results`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify(result),
   })
+  traceDesktopControlTransport('result-headers', { ...context, status: response.status })
+  await response.text()
+  traceDesktopControlTransport('result-body', context)
   if (!response.ok) {
     throw new Error(`Desktop E2E control result failed with ${response.status}`)
   }
@@ -3322,6 +3340,7 @@ async function postDesktopControlStarted(
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ id: command.id, clientId }),
   })
+  await response.text()
   if (!response.ok) {
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
   }
@@ -3329,11 +3348,18 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
-  const pollForCommand = () =>
-    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
-      cache: 'no-store',
-      headers: desktopControlHeaders(),
-    })
+  const pollForCommand = async () => {
+    traceDesktopControlTransport('poll-request', { clientId })
+    const response = await fetch(
+      `${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`,
+      {
+        cache: 'no-store',
+        headers: desktopControlHeaders(),
+      }
+    )
+    traceDesktopControlTransport('poll-headers', { clientId, status: response.status })
+    return response
+  }
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
@@ -3341,6 +3367,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
+  await readyResponse.text()
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
@@ -3356,6 +3383,11 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      traceDesktopControlTransport('command-read', {
+        clientId,
+        commandId: command.id,
+        action: command.action,
+      })
       await postDesktopControlStarted(url, command, clientId)
       let result: DesktopControlResult
       try {
@@ -3370,7 +3402,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
-        await postDesktopControlResult(url, result)
+        await postDesktopControlResult(url, result, command.action)
       } catch (error) {
         console.error('[Wework] Desktop E2E result acknowledgement failed:', {
           commandId: command.id,

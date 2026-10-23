@@ -422,8 +422,13 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
-    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-input] ')) {
-      console.info('[renderer-e2e-input]', {
+    const diagnosticPrefix = message.startsWith('[desktop-e2e-input] ')
+      ? '[renderer-e2e-input]'
+      : message.startsWith('[desktop-e2e-control] ')
+        ? '[renderer-e2e-control]'
+        : null
+    if (process.env.VITE_WEWORK_E2E === 'true' && diagnosticPrefix) {
+      console.info(diagnosticPrefix, {
         webContentsId: contents.id,
         message: redactLog(message).slice(0, 4096),
       })

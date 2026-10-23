@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
@@ -40,6 +40,10 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+  })
+
   test('acknowledges refresh before activating the native menu that unloads the renderer', async () => {
     const activate = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(true)
     let acknowledgeResult!: (value: Response) => void
@@ -292,6 +296,57 @@ describe('Electron desktop E2E automation', () => {
       expect(polls).toBe(1)
       acknowledgeResult(new Response('{}'))
       await vi.waitFor(() => expect(polls).toBe(2))
+    } finally {
+      button.remove()
+    }
+  })
+
+  test('consumes acknowledgement bodies before polling and logs only transport metadata', async () => {
+    const button = document.createElement('button')
+    button.dataset.testid = 'control-body-ordering-button'
+    document.body.append(button)
+    let finishBody!: () => void
+    const acknowledgement = new Response(
+      new ReadableStream({
+        start(controller) {
+          finishBody = () => {
+            controller.enqueue(new TextEncoder().encode('{"ok":true,"private":"ACK_BODY"}'))
+            controller.close()
+          }
+        },
+      })
+    )
+    let polls = 0
+    vi.stubGlobal('fetch', (url: string) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'body-ordered-click',
+              action: 'click',
+              selector: '[data-testid="control-body-ordering-button"]',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) return Promise.resolve(acknowledgement)
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(acknowledgement.bodyUsed).toBe(true))
+      expect(polls).toBe(1)
+      finishBody()
+      await vi.waitFor(() => expect(polls).toBe(2))
+      const messages = vi.mocked(console.info).mock.calls.map(([message]) => String(message))
+      const stages = messages
+        .filter(message => message.includes('"commandId":"body-ordered-click"'))
+        .map(message => JSON.parse(message.slice('[desktop-e2e-control] '.length)).stage)
+      expect(stages).toEqual(['command-read', 'result-post', 'result-headers', 'result-body'])
+      expect(messages.join('\n')).not.toContain('ACK_BODY')
+      expect(messages.join('\n')).not.toContain('control-body-ordering-button')
     } finally {
       button.remove()
     }
