@@ -837,6 +837,10 @@ xterm updates all accessible row contents before batching transform resets, widt
 
 Transcript conversion updates `runtimeStatus` together with the current message's `status`; a completed user message must not leave a stale status that overrides its streaming assistant. Smart app verification logs stage start, completion, and duration without environment variables or credentials. Locate stalled stages from these logs instead of extending E2E waits.
 
+Smart app verification sets `NPM_CONFIG_WORKSPACE_DIR` to the project itself and disables implicit dependency installation before scripts. Typechecking, tests, builds, and runtime probes still execute. Verification must not read or install the containing host workspace. Real pnpm regressions cover a conflicting host package-manager version and prevent creation of its lockfile.
+
+Desktop artifacts restore through `actions/download-artifact@v6`, including the upstream fix that rejects the pending promise on stream timeout instead of exiting successfully with a partial directory. See the [artifact SDK timeout fix](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc). Windows network-failure diagnostics retain connection states, dynamic/excluded port ranges, socket-exhaustion events, and memory-pool counters without process command lines or credentials.
+
 Stand-in completion can arrive before the runtime unread flag. A new completion after observation starts must remain unread, and delivery must consult the current read ledger rather than consume it as restored history. Persist delivery records once per batch before sending alerts. Regressions cover late unread updates, no replay after reload, and a single delivery-ledger write for 1,000 records.
 
 `createSingleRootLocalProject` must wait until the new project is the workbench’s current project. Closing the creation dialog or finding an older composer is insufficient. The cloud-context and running-history scenarios also select a registered model explicitly through `selectE2EModel` before entering the first message. Their stalled-context, attachment, history recovery, and task-move assertions remain intact.

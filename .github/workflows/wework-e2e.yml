@@ -365,7 +365,7 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -648,13 +648,13 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Windows Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64
 
       - name: Download Windows Redis E2E tools
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-redis-e2e-tools
           path: wework/test-results/windows-e2e-tools/redis
@@ -884,7 +884,7 @@ jobs:
           persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -1019,7 +1019,7 @@ jobs:
           filter: blob:none
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
