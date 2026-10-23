@@ -203,7 +203,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('CARGO_TARGET_DIR: targetDirectory')
     expect(source).toContain('executorPackageBinaryPath(targetDirectory, target, profile)')
     expect(source).not.toContain("'metadata',")
-    expect(source).toContain('const [executorPath] = await Promise.all([')
+    expect(source).toContain('await cp(executorPath, packagedExecutor)')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")

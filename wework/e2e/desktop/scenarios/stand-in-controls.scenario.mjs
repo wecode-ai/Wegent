@@ -1,3 +1,4 @@
+import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -36,14 +37,11 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           },
           uiTimeoutMs
         )
-      const open = async () => {
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
-        await control.command('waitFor', PROMPT, { timeoutMs: uiTimeoutMs })
-      }
-      const cancel = () => control.command('click', '[data-testid="stand-in-cancel"]')
+      const open = () => openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
+      const cancel = () => discardStandInDraft(control)
 
       await open()
-      assert.equal(await control.command('getAttribute', AUTO, { value: 'type' }), 'checkbox')
+      assert.equal(await control.command('getAttribute', AUTO, { value: 'role' }), 'switch')
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', AUTO + '[aria-checked="true"]')

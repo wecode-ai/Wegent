@@ -51,6 +51,9 @@ mod collaboration_dispatch;
 #[path = "stand_in.rs"]
 mod stand_in;
 
+#[path = "personal_stand_in.rs"]
+pub mod personal_stand_in;
+
 const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
