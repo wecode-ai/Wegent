@@ -833,6 +833,8 @@ Authenticated flows should create users and data through backend APIs before the
 
 ### Readiness for Local Project Scenarios
 
+`voice-input` uses `clickWhenEnabled` for New Task on initial entry and after restart. Control-channel and telemetry-dialog readiness do not establish sidebar readiness. Preserve the shared 10-second action budget and all first-use setup, dialog dismissal, and post-restart assertions.
+
 xterm updates all accessible row contents before batching transform resets, width measurements, and transform writes. This avoids per-row forced layouts. The dependency patch covers source, CommonJS, and ESM; a regression uses real xterm to verify all row contents are updated before the first measurement. `background-terminals` retains native paging, history, and accessibility assertions, with CPU profiles available to inspect layout hotspots.
 
 Transcript conversion updates `runtimeStatus` together with the current message's `status`; a completed user message must not leave a stale status that overrides its streaming assistant. Smart app verification logs stage start, completion, and duration without environment variables or credentials. Locate stalled stages from these logs instead of extending E2E waits.
