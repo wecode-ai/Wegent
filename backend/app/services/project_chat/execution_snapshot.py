@@ -52,6 +52,36 @@ def completed_activity_for_turn(
     )
 
 
+def can_restore_reconciled_completion(
+    db: Session, *, execution: LoopItemExecution, event_name: str, payload: dict
+) -> bool:
+    """Allow final text repair after a snapshot won the terminal-state race."""
+    if event_name != "response.completed":
+        return False
+    raw_sequence = payload.get("eventSeq", payload.get("event_seq"))
+    if isinstance(raw_sequence, bool):
+        return False
+    try:
+        sequence = int(raw_sequence)
+    except (TypeError, ValueError):
+        return False
+    # Keep the aggregate -> activity lock order and read the concurrent winner.
+    db.refresh(execution, with_for_update=True)
+    if execution.status != "completed" or sequence <= execution.last_event_seq:
+        return False
+    activity = completed_activity_for_turn(
+        db,
+        device_ids=[execution.runtime_device_id],
+        task_id=execution.runtime_task_id,
+        turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+    )
+    return activity is not None and (
+        str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
+        and activity.project_id == execution.cloud_project_id
+        and activity.task_id == execution.loop_item_id
+    )
+
+
 def _match_turn(
     row: ProjectChatMessage,
     snapshot: RuntimeExecutionSnapshot,
