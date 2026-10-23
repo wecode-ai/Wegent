@@ -13,6 +13,8 @@ capability is available. The link is handled by the Wegent web scheme system.
 from __future__ import annotations
 
 import logging
+import re
+from typing import Union
 from urllib.parse import quote
 
 from sqlalchemy.orm import Session
@@ -25,6 +27,13 @@ from app.services.user_mcp_service import user_mcp_service
 logger = logging.getLogger(__name__)
 
 CONNECTOR_OAUTH_MODAL = "wegent://modal/connector-oauth"
+# The authorization list depends on the current message (lazy apps are only
+# listed when the message mentions them), so it travels with the user turn.
+TURN_GUIDANCE_START = "<wegent_connector_apps>"
+TURN_GUIDANCE_END = "</wegent_connector_apps>"
+TURN_GUIDANCE_BLOCK = re.compile(
+    rf"(?:\n\n)?{TURN_GUIDANCE_START}.*?{TURN_GUIDANCE_END}", re.DOTALL
+)
 
 
 def connector_apps_by_state(
@@ -155,3 +164,31 @@ def build_connector_guidance_section(
         [app.slug for app in selected],
     )
     return build_connector_authorization_prompt(selected)
+
+
+def append_turn_guidance(prompt: Union[str, list], section: str) -> Union[str, list]:
+    """Attach the authorization list to the current user message.
+
+    Resumed agent sessions keep the system prompt they started with (Claude Code
+    ``--resume`` and Codex threads both do), so turn-scoped guidance that depends
+    on this message must travel with the message instead.
+    """
+    block = f"{TURN_GUIDANCE_START}\n{section.strip()}\n{TURN_GUIDANCE_END}"
+    if isinstance(prompt, str):
+        return f"{TURN_GUIDANCE_BLOCK.sub('', prompt).rstrip()}\n\n{block}"
+    if not isinstance(prompt, list):
+        return prompt
+
+    cleaned: list = []
+    for item in prompt:
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            cleaned.append({**item, "text": TURN_GUIDANCE_BLOCK.sub("", item["text"])})
+        else:
+            cleaned.append(item)
+    # Reuse the vision-prompt shape the executors already understand.
+    for index, item in enumerate(cleaned):
+        if isinstance(item, dict) and item.get("type") == "input_text":
+            cleaned[index] = {**item, "text": f"{item['text'].rstrip()}\n\n{block}"}
+            return cleaned
+    cleaned.append({"type": "input_text", "text": block})
+    return cleaned
