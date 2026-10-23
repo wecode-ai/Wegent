@@ -304,6 +304,12 @@ export async function createDesktopScenario({
       apiProxy = await new TransportFaultProxy(backendUrl).start()
       deviceProxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = apiProxy.url
+      if (checkpoint === 'plugin-write-coordination') {
+        // Keep the real connection on the fault proxy when cloud metadata
+        // advertises the backend's direct Socket.IO endpoint during startup.
+        appEnvironment.WEWORK_BACKEND_URL = apiProxy.url
+        appEnvironment.WEWORK_SOCKET_URL = apiProxy.url
+      }
     },
     setCloudEnvironment(value) {
       cloud = value

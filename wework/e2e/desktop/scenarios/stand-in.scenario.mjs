@@ -87,7 +87,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         { project_id: project.id, todo: { title: '启用前的任务', assignee_user_id: USER_ID } },
         uiTimeoutMs
       )
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      // Returning from settings reloads the board snapshot and briefly replaces its header.
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
       assert.equal(
         await control.command(
@@ -207,7 +210,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         uiTimeoutMs
       )
       await control.command('click', `${CONTENT} [data-testid="collaboration-tab-board"]`)
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`, {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="true"]')
       const concurrentSettings = await requestExecutor(
         control,
