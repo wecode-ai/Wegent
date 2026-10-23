@@ -106,26 +106,63 @@ test('does not open an Agent form when the creation choice is unavailable', asyn
   assert.equal(calls.length, 2)
 })
 
-test.each(['true', 'false'])(
-  'ensures a workspace is open from its initial aria-expanded=%s state',
-  async expanded => {
-    const calls = []
-    const control = {
-      async command(action, selector, options) {
-        calls.push({ action, selector, options })
-        if (action === 'getAttribute') return expanded
-      },
-    }
-    const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
-    await expandCollaborationWorkspace(control, toggle)
-    assert.equal(calls.filter(call => call.action === 'click').length, expanded === 'false' ? 1 : 0)
-    assert.deepEqual(calls.at(-1), {
-      action: 'waitFor',
-      selector: `${toggle}[aria-expanded="true"]`,
-      options: { visible: true, timeoutMs: 10000 },
-    })
+test('leaves an already expanded workspace untouched', async () => {
+  const calls = []
+  const control = {
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'getAttribute') return 'true'
+    },
   }
-)
+  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+  await expandCollaborationWorkspace(control, toggle)
+  assert.equal(calls.filter(call => call.action === 'click').length, 0)
+  assert.deepEqual(calls, [
+    { action: 'waitFor', selector: toggle, options: { visible: true, timeoutMs: 10000 } },
+    {
+      action: 'getAttribute',
+      selector: toggle,
+      options: { value: 'aria-expanded' },
+    },
+  ])
+})
+
+test('expands a collapsed workspace and verifies the result', async () => {
+  const calls = []
+  const control = {
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'getAttribute') return 'false'
+    },
+  }
+  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+  await expandCollaborationWorkspace(control, toggle)
+  assert.equal(calls.filter(call => call.action === 'click').length, 1)
+  assert.deepEqual(calls.at(-1), {
+    action: 'waitFor',
+    selector: `${toggle}[aria-expanded="true"]`,
+    options: { visible: true, timeoutMs: 3000 },
+  })
+})
+
+test('retries when the selected workspace expands while the click is dispatched', async () => {
+  const calls = []
+  let expansionChecks = 0
+  const control = {
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'getAttribute') return 'false'
+      if (action === 'waitFor' && selector.endsWith('[aria-expanded="true"]')) {
+        expansionChecks += 1
+        if (expansionChecks === 1) throw new Error('Toggle collapsed again')
+      }
+    },
+  }
+  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+  await expandCollaborationWorkspace(control, toggle)
+  assert.equal(calls.filter(call => call.action === 'click').length, 2)
+  assert.equal(expansionChecks, 2)
+})
 
 test('rejects a workspace toggle without a declared expanded state', async () => {
   const calls = []

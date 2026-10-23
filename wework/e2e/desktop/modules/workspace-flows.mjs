@@ -109,18 +109,30 @@ export async function expandCollaborationWorkspace(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
-  const expanded = await control.command('getAttribute', toggleSelector, {
-    value: 'aria-expanded',
-  })
-  assert.ok(
-    expanded === 'true' || expanded === 'false',
-    'A workspace toggle must expose its expanded state'
-  )
-  if (expanded === 'false') await control.command('click', toggleSelector)
-  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, {
-    visible: true,
-    timeoutMs,
-  })
+  const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
+  const attempts = 3
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const expanded = await control.command('getAttribute', toggleSelector, {
+      value: 'aria-expanded',
+    })
+    assert.ok(
+      expanded === 'true' || expanded === 'false',
+      'A workspace toggle must expose its expanded state'
+    )
+    if (expanded === 'true') return
+    await control.command('click', toggleSelector)
+    try {
+      await control.command('waitFor', expandedSelector, {
+        visible: true,
+        timeoutMs: Math.min(timeoutMs, 3000),
+      })
+      return
+    } catch (error) {
+      if (attempt === attempts) throw error
+      // Restoring a selected workspace expands it asynchronously; a click that
+      // races that update collapses it again. Re-read the state and retry.
+    }
+  }
 }
 
 export async function selectCollaborationIssueAgent(
