@@ -97,8 +97,8 @@ async function releaseRequestHold(control, timeoutMs) {
 async function openElicitation(control, scope, composer, timeoutMs) {
   await control.command('fill', composer, { value: PROMPT })
   await control.command('press', composer, { key: 'Enter' })
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
+  const deadline = Date.now() + Math.max(timeoutMs, 90_000)
+  while (Date.now() < deadline) {
     const urlCard = Number(
       await control.command(
         'getElementCount',
@@ -108,21 +108,33 @@ async function openElicitation(control, scope, composer, timeoutMs) {
     )
     if (urlCard > 0) {
       await control.command('click', `${scope} [data-testid="mcp-url-authorization-cancel"]`)
-      break
+      await waitForCount(
+        control,
+        `${scope} [data-testid="mcp-url-authorization-card"]`,
+        0,
+        'The URL authorization card did not close',
+        10_000
+      )
+      continue
     }
     const formCard = Number(
-      await control.command('getElementCount', `${scope} [data-testid="request-user-input-card"]`, {
-        visible: true,
-      })
+      await control.command(
+        'getElementCount',
+        `${scope} [data-testid="request-user-input-questions"]`,
+        { visible: true }
+      )
     )
-    if (formCard > 0) break
+    if (formCard > 0) {
+      await control.command('waitFor', `${scope} [data-testid="request-user-input-questions"]`, {
+        text: '访问范围',
+        visible: true,
+        timeoutMs: 10_000,
+      })
+      return
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  await control.command('waitFor', `${scope} [data-testid="request-user-input-card"]`, {
-    text: '访问范围',
-    visible: true,
-    timeoutMs,
-  })
+  assert.fail(`Timed out waiting for the elicitation form in ${scope}`)
 }
 
 async function assertAnswerSummary(control, scope) {
@@ -150,7 +162,7 @@ async function assertAcceptedAnswerCached(control, scope) {
   })
   await waitForCount(
     control,
-    `${scope} [data-testid="request-user-input-card"]`,
+    `${scope} [data-testid="request-user-input-questions"]`,
     0,
     'The accepted answer left its request form pending',
     10_000
@@ -327,11 +339,15 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'A failed answer transport was marked as accepted',
         taskTimeoutMs
       )
-      await control.command('waitFor', `${WORKBENCH} [data-testid="request-user-input-card"]`, {
-        text: '访问范围',
-        visible: true,
-        timeoutMs: taskTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        `${WORKBENCH} [data-testid="request-user-input-questions"]`,
+        {
+          text: '访问范围',
+          visible: true,
+          timeoutMs: taskTimeoutMs,
+        }
+      )
       await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
       failureGate.resolve()
       await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
