@@ -1,3 +1,4 @@
+import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -44,7 +45,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+        connect: true,
+      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
