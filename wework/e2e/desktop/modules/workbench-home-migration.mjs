@@ -55,7 +55,35 @@ async function runNativeTurn(fixture, home, resumeId) {
     maxBuffer: 4 * 1024 * 1024,
   })
   execution.child.stdin.end()
-  const { stdout } = await execution
+  let stdout
+  try {
+    stdout = (await execution).stdout
+  } catch (error) {
+    const configPath = join(home, 'config.toml')
+    const [configResult, homeResult] = await Promise.allSettled([
+      readFile(configPath, 'utf8'),
+      realpath(home),
+    ])
+    const config = configResult.status === 'fulfilled' ? configResult.value : ''
+    console.error(
+      '[native-migration-resume]',
+      JSON.stringify({
+        configPath,
+        resolvedHome: homeResult.status === 'fulfilled' ? homeResult.value : undefined,
+        homeError: homeResult.status === 'rejected' ? homeResult.reason.message : undefined,
+        configError: configResult.status === 'rejected' ? configResult.reason.message : undefined,
+        configBytes: Buffer.byteLength(config),
+        providerSection: config
+          .split('\n')
+          .filter(line => line.includes('model_providers') && line.trim().startsWith('[')),
+        selectedProvider: config.match(/^model_provider\s*=\s*(.+)$/m)?.[1],
+        configMarkerPresent: config.includes(CONFIG_MARKER),
+        stdout: error.stdout,
+        stderr: error.stderr,
+      })
+    )
+    throw error
+  }
   const events = stdout
     .trim()
     .split('\n')
