@@ -283,11 +283,8 @@ spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The macOS Inspector path also uses the debug
-Executor profile and disables dev-profile debuginfo. It builds a release
-Executor only when the memory checkpoint actually runs (`ci:memory`, `ci:all`,
-or a non-pull-request run), because optimized code generation is relevant to
-memory measurements but does not add Inspector coverage. The macOS memory job keys its pnpm store from both
+type gate remain unchanged. The shared macOS Inspector and memory E2E build uses
+a release Executor so memory measurements use optimized code. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
 cannot consume the critical-path budget. Its large streaming Markdown response
 uses a targeted 30-second completion budget while ordinary memory interactions
@@ -812,12 +809,10 @@ not equivalent coverage.
 Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
 complete browser plus Linux and Windows Desktop Core suites before a commit
 enters `main`; `main` does not repeat checks that already passed for the merge
-group. The macOS memory gate runs by default only on scheduled and manual runs.
-Add the `ci:memory` label when a PR must validate the memory boundary. Applying that
-label starts only the memory gate and does not repeat browser, Linux desktop, or
-Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
+group. The macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`.
+Regular PRs, scheduled runs, and manual runs do not execute memory E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
-normally select Wework E2E. The workflow also runs a complete regression every
+normally select Wework E2E. The workflow also runs a regression excluding memory E2E every
 day at 04:00 UTC. Keeping `ci:all` on a PR also runs all Windows Core shards
 on subsequent pushes. Windows builds, shards, and the summary share one
 scheduling condition; skipped required jobs fail the gate. The macOS memory

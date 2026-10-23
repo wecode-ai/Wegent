@@ -238,10 +238,8 @@ cache warmup，防止主分支只在 lockfile 变化时刷新缓存。桌面 E2E
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
-macOS Inspector 路径同样使用 debug Executor profile，并关闭 dev profile 的
-debuginfo。只有真正执行内存 checkpoint（`ci:memory`、`ci:all` 或非 PR
-运行）时才构建 release Executor：优化后的代码生成会影响内存测量，但在仅运行
-Inspector 时不会增加覆盖。macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
+macOS Inspector 与内存 E2E 的共享构建使用 release Executor，保证内存测量使用
+优化后的代码。macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
 并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。其大段流式 Markdown 响应使用
 定向的 30 秒完成预算，普通内存测试交互仍保持共享的 10 秒超时。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
@@ -695,10 +693,9 @@ Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵
 
 普通 Draft PR 不运行浏览器或桌面 E2E。merge queue 会在提交进入 `main` 之前运行
 完整浏览器以及 Linux、Windows 桌面 Core 套件；`main` 不再重复运行已经通过的
-合并队列检查。macOS 内存门禁默认只在定时任务和手动任务中运行；需要在 PR 中验证
-内存边界时，添加 `ci:memory` 标签。
-添加该标签只触发内存门禁，不会重复运行浏览器或 Linux、Windows 桌面 E2E。
-workflow 每天 UTC 04:00 运行一次完整回归。添加 `ci:all` 标签则会运行浏览器、
+合并队列检查。macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+普通 PR、定时任务和手动任务均不运行内存 E2E。
+workflow 每天 UTC 04:00 运行一次回归（不含内存 E2E）。添加 `ci:all` 标签则会运行浏览器、
 Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通常不会触发
 Wework E2E。
 
