@@ -7,7 +7,7 @@ import type {
   RuntimeWorktreePreflightResponse,
 } from '@/types/api'
 import {
-  deviceSupportsManagedWorktrees,
+  probeDeviceManagedWorktreeSupport,
   probeProjectWorktreeAvailability,
   resolveProjectWorktreeAvailability,
   worktreeWorkspaceDeviceId,
@@ -112,7 +112,13 @@ function createPreflight(
   }
 }
 
-describe('resolveProjectWorktreeAvailability', () => {
+describe('probeDeviceManagedWorktreeSupport', () => {
+  const capabilitiesFor = (device: DeviceInfo): RuntimeWorktreeCapabilitiesResponse => ({
+    success: true,
+    deviceId: device.device_id,
+    runtimeWorktrees: device.runtime_features?.worktrees ?? null,
+  })
+
   test.each([
     ['supported capability', createDevice(), true],
     [
@@ -248,10 +254,46 @@ describe('resolveProjectWorktreeAvailability', () => {
       }),
       false,
     ],
-  ] as const)('recognizes a device with %s', (_label, device, expected) => {
-    expect(deviceSupportsManagedWorktrees(device)).toBe(expected)
+  ] as const)('recognizes a device with %s', async (_label, device, expected) => {
+    const api = {
+      getWorktreeCapabilities: vi.fn(async () => capabilitiesFor(device)),
+    }
+    await expect(probeDeviceManagedWorktreeSupport(api, device)).resolves.toBe(expected)
   })
 
+  test('accepts a local Executor record that carries no runtime features', async () => {
+    const device = createDevice({ device_type: 'local', runtime_features: null })
+    const getWorktreeCapabilities = vi.fn(async () => capabilitiesFor(createDevice()))
+
+    await expect(
+      probeDeviceManagedWorktreeSupport({ getWorktreeCapabilities }, device)
+    ).resolves.toBe(true)
+    expect(getWorktreeCapabilities).toHaveBeenCalledWith({ deviceId: device.device_id })
+  })
+
+  test('rejects a capability response addressed to another device', async () => {
+    const api = {
+      getWorktreeCapabilities: vi.fn(async () => ({
+        ...capabilitiesFor(createDevice()),
+        deviceId: 'other-device',
+      })),
+    }
+
+    await expect(probeDeviceManagedWorktreeSupport(api, createDevice())).resolves.toBe(false)
+  })
+
+  test('reports an RPC failure as unsupported', async () => {
+    const api = {
+      getWorktreeCapabilities: vi.fn(async () => {
+        throw new Error('runtime_rpc_timeout')
+      }),
+    }
+
+    await expect(probeDeviceManagedWorktreeSupport(api, createDevice())).resolves.toBe(false)
+  })
+})
+
+describe('resolveProjectWorktreeAvailability', () => {
   test('uses one stable target device identity for remote workspaces', () => {
     expect(
       worktreeWorkspaceDeviceId(
