@@ -391,9 +391,6 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'background-terminals') {
-    nextEnv.WEWORK_E2E_RENDERER_CPU_PROFILE = 'true'
-  }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
     nextEnv.TZ = 'Asia/Shanghai'
