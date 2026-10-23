@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict'
+import { test } from 'vitest'
+
+import { openProjectStandIn } from '../e2e/desktop/modules/stand-in-flows.mjs'
+import { openStandInNotifications } from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
+
+const entry = '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-open"]'
+
+test('project entry waits for the board to mount before clicking', async () => {
+  const calls = []
+  let mountBoard
+  const boardReady = new Promise(resolve => {
+    mountBoard = resolve
+  })
+  const control = {
+    async command(action, selector) {
+      calls.push([action, selector])
+      if (action === 'waitFor' && selector === entry) await boardReady
+      if (action === 'getValue') return 'default'
+    },
+  }
+
+  const opened = openProjectStandIn(control, entry)
+  assert.deepEqual(calls, [['waitFor', entry]])
+  mountBoard()
+  await opened
+
+  assert.deepEqual(calls.slice(0, 2), [
+    ['waitFor', entry],
+    ['click', entry],
+  ])
+  assert.deepEqual(calls.at(-1), ['waitFor', '[data-testid="stand-in-prompt"]'])
+})
+
+test('missing project entry remains a checkpoint failure without clicking', async () => {
+  const calls = []
+  const missingEntry = new Error('The project board did not mount')
+  const control = {
+    async command(action, selector) {
+      calls.push([action, selector])
+      throw missingEntry
+    },
+  }
+
+  await assert.rejects(openProjectStandIn(control, entry), error => error === missingEntry)
+  assert.deepEqual(calls, [['waitFor', entry]])
+})
+
+test('notification entry waits for the reloaded shell and category before clicking', async () => {
+  const calls = []
+  let mountShell
+  const shellReady = new Promise(resolve => {
+    mountShell = resolve
+  })
+  const notificationEntry = '[data-testid="wework-notifications-button"]'
+  const category = '[data-testid="wework-notifications-category-collaboration"]'
+  const control = {
+    async command(action, selector) {
+      calls.push([action, selector])
+      if (action === 'waitFor' && selector === notificationEntry) await shellReady
+    },
+  }
+
+  const opened = openStandInNotifications(control)
+  assert.deepEqual(calls, [['waitFor', notificationEntry]])
+  mountShell()
+  await opened
+
+  assert.deepEqual(calls, [
+    ['waitFor', notificationEntry],
+    ['click', notificationEntry],
+    ['waitFor', category],
+    ['click', category],
+  ])
+})
+
+test('missing notification entry remains a checkpoint failure', async () => {
+  const calls = []
+  const failure = new Error('Reloaded shell is unavailable')
+  const control = {
+    async command(action, selector) {
+      calls.push([action, selector])
+      throw failure
+    },
+  }
+
+  await assert.rejects(openStandInNotifications(control), error => error === failure)
+  assert.deepEqual(calls, [['waitFor', '[data-testid="wework-notifications-button"]']])
+})

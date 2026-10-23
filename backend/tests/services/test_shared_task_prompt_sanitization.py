@@ -177,6 +177,17 @@ class TestPublicSharedTaskContexts:
                     status=ContextStatus.READY.value,
                     type_data={"knowledge_id": 42, "document_count": 3},
                 ),
+                SubtaskContext(
+                    subtask_id=subtask.id,
+                    user_id=1,
+                    context_type=ContextType.REMOTE_WORKSPACE_ARTIFACT.value,
+                    name="device-report.pdf",
+                    status=ContextStatus.READY.value,
+                    type_data={
+                        "task_id": task.id,
+                        "relative_path": "outputs/device-report.pdf",
+                    },
+                ),
             ]
         )
         test_db.flush()
@@ -202,3 +213,93 @@ class TestPublicSharedTaskContexts:
         assert context.context_type == ContextType.ATTACHMENT.value
         assert context.name == "brief.txt"
         assert "Private knowledge base" not in response.model_dump_json()
+        assert "device-report.pdf" not in response.model_dump_json()
+
+    def test_copy_drops_device_artifacts_but_preserves_other_contexts(
+        self, test_db: Session
+    ) -> None:
+        from app.models.kind import Kind
+        from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.models.task import TaskResource
+        from app.services.shared_task import shared_task_service
+        from app.stores.tasks import subtask_store
+
+        team = Kind(
+            user_id=2,
+            kind="Team",
+            name="import-team",
+            namespace="default",
+            json={},
+            is_active=True,
+        )
+        task = TaskResource(
+            user_id=1,
+            kind="Task",
+            name="source",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Task",
+                "metadata": {"name": "source", "namespace": "default"},
+                "spec": {
+                    "title": "Source",
+                    "prompt": "Create report",
+                    "teamRef": {"name": "source-team", "namespace": "default"},
+                    "workspaceRef": {"name": "workspace", "namespace": "default"},
+                },
+            },
+            is_active=TaskResource.STATE_ACTIVE,
+        )
+        test_db.add_all([team, task])
+        test_db.flush()
+        subtask = Subtask(
+            user_id=1,
+            task_id=task.id,
+            team_id=team.id,
+            title="Create report",
+            bot_ids=[],
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.COMPLETED,
+        )
+        test_db.add(subtask)
+        test_db.flush()
+        for context_type in (
+            ContextType.ATTACHMENT,
+            ContextType.KNOWLEDGE_BASE,
+            ContextType.REMOTE_WORKSPACE_ARTIFACT,
+        ):
+            test_db.add(
+                SubtaskContext(
+                    subtask_id=subtask.id,
+                    user_id=1,
+                    context_type=context_type.value,
+                    name=context_type.value,
+                    status=ContextStatus.READY.value,
+                    type_data={"task_id": task.id, "relative_path": "report.pdf"},
+                )
+            )
+        test_db.commit()
+
+        copied = shared_task_service._copy_task_with_subtasks(
+            test_db, task, new_user_id=2, new_team_id=team.id
+        )
+
+        copied_subtasks = subtask_store.list_by_task_ordered(
+            test_db, task_id=copied.id, owner_user_id=2
+        )
+        assert len(copied_subtasks) == 1
+        contexts = (
+            test_db.query(SubtaskContext)
+            .filter(SubtaskContext.subtask_id == copied_subtasks[0].id)
+            .all()
+        )
+        assert {context.context_type for context in contexts} == {
+            ContextType.ATTACHMENT.value,
+            ContextType.KNOWLEDGE_BASE.value,
+        }
+        assert all(context.user_id == 2 for context in contexts)

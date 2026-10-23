@@ -20,6 +20,15 @@ const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
 
+export async function openStandInNotifications(control) {
+  const entry = '[data-testid="wework-notifications-button"]'
+  const category = '[data-testid="wework-notifications-category-collaboration"]'
+  await control.command('waitFor', entry)
+  await control.command('click', entry)
+  await control.command('waitFor', category)
+  await control.command('click', category)
+}
+
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
   return {
     async handleHttp(request, response, url) {
@@ -89,8 +98,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       }
       assert.ok(binding, 'Stand-in execution must finish')
       const id = `stand-in:${encodeURIComponent(`${binding.device_id}\0${binding.task_id}`)}`
-      await control.command('click', '[data-testid="wework-notifications-button"]')
-      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      await openStandInNotifications(control)
       await control.command('waitFor', selector(`notification-processing-${id}`))
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
@@ -144,8 +152,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const readyBeforeReload = control.readyCount
       await control.command('reloadApp', 'body')
       await control.awaitReadyAfter(readyBeforeReload)
-      await control.command('click', '[data-testid="wework-notifications-button"]')
-      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      await openStandInNotifications(control)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })

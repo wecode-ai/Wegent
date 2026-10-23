@@ -211,7 +211,10 @@ fn algorithm(config: &AuthConfig) -> Algorithm {
     }
 }
 
-fn decode_with_keys<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &str) -> Option<T> {
+pub(crate) fn decode_with_keys<T: for<'de> Deserialize<'de>>(
+    config: &AuthConfig,
+    token: &str,
+) -> Option<T> {
     let mut validation = Validation::new(algorithm(config));
     // python-jose decode defaults: signature and `exp` when present; no
     // audience required and `exp` need not exist.

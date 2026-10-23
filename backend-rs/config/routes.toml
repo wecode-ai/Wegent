@@ -340,6 +340,12 @@ path = "/api/tasks/:task_id/remote-workspace/status"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id/remote-workspace/tree"
+[[routes]]
+methods = ["POST"]
+path = "/api/tasks/:task_id/remote-workspace/artifacts"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id/remote-workspace/artifacts/:context_id/file"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/tasks/:task_id/remote-workspace/file"

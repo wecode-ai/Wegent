@@ -26,6 +26,8 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'collaboration-home-preload': './scenarios/collaboration-home-preload.scenario.mjs',
+  'device-artifact-declaration': './scenarios/device-artifact-declaration.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
@@ -160,6 +162,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-home-preload',
+  'device-artifact-declaration',
   'archived-worktree-cleanup',
   'plugin-toggle-persistence',
   'streaming-content',

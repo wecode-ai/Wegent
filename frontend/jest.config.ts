@@ -17,6 +17,8 @@ const createJestConfig = nextJest({
 
 const config: Config = {
   testEnvironment: 'jsdom',
+  // Recycle idle workers before accumulated JSDOM heaps cause host swapping.
+  workerIdleMemoryLimit: '512MB',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',

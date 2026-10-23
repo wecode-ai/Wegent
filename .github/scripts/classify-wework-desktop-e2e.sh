@@ -11,6 +11,7 @@ core_segments=(
   collaboration-issue-archive
   collaboration-board-sorting
   collaboration-board-move-recovery
+  collaboration-home-preload
   collaboration-first-use
   collaboration-worktree-policy
   collaboration-group-onboarding
@@ -59,6 +60,7 @@ core_segments=(
   task-board-bulk-actions
   core-task-flow
   task-attachments
+  device-artifact-declaration
   drawing-attachment
   window-lifecycle
   goal-lifecycle
@@ -202,8 +204,8 @@ core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login
   project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
   window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
-  collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
-  claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
+  collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
+  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
   harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
@@ -402,6 +404,14 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
+      select_target "core:collaboration-home-preload"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
+      select_target "core:device-artifact-declaration"
+      return
+      ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
       select_target "core:split-workbench"
       return
@@ -1532,6 +1542,7 @@ classify_path() {
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-move-recovery"
+      select_target "core:collaboration-home-preload"
       ;;
     executor/src/server/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"

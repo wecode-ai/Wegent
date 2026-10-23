@@ -3414,6 +3414,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         local_connector_auth::INSTRUCTIONS,
         github_cli::INSTRUCTIONS,
+        crate::artifact_cli::AGENT_INSTRUCTIONS,
     ]
     .into_iter()
     .filter(|instructions| !instructions.is_empty())

@@ -34,6 +34,26 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### 设备产物声明与下载
+
+关联 Backend Task 的 Claude Code 或 Wegent executor 可以声明最终交付文件：
+
+```bash
+$WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
+```
+
+声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
+
+Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
+
+新版默认 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移已撤回，`a9c4e7b2d610` 仅保留空操作版本节点，不读写业务数据；已执行该历史 revision 的配置也不会被自动回滚。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
+
+Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
+
+设备下载复用 `workspace_read_file_chunk` 的规范路径校验；HTTP executor 下载使用必须指定 `root_path` 的 `/filesystem/artifact`。读取前解析真实路径并检查仍位于原工作区内，因此声明后把文件替换为指向工作区外的符号链接也会被拒绝。旧 executor 不支持该端点时明确失败；校验失败后也不得退回 `/files`。文件内容只在用户下载时经过 Backend 转发，不写入 Backend 产物存储；卡片读取的是原工作区的当前文件，不是永久保存的历史副本。
+
+单个产物下载上限为 50 MiB。HTTP 下载在读取响应体前检查 `Content-Length`，并在读取过程中累计实际字节数；即使长度缺失或声明偏小，也会在超限时立即停止读取并返回 413。
+
 ### Wework 打包 App 本地优先通道
 
 本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。

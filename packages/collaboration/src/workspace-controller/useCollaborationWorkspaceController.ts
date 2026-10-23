@@ -96,7 +96,11 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProject(
     projectId: string,
     showLoading?: boolean,
-    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
+    options?: {
+      isCurrent?(): boolean;
+      invalidate?: boolean;
+      loadSnapshot?: boolean;
+    },
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
@@ -206,6 +210,7 @@ export type CollaborationWorkspaceControllerAction =
   | {
       type: "home-loaded";
       projects: CollaborationProject[];
+      preserveSnapshotProjectIds: string[];
       projectItems: Record<string, CollaborationIssue[]>;
       projectMembers: Record<string, CollaborationMember[]>;
       projectAgents: Record<string, CollaborationAgent[]>;
@@ -310,6 +315,19 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
+function preserveProjectSnapshotValues<T>(
+  incoming: Record<string, T>,
+  current: Record<string, T>,
+  projectIds: readonly string[],
+): Record<string, T> {
+  const values = { ...incoming };
+  for (const projectId of projectIds) {
+    if (Object.hasOwn(current, projectId))
+      values[projectId] = current[projectId];
+  }
+  return values;
+}
+
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
@@ -338,10 +356,26 @@ function reduceWorkspaceState(
       return {
         ...state,
         projects: action.projects,
-        projectItems: action.projectItems,
-        projectMembers: action.projectMembers,
-        projectAgents: action.projectAgents,
-        projectTaskBindings: action.projectTaskBindings,
+        projectItems: preserveProjectSnapshotValues(
+          action.projectItems,
+          state.projectItems,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectMembers: preserveProjectSnapshotValues(
+          action.projectMembers,
+          state.projectMembers,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectAgents: preserveProjectSnapshotValues(
+          action.projectAgents,
+          state.projectAgents,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectTaskBindings: preserveProjectSnapshotValues(
+          action.projectTaskBindings,
+          state.projectTaskBindings,
+          action.preserveSnapshotProjectIds,
+        ),
         myWork: action.myWork,
         error: null,
         errorSource: null,
@@ -863,9 +897,12 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadHomeSnapshot = (projectId: string) => {
     const active = homeSnapshotLoads.get(projectId);
     if (active) return active;
+    const mutationGeneration = projectMutationGeneration(projectId);
     const pending = loadStandardSnapshot(projectId)
       .catch(() => null)
       .then((snapshot) => {
+        if (mutationGeneration !== projectMutationGeneration(projectId))
+          return null;
         homeSnapshotResults.set(projectId, snapshot);
         return snapshot;
       })
@@ -961,8 +998,13 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadProject = async (
     projectId: string,
     showLoading = true,
-    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
+    options?: {
+      isCurrent?(): boolean;
+      invalidate?: boolean;
+      loadSnapshot?: boolean;
+    },
   ) => {
+    if (options?.invalidate) markProjectMutated(projectId);
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
@@ -1068,6 +1110,7 @@ export function createCollaborationWorkspaceControllerCommands({
           ? await Promise.all(
               projects.map(async (project) => ({
                 projectId: project.id,
+                mutationGeneration: projectMutationGeneration(project.id),
                 snapshot: !canPreloadHomeSnapshot(project)
                   ? null
                   : isExternalGitProject(project)
@@ -1087,26 +1130,37 @@ export function createCollaborationWorkspaceControllerCommands({
               })),
             )
           : [];
+        const currentSnapshots = snapshots.filter(
+          ({ projectId, mutationGeneration }) =>
+            mutationGeneration === projectMutationGeneration(projectId),
+        );
+        const preserveSnapshotProjectIds = snapshots
+          .filter(
+            ({ projectId, mutationGeneration }) =>
+              mutationGeneration !== projectMutationGeneration(projectId),
+          )
+          .map(({ projectId }) => projectId);
         dispatch({
           type: "home-loaded",
           projects,
+          preserveSnapshotProjectIds,
           projectItems: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.items]] : [],
             ),
           ),
           projectMembers: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.members]] : [],
             ),
           ),
           projectAgents: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.agents]] : [],
             ),
           ),
           projectTaskBindings: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.taskBindings]] : [],
             ),
           ),
