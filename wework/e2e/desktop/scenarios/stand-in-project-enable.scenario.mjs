@@ -97,6 +97,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="stand-in-overview-role-project-enable"]', {
         text: '已开启',
       })
+      await control.command('click', '[data-testid="stand-in-overview-role-project-enable"]')
       await control.command('waitFor', '[data-testid="stand-in-activity"]', {
         text: '尚无处理记录',
       })

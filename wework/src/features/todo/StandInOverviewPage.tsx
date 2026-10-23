@@ -9,7 +9,7 @@ import {
 } from '@/api/personalStandIn'
 import type { StandInProposal } from '@/api/standIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { standInState } from '@/features/notifications/standInNotifications'
+import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePersonalStandIn } from './usePersonalStandIn'
@@ -85,7 +85,16 @@ export function StandInOverviewPage({
     ? standInRoleName(role, roles.indexOf(role), t('standIn.personal.default_role'))
     : t('standIn.title')
   const merged = new Map(
-    (workbench?.runtimeTaskReminders.items ?? []).map(item => [item.task.taskId, item])
+    (workbench?.runtimeTaskReminders.items ?? []).map(item => {
+      const origin = standInOrigin(item)
+      const project = props.projects.find(
+        project =>
+          project.id === origin?.cloudProjectId &&
+          (project.project_store === 'local' ? 'local' : 'cloud') ===
+            (origin?.projectStore === 'local' ? 'local' : 'cloud')
+      )
+      return [item.task.taskId, { ...item, projectName: project?.name || item.projectName }]
+    })
   )
   const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
   if (deviceId)

@@ -145,6 +145,11 @@ it('starts in the primary conversation and opens its editable profile explicitly
 
 it('groups actual stand-in executions by project, excludes ordinary tasks, and opens the selected execution', async () => {
   const { props } = fixture()
+  props.projects.unshift({
+    id: '12',
+    name: 'Unrelated local project',
+    project_store: 'local',
+  } as CollaborationProject)
   const onOpenTask = vi.fn()
   const ordinary = {
     ...runtimeItem,
@@ -171,7 +176,8 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
   )
   await user.click(await screen.findByTestId('stand-in-overview-role-default'))
   const group = await screen.findByTestId('stand-in-activity-project')
-  expect(group).toHaveTextContent('Project')
+  expect(group).toHaveTextContent('Example project')
+  expect(group).not.toHaveTextContent('Unrelated local project')
   expect(group).toHaveTextContent('已完成')
   expect(screen.queryByText('Ordinary task')).not.toBeInTheDocument()
   await user.click(within(group).getByTestId('stand-in-activity-task-task'))
