@@ -60,8 +60,8 @@ export async function openExternalUrl(
   value: string,
   options: OpenExternalUrlOptions = {}
 ): Promise<boolean> {
-  const source = options.source ?? 'unknown'
   const trimmed = value.trim()
+  const source = options.source ?? 'unknown'
   if (!isHttpUrl(trimmed) && !isDingTalkUrl(trimmed)) {
     logExternalLink('rejected', value, source, { reason: 'unsupported-protocol' })
     return false
@@ -69,7 +69,7 @@ export async function openExternalUrl(
 
   try {
     if (isElectronRuntime()) {
-      // DingTalk links are handled by the client registered for the protocol.
+      // DingTalk links are handed to the client registered for the protocol.
       if (isDingTalkUrl(trimmed)) {
         await openWithSystemBrowser(trimmed)
         logExternalLink('opened', trimmed, source, { target: 'system' })
@@ -94,7 +94,7 @@ export async function openExternalUrl(
     })
     return true
   } catch (error) {
-    logExternalLink('failed', value, source, {
+    logExternalLink('failed', trimmed, source, {
       error: error instanceof Error ? error.name : typeof error,
     })
     throw error

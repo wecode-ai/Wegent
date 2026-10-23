@@ -1,7 +1,10 @@
 import pytest
 from fastapi import HTTPException
 
-from app.services.connector_oauth_discovery import discover_connector_oauth
+from app.services.connector_oauth_discovery import (
+    _require_secure_url,
+    discover_connector_oauth,
+)
 
 
 @pytest.mark.asyncio
@@ -79,3 +82,15 @@ def test_discovery_rejects_insecure_resource_url() -> None:
         asyncio.run(discover_connector_oauth("http://fig.example.test/mcp"))
 
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:9000/mcp",
+        "http://127.0.0.1:9000/mcp",
+        "http://[::1]:9000/mcp",
+    ],
+)
+def test_discovery_allows_http_loopback_hosts(url: str) -> None:
+    assert _require_secure_url(url, field="resource URL") == url

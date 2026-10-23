@@ -493,6 +493,8 @@ function AssistantMarkdownLink({
 }) {
   const { openExternalUrl, navigateTo, openHtmlFile } = useMarkdownServices()
   const target = classifyMarkdownLink(href)
+  // DingTalk mini-app pages only render inside the DingTalk client, so hand the
+  // original page URL to the client protocol instead of a browser tab.
   const externalHref = href ? (toDingTalkClientUrl(href) ?? href) : href
   const icon =
     target.kind === 'file' ? (

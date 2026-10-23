@@ -21,7 +21,9 @@ def _require_secure_url(value: str, *, field: str) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme == "https" and parsed.hostname:
         return value.strip()
-    loopback = parsed.hostname in {"localhost", "127.0.0.1", "[::1]"}
+    # ``urlsplit`` strips the brackets from an IPv6 literal, so bare ``::1`` is
+    # the hostname that actually reaches this check.
+    loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
     if parsed.scheme == "http" and loopback:
         return value.strip()
     raise HTTPException(

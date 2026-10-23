@@ -109,6 +109,7 @@ describe('external link helpers', () => {
 
     expect(desktopHostMock).toHaveBeenCalledWith('shell.openExternal', { url })
     expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+    expect(getAppPreferencesMock).not.toHaveBeenCalled()
   })
 
   test.each([

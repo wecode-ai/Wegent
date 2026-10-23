@@ -332,7 +332,12 @@ class ConnectorRuntimeService:
         },
     )
     async def call_tool(
-        db: Session, user: User, name: str, arguments: dict[str, Any]
+        db: Session,
+        user: User,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        enforce_visibility: bool = True,
     ) -> tuple[Any, dict[str, Any] | None, bool]:
         app_slug, separator, upstream_name = name.partition("__")
         if not separator or not app_slug or not upstream_name:
@@ -340,11 +345,19 @@ class ConnectorRuntimeService:
                 status.HTTP_400_BAD_REQUEST, "Invalid connector tool name"
             )
         app = ConnectorAppService.get_app_by_slug(db, app_slug)
-        visible_ids = {
-            item.id for item in ConnectorAppService.list_visible_apps(db, user)
-        }
-        if not app or app.id not in visible_ids:
+        if not app:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        # Administrators testing a catalog app are not necessarily inside its
+        # visibility rules, so the admin endpoint opts out of this gate. Every
+        # user-facing call keeps it.
+        if enforce_visibility:
+            visible_ids = {
+                item.id for item in ConnectorAppService.list_visible_apps(db, user)
+            }
+            if app.id not in visible_ids:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Connector app not found"
+                )
         allowlist = set(app.tool_allowlist or [])
         if allowlist and upstream_name not in allowlist:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")

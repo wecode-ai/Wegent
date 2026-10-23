@@ -28,6 +28,7 @@ from app.services.connector_connections import (
     connector_connection_service,
 )
 from app.services.connector_oauth import ConnectorOAuthService
+from app.services.connector_runtime import ConnectorRuntimeService
 from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 
@@ -755,3 +756,58 @@ def test_admin_can_register_wegent_sites_mcp_connector(
     assert app.transport == "streamable-http"
     assert app.auth_type == "none"
     assert app.mcp_url == "https://sites.example.test/mcp"
+
+
+def test_admin_can_test_a_connector_app_restricted_to_other_roles(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+    monkeypatch,
+):
+    """Catalog validation must not depend on the admin's own visibility."""
+    assert test_admin_user.role != "member"
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="members-only",
+        name="Members only",
+        transport="http",
+        mcp_url="https://tickets.example.test/api",
+        visibility="roles",
+        allowed_roles=["member"],
+        http_tools=[
+            {
+                "name": "get_ticket",
+                "description": "Get one ticket",
+                "method": "GET",
+                "path": "/tickets/{id}",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                },
+                "argument_locations": {"id": "path"},
+                "timeout_seconds": 20,
+            }
+        ],
+        tool_allowlist=["get_ticket"],
+    )
+
+    async def fake_call_http_tool(config, definition, arguments):
+        return ([{"type": "text", "text": "ok"}], None, False)
+
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_call_http_tool",
+        staticmethod(fake_call_http_tool),
+    )
+
+    response = test_client.post(
+        f"/api/admin/connector-apps/{app.id}/tools/test",
+        headers=_admin_headers(test_admin_token),
+        json={"name": "get_ticket", "arguments": {"id": "1"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["is_error"] is False
