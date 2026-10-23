@@ -1,4 +1,4 @@
-import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { openCollaborationNotifications, openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -89,8 +89,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       }
       assert.ok(binding, 'Stand-in execution must finish')
       const id = `stand-in:${encodeURIComponent(`${binding.device_id}\0${binding.task_id}`)}`
-      await control.command('click', '[data-testid="wework-notifications-button"]')
-      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-processing-${id}`))
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
@@ -144,9 +143,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const readyBeforeReload = control.readyCount
       await control.command('reloadApp', 'body')
       await control.awaitReadyAfter(readyBeforeReload)
-      await control.command('waitFor', '[data-testid="wework-notifications-button"]')
-      await control.command('click', '[data-testid="wework-notifications-button"]')
-      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })
@@ -180,11 +177,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       })
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="wework-notifications-button"]')
-        await control.command(
-          'click',
-          '[data-testid="wework-notifications-category-collaboration"]'
-        )
+        await openCollaborationNotifications(control)
         await control.command('waitFor', row)
         await control.command('waitFor', selector(`notification-stand-in-reply-open-${id}`))
         const [bounds] = JSON.parse(await control.command('getElementMetrics', row))

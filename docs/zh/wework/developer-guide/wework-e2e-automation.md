@@ -609,7 +609,15 @@ pnpm --filter wework ai:verify paste-paths \
 
 公共控制器在内置动作未处理命令时，通过 `@extensions/desktop-control` 委派给产品扩展。没有产品扩展时，未知动作会明确失败；公共自动化层不识别具体产品协议。
 
-控制器使用短轮询：没有待执行指令时服务端返回 `204`，前端短暂等待后再次请求。这避免了 WebView 刷新、任务切换或流结束时遗留的长轮询连接吞掉后续指令。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，用于定位控制通道问题。
+控制通道将命令绑定到窗口当前的 client；前端确认执行结果后才开始下一次长轮询，避免待收取命令的请求阻塞结果回执。WebView 重载后的 ready 事件只表示控制通道重连，不表示应用外壳已挂载；通知入口使用 `clickWhenEnabled` 等待按钮和分类可用，仍保留共享的 10 秒 UI 步骤预算。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。
+
+失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，包括 `queuedAt`、`deliveredAt`、`startedAt`、`resultReceivedAt` 和 `failedAt`。对照这些时间区分命令排队、开始确认及结果返回阶段的延迟；最后一段同时包含 UI 执行和结果传输，不能仅凭超时判断 UI 元素不存在。已结束命令的迟到回执仍返回 `404`，只额外记录 `lateResultAt` 和不含结果正文的控制台时间线，不会把失败改成通过。
+
+`responseFinishedAt` 记录控制服务写完命令响应的时间；`workbench-debug.json` 中的 `desktopControlTransport` 记录 renderer 收到响应头、解码命令、确认开始、完成动作和确认结果的有界时间线，并附带窗口可见性和焦点。对照两端时间定位送达后未开始的延迟，不增加超时或重新执行命令；诊断不保留选择器、输入值或结果正文。`reply-predictions` 仅在自身隔离环境启用既有 Composer 提交诊断，用于区分原生 Enter 到达、输入策略和业务发送门禁。
+
+`background-terminals` 的翻页诊断同时采集 xterm 真实 buffer 位置、可访问性行号、窗口焦点和原生按键修饰符。初次打开和重载后的成功检查分别保存 `background-terminal-keys-initial.json`、`background-terminal-keys-restored.json`；失败时查看 `workbench-debug.json` 的 `nativeTerminalKeys`。诊断只读取位置及事件元数据，不修改滚动位置，不保存终端正文；只读 buffer 桥仅在 E2E 构建中开放。翻页断言比较同一次真实按键前后的 buffer 位移，再等待可访问性顶部行并检查最早 12 行输出。可访问性行号可能滞后，不能把旧行号当作按键执行前的真实位置。
+
+监督纠正等 executor 自主轮次在内部保留上一轮完成时间供排序及陈旧 provider 状态恢复使用，但 `running=true` 的对外任务摘要显式返回 `completedAt: null`。只省略该字段不能清除前端增量合并缓存中的旧值。`supervisor-lifecycle` 在故意挂起模型响应时检查运行状态和此摘要边界。前端仍拦截携带旧完成时间的活跃快照，并要求真正的新运行快照推进时间；不放宽这些防陈旧规则，也不用有输出后才启动的前端状态掩盖自主启动。
 
 桌面控制器通过 Electron `webContents.capturePage()` 获取原生 renderer 截图。该能力只在 `VITE_WEWORK_E2E=true` 时开放；选择器截图按元素边界裁剪原生图像，因此诊断会保留真实 Electron 渲染结果。
 

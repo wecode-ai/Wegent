@@ -42,3 +42,12 @@ export async function discardStandInDraft(control) {
   await control.command('click', '[data-testid="stand-in-discard"]')
   await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
 }
+
+/** Control-channel readiness precedes the notification shell after reload. */
+export async function openCollaborationNotifications(control) {
+  await control.command('clickWhenEnabled', '[data-testid="wework-notifications-button"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="wework-notifications-category-collaboration"]'
+  )
+}

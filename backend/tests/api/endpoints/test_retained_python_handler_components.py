@@ -13,18 +13,18 @@ from tests.retained_python_handlers import component_client
 def test_component_client_keeps_both_production_routers_unchanged(test_client):
     production_routes = tuple(test_client.app.routes)
     api_routes = tuple(api_router.routes)
-    path = "/api/internal/robot-queue/emit-runtime-rpc"
+    path = "/api/internal/chat/history/{session_id}"
 
     def registered(app):
         return any(
             isinstance(route, APIRoute)
             and route.path == path
-            and "POST" in route.methods
+            and "GET" in route.methods
             for route in app.routes
         )
 
     assert not registered(test_client.app)
-    with component_client(test_client, ("runtime_rpc",)) as contract:
+    with component_client(test_client, ("chat_history",)) as contract:
         assert contract.app is not test_client.app
         assert registered(contract.app)
         assert not registered(test_client.app)

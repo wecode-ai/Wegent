@@ -70,30 +70,40 @@ export async function verifyTerminalHistory(control, timeoutMs) {
   const tree = `${panel} .xterm-accessibility-tree`
   const textarea = `${panel} .xterm-helper-textarea`
   await control.command('waitFor', tree, { text: MARKERS[0] })
-  const firstRow = `${tree} > [role="listitem"]:first-child[aria-posinset]`
-  await control.command('waitFor', firstRow, { timeoutMs })
-  let position = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
+  const diagnostics = async () =>
+    JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).nativeTerminalKeys
+  let position = (await diagnostics()).current.buffer?.viewportY
   assert.ok(
-    Number.isSafeInteger(position) && position > 0,
-    'Missing terminal viewport row position'
+    Number.isSafeInteger(position) && position >= 0,
+    'Missing real terminal viewport position'
   )
   let pages = 0
-  while (position > 1) {
+  while (position > 0) {
     await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
-    const deadline = Date.now() + timeoutMs
-    let next
-    do {
-      next = Number(await control.command('getAttribute', firstRow, { value: 'aria-posinset' }))
-      if (Number.isSafeInteger(next) && next > 0 && next < position) break
-      await new Promise(resolve => setTimeout(resolve, 50))
-    } while (Date.now() < deadline)
+    const { samples } = await diagnostics()
+    const before = samples.findLast(
+      sample => sample.phase === 'native-event' && sample.event?.key === 'PageUp'
+    )
+    const after = samples.findLast(
+      sample => sample.phase === 'after-render-tick' && sample.key === 'Shift+PageUp'
+    )
+    assert.equal(before?.event.isTrusted, true, 'Paging must use a real native key event')
+    const baseline = before.buffer?.viewportY
+    const next = after?.buffer?.viewportY
     assert.ok(
-      Number.isSafeInteger(next) && next > 0 && next < position,
-      `Native page-up did not move backwards: ${position} -> ${next}`
+      Number.isSafeInteger(baseline) &&
+        baseline >= 0 &&
+        Number.isSafeInteger(next) &&
+        next >= 0 &&
+        (baseline === 0 ? next === 0 : next < baseline),
+      `Native page-up did not move backwards: ${baseline} -> ${next}`
     )
     position = next
     pages += 1
   }
+  await control.command('waitFor', `${tree} > [role="listitem"]:first-child[aria-posinset="1"]`, {
+    timeoutMs,
+  })
   await control.command('waitFor', tree, { text: `${MARKERS[0]}_TICK_12` })
   const lines = (await control.command('getText', `${tree} > div`)).split('\n')
   for (let tick = 1; tick <= 12; tick += 1)
@@ -111,6 +121,10 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, 'body')
+  const captureTerminalKeys = async (control, name) => {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    await writeFile(join(resultDir, name), JSON.stringify(snapshot.nativeTerminalKeys, null, 2))
+  }
   let active = false
   let launched = false
   const toolResults = []
@@ -225,6 +239,7 @@ export function createDesktopScenario({
       )
       await control.command('waitFor', '[data-testid="background-terminal-output-panel"] .xterm')
       await verifyTerminalHistory(control, uiTimeoutMs)
+      await captureTerminalKeys(control, 'background-terminal-keys-initial.json')
       await control.command('waitFor', '[data-testid^="right-workspace-background-terminal:"]', {
         text: MARKERS[0],
       })
@@ -277,6 +292,7 @@ export function createDesktopScenario({
         `${SECTION} [data-testid^="open-background-terminal-"][title*="${MARKERS[0]}"]`
       )
       await verifyTerminalHistory(control, uiTimeoutMs)
+      await captureTerminalKeys(control, 'background-terminal-keys-restored.json')
       await capture(control, 'background-terminals-04b-restored-output.png')
       await showSummary(control)
       await control.command('hover', `${SECTION} [data-testid^="open-background-terminal-"]`)

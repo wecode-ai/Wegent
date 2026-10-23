@@ -88,6 +88,8 @@ describe('runtime pane debug snapshot', () => {
       turnStatus: 'completed',
       completedAt: 1234,
       updatedAt: 1234,
+      goalStatus: 'complete',
+      goalExecutionStatus: null,
       runtimeHandle: { apiKey: 'secret-runtime-value' },
       modelSelection: { modelName: 'test-model', options: { api_key: 'secret-model-value' } },
     })
@@ -108,6 +110,8 @@ describe('runtime pane debug snapshot', () => {
       turnStatus: 'completed',
       completedAt: 1234,
       updatedAt: 1234,
+      goalStatus: 'complete',
+      goalExecutionStatus: null,
     })
     expect(lifecycle?.execution.running).toBe(false)
     expect(JSON.stringify(lifecycle)).not.toContain('secret-')

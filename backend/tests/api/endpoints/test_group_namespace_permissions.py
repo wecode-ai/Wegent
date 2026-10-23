@@ -2,20 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.user import User
 from app.services.external_entity_resolver import register_entity_resolver
 from app.services.group_member_helper import create_group_entity_member
-from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
+from tests.utils.mock_resolver import MockDepartmentResolver
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -249,7 +246,7 @@ def test_admin_cannot_delete_regular_group_without_membership(
     assert response.status_code == 403
 
 
-def test_non_admin_member_can_list_organization_group(
+def test_non_admin_member_can_search_organization_group(
     test_client: TestClient, test_db: Session
 ) -> None:
     owner = _create_user(test_db, "org-owner")
@@ -262,7 +259,7 @@ def test_non_admin_member_can_list_organization_group(
     developer_token = create_access_token(data={"sub": developer.user_name})
 
     response = test_client.get(
-        "/api/groups?page=1&limit=100",
+        "/api/groups/search?page=1&limit=100&include_organization=true",
         headers=_auth_header(developer_token),
     )
 
@@ -270,7 +267,7 @@ def test_non_admin_member_can_list_organization_group(
     assert any(item["name"] == group.name for item in response.json()["items"])
 
 
-def test_admin_can_list_organization_group_without_membership(
+def test_admin_can_search_organization_group_without_membership(
     test_client: TestClient, test_db: Session
 ) -> None:
     owner = _create_user(test_db, "org-owner-admin-visible")
@@ -282,7 +279,7 @@ def test_admin_can_list_organization_group_without_membership(
     admin_token = create_access_token(data={"sub": admin.user_name})
 
     response = test_client.get(
-        "/api/groups?page=1&limit=100",
+        "/api/groups/search?page=1&limit=100&include_organization=true",
         headers=_auth_header(admin_token),
     )
 
@@ -401,12 +398,3 @@ def test_transfer_ownership_to_entity_member_creates_user_record(
     )
     assert new_owner_member is not None
     assert new_owner_member.role == "Owner"
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("groups",)) as client:
-        yield client

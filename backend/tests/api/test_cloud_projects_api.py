@@ -32,12 +32,18 @@ from app.models.resource_member import ResourceMember
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.cloud_project import CloudProjectMemberResponse
+from app.schemas.delivery import LoopItemTaskBindingResponse
 from app.services.cloud_files import cloud_file_service
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import ACTIVE_STATUSES
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_domain import ACTIVE_RUN_STATUSES
+from tests.service_results import service_result
 
 
 class FakeProviderResponse:
@@ -746,9 +752,18 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
         == 404
     )
     assert (
-        test_client.get(
-            f"/api/v1/loop-items/{owner_item['id']}/assignments",
-            headers=_auth(visitor_token),
+        service_result(
+            lambda: {
+                "items": [
+                    issue_assignment_service.response_values(test_db, row)
+                    for row in issue_assignment_service.list(
+                        test_db,
+                        project_id=int(project["id"]),
+                        issue_id=owner_item["id"],
+                        user_id=visitor.id,
+                    )
+                ]
+            }
         ).status_code
         == 404
     )
@@ -788,9 +803,18 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
     assert related_detail.json()["description"] == "owner-only details"
     assert related_detail.json()["can_edit"] is True
     assert (
-        test_client.get(
-            f"/api/v1/loop-items/{owner_item['id']}/assignments",
-            headers=_auth(visitor_token),
+        service_result(
+            lambda: {
+                "items": [
+                    issue_assignment_service.response_values(test_db, row)
+                    for row in issue_assignment_service.list(
+                        test_db,
+                        project_id=int(project["id"]),
+                        issue_id=owner_item["id"],
+                        user_id=visitor.id,
+                    )
+                ]
+            }
         ).status_code
         == 200
     )
@@ -1606,9 +1630,12 @@ def test_todo_lifecycle_and_multiple_local_tasks(
         )
         assert response.status_code == 201
 
-    bindings = test_client.get(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
+    bindings = service_result(
+        loop_item_service.list_task_bindings,
+        test_db,
+        item["id"],
+        test_user.id,
+        response_model=list[LoopItemTaskBindingResponse],
     )
     assert bindings.status_code == 200
     assert {binding["task_id"] for binding in bindings.json()} == {
@@ -2262,9 +2289,12 @@ def test_cloud_project_owner_can_manage_members(
     )
     assert owner_updated.status_code == 200
     assert owner_updated.json()["role"] == "Maintainer"
-    members = test_client.get(
-        f"/api/v1/cloud-projects/{project['id']}/members",
-        headers=_auth(test_token),
+    members = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(project["id"]),
+        test_user.id,
+        response_model=list[CloudProjectMemberResponse],
     )
     assert members.status_code == 200
     members = members.json()
@@ -2321,12 +2351,20 @@ def test_public_project_does_not_expose_member_emails_to_nonmembers(
         ).status_code
         == 201
     )
-    endpoint = f"/api/v1/cloud-projects/{project['id']}/members"
-    visitor_token = create_access_token(data={"sub": visitor.user_name})
-    member_token = create_access_token(data={"sub": direct_member.user_name})
-
-    public_members = test_client.get(endpoint, headers=_auth(visitor_token))
-    direct_members = test_client.get(endpoint, headers=_auth(member_token))
+    public_members = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(project["id"]),
+        visitor.id,
+        response_model=list[CloudProjectMemberResponse],
+    )
+    direct_members = service_result(
+        cloud_project_service.list_members,
+        test_db,
+        int(project["id"]),
+        direct_member.id,
+        response_model=list[CloudProjectMemberResponse],
+    )
 
     assert public_members.status_code == 200
     assert {row["email"] for row in public_members.json()} == {None}
@@ -2731,14 +2769,3 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
 
     # The project row must be unlocked while the device prepares the environment.
     assert open_transactions == [False, False]
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(
-        test_client, ("project_members", "issue_assignments", "issue_tasks")
-    ) as client:
-        yield client

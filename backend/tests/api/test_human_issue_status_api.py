@@ -19,7 +19,11 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.collaboration_human_assignments import (
+    collaboration_human_assignment_status,
+)
 from app.services.issue_assignments import issue_assignment_service
+from tests.service_results import service_result
 from tests.utils.collaboration import authorize_project
 
 
@@ -310,13 +314,18 @@ def test_task_binding_is_persisted_before_status_transition(
     current = test_client.get(url, headers=_auth(token)).json()
     assert current["status"] == status
     assert current["version"] == issue["version"]
-    projection = test_client.post(
-        f"/api/v1/cloud-projects/{project.id}/executions/statuses",
-        headers=_auth(token),
-        json={
-            "loop_item_id": issue["id"],
-            "human_assignment_ids": [identity["humanAssignmentId"]],
-        },
+    projection = service_result(
+        lambda: {
+            "items": [
+                collaboration_human_assignment_status(
+                    test_db,
+                    project_id=int(project.id),
+                    issue_id=issue["id"],
+                    human_assignment_id=identity,
+                )
+                for identity in [identity["humanAssignmentId"]]
+            ]
+        }
     )
     assert projection.status_code == 200, projection.text
     assert projection.json()["items"][0]["status"] == "running"
@@ -380,12 +389,3 @@ def test_assigned_task_binding_survives_normal_status_changes(
     )
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["human_task_binding"] == binding
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("execution_statuses",)) as client:
-        yield client

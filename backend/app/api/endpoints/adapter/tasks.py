@@ -170,22 +170,6 @@ def fork_task(
     return {"task_id": forked_task.id, "task": task_detail}
 
 
-# MIGRATION-CANDIDATE(api="GET /api/tasks"): remove after final confirmation.
-# @router.get("", response_model=TaskListResponse)
-def get_tasks(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get current user's task list (paginated), excluding DELETE status tasks"""
-    skip = (page - 1) * limit
-    items, total = task_kinds_service.get_user_tasks_with_pagination(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
-    )
-    return {"total": total, "items": items}
-
-
 @router.get("/lite", response_model=TaskLiteListResponse)
 def get_tasks_lite(
     page: int = Query(1, ge=1, description="Page number"),

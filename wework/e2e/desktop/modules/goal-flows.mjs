@@ -457,6 +457,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       completedDebugSnapshot.workbench?.runningState ?? null
     )}`
   )
+  assert.equal(completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalStatus, 'complete')
+  assert.equal(
+    completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalExecutionStatus,
+    null,
+    'The completed Goal retained its obsolete autonomous execution hint'
+  )
   await waitForSnapshot(
     control,
     snapshot =>
@@ -767,6 +773,16 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   })
   const beforeStaleSettlement = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.execution.running,
+    true,
+    'The autonomous supervisor correction was not recognized before its first model output'
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.task?.completedAt,
+    null,
+    'The running correction wire summary retained the preceding turn completion'
   )
   assert.equal(
     beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,

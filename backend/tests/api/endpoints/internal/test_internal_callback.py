@@ -42,11 +42,6 @@ def _patch_emitters(monkeypatch, state):
         "publish_callback_event",
         AsyncMock(return_value=True),
     )
-    monkeypatch.setattr(
-        callback,
-        "forward_event_to_channel_callbacks",
-        AsyncMock(),
-    )
     return emitter
 
 
@@ -60,13 +55,15 @@ async def test_streaming_callback_does_not_open_database_session(monkeypatch):
         lambda: pytest.fail("streaming callback must not open a database session"),
     )
 
-    response = await callback.handle_callback(
-        callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
-            task_id=1,
-            subtask_id=2,
-            data={"delta": "thinking"},
-        )
+    response = await callback.handle_batch_callback(
+        [
+            callback.CallbackRequest(
+                event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+                task_id=1,
+                subtask_id=2,
+                data={"delta": "thinking"},
+            )
+        ]
     )
 
     assert response.status == "ok"
@@ -89,13 +86,15 @@ async def test_terminal_callback_closes_database_before_async_emit(monkeypatch):
         lambda db, **kwargs: SimpleNamespace(user_id=7),
     )
 
-    response = await callback.handle_callback(
-        callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.ERROR.value,
-            task_id=1,
-            subtask_id=2,
-            data={"message": "failed", "code": "runtime_error"},
-        )
+    response = await callback.handle_batch_callback(
+        [
+            callback.CallbackRequest(
+                event_type=ResponsesAPIStreamEvents.ERROR.value,
+                task_id=1,
+                subtask_id=2,
+                data={"message": "failed", "code": "runtime_error"},
+            )
+        ]
     )
 
     assert response.status == "ok"

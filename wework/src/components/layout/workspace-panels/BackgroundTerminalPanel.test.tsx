@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import type { NativeTerminalElement } from '@/e2e/native-terminal-diagnostics'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
 
@@ -20,6 +21,8 @@ vi.mock('@xterm/xterm', () => ({
     dispose = vi.fn()
     open = vi.fn()
     loadAddon = vi.fn()
+    buffer = { active: { viewportY: 10, baseY: 20, length: 65 } }
+    rows = 45
     constructor(public options: Record<string, unknown>) {
       records.instances.push(this)
     }
@@ -55,8 +58,33 @@ function terminal(output: string): BackgroundTerminal {
 beforeEach(() => {
   records.instances = []
 })
+afterEach(() => vi.unstubAllEnvs())
 
 describe('BackgroundTerminalPanel', () => {
+  test('exposes only a read-only viewport snapshot in E2E builds and removes it on disposal', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const { container, unmount } = render(
+      <BackgroundTerminalPanel terminal={terminal('ready\n')} active />
+    )
+    const region = container.querySelector<NativeTerminalElement>('[role="region"]')!
+    expect(region.__weworkViewportForE2E?.()).toEqual({
+      viewportY: 10,
+      baseY: 20,
+      length: 65,
+      rows: 45,
+    })
+    unmount()
+    expect(region.__weworkViewportForE2E).toBeUndefined()
+  })
+
+  test('does not expose the diagnostic bridge in normal builds', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'false')
+    const { container } = render(<BackgroundTerminalPanel terminal={terminal('ready\n')} active />)
+    expect(
+      container.querySelector<NativeTerminalElement>('[role="region"]')?.__weworkViewportForE2E
+    ).toBeUndefined()
+  })
+
   test('appends live output once across tab switches and resets when the bounded output changes', () => {
     const { rerender, unmount } = render(
       <BackgroundTerminalPanel terminal={terminal('ready\n')} active />

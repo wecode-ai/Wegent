@@ -29,6 +29,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.delivery import LoopItemTaskBindingResponse
 from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
@@ -37,6 +38,7 @@ from app.services.delivery.storage import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_incoming_hooks import project_incoming_hook_service
+from tests.service_results import service_result
 from tests.utils.collaboration import authorize_project
 
 
@@ -537,6 +539,7 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
 
 
 def test_board_snapshot_returns_first_screen_dependencies(
+    test_db,
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
@@ -568,8 +571,12 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
-    bindings = test_client.get(
-        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    bindings = service_result(
+        loop_item_service.list_task_bindings,
+        test_db,
+        item["id"],
+        test_user.id,
+        response_model=list[LoopItemTaskBindingResponse],
     )
     assert bindings.status_code == 200
     assert bindings.json() == [binding.json()]
@@ -2011,12 +2018,3 @@ def test_loop_item_reorder_respects_sibling_scope_across_statuses(
         second["id"]: "completed",
         child["id"]: "completed",
     }
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("issue_tasks",)) as client:
-        yield client

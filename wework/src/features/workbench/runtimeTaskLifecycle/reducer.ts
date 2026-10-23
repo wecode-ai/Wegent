@@ -3,6 +3,7 @@ import {
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
+  normalizeRuntimeTaskSummary,
 } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
@@ -281,6 +282,15 @@ export function reduceRuntimeTaskLifecycle(
             }
 
     case 'goal_status_received': {
+      // Goal events also supersede the cached task's autonomous execution hint.
+      // Otherwise an idle transcript inherits that hint and cannot confirm completion.
+      const task = state.task
+        ? normalizeRuntimeTaskSummary({
+            ...state.task,
+            goalStatus: event.goalStatus,
+            ...(event.goalStatus !== 'active' ? { goalExecutionStatus: null } : {}),
+          })
+        : null
       const goalJustSettled =
         state.goalStatus === 'active' &&
         event.goalStatus !== null &&
@@ -289,6 +299,7 @@ export function reduceRuntimeTaskLifecycle(
       return goalJustSettled
         ? {
             ...state,
+            task,
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
@@ -300,6 +311,7 @@ export function reduceRuntimeTaskLifecycle(
           }
         : {
             ...state,
+            task,
             goalStatus: event.goalStatus,
             hasAuthoritativeGoalStatus: true,
           }
