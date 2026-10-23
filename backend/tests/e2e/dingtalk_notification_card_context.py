@@ -123,10 +123,11 @@ def _make_project(
     project_key: str | None = None,
     task_provider: str = "local",
     provider_config: dict[str, object] | None = None,
+    statuses: list[dict[str, str]] | None = None,
 ) -> CloudProject:
     public_id = str(uuid.uuid4())
     metadata: dict[str, Any] = {
-        "board_config": {"statuses": _board_statuses()},
+        "board_config": {"statuses": statuses or _board_statuses()},
     }
     if task_provider != "local":
         metadata.update(
@@ -768,6 +769,11 @@ async def run() -> None:
             name=EXTERNAL_PROJECT_NAME,
             project_key="123EXT",
             task_provider="gitlab",
+            statuses=[
+                {"id": "inbox", "name": "收集箱"},
+                {"id": "in_progress", "name": "处理中"},
+                {"id": "in_review", "name": EXTERNAL_REVIEW_STATUS},
+            ],
             provider_config=store_provider_config(
                 "gitlab",
                 {
