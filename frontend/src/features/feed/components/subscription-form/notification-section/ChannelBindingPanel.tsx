@@ -228,19 +228,19 @@ export function ChannelBindingPanel({
                 <li>
                   {t(
                     'notification_settings.group_control_silent',
-                    '静默：[静默] / 【静默】 / [silent]，本次不发送群聊通知，私聊不受影响'
+                    '静默：请在消息结尾添加【静默】或【silent】，本次不发送群聊通知，私聊不受影响'
                   )}
                 </li>
                 <li>
                   {t(
                     'notification_settings.group_control_mention',
-                    '@列表：[@列表:41068,220750] / [mention:41068,220750]，群消息会 @ 这些 staffId 对应用户'
+                    '@列表：请在消息结尾添加【@列表:41068,220750】或【mention:41068,220750】，群消息会 @ 这些 staffId 对应用户'
                   )}
                 </li>
                 <li>
                   {t(
                     'notification_settings.group_control_cleanup',
-                    '控制标记只用于通知路由，发送前会自动清理'
+                    '控制说明必须放在【】中，只用于通知路由，发送前会自动清理'
                   )}
                 </li>
               </ul>

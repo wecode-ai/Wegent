@@ -338,8 +338,8 @@ describe('NotificationSection private binding dialog', () => {
 
     const help = screen.getByTestId('group-control-help-410')
     expect(help).toHaveTextContent('群聊通知控制')
-    expect(help).toHaveTextContent('[静默]')
-    expect(help).toHaveTextContent('[@列表:41068,220750]')
+    expect(help).toHaveTextContent('【静默】')
+    expect(help).toHaveTextContent('【@列表:41068,220750】')
     expect(help).toHaveTextContent('发送前会自动清理')
     expect(screen.queryByTestId('group-mention-users-410')).not.toBeInTheDocument()
   })

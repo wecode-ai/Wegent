@@ -51,5 +51,5 @@ def test_create_execution_appends_group_notification_instruction(
     )
 
     assert execution.prompt.startswith("Check the service.")
-    assert "[静默]" in execution.prompt
-    assert "[@列表:staffId1,staffId2]" in execution.prompt
+    assert "【静默】" in execution.prompt
+    assert "【@列表:staffId1,staffId2】" in execution.prompt

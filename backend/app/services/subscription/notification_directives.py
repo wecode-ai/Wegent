@@ -13,10 +13,11 @@ from typing import Any
 
 GROUP_NOTIFICATION_CONTROL_INSTRUCTION = (
     "群通知控制（仅影响已绑定的群聊，不影响私聊）："
-    "如果本次不需要发送群聊通知，请在回答最后单独一行输出“[静默]”；"
-    "如果需要在群聊中 @ 指定成员，请在最后单独一行输出"
-    "“[@列表:staffId1,staffId2]”或“[mention:staffId1,staffId2]”，"
-    "将 staffId 替换为实际工号；方括号也可以写成【】。"
+    "控制说明必须放在【】中，并作为回答最后一行单独输出。"
+    "如果本次不需要发送群聊通知，请输出“【静默】”；"
+    "如果需要在群聊中 @ 指定成员，请输出"
+    "“【@列表:staffId1,staffId2】”或“【mention:staffId1,staffId2】”，"
+    "将 staffId 替换为实际工号。"
     "这些控制标记只用于通知路由，不要写进正文或其他位置。"
 )
 

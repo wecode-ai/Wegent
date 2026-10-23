@@ -139,5 +139,5 @@ def test_append_group_notification_instruction_requires_bound_group() -> None:
     )
 
     assert appended.startswith("Check the service.")
-    assert "[静默]" in appended
-    assert "[@列表:staffId1,staffId2]" in appended
+    assert "【静默】" in appended
+    assert "【@列表:staffId1,staffId2】" in appended
