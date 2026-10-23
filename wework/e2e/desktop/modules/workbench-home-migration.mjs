@@ -150,6 +150,11 @@ export function createWorkbenchHomeMigrationScenario({
   const completed = []
 
   async function assertActiveHome(control, expectedHome) {
+    // Startup catalog reconciliation can restart Codex and close its SQLite files.
+    // Finish that lifecycle change before probing the same Home with a native CLI.
+    await control.command('ensureLocalModelCatalogReady', 'body', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     const config = await requestExecutor(control, 'executor.codex_home.config.read', uiTimeoutMs)
     assert.equal(resolve(config.codexHome), expectedHome, 'Executor selected the wrong Codex Home')
     assert.equal(resolve(config.configPath), join(expectedHome, 'config.toml'))
