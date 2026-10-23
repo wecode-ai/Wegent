@@ -33,12 +33,12 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
-  isReplyPredictionRequest,
-  requestAdvertisesProgrammaticExec,
-  requestAdvertisesShellTool,
-  nativeToolCallEvents,
-  shellToolCallEvents,
 } from '../modules/response-protocol.mjs'
+import {
+  requestAdvertisesShellCommand,
+  shellCommandPollResponse,
+  shellCommandResponse,
+} from '../modules/shell-command-response.mjs'
 import {
   closeComposerPluginPicker,
   openComposerPluginPicker,
@@ -503,28 +503,22 @@ export async function createDesktopScenario({
       const id = `plugin-recovery-${Date.now()}`
       const result = activeCall ? accountCommandResult(body.input, activeCall.id) : null
       let events
-      if (isReplyPredictionRequest(body)) {
-        events = [assistantMessage('{"suggestion":null}')]
-      } else if (result?.sessionId) {
-        events = nativeToolCallEvents(body, result.pollId, 'write_stdin', {
-          session_id: result.sessionId,
-          chars: '',
-          yield_time_ms: 1000,
-        })
+      if (result?.sessionId) {
+        events = shellCommandPollResponse(body, result.pollId, result.sessionId)
       } else if (result) {
         activeCall.output = result.output
         assert.ok(result.output.includes(activeCall.expected), 'Real plugin command failed')
         events = [assistantMessage(`${activeCall.id} completed`)]
-      } else if (
-        activeCall &&
-        (requestAdvertisesShellTool(body) || requestAdvertisesProgrammaticExec(body)) &&
-        JSON.stringify(body.input ?? '').includes(activeCall.prompt)
-      ) {
+      } else if (activeCall && JSON.stringify(body.input ?? '').includes(activeCall.prompt)) {
+        assert.ok(
+          requestAdvertisesShellCommand(body),
+          'Real Codex did not advertise shell execution'
+        )
         assert.ok(
           requestContainsSkillLocator(body, activeCall.skillPath, activeCall.skillName),
           'Real Codex did not discover the selected plugin skill from the recovered runtime'
         )
-        events = shellToolCallEvents(body, activeCall.id, activeCall.command, workspacePath)
+        events = shellCommandResponse(body, activeCall.id, activeCall.command, workspacePath)
       } else {
         // Temporary diagnostics: record why a request missed the fixture branches.
         const diagnostic = {

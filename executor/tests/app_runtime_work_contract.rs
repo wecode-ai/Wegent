@@ -894,7 +894,12 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
     write_default_codex_state_db_thread(&sqlite_home, false);
     let log_path = temp_path("wegent-app-runtime-rename-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
 
     let renamed = handler
         .handle_runtime_rpc(json!({
@@ -911,6 +916,15 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
     assert_eq!(renamed["success"], true);
     assert_eq!(renamed["accepted"], true);
     assert_eq!(renamed["taskId"], "thread-1");
+    assert!(
+        std::iter::from_fn(|| event_rx.try_recv().ok()).any(|event| {
+            event["event"] == "runtime.task.title.updated"
+                && event["payload"]["taskId"] == "thread-1"
+                && event["payload"]["deviceId"] == "device-1"
+                && event["payload"]["data"]["title"] == "New Codex Title"
+        }),
+        "A committed rename must publish its title before its RPC completes"
+    );
 
     let listed = handler
         .handle_runtime_rpc(json!({

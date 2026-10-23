@@ -268,6 +268,7 @@ impl RuntimeWorkRpcHandler {
         }
 
         link = self.commit_runtime_task_title(link, title);
+
         let mut response = task_action_success(&link);
         response["codexRename"] = json!({"stateUpdated": true});
         Ok(response)

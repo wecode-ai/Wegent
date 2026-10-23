@@ -14,7 +14,7 @@ import { homedir } from 'node:os'
 import { verifyDefaultOnlyDshPackage } from '../modules/dsh-runtime-cache.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { copyFile, readFile, readdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { prepareHarnessAppUi } from '../modules/harness-app-bootstrap.mjs'
 import { verifyHarnessDevelopment } from '../modules/harness-app-development.mjs'
@@ -215,15 +215,33 @@ export async function createDesktopScenario({
         resultDir,
       })
       if (checkpoint === 'harness-app-development') {
-        await verifyHarnessDevelopment(control, {
-          uiTimeoutMs,
-          resultDir,
-          captureScreenshot,
-          electronUserDataDirectory,
-          legacyRuntimeCache,
-          localDshPluginPath,
-          downloadsPath,
-        })
+        try {
+          await verifyHarnessDevelopment(control, {
+            uiTimeoutMs,
+            resultDir,
+            captureScreenshot,
+            electronUserDataDirectory,
+            legacyRuntimeCache,
+            localDshPluginPath,
+            downloadsPath,
+          })
+        } finally {
+          const logs = join(resultDir, 'dsh-e2e-created', 'test-results', 'smart-app', 'logs')
+          let entries = []
+          try {
+            entries = await readdir(logs, { withFileTypes: true })
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error
+          }
+          for (const entry of entries) {
+            if (entry.isFile() && entry.name.endsWith('.log')) {
+              await copyFile(
+                join(logs, entry.name),
+                join(resultDir, `smart-app-verification-${entry.name}`)
+              )
+            }
+          }
+        }
       } else {
         assert.equal(checkpoint, 'harness-app-lifecycle')
         await verifyHarnessLifecycle(control, {

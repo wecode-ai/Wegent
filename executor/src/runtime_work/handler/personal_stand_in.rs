@@ -65,27 +65,19 @@ impl RuntimeWorkRpcHandler {
         } else {
             Vec::new()
         };
-        let mut configs = Vec::new();
-        for settings in personal {
-            if settings["executionDeviceId"] != self.device_id {
-                continue;
-            }
-            let user = settings["userId"].as_i64().unwrap_or_default();
-            for (order, role) in settings["roles"]
-                .as_array()
+        let mut projects = std::collections::BTreeSet::new();
+        projects.extend(
+            local
                 .into_iter()
-                .flatten()
-                .enumerate()
-            {
-                let mut projects = std::collections::BTreeSet::new();
-                for project in &local {
-                    projects.insert((project.id.clone(), "local".to_owned()));
-                }
-                for project in &cloud {
-                    if let Some(id) = project["id"].as_str() {
-                        projects.insert((id.to_owned(), "cloud".to_owned()));
-                    }
-                }
+                .map(|project| (project.id, "local".to_owned())),
+        );
+        projects.extend(cloud.iter().filter_map(|project| {
+            project["id"]
+                .as_str()
+                .map(|id| (id.to_owned(), "cloud".to_owned()))
+        }));
+        for settings in &personal {
+            for role in settings["roles"].as_array().into_iter().flatten() {
                 for project in role["collaboration"]["projects"]
                     .as_array()
                     .into_iter()
@@ -97,19 +89,60 @@ impl RuntimeWorkRpcHandler {
                         projects.insert((id.to_owned(), kind.to_owned()));
                     }
                 }
-                for (project, kind) in projects {
-                    if !role_project_matches(role, &project, &kind) {
-                        continue;
-                    }
-                    let mut config =
-                        project_role(role, user, &project, &kind, settings["autoSelect"] == true);
-                    config["roleOrder"] = json!(order);
-                    config["personalVersion"] = settings["version"].clone();
-                    configs.push(config);
-                }
             }
         }
-        Ok(configs)
+        Ok(projects
+            .into_iter()
+            .flat_map(|(id, kind)| self.stand_in_project_configs(&personal, &id, &kind))
+            .collect())
+    }
+
+    pub(super) fn local_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let personal = store
+            .all_personal_stand_ins(&self.device_id)
+            .map_err(settings_error)?;
+        Ok(store
+            .list_projects()
+            .map_err(settings_error)?
+            .into_iter()
+            .flat_map(|project| self.stand_in_project_configs(&personal, &project.id, "local"))
+            .collect())
+    }
+
+    pub(super) fn stand_in_project_configs(
+        &self,
+        personal: &[Value],
+        project: &str,
+        kind: &str,
+    ) -> Vec<Value> {
+        let mut configs = Vec::new();
+        for settings in personal {
+            if settings["executionDeviceId"] != self.device_id {
+                continue;
+            }
+            for (order, role) in settings["roles"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                if !role_project_matches(role, project, kind) {
+                    continue;
+                }
+                let mut config = project_role(
+                    role,
+                    settings["userId"].as_i64().unwrap_or_default(),
+                    project,
+                    kind,
+                    settings["autoSelect"] == true,
+                );
+                config["roleOrder"] = json!(order);
+                config["personalVersion"] = settings["version"].clone();
+                configs.push(config);
+            }
+        }
+        configs
     }
 
     pub(super) async fn select_polled_personal_role(

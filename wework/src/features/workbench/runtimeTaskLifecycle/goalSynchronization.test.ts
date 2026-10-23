@@ -84,3 +84,21 @@ test('updates conversation content from an inactive pane without writing task li
   syncRuntimeGoal(store, address, goal)
   expect(store.getTask(address)?.goalStatus).toBe('blocked')
 })
+
+test('replaces the pending Goal clock with the native Goal before projecting lifecycle', () => {
+  const store = new RuntimeTaskLifecycleStore('goal-sync-pending')
+  const nativeGoal = { ...goal, createdAt: 1792759113000, updatedAt: 1792759113000 }
+  syncRuntimeGoal(store, address, {
+    ...nativeGoal,
+    threadId: 'pending',
+    updatedAt: 1792759113093,
+  })
+
+  syncRuntimeGoal(store, address, { ...nativeGoal, status: 'blocked' })
+
+  expect(getRuntimeConversationMetadata(address).goal).toEqual({
+    ...nativeGoal,
+    status: 'blocked',
+  })
+  expect(store.getTask(address)?.goalStatus).toBe('blocked')
+})
