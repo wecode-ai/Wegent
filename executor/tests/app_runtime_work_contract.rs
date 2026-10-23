@@ -1026,11 +1026,12 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
     assert_eq!(renamed["taskId"], "thread-1");
     assert!(
         std::iter::from_fn(|| event_rx.try_recv().ok()).any(|event| {
-            event["event"] == "runtime.work.changed"
+            event["event"] == "runtime.task.title.updated"
                 && event["payload"]["taskId"] == "thread-1"
                 && event["payload"]["deviceId"] == "device-1"
+                && event["payload"]["data"]["title"] == "New Codex Title"
         }),
-        "A committed rename must notify work-list subscribers before its RPC completes"
+        "A committed rename must publish its title before its RPC completes"
     );
 
     let listed = handler
