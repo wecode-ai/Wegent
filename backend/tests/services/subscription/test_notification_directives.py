@@ -4,6 +4,7 @@
 
 import pytest
 
+from app.services.subscription.helpers import extract_result_summary
 from app.services.subscription.notification_directives import (
     append_group_notification_instruction,
     parse_notification_directives,
@@ -89,6 +90,24 @@ def test_parse_notification_directives_accepts_colon_variants() -> None:
 
     assert fullwidth_colon.mention_staff_ids == ("41068",)
     assert ascii_colon.mention_staff_ids == ("41068",)
+
+
+@pytest.mark.parametrize(
+    "shell_type",
+    ["Chat", "ClaudeCode", "Codex", "Agno", "Dify"],
+)
+def test_parse_notification_directives_works_for_shell_results(
+    shell_type: str,
+) -> None:
+    result = {
+        "value": "测试\n【@列表：41068】",
+        "executor_session": {"agent": shell_type},
+    }
+
+    directives = parse_notification_directives(extract_result_summary(result))
+
+    assert directives.content == "测试"
+    assert directives.mention_staff_ids == ("41068",)
 
 
 def test_parse_notification_directives_keeps_body_mentions() -> None:
