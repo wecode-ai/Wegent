@@ -178,7 +178,14 @@ pub(crate) fn normalize_source_page(
             .ok_or_else(|| invalid("Missing messages"))?
         {
             let sender = required(message, "senderOpenDingTalkId")?;
-            if sender == own_id || (direct && message["senderOpenDingTalkId"] != source["id"]) {
+            // Explicit self-mentions can be human work requests. Provider AI tags
+            // distinguish our automated replies without relying on message text.
+            let manual_self_mention = !direct
+                && message["sendType"] == "user"
+                && message.get("messageAiSendFlag").is_none();
+            if (sender == own_id && !manual_self_mention)
+                || (direct && message["senderOpenDingTalkId"] != source["id"])
+            {
                 continue;
             }
             let text = required(message, "content")?;
@@ -263,6 +270,7 @@ pub(crate) async fn reply(
         required(message, "senderId")?,
         "--text",
         text,
+        "--ai-tag=true",
         "--uuid",
         &uuid,
         "--profile",
@@ -349,5 +357,19 @@ mod source_tests {
             normalize_source_page(&json!({"kind":"group","id":"selected"}), &incomplete, "me")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn manual_self_mentions_are_received_but_provider_tagged_ai_replies_are_excluded() {
+        let mut manual = conversation("selected", false, "me");
+        manual["messages"][0]["sendType"] = json!("user");
+        let mut automated = manual.clone();
+        automated["messages"][0]["messageAiSendFlag"] = json!("DWS");
+        let response = json!({"result":{"conversationMessagesList":[manual,automated]}});
+        let messages =
+            normalize_source_page(&json!({"kind":"group","id":"selected"}), &response, "me")
+                .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["senderId"], "me");
     }
 }

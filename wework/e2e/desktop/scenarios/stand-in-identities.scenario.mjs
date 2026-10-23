@@ -5,6 +5,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   assistantMessage,
   createSse,
+  isReplyPredictionRequest,
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
@@ -29,6 +30,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
       if (!input.includes(PROPOSE) && !input.includes(FOLLOWUP)) return false
       requests.push(input.includes(FOLLOWUP) ? 'followup' : 'proposal')

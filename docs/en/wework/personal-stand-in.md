@@ -18,6 +18,8 @@ You can also describe a role or configuration change in conversation. AI creates
 
 Search and manually select individual DingTalk groups or contacts in the profile's source section. Group sources receive relevant mentions from the selected group; contact sources receive direct messages from the selected contact. Each source remains bound to the DingTalk account used when selecting it.
 
+You can manually mention yourself in a connected group to delegate work. Stand-in replies always retain DingTalk's AI-send marker. Intake uses the provider marker to exclude your own AI messages and prevent reply loops.
+
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.

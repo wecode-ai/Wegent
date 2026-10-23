@@ -7,6 +7,7 @@ import {
   assistantMessage,
   createSse,
   functionCall,
+  isReplyPredictionRequest,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
@@ -31,6 +32,7 @@ export function createDesktopScenario({
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
+      if (isReplyPredictionRequest(body)) return false
       if (!JSON.stringify(body.input ?? []).includes(PROMPT)) return false
       const id = `stand-in-approval-${Date.now()}`
       let events

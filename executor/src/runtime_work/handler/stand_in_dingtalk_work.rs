@@ -222,6 +222,7 @@ impl RuntimeWorkRpcHandler {
         };
         payload["executionRequest"]["origin"] = origin;
         payload["executionRequest"]["user_id"] = json!(user);
+        set_dingtalk_message_presentation(&mut payload, &pending);
         store
             .update_stand_in_dispatch(user, work_id, &ids, "sending", None)
             .map_err(settings_error)?;
@@ -323,9 +324,45 @@ fn dingtalk_client_id(work: &str, ids: &[String]) -> String {
     )
 }
 
+fn set_dingtalk_message_presentation(payload: &mut Value, messages: &[Value]) {
+    payload["message"] = json!(messages
+        .iter()
+        .map(|message| format!(
+            "{} · {}\n{}",
+            message["source"]["name"].as_str().unwrap_or_default(),
+            message["senderName"].as_str().unwrap_or_default(),
+            message["text"].as_str().unwrap_or_default(),
+        ))
+        .collect::<Vec<_>>()
+        .join("\n\n"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_messages_are_displayed_without_exposing_runtime_instructions() {
+        let mut payload = json!({"message":"Internal orchestration","clientUserMessageId":"batch","executionRequest":{"prompt":"Internal orchestration"}});
+        set_dingtalk_message_presentation(
+            &mut payload,
+            &[
+                json!({"source":{"name":"Test group"},"senderName":"Alice","text":"Please review the plan","id":"private-source-id"}),
+            ],
+        );
+        assert_eq!(
+            payload["message"],
+            "Test group · Alice\nPlease review the plan"
+        );
+        assert_eq!(
+            execution_request(&payload).unwrap().prompt,
+            "Internal orchestration"
+        );
+        assert_eq!(
+            user_message_presentation(&payload).unwrap()["content"],
+            payload["message"]
+        );
+    }
 
     #[tokio::test]
     async fn stand_in_recovery_distinguishes_inflight_unaccepted_and_durably_accepted_batches() {

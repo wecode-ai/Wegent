@@ -87,8 +87,9 @@ export function StandInOverviewPage({
   const merged = new Map(
     (workbench?.runtimeTaskReminders.items ?? []).map(item => [item.task.taskId, item])
   )
+  const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
   if (deviceId)
-    for (const work of inbox.items) merged.set(work.taskId, inboxRuntimeItem(work, deviceId))
+    for (const work of visibleInbox) merged.set(work.taskId, inboxRuntimeItem(work, deviceId))
   const items = [...merged.values()]
     .filter(item => standInWorkRole(item) !== null)
     .sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
@@ -322,7 +323,7 @@ export function StandInOverviewPage({
               <StandInWorkList
                 key={roleId ? `role:${roleId}` : 'primary'}
                 items={roleItems}
-                inbox={inbox.items.filter(work => work.roleId === (roleId ?? '@primary'))}
+                inbox={visibleInbox.filter(work => work.roleId === (roleId ?? '@primary'))}
                 api={api}
                 userId={props.userId}
                 deviceId={deviceId}

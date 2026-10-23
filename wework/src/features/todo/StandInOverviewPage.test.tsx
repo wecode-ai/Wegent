@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
+import type { StandInInboxWork } from '@/api/standIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -78,6 +79,53 @@ it('opens the selected stand-in from the overview list', async () => {
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
   await user.click(screen.getByTestId('stand-in-settings-open'))
   expect(await screen.findByRole('combobox', { name: '当前分身' })).toHaveValue('second')
+})
+
+it('hides empty message associations while preserving existing execution history', async () => {
+  const { props } = fixture()
+  const empty: StandInInboxWork = {
+    id: 'empty',
+    taskId: 'empty',
+    roleId: 'default',
+    title: 'Moved messages',
+    status: 'sent',
+    messageCount: 0,
+    latestMessage: null,
+    updatedAt: '2026-10-24T00:00:00Z',
+    source: {
+      id: 'group',
+      name: 'Test group',
+      kind: 'group',
+      profile: 'corp:user',
+      policy: { automatic: false, askBeforeAct: true },
+    },
+  }
+  vi.mocked(props.services.standInApi!.inbox).mockResolvedValue({
+    items: [
+      empty,
+      {
+        ...empty,
+        id: 'history',
+        taskId: 'history',
+        task: {
+          taskId: 'history',
+          title: 'Completed work',
+          runtime: 'codex',
+          status: 'completed',
+          running: false,
+          workspacePath: '',
+          updatedAt: empty.updatedAt,
+        },
+      },
+    ],
+    sourceErrors: [],
+  })
+  render(<StandInOverviewPage {...props} />)
+  await userEvent.click(await screen.findByTestId('stand-in-overview-role-default'))
+  expect(await screen.findByTestId('stand-in-activity-task-history')).toHaveTextContent(
+    'Completed work'
+  )
+  expect(screen.queryByTestId('stand-in-activity-task-empty')).not.toBeInTheDocument()
 })
 
 it('starts in the primary conversation and opens its editable profile explicitly', async () => {

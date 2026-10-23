@@ -154,24 +154,14 @@ async fn reply_to_work(
     let settings = store
         .personal_stand_in(identity.user, &identity.device)
         .map_err(|e| e.to_string())?;
-    let role = if identity.role.as_deref() == Some("primary") {
-        &settings["primary"]
-    } else {
-        settings["roles"]
-            .as_array()
-            .and_then(|rows| rows.iter().find(|role| role["id"] == record["roleId"]))
-            .ok_or("Role no longer exists")?
-    };
-    let source = role["dingtalk"]
-        .as_array()
-        .and_then(|rows| {
-            rows.iter().find(|source| {
-                source["id"] == message["source"]["id"]
-                    && source["profile"] == message["source"]["profile"]
-                    && source["kind"] == message["source"]["kind"]
-            })
-        })
-        .ok_or("Source connection was removed; reply was not sent")?;
+    let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
+    let role = identities
+        .iter()
+        .find(|role| role["id"] == record["roleId"])
+        .ok_or("Role no longer exists")?;
+    let source =
+        crate::task_runtime::personal_stand_in::dingtalk_connection(role, &message["source"])
+            .ok_or("Source connection was removed; reply was not sent")?;
     if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
         return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
     }
