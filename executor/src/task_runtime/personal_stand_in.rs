@@ -16,6 +16,19 @@ fn personal_key(user: i64) -> String {
     format!("personal-stand-in:{user}")
 }
 
+fn bind_personal_device(personal: &mut Value, device: &str) -> bool {
+    if device.is_empty() {
+        return false;
+    }
+    let mut changed = personal["executionDeviceId"] != device;
+    personal["executionDeviceId"] = json!(device);
+    for role in personal["roles"].as_array_mut().into_iter().flatten() {
+        changed |= role["executionDeviceId"] != device;
+        role["executionDeviceId"] = json!(device);
+    }
+    changed
+}
+
 pub(super) fn read_personal(
     connection: &Connection,
     user: i64,
@@ -155,10 +168,16 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(row) = get_item_from(&connection, &personal_key(user), "personal_stand_in")? {
+            let mut personal = row.metadata;
+            // Device-owned settings follow their Executor, not a stale desktop identity.
+            if bind_personal_device(&mut personal, device) {
+                write_personal(&connection, &personal)?;
+            }
             connection.commit()?;
-            return Ok(row.metadata);
+            return Ok(personal);
         }
-        let personal = read_personal(&connection, user, device)?;
+        let mut personal = read_personal(&connection, user, device)?;
+        bind_personal_device(&mut personal, device);
         // Migrate old rows atomically, without changing their enable timestamps or versions.
         if personal["roles"].as_array().is_some_and(|roles| {
             roles
@@ -241,27 +260,19 @@ impl LocalTaskStore {
         Ok(value)
     }
 
-    pub fn all_personal_stand_ins(&self) -> Result<Vec<Value>, TaskRuntimeError> {
+    pub fn all_personal_stand_ins(&self, device: &str) -> Result<Vec<Value>, TaskRuntimeError> {
         let users = {
             let connection = self.connection()?;
-            let mut statement = connection.prepare("SELECT DISTINCT json_extract(metadata,'$.userId') FROM loop_items WHERE resource_type='stand_in_settings'")?;
+            let mut statement = connection.prepare("SELECT DISTINCT json_extract(metadata,'$.userId') FROM loop_items WHERE resource_type IN ('stand_in_settings','personal_stand_in')")?;
             let users = statement
                 .query_map([], |row| row.get::<_, i64>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
             users
         };
-        for user in users {
-            self.personal_stand_in(user, "")?;
-        }
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT metadata FROM loop_items WHERE resource_type='personal_stand_in'")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-        rows.map(|row| {
-            serde_json::from_str(&row?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect()
+        users
+            .into_iter()
+            .map(|user| self.personal_stand_in(user, device))
+            .collect()
     }
 
     pub fn stand_in_selection_errors(

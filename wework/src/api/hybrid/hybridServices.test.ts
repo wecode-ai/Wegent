@@ -96,6 +96,7 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    standInApi: { personalSave: vi.fn(), save: vi.fn() },
     getLocalRuntimeSidebarIdentity: localSidebarIdentity,
     replyPredictionApi: { predict: vi.fn().mockResolvedValue({ suggestion: '继续' }) },
     composerCatalogApi: { readCatalog: vi.fn() },
@@ -177,6 +178,7 @@ const mocks = vi.hoisted(() => {
     createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
   }
   const cloudServices = {
+    standInApi: { personalSave: vi.fn(), save: vi.fn() },
     projectChatClient: { reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]) },
     composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
@@ -469,6 +471,53 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
+
+describe('stand-in save routing', () => {
+  it.each(['local-device', 'remote-device'])(
+    'routes saves by the selected Executor %s rather than the stored device field',
+    async deviceId => {
+      mocks.localSidebarIdentity.mockResolvedValue({
+        deviceId: 'local-device',
+        runtimeInstanceId: 'local-runtime',
+        provenance: 'local-ipc',
+      })
+      const local = mocks.localServices.standInApi
+      const cloud = mocks.cloudServices.standInApi
+      for (const api of [local, cloud]) {
+        api.personalSave.mockClear()
+        api.save.mockClear()
+      }
+      const settings = {
+        userId: 7,
+        executionDeviceId: 'old-device',
+        version: 1,
+        autoSelect: false,
+        roles: [],
+      }
+      const services = createServices()
+      await services.standInApi!.personalSave(7, settings, deviceId)
+      const selected = deviceId === 'local-device' ? local : cloud
+      const other = selected === local ? cloud : local
+      expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
+      expect(other.personalSave).not.toHaveBeenCalled()
+      const projectSettings = {
+        enabled: true,
+        prompt: '',
+        executionDeviceId: 'old-device',
+        version: 1,
+      }
+      await services.standInApi!.save('project', 7, 'cloud', projectSettings, deviceId)
+      expect(selected.save).toHaveBeenCalledExactlyOnceWith(
+        'project',
+        7,
+        'cloud',
+        projectSettings,
+        deviceId
+      )
+      expect(other.save).not.toHaveBeenCalled()
+    }
+  )
+})
 
 describe('qualified local sidebar routing', () => {
   const identity = {

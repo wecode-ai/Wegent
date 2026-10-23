@@ -362,6 +362,20 @@ impl CodexAppServerClient {
         .await
     }
 
+    pub(crate) async fn mutate_thread_goal(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let thread_id = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .ok_or("Goal mutation requires a thread ID")?;
+        let gate = self.thread_lifecycle_gate(thread_id).await;
+        let _guard = gate.lock().await;
+        self.request(method, params).await
+    }
+
     async fn request_for_launch_config(
         &self,
         method: &str,
@@ -2608,6 +2622,7 @@ async fn read_shared_turn_notifications(
                 overload_recovery::RecoveryAction::Retry {
                     delay,
                     notification,
+                    goal,
                 } => {
                     if let Some(callback) = options.overload_turn_recovering.as_ref() {
                         if let Some(turn_id) = notification_turn_id.as_deref() {
@@ -2626,10 +2641,18 @@ async fn read_shared_turn_notifications(
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
-                    let start = timeout_at(
-                        startup_deadline,
-                        client.request("turn/start", options.overload_continuation_params.clone()),
-                    );
+                    let restoring_goal = goal.is_some();
+                    let continuation = async {
+                        if let Some(goal) = goal {
+                            overload_recovery::resume_goal(client, thread_id, &goal).await
+                        } else {
+                            client
+                                .request("turn/start", options.overload_continuation_params.clone())
+                                .await
+                                .map(|response| (response, true))
+                        }
+                    };
+                    let start = timeout_at(startup_deadline, continuation);
                     let response = if let Some(cancel_rx) = options.cancellation.as_mut() {
                         tokio::select! {
                             biased;
@@ -2642,7 +2665,7 @@ async fn read_shared_turn_notifications(
                     } else {
                         start.await
                     };
-                    let response = match response {
+                    let (response, restarted) = match response {
                         Ok(response) => response?,
                         Err(_) => {
                             return Err(recover_stalled_shared_turn(
@@ -2653,7 +2676,25 @@ async fn read_shared_turn_notifications(
                             .await)
                         }
                     };
-                    options.active_turn_id = turn_start_response_id(&response);
+                    if restoring_goal {
+                        overload_recovery::sync_goal_snapshot(
+                            state,
+                            options.notifications.as_ref(),
+                            thread_id,
+                            &response,
+                        );
+                        if !restarted && !state.goal_is_active() {
+                            return Ok(ExecutionOutcome::Cancelled {
+                                message: "Goal changed during model overload recovery".to_owned(),
+                            });
+                        }
+                        // Activating an idle Goal starts its native continuation.
+                        // Do not race it with a second turn/start request.
+                        options.wait_for_goal_continuation = state.goal_is_active();
+                    } else {
+                        options.active_turn_id = turn_start_response_id(&response);
+                    }
+
                     options.expected_client_user_message_id = None;
                     if let (Some(callback), Some(turn_id)) = (
                         options.active_turn_started.as_ref(),
