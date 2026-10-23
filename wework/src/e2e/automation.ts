@@ -29,7 +29,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
-import { createNativeKeyAttributeObservation } from './native-key-observation'
+import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -1107,7 +1107,7 @@ async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
   phase: 'press' | 'down' | 'up' = 'press',
-  measurement?: { selector: string; attribute: string }
+  measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
@@ -1122,14 +1122,10 @@ async function pressNativeDesktopControlKey(
   const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const expectedKey = parseDesktopControlKey(key).key
-  const observation = measurement
-    ? createNativeKeyAttributeObservation(
-        element,
-        () =>
-          findDesktopControlElements(measurement.selector)[0]?.getAttribute(
-            measurement.attribute
-          ) ?? null
-      )
+  const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
+  if (measurement && !viewportTarget) throw new Error('Native viewport target is unavailable')
+  const observation = viewportTarget
+    ? createNativeKeyObservation(element, () => readNativeTerminalViewport(viewportTarget))
     : null
   const recordKey = (event: KeyboardEvent) => {
     received.push(event)
@@ -1154,8 +1150,11 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return observation
-    ? JSON.stringify({ attributeBefore: observation.result() })
+  return observation && viewportTarget
+    ? JSON.stringify({
+        viewportBefore: observation.result(),
+        viewportAfter: readNativeTerminalViewport(viewportTarget),
+      })
     : (document.activeElement?.getAttribute('data-testid') ?? '')
 }
 
@@ -3269,7 +3268,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         command.selector,
         command.key ?? '',
         'press',
-        command.target ? { selector: command.target, attribute: command.value ?? '' } : undefined
+        command.target ? { selector: command.target } : undefined
       )
     }
     case 'nativeKeyDownOnly': {

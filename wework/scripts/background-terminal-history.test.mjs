@@ -9,6 +9,8 @@ function historyControl({
   missingTick = false,
   pendingOutput = false,
   advanceBeforeKey = false,
+  staleAccessibility = false,
+  stuckAccessibility = false,
 } = {}) {
   let row = 121
   let bottom = row
@@ -42,15 +44,25 @@ function historyControl({
           bottom = row
           advanced = true
         }
-        const attributeBefore = String(row)
+        const viewportBefore = String(row)
         if (options.key === 'Shift+PageUp' && !stuck) {
-          if (pendingOutput) pendingRow = Math.max(1, row - 40)
-          else row = Math.max(1, row - 40)
+          const next = Math.max(1, row - 40)
+          if (pendingOutput) pendingRow = next
+          row = next
         }
         if (options.key === 'Shift+PageDown') row = Math.min(bottom, row + 40)
-        return options.target ? JSON.stringify({ attributeBefore }) : undefined
+        return options.target
+          ? JSON.stringify({
+              attributeBefore: staleAccessibility ? '41' : viewportBefore,
+              viewportBefore,
+              viewportAfter: String(row),
+            })
+          : undefined
       }
       if (action === 'waitFor') {
+        if (selector.includes('[aria-posinset="') && stuckAccessibility) {
+          throw new Error('Accessibility viewport did not update')
+        }
         if (options.text === `${marker}_TICK_12` && (row !== 1 || missingTick)) {
           throw new Error('Initial history is not visible')
         }
@@ -93,4 +105,16 @@ test('compares page-up against the viewport at the native key, after live output
   await verifyTerminalHistory(history.control, 10000)
   assert.equal(history.row(), 201)
   assert.equal(history.control.calls.filter(call => call.options.key === 'Shift+PageUp').length, 5)
+})
+
+test('uses the native viewport when the accessibility tree is behind at the key event', async () => {
+  const history = historyControl({ staleAccessibility: true })
+  await verifyTerminalHistory(history.control, 10000)
+  assert.equal(history.row(), 121)
+  assert.equal(history.control.calls.filter(call => call.options.key === 'Shift+PageUp').length, 3)
+})
+
+test('still fails when the accessibility viewport never reflects the native page-up', async () => {
+  const history = historyControl({ stuckAccessibility: true })
+  await assert.rejects(verifyTerminalHistory(history.control, 10000), /viewport did not update/)
 })

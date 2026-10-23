@@ -9,6 +9,7 @@ import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/li
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { registerNativeTerminalViewport } from '@/e2e/native-key-observation'
 
 export function BackgroundTerminalPanel({
   terminal,
@@ -43,6 +44,10 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    const disposeViewport =
+      import.meta.env.VITE_WEWORK_E2E === 'true'
+        ? registerNativeTerminalViewport(container, () => xterm.buffer.active.viewportY + 1)
+        : null
     let lastHistoryKeyAt = 0
     const logViewport = (stage: string) =>
       logRuntimeTaskCreateStage(stage, {
@@ -74,6 +79,7 @@ export function BackgroundTerminalPanel({
     return () => {
       observer.disconnect()
       scrollDiagnostic?.dispose()
+      disposeViewport?.()
       disposeTheme()
       resourceRef.current = null
       xterm.dispose()
@@ -110,6 +116,7 @@ export function BackgroundTerminalPanel({
     >
       <div
         ref={containerRef}
+        data-testid="background-terminal-xterm"
         className="h-full min-h-0 w-full overflow-hidden py-3 pl-3"
         role="region"
         aria-label={
