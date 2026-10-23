@@ -636,3 +636,115 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
     assert_eq!(last_goal, Some(paused));
     assert!(child.wait().await.unwrap().success());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resume() {
+    use super::super::{CodexAppServerClient, CodexAppServerProcess, CodexNotificationHub};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        process::Stdio,
+        sync::Arc,
+    };
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        sync::Mutex,
+    };
+    for method in ["thread/goal/set", "thread/goal/clear"] {
+        let client = CodexAppServerClient::new(format!("goal-recovery-gate-{method}"));
+        client.mark_thread_active("root-thread").await;
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .args(["-c", "cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        super::super::configure_codex_app_server_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut requests = BufReader::new(child.stdout.take().unwrap()).lines();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut shared = client.state.lock().await;
+            shared.process_environment =
+                client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
+            shared.process = Some(CodexAppServerProcess {
+                child,
+                stdin: Arc::new(Mutex::new(stdin)),
+                pending: Arc::clone(&pending),
+                notifications: CodexNotificationHub::new(),
+                reader_task: tokio::spawn(async {}),
+            });
+        }
+        let expected = blocked_goal(json!("failed-turn"))["params"]["goal"].clone();
+        let gate = client.thread_lifecycle_gate("root-thread").await;
+        let recovery_client = client.clone();
+        let recovery_goal = expected.clone();
+        let recovery = tokio::spawn(async move {
+            resume_goal(&recovery_client, "root-thread", &recovery_goal).await
+        });
+        let read: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(read["method"], "thread/goal/get");
+        let user_client = client.clone();
+        let user_mutation = tokio::spawn(async move {
+            user_client
+                .mutate_thread_goal(
+                    method,
+                    json!({"threadId": "root-thread", "status": "paused"}),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while Arc::strong_count(&gate) < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("user mutation must reach the gate while the recovery snapshot is held");
+        assert!(!user_mutation.is_finished());
+        pending
+            .lock()
+            .await
+            .remove(&read["id"].as_u64().unwrap())
+            .unwrap()
+            .send(Ok(json!({"goal": expected})))
+            .unwrap();
+        let resume: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(resume["method"], "thread/goal/set");
+        assert_eq!(
+            resume["params"]["status"], "active",
+            "the user mutation interleaved before automatic recovery"
+        );
+        let mut active = expected.clone();
+        active["status"] = json!("active");
+        pending
+            .lock()
+            .await
+            .remove(&resume["id"].as_u64().unwrap())
+            .unwrap()
+            .send(Ok(json!({"goal": active})))
+            .unwrap();
+        assert!(recovery.await.unwrap().unwrap().1);
+        let user: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(user["method"], method);
+        assert_eq!(user["params"]["status"], "paused");
+        let response = if method == "thread/goal/clear" {
+            json!({"cleared": true})
+        } else {
+            json!({"goal": {"status": "paused"}})
+        };
+        pending
+            .lock()
+            .await
+            .remove(&user["id"].as_u64().unwrap())
+            .unwrap()
+            .send(Ok(response.clone()))
+            .unwrap();
+        assert_eq!(user_mutation.await.unwrap().unwrap(), response);
+        client.restart().await;
+    }
+}

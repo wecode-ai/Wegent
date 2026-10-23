@@ -362,6 +362,20 @@ impl CodexAppServerClient {
         .await
     }
 
+    pub(crate) async fn mutate_thread_goal(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let thread_id = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .ok_or("Goal mutation requires a thread ID")?;
+        let gate = self.thread_lifecycle_gate(thread_id).await;
+        let _guard = gate.lock().await;
+        self.request(method, params).await
+    }
+
     async fn request_for_launch_config(
         &self,
         method: &str,
@@ -2630,16 +2644,7 @@ async fn read_shared_turn_notifications(
                     let restoring_goal = goal.is_some();
                     let continuation = async {
                         if let Some(goal) = goal {
-                            let current = client
-                                .request("thread/goal/get", json!({"threadId": thread_id}))
-                                .await?;
-                            match overload_recovery::goal_resume_params(&goal, &current)? {
-                                Some(params) => client
-                                    .request("thread/goal/set", params)
-                                    .await
-                                    .map(|response| (response, true)),
-                                None => Ok((current, false)),
-                            }
+                            overload_recovery::resume_goal(client, thread_id, &goal).await
                         } else {
                             client
                                 .request("turn/start", options.overload_continuation_params.clone())

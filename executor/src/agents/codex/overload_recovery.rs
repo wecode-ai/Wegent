@@ -150,6 +150,27 @@ pub(super) fn goal_resume_params(
     })))
 }
 
+pub(super) async fn resume_goal(
+    client: &super::CodexAppServerClient,
+    thread_id: &str,
+    expected: &Value,
+) -> Result<(Value, bool), String> {
+    // Codex has no conditional Goal update. Share the lifecycle gate with user
+    // mutations so a pause or clear cannot land between this read and write.
+    let gate = client.thread_lifecycle_gate(thread_id).await;
+    let _guard = gate.lock().await;
+    let current = client
+        .request("thread/goal/get", json!({"threadId": thread_id}))
+        .await?;
+    match goal_resume_params(expected, &current)? {
+        Some(params) => client
+            .request("thread/goal/set", params)
+            .await
+            .map(|response| (response, true)),
+        None => Ok((current, false)),
+    }
+}
+
 pub(super) fn sync_goal_snapshot(
     state: &mut CodexRunState,
     notifications: Option<&super::CodexNotificationSender>,
