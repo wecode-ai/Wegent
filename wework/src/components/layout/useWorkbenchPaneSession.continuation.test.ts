@@ -191,6 +191,36 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
+  test('cleans submitted code comments from an edited annotation batch', async () => {
+    const { result } = await renderSession()
+    const annotation = {
+      ...codeComment,
+      id: 'submitted-annotation',
+      source: 'browser_annotation' as const,
+    }
+    act(() => result.current.addCodeComment(annotation))
+    let acknowledgeSend!: (accepted: boolean) => void
+    mocks.send.mockImplementationOnce(
+      () =>
+        new Promise<boolean>(resolve => {
+          acknowledgeSend = resolve
+        })
+    )
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    const nextComment = { ...codeComment, id: 'next-turn-comment' }
+    act(() => result.current.addCodeComment(nextComment))
+    await act(async () => {
+      acknowledgeSend(true)
+      expect(await submission).toBe(true)
+    })
+    expect(result.current.codeCommentContexts).toEqual([annotation, nextComment])
+    expect(result.current.browserAnnotationCommand).toBeNull()
+  })
+
   test.each(['rejected', 'thrown'] as const)(
     'preserves newer text when a new-pane send is %s',
     async outcome => {

@@ -9,6 +9,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -286,7 +287,9 @@ export function useWorkbenchPaneSession({
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const codeCommentContextsRef = useRef(codeCommentContexts)
-  codeCommentContextsRef.current = codeCommentContexts
+  useLayoutEffect(() => {
+    codeCommentContextsRef.current = codeCommentContexts
+  }, [codeCommentContexts])
   const [browserAnnotationCommand, setBrowserAnnotationCommand] =
     useState<BrowserAnnotationCommand | null>(null)
   const browserAnnotationCommandSequenceRef = useRef(0)
@@ -360,15 +363,17 @@ export function useWorkbenchPaneSession({
 
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
-      // Native annotation cleanup clears the entire page, so keep an edited batch intact.
-      if (
-        reason === 'send_success' &&
-        codeCommentContextsRef.current !== contexts &&
-        contexts.some(isBrowserAnnotationContext)
+      // Native cleanup clears the entire page; retain an edited annotation batch.
+      const preserveAnnotations =
+        reason === 'send_success' && codeCommentContextsRef.current !== contexts
+      setCodeCommentContexts(current =>
+        current.filter(
+          context =>
+            !contexts.includes(context) ||
+            (preserveAnnotations && isBrowserAnnotationContext(context))
+        )
       )
-        return
-      setCodeCommentContexts(current => current.filter(context => !contexts.includes(context)))
-      if (!contexts.some(isBrowserAnnotationContext)) return
+      if (preserveAnnotations || !contexts.some(isBrowserAnnotationContext)) return
 
       browserAnnotationCommandSequenceRef.current += 1
       setBrowserAnnotationCommand({
