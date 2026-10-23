@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
 import type { BackgroundTerminal } from '../backgroundTerminals'
 import { createXtermWebLinksAddon } from './xtermLinks'
+import { installXtermHistoryDiagnostics } from './xtermHistoryDiagnostics'
 
 export function BackgroundTerminalPanel({
   terminal,
@@ -42,6 +43,7 @@ export function BackgroundTerminalPanel({
     xterm.loadAddon(fit)
     xterm.loadAddon(createXtermWebLinksAddon())
     xterm.open(container)
+    const disposeHistoryDiagnostics = installXtermHistoryDiagnostics(xterm, terminal?.id ?? '')
     const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
     resourceRef.current = { terminal: xterm, fit, output: '' }
     const observer = new ResizeObserver(() => {
@@ -50,6 +52,7 @@ export function BackgroundTerminalPanel({
     observer.observe(container)
     return () => {
       observer.disconnect()
+      disposeHistoryDiagnostics()
       disposeTheme()
       resourceRef.current = null
       xterm.dispose()
