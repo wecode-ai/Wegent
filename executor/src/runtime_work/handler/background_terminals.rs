@@ -101,44 +101,78 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-pub(super) fn runtime_background_command_messages(link: &RuntimeTaskLink) -> Vec<Value> {
-    let mut messages = completed_transcript_messages(link)
+pub(super) fn runtime_background_command_turns(
+    link: &RuntimeTaskLink,
+    native_turns: &[Value],
+) -> Vec<Value> {
+    let mut messages = runtime_background_command_messages(link, native_turns);
+    remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
+    transcript_canonical_turns(&messages, TranscriptTurnItemSource::CachedMessages)
+}
+
+fn runtime_background_command_messages(
+    link: &RuntimeTaskLink,
+    native_turns: &[Value],
+) -> Vec<Value> {
+    let native_items = native_turns
+        .iter()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .filter_map(|item| Some((item["id"].as_str()?, item)))
+        .collect::<std::collections::HashMap<_, _>>();
+    completed_transcript_messages(link)
         .into_iter()
-        .filter(|message| message["role"] == "assistant")
-        .collect::<Vec<_>>();
-    for message in &mut messages {
-        let items = message
-            .get("runtimeItems")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|item| {
-                item["type"] == "block"
-                    && item
-                        .pointer("/block/render_payload/kind")
-                        .and_then(Value::as_str)
-                        == Some("command_execution")
-                    && item
-                        .pointer("/block/render_payload/status")
-                        .and_then(Value::as_str)
-                        == Some("inProgress")
-                    && !matches!(
-                        item.pointer("/block/status").and_then(Value::as_str),
-                        Some("done" | "error")
-                    )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        message["runtimeItems"] = json!(items);
-    }
-    messages
-        .into_iter()
-        .filter(|message| {
-            message["runtimeItems"]
-                .as_array()
-                .is_some_and(|items| !items.is_empty())
+        .filter_map(|mut message| {
+            let source = message["runtimeItems"].as_array()?;
+            if message["role"] != "assistant" || !source.iter().any(is_running_runtime_command) {
+                return None;
+            }
+            let items = source
+                .iter()
+                .filter_map(|item| {
+                    let native = item["id"]
+                        .as_str()
+                        .and_then(|id| native_items.get(id))
+                        .copied();
+                    if is_running_runtime_command(item)
+                        && !native.is_some_and(|native| {
+                            matches!(
+                                native.pointer("/block/status").and_then(Value::as_str),
+                                Some("done" | "error")
+                            )
+                        })
+                    {
+                        let mut runtime = item.clone();
+                        if let Some(position) = native.and_then(|item| item.get("position")) {
+                            runtime["position"] = position.clone();
+                        }
+                        Some(runtime)
+                    } else {
+                        // Use current native values only. These identities witness the command's
+                        // observed neighbors without replaying historical cached text into a page.
+                        native.cloned()
+                    }
+                })
+                .collect::<Vec<_>>();
+            message["runtimeItems"] = json!(items);
+            Some(message)
         })
         .collect()
+}
+
+fn is_running_runtime_command(item: &Value) -> bool {
+    item["type"] == "block"
+        && item
+            .pointer("/block/render_payload/kind")
+            .and_then(Value::as_str)
+            == Some("command_execution")
+        && item
+            .pointer("/block/render_payload/status")
+            .and_then(Value::as_str)
+            == Some("inProgress")
+        && !matches!(
+            item.pointer("/block/status").and_then(Value::as_str),
+            Some("done" | "error")
+        )
 }
 
 fn append_command_output(value: &mut Value, field: &str, delta: &str) {

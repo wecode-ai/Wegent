@@ -1,3 +1,4 @@
+import { appendAcceptedRuntimeConversationUser } from "./runtime-turn-updates";
 import { projectRuntimePaneTranscript } from "./runtime-transcript-page";
 import { describe, expect, it } from "vitest";
 import type {
@@ -26,6 +27,115 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("recognizes a late send acknowledgement through the explicit native user alias", () => {
+    const page = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      messages: [],
+      turns: [
+        {
+          id: "completed",
+          status: "completed",
+          items: [
+            {
+              id: "native-user",
+              type: "user_message",
+              position: 10,
+              message: {
+                id: "native-user",
+                clientUserMessageId: "client-user",
+                role: "user",
+                content: "Continue",
+              },
+            },
+            {
+              id: "answer",
+              type: "assistant_text",
+              position: 11,
+              content: "Finished",
+            },
+          ],
+        },
+      ],
+    });
+    const accepted = appendAcceptedRuntimeConversationUser(
+      page.turns,
+      {
+        id: "client-user",
+        role: "user",
+        status: "done",
+        content: "Continue",
+        createdAt: "",
+      },
+      null,
+      new Set(),
+    );
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].items.map((item) => item.id)).toEqual([
+      "native-user",
+      "answer",
+    ]);
+  });
+  it("projects a newly streaming reply after its persisted user before any assistant identity is shared", () => {
+    const page = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      messages: [],
+      running: true,
+      turns: [
+        {
+          id: "current",
+          status: "inProgress",
+          position: 10,
+          items: [
+            {
+              id: "native-user",
+              type: "user_message",
+              position: 11,
+              message: { id: "native-user", role: "user", content: "Prompt" },
+            },
+          ],
+        },
+      ],
+      runtimeTurns: [
+        {
+          id: "current",
+          status: "streaming",
+          items: [
+            { id: "reply", type: "assistant_text", content: "Partial answer" },
+          ],
+        },
+      ],
+    });
+    expect(page.turns[0].items.map((item) => item.id)).toEqual([
+      "native-user",
+      "reply",
+    ]);
+    expect(
+      page.messages.map((message) => [
+        message.role,
+        message.content,
+        message.status,
+      ]),
+    ).toEqual([
+      ["user", "Prompt", "done"],
+      ["assistant", "Partial answer", "streaming"],
+    ]);
+  });
+  it("preserves a presentation-only legacy preview with an empty native page", () => {
+    const page = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      turns: [],
+      runtimeTurns: [],
+      messages: [
+        { id: "legacy-preview", role: "user", content: "Original prompt" },
+      ],
+    });
+    expect(page.messages.map((message) => message.content)).toEqual([
+      "Original prompt",
+    ]);
+  });
   it("preserves a legacy display projection when the remote schema returns no runtime overlay", () => {
     const page = projectRuntimePaneTranscript({
       runtime: "claude_code",

@@ -43,8 +43,8 @@ export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse,
 ): RuntimePaneTranscript {
   const turns = mergeRuntimeConversationTurns(
-    runtimeTranscriptTurnsToConversationTurns(transcript.runtimeTurns ?? []),
     runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+    runtimeTranscriptTurnsToConversationTurns(transcript.runtimeTurns ?? []),
   );
   return {
     supersededTurnIds: transcript.supersededTurnIds ?? [],
@@ -52,9 +52,10 @@ export function projectRuntimePaneTranscript(
     historyUnavailable: transcript.historyUnavailable,
     runtime: transcript.runtime,
     running: transcript.running,
-    messages: Array.isArray(transcript.runtimeTurns)
-      ? projectRuntimeConversationTurns(turns)
-      : runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+    messages:
+      Array.isArray(transcript.runtimeTurns) && turns.length > 0
+        ? projectRuntimeConversationTurns(turns)
+        : runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
     turns,
     contextUsage: transcript.contextUsage ?? null,
     turnNavigation: transcript.turnNavigation ?? [],

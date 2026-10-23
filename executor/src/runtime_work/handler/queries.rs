@@ -786,9 +786,7 @@ impl RuntimeWorkRpcHandler {
                 }
             });
         if !direct_thread_override {
-            if thread["timeline"] != true {
-                self.merge_active_codex_transcript(&local_task_id, &mut thread);
-            }
+            self.merge_active_codex_transcript(&local_task_id, &mut thread);
             self.repair_legacy_task_activity_time(&local_task_id, &thread);
         }
         let workspace_path = local_link
@@ -918,6 +916,12 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         }
+        let runtime_turns = local_link
+            .as_ref()
+            .filter(|_| !direct_thread_override && thread["timeline"] == true)
+            .map(|link| {
+                super::background_terminals::runtime_background_command_turns(link, &native_turns)
+            });
         let mut response = transcript_response(TranscriptResponseInput {
             canonical_turns: (thread.get("timeline").and_then(Value::as_bool) == Some(true))
                 .then_some(native_turns),
@@ -946,8 +950,8 @@ impl RuntimeWorkRpcHandler {
         });
         response["threadId"] = json!(thread_id);
         if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
-            if thread["timeline"] == true {
-                response["runtimeTurns"] = json!(self.runtime_codex_turns(link, running));
+            if let Some(runtime_turns) = runtime_turns {
+                response["runtimeTurns"] = json!(runtime_turns);
             }
             response["supersededTurnIds"] =
                 json!(superseded_transcript_turn_ids(&link.runtime_handle));

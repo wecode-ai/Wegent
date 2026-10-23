@@ -213,6 +213,7 @@ test('restores running runtime commands beside completed native history without 
                 render_payload: { kind: 'command_execution', status: 'inProgress' },
               },
             },
+            response('Native answer').turns[0].items[0],
           ],
         },
       ],

@@ -107,6 +107,7 @@ fn project_transcript_with_options(
         {
             continue;
         }
+        let message_start = messages.len();
         let items = TurnTranscriptProjector::new(
             &mut messages,
             turn,
@@ -126,10 +127,7 @@ fn project_transcript_with_options(
             "error": turn_error_message(turn),
             "position": turn.get("position"),
         });
-        if let Some(message) = messages
-            .last()
-            .filter(|message| message["turnId"] == normalized["id"])
-        {
+        for message in &messages[message_start..] {
             for key in [
                 "fileChanges",
                 "references",
@@ -139,7 +137,12 @@ fn project_transcript_with_options(
                 "durationMs",
             ] {
                 if let Some(value) = message.get(key) {
-                    normalized[key] = value.clone();
+                    normalized[key] = if key == "fileChanges" {
+                        merge_file_changes(normalized.get(key).cloned(), value.clone())
+                            .unwrap_or(Value::Null)
+                    } else {
+                        value.clone()
+                    };
                 }
             }
         }

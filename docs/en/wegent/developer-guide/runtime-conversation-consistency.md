@@ -18,11 +18,11 @@ Positions belong to a native `threadId`. Replacing a thread invalidates the prev
 
 A turn can span multiple native pages. Only a page containing its user item or turn-start boundary owns a synthetic user presentation; turn metadata carried by a cursor cannot transfer that ownership to another page.
 
-Persisted items use native positions; unpositioned runtime items retain their observed native neighbors. Absence from a history page is not deletion. The executor returns unfinished live items and running background commands separately in runtimeTurns, without appending cached historical text. Explicit supersededTurnIds remove replaced turns and reject late events. Native users bind to host send identities only through a unique user and presentation in the same turn.
+Persisted items use native positions; unpositioned runtime items retain their observed native neighbors. Absence from a history page is not deletion. The executor overlays unfinished current items onto native history before projecting turns and messages once, so both API views contain the same current content. Completed historical caches cannot enter this overlay. Separate runtimeTurns carry only running background commands and their output, anchored by neighboring identities from the current native page without replaying cached text. The frontend uses native history as its base and runtime state as its overlay. Explicit supersededTurnIds remove replaced turns and reject late events. Native users bind to host send identities only through a unique user and presentation in the same turn.
 
 ## Ownership and synchronization
 
-Native normalization produces turns/items and presentation messages in one pass. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
+Native normalization produces turns/items and presentation messages in one pass. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
 
 Edit/retry supersession markers filter native turns before normalization so both projections agree. Metadata reads reuse the existing startup retry only for explicit not-ready protocol errors; permanent errors still propagate to the caller.
 

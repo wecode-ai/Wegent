@@ -1463,3 +1463,21 @@ fn context_compaction_before_user_stays_in_the_user_response_turn() {
     assert_eq!(messages[1]["content"], "Done");
     assert_eq!(messages[1]["blocks"][0]["tool_name"], "context_compaction");
 }
+
+#[test]
+fn canonical_turn_retains_artifacts_from_segments_before_guidance() {
+    let thread = json!({"id":"thread-1","cwd":"/tmp/project","turns":[{
+        "id":"turn-1","status":"completed","items":[
+            {"id":"patch","type":"patchApplyEnd","status":"completed","changes":{
+                "/tmp/project/src/one.rs":{"type":"update","unified_diff":"@@ -1 +1 @@\n-old\n+new\n"}
+            }},
+            {"id":"guidance","type":"userMessage","content":[{"type":"inputText","text":"Continue"}]},
+            {"id":"final","type":"agentMessage","phase":"final_answer","text":"Done"}
+        ]
+    }]});
+    let projection = project_transcript(&thread, "device-1", false);
+    assert_eq!(
+        projection.turns[0]["fileChanges"]["files"][0]["path"],
+        "src/one.rs"
+    );
+}

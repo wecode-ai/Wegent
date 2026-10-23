@@ -29,9 +29,7 @@ export function seedRuntimeConversationTurns(
   for (const message of messages) {
     if (message.role !== "user") continue;
     const existing = turns.some((turn) =>
-      turn.items.some(
-        (item) => item.type === "user_message" && item.id === message.id,
-      ),
+      hasRuntimeConversationUserIdentity(turn, message.id),
     );
     if (!existing) {
       turns = appendOptimisticUser(turns, message);
@@ -48,11 +46,7 @@ export function appendAcceptedRuntimeConversationUser(
 ): RuntimeConversationTurn[] {
   if (message.role !== "user") return appendOptimisticUser(turns, message);
   if (
-    turns.some((turn) =>
-      turn.items.some(
-        (item) => item.type === "user_message" && item.id === message.id,
-      ),
-    )
+    turns.some((turn) => hasRuntimeConversationUserIdentity(turn, message.id))
   ) {
     return turns;
   }
@@ -98,6 +92,20 @@ export function appendAcceptedRuntimeConversationUser(
   });
 }
 
+function hasRuntimeConversationUserIdentity(
+  turn: RuntimeConversationTurn,
+  id: string,
+): boolean {
+  return (
+    turn.clientUserMessageId === id ||
+    turn.items.some(
+      (item) =>
+        item.type === "user_message" &&
+        (item.id === id || item.message.id === id),
+    )
+  );
+}
+
 export function hasRuntimeConversationUser(
   turn: RuntimeConversationTurn,
 ): boolean {
@@ -110,11 +118,7 @@ export function appendOptimisticUser(
 ): RuntimeConversationTurn[] {
   if (message.role !== "user") return turns;
   if (
-    turns.some((turn) =>
-      turn.items.some(
-        (item) => item.type === "user_message" && item.id === message.id,
-      ),
-    )
+    turns.some((turn) => hasRuntimeConversationUserIdentity(turn, message.id))
   ) {
     return turns;
   }
@@ -157,14 +161,8 @@ export function updateStartedTurn(
     });
   }
   const optimisticIndex = action.clientUserMessageId
-    ? turns.findIndex(
-        (turn) =>
-          turn.clientUserMessageId === action.clientUserMessageId ||
-          turn.items.some(
-            (item) =>
-              item.type === "user_message" &&
-              item.id === action.clientUserMessageId,
-          ),
+    ? turns.findIndex((turn) =>
+        hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
       )
     : findLastIndex(
         turns,

@@ -609,7 +609,7 @@ impl RuntimeWorkRpcHandler {
             CodexTranscriptRequest {
                 thread_id,
                 cursor: None,
-                limit: 1,
+                limit: CODEX_TRANSCRIPT_PAGE_SIZE,
                 direction: CodexTranscriptDirection::Descending,
                 full_content: true,
                 prefer_rollout_history: false,

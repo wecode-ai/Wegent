@@ -244,38 +244,6 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn runtime_codex_turns(&self, link: &RuntimeTaskLink, running: bool) -> Vec<Value> {
-        let mut messages = super::background_terminals::runtime_background_command_messages(link);
-        let active = self
-            .active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|items| items.get(&link.local_task_id).cloned())
-            .filter(|active| {
-                running && link.thread_id.as_deref() == Some(active.thread_id.as_str())
-            });
-        if let Some(active) = active {
-            let items = active
-                .items
-                .into_iter()
-                .filter(|item| item["lifecycleCompleted"] != true)
-                .collect::<Vec<_>>();
-            let thread = json!({"cwd":link.workspace_path,"turns":[{
-                "id":active.turn_id,"items":items,"status":"inProgress"
-            }]});
-            messages.extend(transcript_messages(&thread, &self.device_id));
-        }
-        remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
-        transcript_canonical_turns(&messages, TranscriptTurnItemSource::CachedMessages)
-            .into_iter()
-            .filter(|turn| {
-                turn["items"]
-                    .as_array()
-                    .is_some_and(|items| !items.is_empty())
-            })
-            .collect()
-    }
-
     pub(super) fn merge_active_codex_transcript(&self, local_task_id: &str, thread: &mut Value) {
         let active = self
             .active_codex_transcript_items
@@ -285,6 +253,15 @@ impl RuntimeWorkRpcHandler {
         let Some(active) = active.filter(|active| !active.items.is_empty()) else {
             return;
         };
+        let positioned = thread["timeline"] == true;
+        let active_items = active
+            .items
+            .into_iter()
+            .filter(|item| !positioned || item["lifecycleCompleted"] != true)
+            .collect::<Vec<_>>();
+        if active_items.is_empty() {
+            return;
+        }
         let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) else {
             return;
         };
@@ -292,13 +269,32 @@ impl RuntimeWorkRpcHandler {
             .iter_mut()
             .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
         {
-            turn["status"] = json!("inProgress");
-            merge_codex_turn_items(turn, active.items);
+            if !positioned {
+                turn["status"] = json!("inProgress");
+            }
+            let active_items = active_items
+                .into_iter()
+                .filter(|item| {
+                    if !positioned {
+                        return true;
+                    }
+                    let existing = turn["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|native| native["id"] == item["id"]);
+                    existing.map_or(true, |native| {
+                        item_type(native) == "commandexecution"
+                            && !matches!(native["status"].as_str(), Some("completed" | "failed"))
+                    })
+                })
+                .collect();
+            merge_codex_turn_items(turn, active_items);
             return;
         }
         turns.push(json!({
             "id": active.turn_id,
-            "items": active.items,
+            "items": active_items,
             "itemsView": "full",
             "status": "inProgress",
         }));

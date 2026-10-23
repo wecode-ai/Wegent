@@ -164,7 +164,8 @@ async fn native_timeline_restores_only_runtime_commands_outside_durable_history(
                 {"id":"finished-command","type":"block","block":{
                     "id":"finished-command","type":"tool","status":"done",
                     "render_payload":{"kind":"command_execution","status":"completed"}
-                }}
+                }},
+                {"id":"current-text","type":"assistant_text","content":"Stale cached anchor"}
             ]
         })]);
     });
@@ -174,12 +175,14 @@ async fn native_timeline_restores_only_runtime_commands_outside_durable_history(
     assert_eq!(runtime.as_array().unwrap().len(), 1);
     assert_eq!(runtime[0]["id"], "current");
     assert_eq!(runtime[0]["status"], "done");
-    assert_eq!(runtime[0]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(runtime[0]["items"].as_array().unwrap().len(), 2);
     assert_eq!(runtime[0]["items"][0]["id"], "running-command");
     assert_eq!(
         runtime[0]["items"][0]["block"]["tool_output"],
         "ready\ntick\n"
     );
+    assert_eq!(runtime[0]["items"][1]["id"], "current-text");
+    assert_eq!(runtime[0]["items"][1]["content"], "Current");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -193,13 +196,49 @@ async fn native_timeline_keeps_inflight_items_separate_from_historical_page_orde
             json!({"id":"live","type":"agentMessage","text":"Still streaming","lifecycleCompleted":false})
         ]
     });
-    let link = handler.local_task_link("task-1").unwrap();
-    let runtime = handler.runtime_codex_turns(&link, true);
-    assert_eq!(runtime[0]["items"].as_array().unwrap().len(), 1);
-    assert_eq!(runtime[0]["items"][0]["id"], "live");
-    assert_eq!(runtime[0]["status"], "streaming");
     let response = read_and_stop(&mut handler).await.unwrap();
-    assert_eq!(response["turns"][1]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(response["turns"][1]["items"].as_array().unwrap().len(), 2);
     assert_eq!(response["turns"][1]["items"][0]["content"], "Current");
+    assert_eq!(
+        response["turns"][1]["items"][1]["content"],
+        "Still streaming"
+    );
+    assert!(response["turns"][1]["items"][1].get("position").is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_timeline_binds_plain_execution_identity_without_synthesizing_a_prompt() {
+    let (mut handler, root) = native_handler("native-plain-user-binding");
+    handler.store.update_task("task-1", |link| {
+        bind_runtime_handle_user_message_presentation_to_turn(
+            &mut link.runtime_handle,
+            "client-user",
+            "current",
+        );
+    });
+    fs::write(root.join("thread_timeline_list.json"), json!({"data":[
+        {"type":"turnStarted","position":0,"turnId":"current"},
+        {"type":"item","position":1,"turnId":"current","item":{
+            "id":"native-user","type":"userMessage","content":[{"type":"inputText","text":"Original prompt"}]
+        }},
+        {"type":"item","position":2,"turnId":"current","item":{
+            "id":"current-text","type":"agentMessage","phase":"final_answer","text":"Current"
+        }}
+    ],"nextCursor":null}).to_string()).unwrap();
+    let response = read_and_stop(&mut handler).await.unwrap();
+    let user = &response["turns"][0]["items"][0];
+    assert_eq!(user["id"], "native-user");
+    assert_eq!(user["message"]["clientUserMessageId"], "client-user");
+    assert_eq!(user["message"]["content"], "Original prompt");
+    assert_eq!(
+        response["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .count(),
+        1
+    );
     fs::remove_dir_all(root).unwrap();
 }
