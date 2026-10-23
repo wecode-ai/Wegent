@@ -423,7 +423,10 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
-    if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      (level === 3 || message.startsWith('[Wework] Runtime task create diagnostic '))
+    ) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
         message: redactLog(message).slice(0, 4096),

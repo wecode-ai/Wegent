@@ -1107,10 +1107,24 @@ async function pressNativeDesktopControlKey(
   phase: 'press' | 'down' | 'up' = 'press'
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  const trace = (stage: string) =>
+    console.error(
+      '[desktop-e2e-native-key]',
+      JSON.stringify({
+        stage,
+        at: Date.now(),
+        key,
+        visible: document.visibilityState,
+        focused: document.hasFocus(),
+      })
+    )
+  trace('begin')
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
+  trace('focused')
   await waitForDesktopControlTick()
+  trace('tick')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
@@ -1121,13 +1135,16 @@ async function pressNativeDesktopControlKey(
   const recordKey = (event: KeyboardEvent) => received.push(event)
   window.addEventListener(eventType, recordKey, true)
   try {
+    trace('sending')
     await invokeDesktopHost('e2e.pressKey', {
       windowLabel,
       key,
       phase,
       focus: false,
     })
+    trace('sent')
     await waitForDesktopControlTick()
+    trace('settled')
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
         `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
