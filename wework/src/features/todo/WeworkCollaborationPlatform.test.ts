@@ -698,17 +698,8 @@ describe('Wework collaboration workspace API', () => {
       name: 'Local project',
       roots: ['/workspace/imported'],
     })
-    expect(ensureDefault).toHaveBeenCalledWith(
-      'local-project',
-      expect.objectContaining({
-        name: 'current-device-agent',
-        model: null,
-      })
-    )
-    expect(warning).toHaveBeenCalledWith(
-      expect.stringContaining('imported project local-project'),
-      expect.any(Error)
-    )
+    expect(ensureDefault).not.toHaveBeenCalled()
+    expect(warning).not.toHaveBeenCalled()
     warning.mockRestore()
   })
 
@@ -3144,7 +3135,7 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
-  it('automatically adds the default local Agent to a newly created local project', async () => {
+  it('adds the default local Agent only when explicitly selected', async () => {
     const ensureDefault = vi.fn(async (projectId: string, input: Record<string, unknown>) => ({
       id: `LA-${projectId}`,
       projectId,
@@ -3169,7 +3160,9 @@ describe('Wework collaboration workspace API', () => {
     } as unknown as ProjectSpaceDetailServices
     const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, details)!
 
-    await expect(api.projects.create({ name: 'New local' })).resolves.toMatchObject({
+    await expect(
+      api.projects.create({ name: 'New local', includeDefaultAgent: true })
+    ).resolves.toMatchObject({
       id: 'new-local',
       workspace_id: 'wework-local-workspace',
     })
@@ -3184,7 +3177,7 @@ describe('Wework collaboration workspace API', () => {
     expect(delivery.updateCloudProject).not.toHaveBeenCalled()
   })
 
-  it('does not add the default local Agent when local project creation opts out', async () => {
+  it('does not add the default local Agent when creating a project without a selection', async () => {
     const ensureDefault = vi.fn()
     const createCloudProject = vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' })
     const details = {
@@ -3210,7 +3203,6 @@ describe('Wework collaboration workspace API', () => {
 
     await api.projects.create({
       name: 'New local',
-      includeDefaultAgent: false,
     })
 
     expect(createCloudProject).toHaveBeenCalledWith(
@@ -3243,7 +3235,9 @@ describe('Wework collaboration workspace API', () => {
       details
     )!
 
-    await expect(api.projects.create({ name: 'New local' })).resolves.toMatchObject({
+    await expect(
+      api.projects.create({ name: 'New local', includeDefaultAgent: true })
+    ).resolves.toMatchObject({
       id: 'new-local',
       name: 'New local',
     })
@@ -3994,6 +3988,47 @@ describe('Wework collaboration workspace API', () => {
     await expect(Promise.all([resources, workspaceAgents])).resolves.toHaveLength(2)
     expect(ensureDefault).toHaveBeenCalledOnce()
   })
+
+  it.each(['current-device-agent', 'manual-agent'])(
+    'returns consistent edit and deletion controls for local Agent %s',
+    async name => {
+      const record = {
+        id: 'LA-created',
+        name,
+        displayName: 'Manually added Agent',
+        runtime: 'codex',
+        status: 'active',
+        version: 1,
+      }
+      const localProjectChatAgentApi = {
+        list: vi.fn().mockResolvedValue([record]),
+        create: vi.fn().mockResolvedValue(record),
+        update: vi.fn().mockResolvedValue(record),
+      }
+      const details = {
+        ...createLocalDetailServices(),
+        localProjectChatAgentApi,
+      } as unknown as ProjectSpaceDetailServices
+      const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, details)!
+      const [listed] = await api.agents.list('local-project')
+
+      expect(listed).toMatchObject({
+        agent_id: name,
+        name: record.displayName,
+        can_edit: true,
+        deletable: name !== 'current-device-agent',
+      })
+      await expect(api.agents.create('local-project', { name, runtime: 'codex' })).resolves.toEqual(
+        listed
+      )
+      await expect(
+        api.agents.update('local-project', record.id, {
+          version: 1,
+          displayName: record.displayName,
+        })
+      ).resolves.toEqual(listed)
+    }
+  )
 
   it('does not allow deleting the default local Agent', async () => {
     const archive = vi.fn()
