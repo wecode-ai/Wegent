@@ -128,6 +128,60 @@ async fn relocated_v2_recovers_existing_caches_and_preserves_install_state() {
 }
 
 #[tokio::test]
+async fn cleared_component_states_stay_cleared_across_sync_and_recovery() {
+    for codex_only in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let store = installed(&root, codex_only).await;
+        let manifest = store.manifest.load().unwrap();
+        assert_eq!(
+            manifest["plugins"]["demo@wegent"]["component_states"]["skill:demo"],
+            false
+        );
+        let handler = CapabilitySyncHandler::with_package_provider(
+            "",
+            store.clone(),
+            Packages(archive("demo")),
+        );
+        let mut cleared = payload("demo");
+        cleared["plugins"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("component_states".to_owned(), json!({}));
+        let result = handler.apply_sync(cleared).await.unwrap();
+        assert_eq!(result["success"], true, "{result}");
+        let manifest = store.manifest.load().unwrap();
+        assert!(
+            manifest["plugins"]["demo@wegent"]
+                .get("component_states")
+                .is_none(),
+            "{manifest}"
+        );
+        if !codex_only {
+            let installed_plugins: Value = serde_json::from_str(
+                &fs::read_to_string(root.join("claude/plugins/installed_plugins.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(
+                installed_plugins["plugins"]["demo@wegent"][0]
+                    .get("componentStates")
+                    .is_none(),
+                "{installed_plugins}"
+            );
+        }
+        let recovered = store.reconcile_managed_plugin_runtimes().unwrap();
+        assert!(recovered.failed.is_empty(), "{:?}", recovered.failed);
+        let manifest = store.manifest.load().unwrap();
+        assert!(
+            manifest["plugins"]["demo@wegent"]
+                .get("component_states")
+                .is_none(),
+            "{manifest}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn failed_plugin_does_not_prevent_another_plugin_recovery() {
     let temp = tempfile::tempdir().unwrap();
     let old = temp.path().join("old");
