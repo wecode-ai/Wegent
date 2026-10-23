@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
 import {
+  refreshPluginInventory,
   verifyPluginEnabledState,
   verifyPluginTogglePersistence,
 } from '../modules/plugin-inventory-state.mjs'
@@ -155,10 +156,7 @@ export async function createDesktopScenario({
 
   async function refresh(control, fixture) {
     await openPlugin(control, fixture)
-    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
-    await control.command('waitFor', `${testId('plugins-refresh-button')}:not(:disabled)`, {
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
+    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
   }
 
   // The composer plugin list is renderer memory projected lazily on the first
@@ -444,7 +442,7 @@ export async function createDesktopScenario({
     await refresh(control, primary)
     await control.command('click', testId(`plugin-marketplace-row-${primary.pluginId}`))
     await control.command('waitFor', '[data-testid^="plugin-detail-toggle-"]', { text: '更新' })
-    await control.command('click', '[data-testid^="plugin-detail-toggle-"]')
+    await control.command('clickWhenEnabled', '[data-testid^="plugin-detail-toggle-"]')
     await control.command('clickWhenEnabled', testId('plugin-update-confirm-button'))
     await waitRuntime(primary, '3.0.0')
     await invoke(control, primary, '3.0.0', 'updated-after-home-change')
