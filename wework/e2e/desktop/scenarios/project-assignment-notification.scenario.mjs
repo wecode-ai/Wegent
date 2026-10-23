@@ -741,12 +741,24 @@ export function createDesktopScenario({
           timeoutMs: modelResponseTimeoutMs,
         }
       )
-      await waitForValue(
+      const issueAfterAiDraft = await waitForValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value => value.status === 'in_progress' && value.current_delivery_id === delivery.id,
-        'AI 草稿不应替处理人提交原 Issue',
+        value => value.current_delivery_id === delivery.id,
+        'AI 交付没有关联到原 Issue',
         modelResponseTimeoutMs
       )
+      // AI assistance attaches its delivery; only the person changes the Issue's workflow state.
+      assert.equal(
+        issueAfterAiDraft.status,
+        pendingIssue.status,
+        'AI 草稿不应替处理人改变原 Issue 的状态'
+      )
+      assert.deepEqual(
+        issueAfterAiDraft.status_history,
+        pendingIssue.status_history,
+        'AI 草稿不应新增原 Issue 的状态变更历史'
+      )
+      assert.equal(issueAfterAiDraft.completed_at, pendingIssue.completed_at)
       assert.equal(
         delivery.source_task_snapshot.humanAssignmentId,
         notification.payload.humanAssignmentId

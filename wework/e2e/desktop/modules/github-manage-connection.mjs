@@ -62,8 +62,10 @@ export async function verifyGithubManageConnectionConsent(control, previousSlug,
   await control.command('waitFor', `[data-testid="plugin-marketplace-actions-${id}"]`)
   await control.command('click', `[data-testid="plugin-marketplace-row-${id}"]`)
   const manage = '[data-testid="plugin-connection-manage-connector:github"]'
-  await control.command('waitFor', manage, { text: '登录' })
   for (const attempt of ['initial', 'after-cancel']) {
+    // Cancellation reports its error before the outer action releases its busy
+    // state. Wait for the login action itself before inspecting or using it.
+    await control.command('waitFor', manage, { text: '登录', visible: true, enabled: true })
     const row = JSON.parse(await control.command('snapshot', manage))
     assert.equal(row.text.trim(), '登录', `Unauthenticated CLI must offer login: ${attempt}`)
     await control.command('clickWhenEnabled', manage)
@@ -89,6 +91,9 @@ export async function verifyGithubManageConnectionConsent(control, previousSlug,
     }
     await control.command('click', '[data-testid="connector-auth-cancel"]')
     await control.command('waitFor', '[data-testid="plugin-detail-action-error"]')
+    await control.command('waitFor', '[data-testid="plugin-github-cli-auth-dialog"]', {
+      visible: false,
+    })
   }
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', '[data-testid="plugins-search-input"]')
