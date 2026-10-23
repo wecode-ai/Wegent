@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   resolveLaunch: vi.fn(),
+  listModelOptions: vi.fn(),
+  storeAdditionalProxies: vi.fn(),
+  takeAdditionalProxies: vi.fn(),
   resolveDecisionLaunch: vi.fn(),
   unregisterDecision: vi.fn(),
   decisionScope: vi.fn((installationId: string) => `smart-app:${installationId}:uuid`),
@@ -36,9 +39,11 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   registerHarnessAppTab: mocks.register,
   unregisterHarnessAppTab: vi.fn(),
   storeHarnessAppProxyToken: mocks.storeProxy,
+  storeHarnessAppAdditionalProxyTokens: mocks.storeAdditionalProxies,
   storeHarnessAppContextToken: mocks.storeContext,
   storeHarnessAppDecisionToken: mocks.storeDecision,
   takeHarnessAppProxyToken: mocks.takeProxy,
+  takeHarnessAppAdditionalProxyTokens: mocks.takeAdditionalProxies,
   takeHarnessAppContextToken: mocks.takeContext,
   takeHarnessAppDecisionToken: mocks.takeDecision,
 }))
@@ -58,7 +63,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@/features/local-harness/localHarnessModels', () => ({
-  listLocalHarnessModelOptions: () => [{ key: 'model-1' }],
+  listLocalHarnessModelOptions: mocks.listModelOptions,
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -117,12 +122,129 @@ describe('HarnessAppAutoLauncher', () => {
       protocolVersion: 1,
     })
     mocks.takeProxy.mockResolvedValue(null)
+    mocks.takeAdditionalProxies.mockResolvedValue([])
+    mocks.listModelOptions.mockReturnValue([{ key: 'model-1', label: 'Default model' }])
     mocks.takeContext.mockResolvedValue(null)
     mocks.takeDecision.mockResolvedValue(null)
     mocks.unregisterProxy.mockResolvedValue(undefined)
     mocks.unregisterContext.mockResolvedValue(undefined)
     mocks.unregisterDecision.mockResolvedValue(undefined)
     mocks.stop.mockResolvedValue(undefined)
+  })
+
+  test('registers each available Wework model on its own route', async () => {
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Default model' },
+      { key: 'model-2', label: 'Second model' },
+    ])
+    mocks.resolveLaunch
+      .mockResolvedValueOnce({
+        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+        proxyToken: 'default-token',
+        context: { baseUrl: 'http://127.0.0.1:9001', token: 'context-token' },
+      })
+      .mockResolvedValueOnce({
+        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/second-token',
+        proxyToken: 'second-token',
+      })
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockResolvedValue(running)
+
+    render(<HarnessAppAutoLauncher installationId="app-1" />)
+
+    await waitFor(() => expect(mocks.storeAdditionalProxies).toHaveBeenCalled())
+    expect(mocks.resolveLaunch).toHaveBeenCalledTimes(2)
+    expect(mocks.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+        additionalModels: [
+          {
+            modelKey: 'model-2',
+            displayName: 'Second model',
+            baseUrl: 'http://127.0.0.1:9000/v1/harness-router/second-token',
+          },
+        ],
+      })
+    )
+    expect(mocks.storeAdditionalProxies).toHaveBeenCalledWith('app-1', ['second-token'])
+  })
+
+  test('keeps the default and registered models when another model is unavailable', async () => {
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Default model' },
+      { key: 'model-2', label: 'Second model' },
+      { key: 'model-3', label: 'Third model' },
+    ])
+    mocks.resolveLaunch
+      .mockResolvedValueOnce({ baseUrl: 'http://127.0.0.1:9000', proxyToken: 'default-token' })
+      .mockResolvedValueOnce({ baseUrl: 'http://127.0.0.1:9001', proxyToken: 'second-token' })
+      .mockRejectedValueOnce(new Error('third model unavailable'))
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockResolvedValue(running)
+
+    render(<HarnessAppAutoLauncher installationId="app-1" />)
+
+    await waitFor(() => expect(mocks.storeAdditionalProxies).toHaveBeenCalled())
+    expect(mocks.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalModels: [
+          { modelKey: 'model-2', displayName: 'Second model', baseUrl: 'http://127.0.0.1:9001' },
+        ],
+      })
+    )
+    expect(mocks.unregisterProxy).not.toHaveBeenCalled()
+  })
+
+  test('releases all model routes when the app fails after startup', async () => {
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Default model' },
+      { key: 'model-2', label: 'Second model' },
+    ])
+    mocks.resolveLaunch
+      .mockResolvedValueOnce({ baseUrl: 'http://127.0.0.1:9000', proxyToken: 'default-token' })
+      .mockResolvedValueOnce({ baseUrl: 'http://127.0.0.1:9001', proxyToken: 'second-token' })
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockResolvedValue({ ...running, webUrl: null })
+
+    render(<HarnessAppAutoLauncher installationId="app-1" />)
+
+    await waitFor(() => expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token'))
+    expect(mocks.stop).toHaveBeenCalledWith('app-1')
+    expect(mocks.takeAdditionalProxies).toHaveBeenCalledWith('app-1')
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('default-token')
+  })
+
+  test('records the failed startup stage without logging route tokens', async () => {
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Default model' },
+      { key: 'model-2', label: 'Second model' },
+    ])
+    mocks.resolveLaunch
+      .mockResolvedValueOnce({ baseUrl: 'http://127.0.0.1:9000', proxyToken: 'default-token' })
+      .mockResolvedValueOnce({ baseUrl: 'http://127.0.0.1:9001', proxyToken: 'second-token' })
+    mocks.list.mockResolvedValue([grantedInstallation])
+    mocks.start.mockResolvedValue(running)
+    mocks.storeAdditionalProxies.mockRejectedValue(new Error('sensitive-second-token'))
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      render(<HarnessAppAutoLauncher installationId="app-1" />)
+
+      await waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          expect.stringMatching(/^\[Wework\] Smart app launch diagnostic /)
+        )
+      )
+      const record = String(
+        warning.mock.calls.find(([message]) =>
+          String(message).startsWith('[Wework] Smart app launch diagnostic ')
+        )?.[0]
+      )
+      expect(record).toContain('"stage":"store-additional-proxy-tokens"')
+      expect(record).not.toContain('second-token')
+    } finally {
+      warning.mockRestore()
+    }
   })
 
   test('starts and registers an installed Smart app when its tab opens', async () => {

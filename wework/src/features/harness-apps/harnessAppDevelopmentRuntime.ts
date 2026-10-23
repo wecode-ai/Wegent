@@ -4,14 +4,17 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   harnessAppDecisionScope,
   registerHarnessAppTab,
+  storeHarnessAppAdditionalProxyTokens,
   storeHarnessAppContextToken,
   storeHarnessAppDecisionToken,
   storeHarnessAppProxyToken,
+  takeHarnessAppAdditionalProxyTokens,
   takeHarnessAppContextToken,
   takeHarnessAppDecisionToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from './harnessAppTabs'
+import { registerAdditionalHarnessAppModels } from './harnessAppModelRoutes'
 
 type LocalHarnessModelApi = NonNullable<WorkbenchServices['localHarnessModelApi']>
 type LocalDecisionRouterApi = NonNullable<WorkbenchServices['localDecisionRouterApi']>
@@ -29,13 +32,15 @@ async function releaseHarnessAppRuntimeTokens(
   localHarnessModelApi?: LocalHarnessModelApi,
   localDecisionRouterApi?: LocalDecisionRouterApi
 ): Promise<void> {
-  const [proxyToken, contextToken, decisionToken] = await Promise.all([
+  const [proxyToken, additionalProxyTokens, contextToken, decisionToken] = await Promise.all([
     takeHarnessAppProxyToken(installationId),
+    takeHarnessAppAdditionalProxyTokens(installationId),
     takeHarnessAppContextToken(installationId),
     takeHarnessAppDecisionToken(installationId),
   ])
   await Promise.allSettled([
     proxyToken ? localHarnessModelApi?.unregisterProxy(proxyToken) : undefined,
+    ...additionalProxyTokens.map(token => localHarnessModelApi?.unregisterProxy(token)),
     contextToken ? localHarnessModelApi?.unregisterContext(contextToken) : undefined,
     decisionToken ? localDecisionRouterApi?.unregister(decisionToken) : undefined,
   ])
@@ -67,9 +72,11 @@ export async function startHarnessAppDevelopmentRuntime({
     modelOptions.find(option => option.key === installation.modelKey) ?? modelOptions[0] ?? null
   const decisionGranted = installation.grantedCapabilities?.decisionModel === true
   let launch: Awaited<ReturnType<LocalHarnessModelApi['resolveLaunch']>> | null = null
+  const additionalProxyTokens: string[] = []
   let decisionLaunch: Awaited<ReturnType<LocalDecisionRouterApi['resolveLaunch']>> | null = null
   let started = false
   let proxyTokenStored = false
+  let additionalProxyTokensStored = false
   let contextTokenStored = false
   let decisionTokenStored = false
   try {
@@ -80,6 +87,15 @@ export async function startHarnessAppDevelopmentRuntime({
       model && localHarnessModelApi
         ? await localHarnessModelApi.resolveLaunch('opencode', model)
         : null
+    const additionalModels =
+      launch && model && localHarnessModelApi
+        ? await registerAdditionalHarnessAppModels(
+            model,
+            modelOptions,
+            localHarnessModelApi,
+            token => additionalProxyTokens.push(token)
+          )
+        : []
     // Register the decision route before the app starts, so a failure here
     // never leaves the Smart App with a half-configured router.
     decisionLaunch =
@@ -89,6 +105,7 @@ export async function startHarnessAppDevelopmentRuntime({
     const running = await harnessAppsApi.start({
       installationId: installation.id,
       modelBaseUrl: launch?.baseUrl ?? null,
+      ...(additionalModels.length ? { additionalModels } : {}),
       contextBaseUrl: launch?.context?.baseUrl ?? null,
       contextToken: launch?.context?.token ?? null,
       decisionBaseUrl: decisionLaunch?.baseUrl ?? null,
@@ -99,6 +116,10 @@ export async function startHarnessAppDevelopmentRuntime({
     if (launch) {
       await storeHarnessAppProxyToken(installation.id, launch.proxyToken)
       proxyTokenStored = true
+    }
+    if (additionalProxyTokens.length) {
+      await storeHarnessAppAdditionalProxyTokens(installation.id, additionalProxyTokens)
+      additionalProxyTokensStored = true
     }
     if (launch?.context) {
       await storeHarnessAppContextToken(installation.id, launch.context.token)
@@ -122,6 +143,11 @@ export async function startHarnessAppDevelopmentRuntime({
     }
     if (launch?.proxyToken && !proxyTokenStored) {
       await localHarnessModelApi?.unregisterProxy(launch.proxyToken).catch(() => undefined)
+    }
+    if (!additionalProxyTokensStored) {
+      await Promise.allSettled(
+        additionalProxyTokens.map(token => localHarnessModelApi?.unregisterProxy(token))
+      )
     }
     if (launch?.context?.token && !contextTokenStored) {
       await localHarnessModelApi?.unregisterContext(launch.context.token).catch(() => undefined)

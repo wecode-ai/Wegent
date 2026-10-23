@@ -559,6 +559,45 @@ describe('SmartAppManager', () => {
     }
   })
 
+  test('rejects an additional model route outside loopback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-extra-model-route-'))
+    roots.push(root)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const manager = createManager(root)
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      modelKey: 'default-model',
+    })
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        additionalModels: [
+          {
+            modelKey: 'extra-model',
+            displayName: 'Extra model',
+            baseUrl: 'http://attacker.example.com/v1/harness-router/route-token',
+          },
+        ],
+      })
+    ).rejects.toThrow('Wework model router base URL')
+
+    await expect(
+      manager.start({
+        installationId: installation.id,
+        additionalModels: [
+          {
+            modelKey: 'extra-model',
+            displayName: 'Extra model',
+            baseUrl: 'http://127.0.0.1:9000/v1/harness-router/route-token',
+          },
+        ],
+      })
+    ).rejects.toThrow('Wework model router requires a default model route')
+  })
+
   test('rejects an unsupported decision router protocol version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-version-'))
     roots.push(root)
@@ -619,6 +658,7 @@ describe('SmartAppManager', () => {
     roots.push(root)
     const manager = createManager(root)
     manager.storeProxyToken('app-1', 'proxy-token')
+    manager.storeAdditionalProxyTokens('app-1', ['second-token'])
     manager.storeContextToken('app-1', 'context-token')
     manager.storeDecisionToken('app-1', 'decision-token')
 
@@ -626,6 +666,8 @@ describe('SmartAppManager', () => {
     expect(manager.takeDecisionToken('app-1')).toBeNull()
     // Taking the decision route must not consume the generic model routes.
     expect(manager.takeProxyToken('app-1')).toBe('proxy-token')
+    expect(manager.takeAdditionalProxyTokens('app-1')).toEqual(['second-token'])
+    expect(manager.takeAdditionalProxyTokens('app-1')).toEqual([])
     expect(manager.takeContextToken('app-1')).toBe('context-token')
   })
 
@@ -640,12 +682,14 @@ describe('SmartAppManager', () => {
       expectedSha256: preview.sha256,
     })
     manager.storeProxyToken(installation.id, 'proxy-token')
+    manager.storeAdditionalProxyTokens(installation.id, ['second-token'])
     manager.storeContextToken(installation.id, 'context-token')
     manager.storeDecisionToken(installation.id, 'decision-token')
 
     await manager.delete(installation.id, false)
 
     expect(manager.takeProxyToken(installation.id)).toBeNull()
+    expect(manager.takeAdditionalProxyTokens(installation.id)).toEqual([])
     expect(manager.takeContextToken(installation.id)).toBeNull()
     expect(manager.takeDecisionToken(installation.id)).toBeNull()
   })

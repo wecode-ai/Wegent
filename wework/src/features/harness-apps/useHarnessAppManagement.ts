@@ -9,6 +9,7 @@ import {
   harnessAppRoute,
   openHarnessAppTab,
   registerHarnessAppTab,
+  takeHarnessAppAdditionalProxyTokens,
   takeHarnessAppContextToken,
   takeHarnessAppDecisionToken,
   takeHarnessAppProxyToken,
@@ -18,7 +19,7 @@ import { beginHarnessAppLaunch, clearHarnessAppLaunch } from './harnessAppLaunch
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 /**
- * Releases every route registration an installation owns. The three routes are
+ * Releases every route registration an installation owns. The routes are
  * independent, so one failing unregister must not strand the others.
  */
 export async function releaseHarnessAppRoutes(
@@ -27,6 +28,9 @@ export async function releaseHarnessAppRoutes(
   localDecisionRouterApi: WorkbenchServices['localDecisionRouterApi']
 ): Promise<void> {
   await Promise.allSettled([
+    takeHarnessAppAdditionalProxyTokens(installationId).then(tokens =>
+      Promise.allSettled(tokens.map(token => localHarnessModelApi?.unregisterProxy(token)))
+    ),
     takeHarnessAppProxyToken(installationId).then(token =>
       token ? localHarnessModelApi?.unregisterProxy(token) : undefined
     ),

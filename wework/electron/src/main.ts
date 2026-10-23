@@ -401,6 +401,10 @@ const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-updat
 const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'runtime-launch.log')
 )
+const smartAppDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'smart-app-launch.log'),
+  '[Wework] Smart app launch diagnostic '
+)
 const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'conversation-search.log'),
   '[Wework] Conversation search diagnostic '
@@ -434,6 +438,9 @@ app.on('web-contents-created', (_event, contents) => {
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+    void smartAppDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write Smart app diagnostics', error)
     })
     void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write conversation search diagnostics', error)
