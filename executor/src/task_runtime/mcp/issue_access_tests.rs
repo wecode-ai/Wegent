@@ -198,7 +198,7 @@ async fn assert_cloud_issue_access(target_project_id: &'static str) {
                  Json(body): Json<Value>| async move {
                     assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
                     assert_eq!(item_id, "ISSUE-2");
-                    assert_eq!(body, json!({"body": "Related work completed"}));
+                    assert_eq!(body, json!({"body": "Related work completed", "mentions": []}));
                     Json(json!({"id": "comment-1", "body": body["body"]}))
                 },
             ),

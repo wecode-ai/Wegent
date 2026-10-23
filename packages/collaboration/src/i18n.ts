@@ -725,8 +725,6 @@ const sharedMessages: Record<
       "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
     "todo.execution_duration_help":
       "执行时长：{{duration}}。从本轮执行开始后持续计时。",
-    "todo.expand_execution_details": "展开",
-    "todo.collapse_execution_details": "收起",
     "todo.follow_up_owner": "跟进人",
     "todo.new_task": "新建任务",
     "todo.no_linked_task": "暂无关联任务",
@@ -1255,8 +1253,6 @@ const sharedMessages: Record<
       "Visibility: {{value}}. Controls who can view this issue's details.",
     "todo.execution_duration_help":
       "Execution duration: {{duration}}. Counts from the start of the current run.",
-    "todo.expand_execution_details": "Expand",
-    "todo.collapse_execution_details": "Collapse",
     "todo.follow_up_owner": "Owner",
     "todo.new_task": "New task",
     "todo.no_linked_task": "No linked tasks",

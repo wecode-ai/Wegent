@@ -13,8 +13,99 @@ from app.schemas.subtask_context import SubtaskContextBrief
 from app.schemas.task import SkillRef
 from app.services.task_fork_history import ForkHistoryItem
 from app.services.task_skill_selection import parse_requested_skill_refs_from_labels
+from app.stores.tasks import task_access_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
+
+CONVERSATION_CONTEXT_TYPE = "conversation"
+
+
+def filter_conversation_contexts_for_viewer(
+    db: Session, *, subtasks: List[Dict[str, Any]], user_id: int
+) -> None:
+    """Drop conversation references the viewer cannot access.
+
+    A group-chat member must not learn the title or ID of a private task that
+    another member referenced. Contexts are mutated in place.
+    """
+    referenced_ids: Set[int] = set()
+    for subtask in subtasks:
+        for context in subtask.get("contexts") or []:
+            if context.get("context_type") != CONVERSATION_CONTEXT_TYPE:
+                continue
+            task_id = context.get("task_id")
+            if isinstance(task_id, int):
+                referenced_ids.add(task_id)
+
+    if not referenced_ids:
+        return
+
+    accessible_ids = {
+        task_id
+        for task_id in referenced_ids
+        if task_access_store.is_member(db, task_id=task_id, user_id=user_id)
+    }
+    for subtask in subtasks:
+        contexts = subtask.get("contexts")
+        if not contexts:
+            continue
+        visible = [
+            context
+            for context in contexts
+            if context.get("context_type") != CONVERSATION_CONTEXT_TYPE
+            or context.get("task_id") in accessible_ids
+        ]
+        if len(visible) != len(contexts):
+            subtask["contexts"] = visible
+
+
+def filter_conversation_contexts_on_subtasks(
+    db: Session, *, subtasks: List[Any], user_id: int
+) -> None:
+    """Drop inaccessible conversation contexts from ORM subtasks in place.
+
+    ``/api/subtasks`` returns the same message payloads as the task detail
+    endpoint, so it needs the same rule: a viewer must not learn the title or
+    task id of a private task that another member referenced.
+
+    The collection is stored back with ``set_committed_value`` so SQLAlchemy
+    does not treat the filtered list as a pending change to the relationship.
+    """
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    referenced_ids: Set[int] = set()
+    for subtask in subtasks:
+        for context in getattr(subtask, "contexts", None) or []:
+            if context.context_type != CONVERSATION_CONTEXT_TYPE:
+                continue
+            type_data = context.type_data if isinstance(context.type_data, dict) else {}
+            task_id = type_data.get("task_id")
+            if isinstance(task_id, int):
+                referenced_ids.add(task_id)
+
+    if not referenced_ids:
+        return
+
+    accessible_ids = {
+        task_id
+        for task_id in referenced_ids
+        if task_access_store.is_member(db, task_id=task_id, user_id=user_id)
+    }
+    for subtask in subtasks:
+        contexts = getattr(subtask, "contexts", None)
+        if not contexts:
+            continue
+        visible = [
+            context
+            for context in contexts
+            if context.context_type != CONVERSATION_CONTEXT_TYPE
+            or (
+                isinstance(context.type_data, dict)
+                and context.type_data.get("task_id") in accessible_ids
+            )
+        ]
+        if len(visible) != len(contexts):
+            set_committed_value(subtask, "contexts", visible)
 
 
 def get_bots_for_subtasks(

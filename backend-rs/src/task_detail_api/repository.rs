@@ -116,6 +116,45 @@ fn approved_member_row_exists(row: Option<i64>) -> bool {
     row.is_some()
 }
 
+/// Task ids the viewer may read: owned by them or shared with them.
+///
+/// Conversation references expose the referenced task's title, so a task-detail
+/// response must only carry the ones the viewer can actually open.
+pub(crate) async fn accessible_task_ids<M>(
+    mysql: &M,
+    task_ids: &[i64],
+    user_id: i64,
+) -> brz_mysql::MysqlResult<Vec<i64>>
+where
+    M: brz_mysql::Mysql,
+{
+    if task_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[derive(FromMysqlRow)]
+    struct TaskIdRow {
+        task_id: i64,
+    }
+    let ids = task_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT DISTINCT tasks.id AS task_id \nFROM tasks \n\
+         LEFT JOIN resource_members rm ON rm.resource_type = 'Task' \
+         AND rm.resource_id = tasks.id AND rm.entity_type = 'user' \
+         AND rm.entity_id = ? AND rm.status = 'approved' \
+         AND rm.copied_resource_id = 0 \n\
+         WHERE tasks.id IN ({ids}) AND tasks.kind = 'Task' AND tasks.is_active = 1 \n\
+         AND (tasks.user_id = ? OR rm.id IS NOT NULL)"
+    );
+    let rows: Vec<TaskIdRow> = mysql
+        .fetch_all(&sql, (user_id.to_string(), user_id))
+        .await?;
+    Ok(rows.into_iter().map(|row| row.task_id).collect())
+}
+
 /// One `list_by_task_ordered` listing, decoded: the subtasks and the contexts
 /// the store attached on the path that resolved its own table.
 pub(crate) struct SubtaskListing {

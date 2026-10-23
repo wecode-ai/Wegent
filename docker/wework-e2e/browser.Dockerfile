@@ -6,6 +6,7 @@ ARG UV_VERSION=0.11.17
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
     curl \
+    docker.io \
     libmagic1 \
     zstd \
   && rm -rf /var/lib/apt/lists/* \
@@ -17,6 +18,7 @@ RUN apt-get update \
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN node --version \
+  && docker --version \
   && pnpm --version \
   && uv --version \
   && zstd --version \

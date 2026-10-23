@@ -4,7 +4,7 @@ import {
   preserveProcessingBlockTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
-import { preserveCommandExecutionOutput } from "./command-execution";
+import { commandExecutionPayload } from "./command-execution";
 
 import { getLatestThinkingContent } from "./workbench-message-reducer";
 
@@ -471,7 +471,7 @@ export function mergeRuntimeConversationItem(
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
-  const snapshotBlock = preserveCommandExecutionOutput(
+  const snapshotBlock = preserveToolOutput(
     local.block,
     preserveRequestUserInputResponse(local.block, snapshot.block),
   );
@@ -495,6 +495,39 @@ export function mergeRuntimeConversationItem(
   return {
     ...snapshot,
     block: preserveProcessingBlockTiming(local.block, snapshotBlock),
+  };
+}
+
+function preserveToolOutput(
+  local: ProcessingBlock,
+  snapshot: ProcessingBlock,
+): ProcessingBlock {
+  if (
+    local.type !== "tool" ||
+    snapshot.type !== "tool" ||
+    local.toolName !== snapshot.toolName
+  )
+    return snapshot;
+  const previous = local.toolOutput;
+  const incoming = snapshot.toolOutput;
+  if (previous === undefined || previous === null || previous === "")
+    return snapshot;
+  const missingOutput =
+    incoming === undefined || incoming === null || incoming === "";
+  const partialCommandOutput =
+    commandExecutionPayload(local) &&
+    commandExecutionPayload(snapshot)?.status === "inProgress" &&
+    typeof previous === "string" &&
+    typeof incoming === "string" &&
+    previous.startsWith(incoming);
+  if (!missingOutput && !partialCommandOutput) return snapshot;
+  return {
+    ...snapshot,
+    toolOutput: previous,
+    toolOutputTruncated: local.toolOutputTruncated,
+    toolOutputOriginalBytes: local.toolOutputOriginalBytes,
+    toolOutputOriginalChars: local.toolOutputOriginalChars,
+    toolOutputLoadRef: local.toolOutputLoadRef,
   };
 }
 

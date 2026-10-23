@@ -97,6 +97,10 @@ async def test_member_report_reply_and_executor_pull_share_one_binding(
     )
     queued = s.db.get(LoopItemExecution, replies[0].metadata["execution_id"])
     assert queued.runtime_task_id == message.runtime_task_id
+    assert queued.assignment_pending
+    assert queued.execution_device_id == ""
+    assert loop_item_execution_service.prepare_queued_assignments(s.db) == 1
+    assert not queued.assignment_pending
     assert queued.execution_device_id == route
     assert queued.runtime_device_id == "electron-app"
     assert queued.status == "queued"

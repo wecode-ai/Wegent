@@ -1,3 +1,4 @@
+import { rendererCrashStore } from './rendererCrashStore'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -1813,6 +1814,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'crashRenderer':
+      rendererCrashStore.trigger()
+      return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
     case 'getNativeWindowState':
@@ -1924,6 +1928,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'requestMainWindowClose':
       return ''
     case 'requestStartupSplashClose':
+    case 'refreshFromApplicationMenu':
       return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
@@ -3327,6 +3332,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           return
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
+          return
+        } else if (command.action === 'refreshFromApplicationMenu') {
+          const activated = await invokeDesktopHost('e2e.activateApplicationMenu', {
+            id: 'view.refresh',
+          })
+          if (!activated) throw new Error('View > Refresh is unavailable')
           return
         }
       }

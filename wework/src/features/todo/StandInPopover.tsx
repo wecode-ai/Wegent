@@ -4,7 +4,6 @@ import { StandInIcon } from './StandInIcon'
 import * as Popover from '@radix-ui/react-popover'
 import { Bot, ChevronDown, Monitor } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { dequal } from 'dequal'
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
@@ -22,18 +21,6 @@ const emptySettings: WorkspaceStandInSettings = {
   version: 0,
 }
 
-const configurationKeys = [
-  'prompt',
-  'executionDeviceId',
-  'agentId',
-  'model',
-  'modelOptions',
-  'workspace',
-  'goalMode',
-  'name',
-  'tags',
-] as const
-
 export function StandInPopover({
   api,
   project,
@@ -47,7 +34,7 @@ export function StandInPopover({
   onCancel,
   embedded = false,
   userId,
-  projects = [],
+  projects,
 }: {
   userId?: number
   projects?: CollaborationProject[]
@@ -55,7 +42,7 @@ export function StandInPopover({
   services?: WorkbenchServices
   initialProfileId?: string
   initialDeviceId?: string
-  onSaved?(settings: WorkspaceStandInSettings, action?: 'settings' | 'automatic'): void
+  onSaved?(settings: WorkspaceStandInSettings): void
   onSavingChange?(saving: boolean): void
   onCancel?(): void
   api: SharedWorkspaceApi
@@ -71,7 +58,7 @@ export function StandInPopover({
   const [reuseNotice, setReuseNotice] = useState(false)
   const [saved, setSaved] = useState(emptySettings)
   const [draft, setDraft] = useState(emptySettings)
-  const [pendingEnable, setPendingEnable] = useState(false)
+  const [loadedProjects, setLoadedProjects] = useState<CollaborationProject[]>([])
   const deviceLoad = useRef(0)
   const selectedDevice = useRef(initialDeviceId ?? '')
   const [currentDeviceId, setCurrentDeviceId] = useState('')
@@ -94,13 +81,7 @@ export function StandInPopover({
     workspaceResult?.deviceId === draft.executionDeviceId ? workspaceResult : null
   const runtimeWork = currentWorkspace?.work ?? null
   const workspaceError = currentWorkspace?.error ?? null
-  const workspaceLoading = Boolean(
-    services?.runtimeWorkApi && draft.executionDeviceId && !currentWorkspace
-  )
   const [notice, setNotice] = useState<string | null>(null)
-  const canConfigure =
-    project.project_store === 'local' ||
-    ['Developer', 'Maintainer', 'Owner'].includes(project.access_role ?? '')
   const load = useCallback(
     (signal: { cancelled: boolean }) => {
       if (!api.standIn) return Promise.resolve()
@@ -121,7 +102,6 @@ export function StandInPopover({
           if (signal.cancelled || !settings) return
           setError(null)
           setSaved(settings)
-          setPendingEnable(false)
           setLoaded(true)
           setDraft({ ...settings, executionDeviceId: settings.executionDeviceId || current })
         })
@@ -172,7 +152,6 @@ export function StandInPopover({
     setDraft({ ...emptySettings, executionDeviceId: deviceId })
     setLoaded(false)
     setLoading(true)
-    setPendingEnable(false)
     setError(null)
     try {
       const settings = await api.standIn!.get(
@@ -230,6 +209,22 @@ export function StandInPopover({
     }
   }, [open, services, userId, draft.executionDeviceId, saved.version])
 
+  useEffect(() => {
+    if (!open || projects) return
+    let active = true
+    void api.projects
+      .list()
+      .then(rows => {
+        if (active) setLoadedProjects(rows)
+      })
+      .catch(cause => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      active = false
+    }
+  }, [open, projects, api.projects])
+
   if (!api.standIn) return null
   const availableDevices: Pick<DeviceInfo, 'device_id' | 'app_device_id' | 'name' | 'status'>[] =
     devices.filter(
@@ -255,38 +250,17 @@ export function StandInPopover({
       [device.device_id, device.app_device_id].includes(draft.executionDeviceId)
     )
   )
-  const persist = async (settings: WorkspaceStandInSettings, action: 'settings' | 'automatic') => {
-    if (!api.standIn || !loaded || loading || saving || !canConfigure) return
+  const save = async (prompt: string) => {
+    if (!api.standIn || !loaded || loading || saving) return
     setSaving(true)
     setError(null)
     try {
-      const result = await api.standIn.save(project.id, settings)
+      const result = await api.standIn.save(project.id, { ...draft, prompt })
       setSaved(result)
-      setPendingEnable(false)
-      // Accept server metadata while retaining only unsaved configuration edits.
-      setDraft(current =>
-        action === 'automatic'
-          ? {
-              ...result,
-              ...Object.fromEntries(
-                configurationKeys
-                  .filter(key => !dequal(current[key], settings[key]))
-                  .map(key => [key, current[key]])
-              ),
-            }
-          : result
-      )
-      onSaved?.(result, action)
-      if (action === 'settings' && !embedded) setOpen(false)
-      setNotice(
-        t(
-          action === 'settings'
-            ? 'standIn.saved'
-            : result.enabled
-              ? 'standIn.automatic_enabled'
-              : 'standIn.automatic_disabled'
-        )
-      )
+      setDraft(result)
+      onSaved?.(result)
+      if (!embedded) setOpen(false)
+      setNotice(t('standIn.saved'))
       return true
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -300,78 +274,19 @@ export function StandInPopover({
   const sameProjectProfiles = profiles.filter(
     row => row.projectId === project.id && row.projectStore === projectStore
   )
-  const reuseProfiles = profiles.filter(
-    row => row.projectId !== project.id || row.projectStore !== projectStore
-  )
-  const agentMissing = Boolean(draft.agentId && !agents.some(agent => agent.id === draft.agentId))
-  const savedConfiguration = {
-    ...saved,
-    executionDeviceId: saved.executionDeviceId || currentDeviceId,
-  }
-  const hasChanges = configurationKeys.some(key => !dequal(draft[key], savedConfiguration[key]))
-  const save = (prompt: string) =>
-    persist({ ...draft, prompt, enabled: saved.enabled || pendingEnable }, 'settings')
-  const toggleAutomatic = () => {
-    setNotice(null)
-    if (pendingEnable) {
-      setPendingEnable(false)
-    } else if (!saved.enabled && (saved.version === 0 || hasChanges || !composerValid)) {
-      setPendingEnable(true)
-    } else {
-      void persist(
-        { ...saved, executionDeviceId: draft.executionDeviceId, enabled: !saved.enabled },
-        'automatic'
-      )
-    }
-  }
+  const reuseProfiles = profiles.flatMap(row => {
+    if (row.projectId === project.id && row.projectStore === projectStore) return []
+    const sourceProject = (projects ?? loadedProjects).find(
+      candidate =>
+        candidate.id === row.projectId &&
+        (candidate.project_store === 'local' ? 'local' : 'cloud') === row.projectStore
+    )
+    return sourceProject ? [{ ...row, projectName: sourceProject.name }] : []
+  })
   const editor = (
     <>
       <div className="p-4">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={saved.enabled}
-          aria-busy={saving}
-          aria-label={t('standIn.auto_label')}
-          data-testid="stand-in-auto"
-          disabled={
-            saving ||
-            !canConfigure ||
-            !loaded ||
-            (!saved.enabled && saved.version > 0 && !composerValid)
-          }
-          onClick={toggleAutomatic}
-          className="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
-        >
-          <span className="min-w-0">
-            <span className="text-sm font-medium text-text-primary">{t('standIn.auto_label')}</span>
-            <span className="mt-1 block text-xs text-text-muted">
-              {t('standIn.auto_description')}
-            </span>
-          </span>
-          <span
-            aria-hidden="true"
-            className={`inline-flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors ${saved.enabled ? 'bg-text-primary' : 'bg-border'}`}
-          >
-            <span
-              className={`h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${saved.enabled ? 'translate-x-4' : ''}`}
-            />
-          </span>
-        </button>
-        {pendingEnable && (
-          <p
-            role="status"
-            data-testid="stand-in-enable-notice"
-            className="mt-2 text-xs text-text-muted"
-          >
-            {t(
-              saved.version === 0 ? 'standIn.configure_before_enable' : 'standIn.save_before_enable'
-            )}
-          </p>
-        )}
-        <h3 className="mb-3 mt-4 border-t border-border pt-4 text-sm font-medium">
-          {t('standIn.settings')}
-        </h3>
+        <h3 className="mb-3 text-sm font-medium">{t('standIn.settings')}</h3>
         {sameProjectProfiles.some(row => row.id && row.id !== 'default') && (
           <label className="mb-3 flex items-center gap-2 text-sm text-text-secondary">
             {t('standIn.existing_profile')}
@@ -403,7 +318,7 @@ export function StandInPopover({
             <select
               data-testid="stand-in-reuse-select"
               value=""
-              disabled={saving || !loaded || !canConfigure}
+              disabled={saving || !loaded}
               onChange={event => {
                 const source = reuseProfiles[Number(event.target.value)]
                 if (!source) return
@@ -424,12 +339,8 @@ export function StandInPopover({
               <option value="">{t('standIn.choose_existing')}</option>
               {reuseProfiles.map((row, index) => (
                 <option key={`${row.projectStore}:${row.projectId}:${row.id}`} value={index}>
-                  {projects.find(
-                    project =>
-                      project.id === row.projectId &&
-                      (project.project_store === 'local' ? 'local' : 'cloud') === row.projectStore
-                  )?.name ?? row.projectId}{' '}
-                  · {row.name || t('standIn.default_profile')}
+                  {row.projectName}
+                  {row.name ? ` · ${row.name}` : ''}
                 </option>
               ))}
             </select>
@@ -437,7 +348,7 @@ export function StandInPopover({
         )}
         {reuseNotice && (
           <p role="status" className="mb-3 text-xs text-text-muted">
-            {t(agentMissing ? 'standIn.copy_agent_required' : 'standIn.copied')}
+            {t('standIn.copied')}
           </p>
         )}
 
@@ -452,15 +363,8 @@ export function StandInPopover({
               onChange={setDraft}
               onSave={save}
               onValidityChange={setComposerValid}
-              disabled={saving || !canConfigure || !loaded}
-              submitDisabled={
-                loading ||
-                agentMissing ||
-                workspaceLoading ||
-                Boolean(workspaceError) ||
-                !draft.executionDeviceId ||
-                selectionMissing
-              }
+              disabled={saving || !loaded}
+              submitDisabled={!draft.executionDeviceId || selectionMissing}
               runtimeWork={runtimeWork}
               devices={devices}
               services={services}
@@ -473,7 +377,7 @@ export function StandInPopover({
                   <select
                     id={`${promptId}-device`}
                     data-testid="stand-in-device"
-                    disabled={saving || !canConfigure}
+                    disabled={saving}
                     value={draft.executionDeviceId}
                     onChange={event => void selectDevice(event.target.value)}
                     className="h-8 min-w-0 max-w-44 cursor-pointer appearance-none bg-transparent text-sm outline-none"
@@ -514,7 +418,7 @@ export function StandInPopover({
                     aria-label={t('standIn.agent')}
                     data-testid="stand-in-agent"
                     value={draft.agentId ?? ''}
-                    disabled={saving || !canConfigure || !loaded}
+                    disabled={saving || !loaded}
                     onChange={event =>
                       setDraft(current => ({
                         ...current,
@@ -545,9 +449,27 @@ export function StandInPopover({
             )}
           </>
         ) : null}
-        {!canConfigure && (
-          <p className="mt-3 text-xs text-text-muted">{t('standIn.no_permission')}</p>
-        )}
+        <fieldset className="mt-4">
+          <legend className="text-sm font-medium text-text-primary">{t('standIn.auto')}</legend>
+          <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-text-primary md:min-h-8">
+            <input
+              type="checkbox"
+              data-testid="stand-in-auto"
+              disabled={saving || loading || !loaded}
+              checked={draft.enabled}
+              aria-checked={draft.enabled}
+              aria-describedby={`${promptId}-auto-description`}
+              onChange={event => {
+                const enabled = event.target.checked
+                setDraft(current => ({ ...current, enabled }))
+              }}
+            />
+            {t('standIn.auto_label')}
+          </label>
+          <p id={`${promptId}-auto-description`} className="text-xs text-text-muted">
+            {t('standIn.auto_description')}
+          </p>
+        </fieldset>
         {error && (
           <div role="alert" className="mt-3 text-xs text-error">
             <p>{error}</p>
@@ -577,7 +499,6 @@ export function StandInPopover({
               data-testid="stand-in-cancel"
               onClick={() => {
                 setDraft(saved)
-                setPendingEnable(false)
                 if (embedded) onCancel?.()
                 else setOpen(false)
               }}
@@ -592,7 +513,6 @@ export function StandInPopover({
                 !loaded ||
                 loading ||
                 saving ||
-                !canConfigure ||
                 !composerValid ||
                 !draft.executionDeviceId ||
                 selectionMissing
@@ -600,13 +520,7 @@ export function StandInPopover({
               onClick={() => void save(draft.prompt)}
               className="min-h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
             >
-              {t(
-                saving
-                  ? 'standIn.saving'
-                  : pendingEnable
-                    ? 'standIn.save_and_enable'
-                    : 'standIn.save'
-              )}
+              {t(saving ? 'standIn.saving' : 'standIn.save')}
             </button>
           </div>
         )}
@@ -633,7 +547,6 @@ export function StandInPopover({
           deviceLoad.current += 1
           setOpen(next)
           setNotice(null)
-          setPendingEnable(false)
           if (next) {
             setLoading(true)
             setLoaded(false)

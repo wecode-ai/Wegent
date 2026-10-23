@@ -91,7 +91,6 @@ export function cloudRuntimePort(
       cachedIssues.set(taskKey(task), result.item)
       return { issue: result.item }
     },
-    updateTrackedTaskTitle: vi.fn().mockResolvedValue(null),
     reportExecutionLifecycle: vi.fn().mockResolvedValue(null),
   }
 }

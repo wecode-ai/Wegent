@@ -61,6 +61,15 @@
     "quoted_text": "引用内容",
     "remove_quote": "移除引用"
   },
+  "mention": {
+    "taskSection": "历史任务",
+    "agentSection": "智能体",
+    "taskHint": "引用上下文并继续",
+    "referencedTask": "历史任务",
+    "removeTaskReference": "移除 {{name}}",
+    "searching": "正在搜索任务...",
+    "noResults": "没有匹配的历史任务"
+  },
   "sourceReferences": {
     "title": "引用来源",
     "openSource": "打开来源",

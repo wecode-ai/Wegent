@@ -420,3 +420,23 @@ describe('composer cancellation rollback', () => {
     }
   )
 })
+
+describe('accepted async question replies', () => {
+  test.each([true, false])(
+    'clears global waiting only after reply acceptance (%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      act(() => lifecycleStore.userInputRequested(address, 'async'))
+      mocks.send.mockResolvedValue(accepted)
+      await act(async () => {
+        expect(
+          await result.current.sendRequestUserInputResponse(
+            { requestId: 'async-question', answers: { direction: { answers: ['Complete'] } } },
+            { appendUserMessage: true }
+          )
+        ).toBe(accepted)
+      })
+      expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
+    }
+  )
+})

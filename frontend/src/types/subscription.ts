@@ -511,6 +511,7 @@ export interface NotificationChannelBindingConfig {
   bind_group: boolean
   group_conversation_id?: string
   group_name?: string
+  group_mention_user_ids?: string[]
 }
 
 export interface DeveloperBindingSessionStartRequest {
