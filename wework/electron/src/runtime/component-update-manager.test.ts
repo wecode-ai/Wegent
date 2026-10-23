@@ -379,7 +379,9 @@ describe('ComponentUpdateManager', () => {
       componentFetch(update.manifest, update.assetName, update.archive)
     )
 
-    await expect(manager.stageUpdateForApp(appVersion, 'beta')).rejects.toThrow()
+    await expect(manager.stageUpdateForApp(appVersion, 'beta')).rejects.toThrow(
+      'Component manifest is incompatible with this application'
+    )
   })
 
   test('downloads a changed component outside the manifest origin and path', async () => {
