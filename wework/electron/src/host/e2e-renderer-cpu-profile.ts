@@ -1,10 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import type { WebContents } from 'electron'
+import { contentTracing } from 'electron'
 
 interface ProfileContents {
   id: number
-  debugger: Pick<WebContents['debugger'], 'isAttached' | 'attach' | 'sendCommand'>
   isDestroyed(): boolean
   on(event: 'did-finish-load', listener: () => void): unknown
 }
@@ -35,25 +34,23 @@ async function collectProfiles(contents: ProfileContents, directory: string): Pr
   let sequence = 0
   while (!contents.isDestroyed()) {
     try {
-      const session = contents.debugger
-      if (!session.isAttached()) session.attach('1.3')
-      await session.sendCommand('Profiler.enable')
-      await session.sendCommand('Profiler.setSamplingInterval', { interval: 1000 })
-      await session.sendCommand('Profiler.start')
-      await new Promise(resolve => setTimeout(resolve, 20_000))
-      if (contents.isDestroyed()) return
-      const { profile } = await session.sendCommand('Profiler.stop')
       await mkdir(directory, { recursive: true })
-      await writeFile(
-        join(directory, `renderer-${contents.id}-${sequence++}.cpuprofile`),
-        JSON.stringify(profile),
-        { mode: 0o600 }
-      )
+      const startedAt = Date.now()
+      await contentTracing.startRecording({
+        included_categories: ['disabled-by-default-v8.cpu_profiler', 'renderer.scheduler'],
+        recording_mode: 'record-continuously',
+        trace_buffer_size_in_kb: 32768,
+      })
+      await new Promise(resolve => setTimeout(resolve, 20_000))
+      const file = `renderer-${contents.id}-${sequence++}.trace.json`
+      await contentTracing.stopRecording(join(directory, file))
+      console.info('[e2e-renderer-cpu-profile]', { file, startedAt, finishedAt: Date.now() })
     } catch (error) {
       if (contents.isDestroyed()) return
       console.warn('[e2e-renderer-cpu-profile]', {
         webContentsId: contents.id,
         error: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : undefined,
       })
       return
     }
