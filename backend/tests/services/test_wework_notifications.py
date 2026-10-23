@@ -467,6 +467,79 @@ def test_explicit_click_target_overrides_source_link(test_db, test_user):
     assert row.url == "wework://boards"
 
 
+def test_project_sourced_message_carries_board_context(test_db, test_user):
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.name = "QUEUE-12"
+    item.assignee_user_id = test_user.id
+    test_db.commit()
+
+    row = send_wework_notification(
+        test_db,
+        user_id=test_user.id,
+        values=NotificationCreate(
+            project_id=project.id,
+            item_id=item.id,
+            title="Review",
+            body="Please review",
+        ),
+    )
+
+    assert row.payload == {
+        "projectId": str(project.id),
+        "projectName": project.name,
+        "itemId": item.id,
+        "itemKey": "QUEUE-12",
+        "itemTitle": item.title,
+        "itemStatus": "收集箱",
+        "assigneeName": test_user.user_name,
+    }
+
+
+def test_external_project_message_carries_provider_context(
+    test_db, test_user, monkeypatch
+):
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        "task_provider": "gitlab",
+        "provider_config": {"repository": "group/project"},
+    }
+    test_db.commit()
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "get",
+        lambda _db, _item_id, _user_id: {
+            "cloud_project_id": str(project.id),
+            "title": "Provider issue",
+            "status": "in_review",
+            "assignee_name": "负责人",
+        },
+    )
+
+    row = send_wework_notification(
+        test_db,
+        user_id=test_user.id,
+        values=NotificationCreate(
+            project_id=project.id,
+            item_id="GL-7",
+            title="Review",
+            body="Please review",
+        ),
+    )
+
+    assert row.payload == {
+        "projectId": str(project.id),
+        "projectName": project.name,
+        "itemId": "GL-7",
+        "itemKey": "GL-7",
+        "itemTitle": "Provider issue",
+        "itemStatus": "待确认",
+        "assigneeName": "负责人",
+    }
+
+
 def test_click_target_can_point_at_one_comment(test_client, test_db, test_token):
     url = "wework://boards/12/issues/WEG-12/comments/c-1"
     response = test_client.post(
