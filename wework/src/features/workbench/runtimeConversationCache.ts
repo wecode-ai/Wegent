@@ -435,6 +435,34 @@ export function applyRuntimeConversationAction(
   const nextTurns = reduceRuntimeConversationTurns(currentTurns, action).filter(
     turn => !turn.id || !superseded?.has(turn.id)
   )
+  if (
+    import.meta.env.VITE_WEWORK_E2E === 'true' &&
+    action.type.startsWith('assistant_') &&
+    action.type !== 'assistant_chunk'
+  ) {
+    const timing = (turns: RuntimeConversationTurn[]) =>
+      turns.map(({ id, status, startedAt, completedAt, durationMs }) => ({
+        id,
+        status,
+        startedAt,
+        completedAt,
+        durationMs,
+      }))
+    console.error(
+      '[desktop-e2e-turn-timing]',
+      JSON.stringify({
+        at: Date.now(),
+        key,
+        action: action.type,
+        before: timing(currentTurns),
+        after: timing(nextTurns),
+        source:
+          'durationMs' in action
+            ? { startedAt: action.startedAt, durationMs: action.durationMs }
+            : undefined,
+      })
+    )
+  }
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action)
   return projectRuntimeConversationMessages(key, nextTurns)

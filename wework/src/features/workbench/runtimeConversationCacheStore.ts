@@ -288,6 +288,30 @@ export function notifyRuntimeConversation(key: string, action?: RuntimePaneMessa
 }
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    const timing = (values: RuntimeConversationTurn[]) =>
+      JSON.stringify(
+        values.map(({ id, status, startedAt, completedAt, durationMs }) => ({
+          id,
+          status,
+          startedAt,
+          completedAt,
+          durationMs,
+        }))
+      )
+    const previous = timing(turnsByConversation.get(key) ?? [])
+    const next = timing(turns)
+    if (previous !== next)
+      console.error(
+        '[desktop-e2e-turn-commit]',
+        JSON.stringify({
+          at: Date.now(),
+          key,
+          previous: JSON.parse(previous),
+          next: JSON.parse(next),
+        })
+      )
+  }
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
