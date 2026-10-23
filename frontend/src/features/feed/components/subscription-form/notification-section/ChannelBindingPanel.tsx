@@ -234,7 +234,7 @@ export function ChannelBindingPanel({
                 <li>
                   {t(
                     'notification_settings.group_control_mention',
-                    '@列表：请在消息结尾添加【@列表:41068,220750】或【mention:41068,220750】，群消息会 @ 这些 staffId 对应用户'
+                    '@指定用户：请在消息结尾添加【@列表:1234,1235】或【mention:1234,1235】，群消息会 @ 这些 staffId 对应用户；多个 staffId 可用中文或英文逗号分隔'
                   )}
                 </li>
                 <li>

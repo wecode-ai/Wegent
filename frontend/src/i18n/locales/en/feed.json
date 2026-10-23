@@ -411,7 +411,7 @@
     "group_delivery_hint": "When enabled, notifications will be delivered to the currently bound group chat",
     "group_control_title": "Group notification controls",
     "group_control_silent": "Silence: add 【静默】 or 【silent】 at the end of the message to skip this group notification; private delivery is unchanged",
-    "group_control_mention": "Mentions: add 【@列表:41068,220750】 or 【mention:41068,220750】 at the end of the message to mention those DingTalk staffIds",
+    "group_control_mention": "@specific users: add 【@列表:1234,1235】 or 【mention:1234,1235】 at the end of the message to mention those DingTalk staffIds; separate IDs with English or Chinese commas",
     "group_control_cleanup": "Control instructions must use 【】, only route the notification and are removed before delivery",
     "bind_now": "Bind now",
     "step_start": "Start binding",

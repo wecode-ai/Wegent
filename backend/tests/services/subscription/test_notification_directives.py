@@ -32,6 +32,10 @@ from app.services.subscription.notification_directives import (
             "Please review the alert.",
         ),
         (
+            "Please review the alert.\n\n【@列表:1234，1235】",
+            "Please review the alert.",
+        ),
+        (
             "Please review the alert.\n\n[mention: 41068, 220750]",
             "Please review the alert.",
         ),
@@ -61,6 +65,18 @@ def test_parse_notification_directives_extracts_silent_and_mentions() -> None:
     assert directives.silent is True
     assert directives.mention_staff_ids == ("41068", "220750")
     assert directives.content == "Alert needs attention."
+
+
+def test_parse_notification_directives_accepts_brackets_and_comma_variants() -> None:
+    square = parse_notification_directives(
+        "Alert needs attention.\n\n[@列表:1234，1235]"
+    )
+    fullwidth = parse_notification_directives(
+        "Alert needs attention.\n\n【mention:1234, 1235】"
+    )
+
+    assert square.mention_staff_ids == ("1234", "1235")
+    assert fullwidth.mention_staff_ids == ("1234", "1235")
 
 
 def test_parse_notification_directives_keeps_body_mentions() -> None:
@@ -140,4 +156,4 @@ def test_append_group_notification_instruction_requires_bound_group() -> None:
 
     assert appended.startswith("Check the service.")
     assert "【静默】" in appended
-    assert "【@列表:staffId1,staffId2】" in appended
+    assert "【@列表:1234,1235】" in appended
