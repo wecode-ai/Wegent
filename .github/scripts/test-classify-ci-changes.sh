@@ -2039,7 +2039,9 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_CODEX_BIN:"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"wework-desktop-windows-redis-e2e-tools"* ]] ||
+  [[ "$(grep -Fc '.github/scripts/download-actions-artifact.sh' <<<"$wework_windows_desktop_core_job")" -ne 2 ]] ||
+  [[ "$wework_windows_desktop_core_job" == *"uses: actions/download-artifact@"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"uses: ./.github/actions/setup-python-uv-cache"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'python-version: "3.12"'* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"shell: pwsh"* ]] ||

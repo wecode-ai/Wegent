@@ -727,7 +727,7 @@ xterm 无障碍行先统一更新内容，再批量清除缩放、测量宽度�
 
 智能工作台验证通过 `NPM_CONFIG_WORKSPACE_DIR` 将 pnpm 限定到项目自身，并关闭运行脚本前的隐式依赖安装。类型检查、测试、构建与运行时探针照常执行；不能为验证而读取或安装包含该项目的宿主工作区。真实 pnpm 回归覆盖宿主版本冲突以及宿主锁文件不被创建。
 
-桌面构建产物使用 `actions/download-artifact@v6` 恢复，包含下载流超时后拒绝等待 Promise 的上游修复，避免进程成功退出却留下不完整目录。参见 [artifact SDK 超时修复](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc)。Windows 网络失败诊断保留连接状态、动态与排除端口范围、套接字耗尽事件和内存池计数，不采集进程命令行或凭据。
+Linux 桌面构建产物使用 `actions/download-artifact@v6` 恢复，包含下载流超时后拒绝等待 Promise 的上游修复，避免进程成功退出却留下不完整目录。参见 [artifact SDK 超时修复](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc)。Windows 应用与 Redis 产物复用 `download-actions-artifact.sh`，先完整下载 ZIP，再通过 `uv run --no-project python` 本地解压，避免解压写盘的背压触发下载器的数据块超时。脚本分别记录下载完成与解压完成，传输失败和损坏 ZIP 均使任务失败。Windows 网络失败诊断保留连接状态、动态与排除端口范围、套接字耗尽事件和内存池计数，不采集进程命令行或凭据。
 
 分身完成状态可能先于运行时未读标志到达。观察开始后的新完成必须保留为未读，并从当前已读账本决定投递，不能将它当作历史恢复提前消耗。投递记录按批次持久化后再发送通知；回归覆盖迟到的未读标志、重载不重放及 1000 条记录只写一次投递账本。
 
