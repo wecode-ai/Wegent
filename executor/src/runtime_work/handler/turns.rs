@@ -943,7 +943,10 @@ impl RuntimeWorkRpcHandler {
             let _delivery = self
                 .codex_notification_delivery
                 .lock()
-                .expect("Codex notification delivery lock should not be poisoned");
+                .unwrap_or_else(|poisoned| {
+                    log_executor_event("Codex notification delivery recovered after panic", &[]);
+                    poisoned.into_inner()
+                });
             let mut message = message.into();
             if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
                 return;
@@ -1064,6 +1067,7 @@ impl RuntimeWorkRpcHandler {
             }
             if codex_notification_requires_user_input(&message)
                 || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
+                || message["method"] == super::super::codex_user_input::APPROVAL_SETTLED_METHOD
             {
                 self.refresh_pending_user_input_status(local_task_id);
             }

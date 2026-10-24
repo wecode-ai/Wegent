@@ -332,8 +332,12 @@ impl JsonRpcConnection {
                 .and_then(Value::as_str)
                 .is_some_and(is_codex_approval_request_method)
             {
-                self.answer_approval(&message, &mut request_user_input_answers)
-                    .await?;
+                self.answer_approval(
+                    &message,
+                    &mut request_user_input_answers,
+                    notifications.as_ref(),
+                )
+                .await?;
                 continue;
             }
             if let Some(outcome) = state.handle_message(&message) {
@@ -413,16 +417,28 @@ impl JsonRpcConnection {
         &mut self,
         message: &Value,
         answers: &mut Option<CodexRequestUserInputReceiver>,
+        notifications: Option<&CodexNotificationSender>,
     ) -> Result<(), String> {
         let request_id =
             json_rpc_request_id(message).ok_or("approval request is missing JSON-RPC id")?;
-        let response = match answers {
-            Some(receiver) => receiver
-                .recv()
-                .await
-                .ok_or("approval response channel closed")?,
-            None => json!({}),
+        let (response, status) = match answers {
+            Some(receiver) => {
+                match tokio::time::timeout(super::elicitation::remaining(message), receiver.recv())
+                    .await
+                {
+                    Ok(response) => (
+                        response.ok_or("approval response channel closed")?,
+                        "answered",
+                    ),
+                    Err(_) => (json!({}), "expired"),
+                }
+            }
+            None => (json!({}), "cancelled"),
         };
+        if let Some(sender) = notifications {
+            let _ =
+                sender.send(super::elicitation::settled(message, status, Some(&response)).into());
+        }
         self.write_message(json!({
             "id": request_id,
             "result": codex_approval_result(message, &response)?,

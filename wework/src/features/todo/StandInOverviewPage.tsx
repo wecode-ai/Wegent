@@ -250,7 +250,7 @@ export function StandInOverviewPage({
           <p role="status" className="p-5 text-text-muted">
             {t('standIn.loading')}
           </p>
-        ) : state.error ? (
+        ) : state.error && !state.saved ? (
           <div role="alert" className="p-5 text-error">
             <p>{state.error}</p>
             <button
@@ -264,9 +264,9 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {(proposalError || inbox.error) && (
+            {(state.error || proposalError || inbox.error) && (
               <p role="alert" className="px-5 py-2 text-sm text-error">
-                {proposalError || inbox.error}
+                {state.error || proposalError || inbox.error}
               </p>
             )}
             {inbox.sourceErrors.map(value => (

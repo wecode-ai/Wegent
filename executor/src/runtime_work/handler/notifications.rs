@@ -115,10 +115,14 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         message: &mut Value,
     ) -> bool {
-        if message["method"] != "mcpServer/elicitation/request" {
+        if message["method"] == super::super::codex_user_input::APPROVAL_SETTLED_METHOD
+            || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
+        {
             return true;
         }
-        let Some(item) = super::super::mcp_elicitation::item(message) else {
+        let Some(item) = super::super::mcp_elicitation::item(message)
+            .or_else(|| super::super::codex_user_input::request_item(message))
+        else {
             return true;
         };
         let cached = self
@@ -309,6 +313,19 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) {
         let notification = codex_notification(message);
+        if notification.method == super::super::codex_user_input::APPROVAL_SETTLED_METHOD {
+            if let (Some(key), Ok(mut items)) = (
+                message.get("id").and_then(user_input_request_key),
+                self.active_codex_transcript_items.lock(),
+            ) {
+                if let Some(active) = items
+                    .get_mut(local_task_id)
+                    .filter(|active| active.turn_id == turn_id)
+                {
+                    active.user_input_requests.insert(key, false);
+                }
+            }
+        }
         if notification.method != "mcpServer/elicitation/request"
             && codex_notification_requires_user_input(message)
         {
@@ -324,7 +341,7 @@ impl RuntimeWorkRpcHandler {
             {
                 active.user_input_requests.entry(request_id).or_insert(true);
             }
-            if notification.method != "item/tool/requestUserInput" {
+            if super::super::codex_user_input::request_item(message).is_none() {
                 return;
             }
         }
@@ -766,7 +783,10 @@ impl RuntimeWorkRpcHandler {
             let _delivery = self
                 .codex_notification_delivery
                 .lock()
-                .expect("Codex notification delivery lock should not be poisoned");
+                .unwrap_or_else(|poisoned| {
+                    log_executor_event("Codex notification delivery recovered after panic", &[]);
+                    poisoned.into_inner()
+                });
             if !skip_active_notification && message.claim_runtime_delivery() {
                 if !route_nested {
                     self.record_background_terminal_notification(&local_task_id, &message);

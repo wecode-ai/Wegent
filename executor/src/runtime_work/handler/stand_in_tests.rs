@@ -567,7 +567,7 @@ async fn default_personal_task_needs_no_project_environment() {
 }
 
 #[tokio::test]
-async fn project_work_reads_current_shared_preferences_including_deletions() {
+async fn project_work_does_not_copy_private_preferences_into_the_source_prompt() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -586,7 +586,8 @@ async fn project_work_reads_current_shared_preferences_including_deletions() {
             .await
             .unwrap();
         let prompt = payload["message"].as_str().unwrap();
-        assert!(prompt.ends_with(&format!("Shared personal preferences: {preference}")));
+        assert!(!prompt.contains("Shared personal preferences"));
+        assert!(!prompt.contains("Always use concise replies"));
         assert!(!prompt.contains("Stale preference"));
         if preference.is_empty() {
             assert!(!prompt.contains("Always use concise replies"));

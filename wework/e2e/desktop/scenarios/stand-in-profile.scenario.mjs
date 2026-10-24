@@ -242,6 +242,30 @@ export function createDesktopScenario({
       const remembered = await rpc('runtime.stand_in.memory.list', { userId: USER })
       assert.equal(remembered.items[0].sourceTaskId, `stand-in-chat-${USER}-primary`)
       await captureScreenshot(control, '12-memory-from-chat.png')
+      await control.command('click', '[data-testid="stand-in-memory-edit"]')
+      await control.command('fill', '[data-testid="stand-in-memory-content"]', {
+        value: 'UNSAVED_MEMORY_MUST_NOT_PERSIST',
+      })
+      await control.command('click', '[data-testid="stand-in-memory-close"]')
+      await control.command('waitFor', '[data-testid="stand-in-memory-discard"]')
+      await captureScreenshot(control, 'memory-discard-on-close.png')
+      await control.command('click', '[data-testid="stand-in-memory-keep"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-memory-content"]'),
+        'UNSAVED_MEMORY_MUST_NOT_PERSIST'
+      )
+      await control.command('click', '[data-testid="stand-in-memory-close"]')
+      await control.command('click', '[data-testid="stand-in-memory-discard"]')
+      await control.command('waitFor', '[data-testid="stand-in-memory-panel"]', { visible: false })
+      assert.equal(
+        (await rpc('runtime.stand_in.memory.list', { userId: USER })).items[0].content,
+        'PROFILE_MEMORY_FROM_EXPLICIT_CHAT'
+      )
+      await captureScreenshot(control, 'memory-discard-closed.png')
+      await control.command('click', '[data-testid="stand-in-memory-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-memory-item"]', {
+        text: 'PROFILE_MEMORY_FROM_EXPLICIT_CHAT',
+      })
       await control.command('click', '[data-testid="stand-in-memory-close"]')
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
       await control.command('click', '[data-testid="stand-in-settings-open"]')

@@ -61,7 +61,9 @@ export function StandInProposalCard({
           })}
           {removed.map(role => (
             <p key={role.id} className="py-3 text-sm">
-              {t('standIn.workspace.remove_role', { name: role.name })}
+              {t('standIn.workspace.remove_role', {
+                name: role.name || t('standIn.personal.default_role'),
+              })}
             </p>
           ))}
           {!dequal(current.primary, proposal.settings.primary) && proposal.settings.primary && (

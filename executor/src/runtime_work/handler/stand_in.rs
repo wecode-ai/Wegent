@@ -203,7 +203,12 @@ impl RuntimeWorkRpcHandler {
                 selected
             } else {
                 crate::task_runtime::personal_stand_in::project_role(
-                    &personal["roles"][0],
+                    identities.first().ok_or_else(|| {
+                        AppIpcError::new(
+                            "stand_in_identity_missing",
+                            "No stand-in identity is available",
+                        )
+                    })?,
                     user,
                     &project,
                     if local { "local" } else { "cloud" },
@@ -674,19 +679,11 @@ impl RuntimeWorkRpcHandler {
         } else {
             "cloud"
         };
-        let user = config["userId"]
-            .as_i64()
-            .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
-        let personal = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(settings_error)?
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
         let prompt = format!(
-            "[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}\n\n{}\n\n{}\n\n{}\n\nShared personal preferences: {}",
+            "[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}\n\n{}\n\n{}\n\n{}",
             issue["title"].as_str().unwrap_or_default(),
             issue["description"].as_str().unwrap_or_default(),
-            config["prompt"].as_str().unwrap_or_default(),
-            personal["primary"]["preferences"].as_str().unwrap_or_default()
+            config["prompt"].as_str().unwrap_or_default()
         );
         let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":if config["manual"] == true { "manual" } else { "assignment" },"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"selectionMode":config["selectionMode"],"selectionReason":config["selectionReason"],"projectStore":config["projectStore"],"cloudProjectId":project,"loopItemId":issue_id,"humanAssignmentId":human_id,"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
         let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});

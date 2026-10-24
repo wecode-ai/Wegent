@@ -5692,3 +5692,35 @@ async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers(
     assert_eq!(result.result["action"], "cancel");
     assert_eq!(result.status, "expired");
 }
+
+#[tokio::test]
+async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
+    let client = CodexAppServerClient::new("unused-expired-approval");
+    let (_answer_tx, answer_rx) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(answer_rx);
+    let (notifications, mut received) = mpsc::unbounded_channel();
+    let (errors, _error_rx) = mpsc::unbounded_channel();
+    let request = json!({"id":91,"method":"item/commandExecution/requestApproval","params":{
+        "threadId":"thread", "turnId":"turn", "itemId":"command", "expiresAtUnixMs":0
+    }});
+    spawn_shared_approval_response(
+        &client,
+        &request,
+        Some(router),
+        errors,
+        Some(notifications.downgrade()),
+    )
+    .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event["method"], "wegent/approval/settled");
+    assert_eq!(event["params"]["interactionStatus"], "expired");
+    assert_eq!(event["params"]["expiresAtUnixMs"], 0);
+    assert_eq!(event["params"]["approvalMethod"], request["method"]);
+    assert_eq!(
+        codex_approval_result(&request, &json!({})).unwrap()["decision"],
+        "decline"
+    );
+}

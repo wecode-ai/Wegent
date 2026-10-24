@@ -22,7 +22,7 @@ export function StandInMemoryPanel({
   const [editing, setEditing] = useState<Partial<StandInMemory> | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [discard, setDiscard] = useState(false)
+  const [discard, setDiscard] = useState<'close' | 'cancel' | null>(null)
   const scopes: { scope: StandInMemoryScope; label: string }[] = [
     { scope: { kind: 'personal' }, label: t('standIn.memory.personal') },
     ...settings.roles.map(role => ({
@@ -74,7 +74,7 @@ export function StandInMemoryPanel({
     )
   const close = () => {
     if (busy) return
-    if (dirty) setDiscard(true)
+    if (dirty) setDiscard('close')
     else onClose()
   }
   const ref = useDialogKeyboard<HTMLDivElement>(close)
@@ -192,7 +192,7 @@ export function StandInMemoryPanel({
                   data-testid="stand-in-memory-cancel"
                   disabled={busy}
                   onClick={() => {
-                    if (dirty) setDiscard(true)
+                    if (dirty) setDiscard('cancel')
                     else setEditing(null)
                   }}
                   className="min-h-8 rounded-md px-3 hover:bg-muted"
@@ -291,7 +291,8 @@ export function StandInMemoryPanel({
               data-testid="stand-in-memory-discard"
               onClick={() => {
                 setEditing(null)
-                setDiscard(false)
+                setDiscard(null)
+                if (discard === 'close') onClose()
               }}
               className="min-h-8 rounded-md border border-border px-3"
             >
@@ -300,7 +301,7 @@ export function StandInMemoryPanel({
             <button
               type="button"
               data-testid="stand-in-memory-keep"
-              onClick={() => setDiscard(false)}
+              onClick={() => setDiscard(null)}
               className="min-h-8 rounded-md px-3 hover:bg-muted"
             >
               {t('standIn.cancel')}

@@ -69,7 +69,15 @@ pub(super) fn log_event(event: &str, message: &Value) {
 
 pub(super) fn settled(message: &Value, status: &str, response: Option<&Value>) -> Value {
     let mut notification = message.clone();
-    notification["method"] = json!("wegent/mcpElicitation/settled");
+    notification["method"] = json!(if message["method"]
+        .as_str()
+        .is_some_and(super::is_codex_approval_request_method)
+    {
+        notification["params"]["approvalMethod"] = message["method"].clone();
+        "wegent/approval/settled"
+    } else {
+        "wegent/mcpElicitation/settled"
+    });
     notification["params"]["interactionStatus"] = json!(status);
     notification["params"]["settledAtUnixMs"] = json!(now_ms());
     if let Some(answers) = response.and_then(|response| response.get("answers")) {

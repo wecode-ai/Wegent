@@ -2800,6 +2800,10 @@ async fn read_shared_turn_notifications(
                 &message,
                 request_user_input_answers.clone(),
                 response_error_tx.clone(),
+                options
+                    .notifications
+                    .as_ref()
+                    .map(mpsc::UnboundedSender::downgrade),
             )?;
             continue;
         }
@@ -3121,6 +3125,7 @@ fn spawn_shared_approval_response(
     message: &Value,
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
+    notifications: Option<mpsc::WeakUnboundedSender<CodexNotification>>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
@@ -3135,7 +3140,7 @@ fn spawn_shared_approval_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
-            let response = if let (Some(receiver), Some(correlation_key)) =
+            let (response, status) = if let (Some(receiver), Some(correlation_key)) =
                 (request_user_input_answers, correlation_key)
             {
                 match tokio::time::timeout(
@@ -3144,13 +3149,16 @@ fn spawn_shared_approval_response(
                 )
                 .await
                 {
-                    Ok(response) => response?.unwrap_or_else(|| json!({})),
-                    Err(_) => json!({}),
+                    Ok(response) => (response?.unwrap_or_else(|| json!({})), "answered"),
+                    Err(_) => (json!({}), "expired"),
                 }
             } else {
-                json!({})
+                (json!({}), "cancelled")
             };
             let result = codex_approval_result(&message, &response)?;
+            if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
+                let _ = sender.send(elicitation::settled(&message, status, Some(&response)).into());
+            }
             client.send_response(request_id, result).await
         }
         .await;

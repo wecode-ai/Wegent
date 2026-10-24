@@ -207,3 +207,15 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
   await user.click(screen.getByTestId('stand-in-preview-open'))
   expect(onOpenTask).toHaveBeenCalledWith(runtimeItem.address)
 })
+
+it('preserves the mounted conversation when settings refresh fails', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  render(<StandInOverviewPage {...props} />)
+  const conversation = await screen.findByTestId('identity-conversation')
+  vi.mocked(api.personalGet).mockRejectedValueOnce(new Error('settings unavailable'))
+  act(() => publishPersonalStandIn(settings))
+  expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+})

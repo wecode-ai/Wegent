@@ -87,3 +87,19 @@ it('preserves unsaved edits on failure and requires discarding before closing', 
   await user.click(screen.getByTestId('stand-in-memory-keep'))
   expect(screen.getByTestId('stand-in-memory-content')).toHaveValue('回复简洁，先问我')
 })
+
+it.each(['close', 'cancel'] as const)(
+  'discards edits from %s and completes that action',
+  async action => {
+    const f = fixture()
+    f.render()
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('stand-in-memory-edit'))
+    await user.type(screen.getByTestId('stand-in-memory-content'), ' changed')
+    await user.click(screen.getByTestId(`stand-in-memory-${action}`))
+    await user.click(screen.getByTestId('stand-in-memory-discard'))
+    expect(screen.queryByTestId('stand-in-memory-content')).not.toBeInTheDocument()
+    expect(f.onClose).toHaveBeenCalledTimes(action === 'close' ? 1 : 0)
+    expect(f.api.saveMemory).not.toHaveBeenCalled()
+  }
+)
