@@ -25,6 +25,7 @@ export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
     `原稿依据：:codex-file-citation{path="${source}" purpose="source"}`,
     `输出：::codex-file-citation{path="${output}" purpose="output" line_range_start=1}`,
     `旧式引用：【F:${encodeURI(output)}†L1】`,
+    `> Quoted &amp;\n> :codex-file-citation{path="${source}" purpose="source"}\n> Still readable`,
     ':codex-followup[Explain this result]{prompt="Explain the citation result"}',
     '`' + ':codex-file-citation{path="example-only.md"}' + '`',
   ].join('\n\n')
@@ -49,6 +50,10 @@ export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
     assert.equal(
       await control.command('getText', `${ASSISTANT} p code`),
       ':codex-file-citation{path="example-only.md"}'
+    )
+    assert.equal(
+      (await control.command('getText', `${ASSISTANT} blockquote`)).replace(/\s+/g, ' ').trim(),
+      'Quoted & original.ts Still readable'
     )
     await control.command('click', `${ASSISTANT} [data-testid="assistant-followup-copy"]`)
     await control.command('waitFor', `${ASSISTANT} [data-testid="assistant-followup-copy"]`, {

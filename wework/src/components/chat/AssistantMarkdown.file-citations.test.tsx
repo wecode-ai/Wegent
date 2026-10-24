@@ -113,6 +113,16 @@ test('keeps adjacent text, entities, emphasis and multiple citations intact', ()
   expect(screen.getAllByTestId('assistant-markdown-link')[0].closest('strong')).not.toBeNull()
 })
 
+test.each(['> ', '> > '])('preserves multiline blockquote content with prefix %s', prefix => {
+  render(
+    <AssistantMarkdown
+      content={`${prefix}Before &amp;\n${prefix}${citation}\n${prefix}After &lt;end&gt;`}
+    />
+  )
+  expect(screen.getByTestId('assistant-markdown-link').closest('blockquote')).not.toBeNull()
+  expect(document.querySelector('blockquote')).toHaveTextContent('Before & report.xlsx After <end>')
+})
+
 test('hides incomplete streaming attributes and reveals the complete file reference', () => {
   const { rerender } = render(
     <AssistantMarkdown content={'原稿：:codex-file-citation{path="/tmp/private'} isStreaming />

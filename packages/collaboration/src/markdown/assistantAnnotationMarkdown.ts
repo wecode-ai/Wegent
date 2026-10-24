@@ -46,15 +46,16 @@ export const remarkAssistantAnnotations: Plugin<[{ isStreaming: boolean }], Root
         .join('') + source.slice(cursor)
     const tree = parse(masked, file) as Root
     tree.data = { ...tree.data, assistantAnnotations: spans }
-    const visit = (node: Nodes) => {
+    const visit = (node: Nodes, inBlockquote = false) => {
       if (!('children' in node)) return
+      inBlockquote ||= node.type === 'blockquote'
       node.children = node.children.flatMap((child): typeof node.children => {
         if (
           child.type !== 'text' ||
           child.position?.start.offset === undefined ||
           child.position.end.offset === undefined
         ) {
-          visit(child)
+          visit(child, inBlockquote)
           return [child] as typeof node.children
         }
         const start = child.position.start.offset
@@ -70,7 +71,9 @@ export const remarkAssistantAnnotations: Plugin<[{ isStreaming: boolean }], Root
         // their own offsets; never slice a decoded text value with source offsets.
         const children: PhrasingContent[] = []
         let offset = start
-        const inline = (text: string, label = false): PhrasingContent[] => {
+        const inline = (raw: string, label = false): PhrasingContent[] => {
+          // Source positions include container markers omitted from mdast text.
+          const text = inBlockquote && !label ? raw.replace(/\n[ \t]*(?:>[ \t]?)+/g, '\n') : raw
           if (!text) return []
           // A paragraph prefix keeps labels inline without changing underscore
           // delimiter flanking; text runs need both sentinels to retain spaces.
