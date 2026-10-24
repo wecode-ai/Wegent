@@ -4,6 +4,7 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { isMainWindowFocused } from '@/desktop/windowFocus'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { useTranslation } from '@/hooks/useTranslation'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { WeworkInbox } from '@/api/notifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
@@ -27,6 +28,11 @@ export function useStandInNotifications(
   const versions = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const delivered = useMemo(() => createStandInRecordStore(`${storageKey}:delivered`), [storageKey])
   const observedTasks = useRef({ storageKey: '', startedAt: 0, keys: new Set<string>() })
+  useEffect(() => {
+    if (observedTasks.current.storageKey !== storageKey) {
+      observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
+    }
+  }, [storageKey])
   const items = useMemo(
     () => mergeStandInNotifications(inbox?.items ?? [], enabled ? (source?.items ?? []) : []),
     [inbox, source?.items, enabled]
@@ -42,9 +48,6 @@ export function useStandInNotifications(
         .slice(0, STAND_IN_RECORD_LIMIT),
     [items]
   )
-  useEffect(() => {
-    observedTasks.current = { storageKey, startedAt: Date.now(), keys: new Set<string>() }
-  }, [storageKey])
   useEffect(() => {
     const current = store.getSnapshot()
     const next = { ...current }
@@ -92,6 +95,9 @@ export function useStandInNotifications(
     for (const key of observedTaskKeys) {
       if (!currentKeys.has(key)) observedTaskKeys.delete(key)
     }
+    const nextDelivered = { ...delivered.getSnapshot() }
+    let deliveryChanged = false
+    const alerts: Parameters<typeof sendSystemNotification>[0][] = []
     for (const item of trackedItems) {
       const state = item.payload.standIn
       if (!state || !item.runtimeItem) continue
@@ -101,10 +107,23 @@ export function useStandInNotifications(
       const historical =
         firstObservation && Date.parse(state.updatedAt) <= observedTasks.current.startedAt
       const version = standInVersion(state)
-      const deliveredVersion = delivered.getSnapshot()[item.runtimeItem.key]?.version
+      const deliveredVersion = nextDelivered[item.runtimeItem.key]?.version
+      const readVersion = store.getSnapshot()[item.runtimeItem.key]?.version
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        logRuntimeTaskCreateStage('stand-in-alert', {
+          taskKey: item.runtimeItem.key,
+          version,
+          deliveredVersion,
+          readVersion,
+          runtimeUnread: source?.unreadTaskKeys.has(item.runtimeItem.key),
+          firstObservation,
+          historical,
+          systemEnabled,
+          currentTaskId: source?.currentAddress?.taskId,
+        })
+      }
       if (deliveredVersion === version) continue
       const alreadyDelivered = matchesStandInVersion(deliveredVersion, state)
-      const readVersion = versions[item.runtimeItem.key]?.version
       const unread =
         readVersion == null
           ? source?.unreadTaskKeys.has(item.runtimeItem.key) ||
@@ -112,10 +131,8 @@ export function useStandInNotifications(
             (firstObservation && !historical)
           : !matchesStandInVersion(readVersion, state)
       if (!unread && !firstObservation && !alreadyDelivered) continue
-      delivered.write({
-        ...delivered.getSnapshot(),
-        [item.runtimeItem.key]: { version, savedAt: Date.now() },
-      })
+      nextDelivered[item.runtimeItem.key] = { version, savedAt: Date.now() }
+      deliveryChanged = true
       // Baseline older settlements, but retain live completions that beat task discovery.
       if (historical || alreadyDelivered || !unread) continue
       const viewingTask =
@@ -123,19 +140,22 @@ export function useStandInNotifications(
         source?.currentAddress?.taskId === state.taskId &&
         isMainWindowFocused()
       if (!systemEnabled || viewingTask) continue
-      void sendSystemNotification({
+      alerts.push({
         title: item.payload.taskTitle || item.title,
         body: t(`notifications.stand_in_${state.status}`),
         address: item.runtimeItem.address,
         url: item.url ?? undefined,
       })
     }
+    if (deliveryChanged) delivered.write(nextDelivered)
+    for (const alert of alerts) void sendSystemNotification(alert)
   }, [
     trackedItems,
     versions,
     source?.unreadTaskKeys,
     source?.currentAddress,
     delivered,
+    store,
     storageKey,
     observedTasks,
     systemEnabled,

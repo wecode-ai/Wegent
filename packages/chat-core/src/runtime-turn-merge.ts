@@ -2,11 +2,15 @@ import {
   processingBlocks,
   assistantTextContent,
   preserveProcessingBlockTiming,
+  completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
 
-import { getLatestThinkingContent } from "./workbench-message-reducer";
+import {
+  getLatestThinkingContent,
+  nestWorkbenchProcessingBlocks,
+} from "./workbench-message-reducer";
 
 import type {
   ProcessingBlock,
@@ -38,6 +42,19 @@ export function mergeRuntimeConversationTurn(
   const preserveStreamingThinking =
     snapshot.status === "streaming" &&
     assistantTextContent(local.items) === assistantTextContent(snapshot.items);
+  const timing = isTerminalTurnStatus(local.status)
+    ? {
+        startedAt: local.startedAt ?? snapshot.startedAt,
+        durationMs: local.durationMs ?? snapshot.durationMs,
+        completedAt: local.completedAt ?? snapshot.completedAt,
+      }
+    : isTerminalTurnStatus(snapshot.status) && local.startedAt !== undefined
+      ? completeRuntimeTurnTiming(local, snapshot)
+      : {
+          startedAt: local.startedAt ?? snapshot.startedAt,
+          durationMs: snapshot.durationMs,
+          completedAt: snapshot.completedAt,
+        };
   return {
     ...local,
     ...snapshot,
@@ -45,7 +62,12 @@ export function mergeRuntimeConversationTurn(
       snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     itemMerge: undefined,
-    items,
+    items: orderRuntimeConversationItems(items),
+    position:
+      Math.min(local.position ?? Infinity, snapshot.position ?? Infinity) ===
+      Infinity
+        ? undefined
+        : Math.min(local.position ?? Infinity, snapshot.position ?? Infinity),
     fileChanges:
       local.fileChanges &&
       snapshot.fileChanges &&
@@ -61,20 +83,7 @@ export function mergeRuntimeConversationTurn(
       preserveLocalTerminal || preserveLocalFailure
         ? local.status
         : snapshot.status,
-    // Preserve higher-precision live timestamps when reading native history.
-    startedAt: local.startedAt ?? snapshot.startedAt,
-    durationMs:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.durationMs
-        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.durationMs ?? snapshot.durationMs)
-          : snapshot.durationMs,
-    completedAt:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.completedAt
-        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.completedAt ?? snapshot.completedAt)
-          : snapshot.completedAt,
+    ...timing,
     error:
       preserveLocalTerminal || preserveLocalFailure
         ? local.error
@@ -163,7 +172,15 @@ export function orderRuntimeConversationTurns(
       timestamp: runtimeConversationTurnTimestamp(turn),
     }));
   let orderedTurns: RuntimeConversationTurn[];
-  if (
+  if (indexedTurns.some(({ turn }) => turn.position !== undefined)) {
+    orderedTurns = indexedTurns
+      .sort(
+        (left, right) =>
+          (left.turn.position ?? Infinity) -
+            (right.turn.position ?? Infinity) || left.index - right.index,
+      )
+      .map(({ turn }) => turn);
+  } else if (
     indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)
   ) {
     orderedTurns = indexedTurns
@@ -210,16 +227,38 @@ export function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false,
 ): RuntimeConversationItem[] {
-  const reconciledLocalItems = removeEquivalentAssistantTextItems(
-    localItems,
-    snapshotItems,
+  const positionedIds = new Set(
+    snapshotItems
+      .filter((item) => item.position !== undefined)
+      .map((item) => item.id),
   );
-  const localById = new Map(
-    reconciledLocalItems.map((item) => [item.id, item]),
+  const snapshotUserIds = new Map(
+    snapshotItems.flatMap((item) =>
+      item.type === "user_message" ? [[item.message.id, item.id] as const] : [],
+    ),
   );
+  const localUsers = new Map(
+    localItems.flatMap((item) =>
+      item.type === "user_message" ? [[item.message.id, item] as const] : [],
+    ),
+  );
+  const reconciledLocalItems =
+    positionedIds.size > 0
+      ? localItems
+      : removeEquivalentAssistantTextItems(localItems, snapshotItems);
+  const canonicalLocalItems = reconciledLocalItems.filter(
+    (item) =>
+      item.type !== "user_message" ||
+      !snapshotUserIds.has(item.message.id) ||
+      snapshotUserIds.get(item.message.id) === item.id,
+  );
+  const localById = new Map(canonicalLocalItems.map((item) => [item.id, item]));
   const mergedSnapshotItems = snapshotItems.map((item) =>
     mergeRuntimeConversationItem(
-      localById.get(item.id),
+      localById.get(item.id) ??
+        (item.type === "user_message"
+          ? localUsers.get(item.message.id)
+          : undefined),
       item,
       preserveLocalTerminal,
     ),
@@ -227,10 +266,69 @@ export function mergeRuntimeConversationItems(
   const snapshotById = new Map(
     mergedSnapshotItems.map((item) => [item.id, item]),
   );
-  const mergedLocalItems = reconciledLocalItems.map(
+  const mergedLocalItems = canonicalLocalItems.map(
     (item) => snapshotById.get(item.id) ?? item,
   );
-  return insertMissingSnapshotItems(mergedLocalItems, mergedSnapshotItems);
+  const items = insertMissingSnapshotItems(
+    mergedLocalItems,
+    mergedSnapshotItems,
+  );
+  const positions = new Map(
+    items.flatMap((item) =>
+      item.position === undefined ? [] : [[item.id, item.position] as const],
+    ),
+  );
+  const anchors = new Map<string, number>();
+  // Only original source sequences witness adjacency. Inserting a newly discovered native
+  // item into the union must not retroactively make it a neighbor observed by a live item.
+  for (const source of [canonicalLocalItems, snapshotItems]) {
+    let nextPosition = Infinity;
+    for (let index = source.length - 1; index >= 0; index--) {
+      const item = source[index];
+      const position = positions.get(item.id);
+      if (position !== undefined) nextPosition = position;
+      else if (nextPosition !== Infinity || !anchors.has(item.id))
+        anchors.set(item.id, nextPosition);
+    }
+  }
+  return orderRuntimeConversationItems(items, anchors);
+}
+
+/** Persisted positions are authoritative; items still in flight remain provisional. */
+export function orderRuntimeConversationItems(
+  items: RuntimeConversationItem[],
+  observedAnchors?: ReadonlyMap<string, number>,
+): RuntimeConversationItem[] {
+  if (!items.some((item) => item.position !== undefined)) return items;
+  let nextPosition = Infinity;
+  const ordered = items.map((item, index) => ({
+    item,
+    index,
+    anchor: Infinity,
+  }));
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const entry = ordered[index];
+    if (entry.item.position !== undefined) nextPosition = entry.item.position;
+    // Unpersisted runtime items stay before their observed next native identity. Absence from
+    // durable history is not deletion: background commands and pending prompts may never be rows.
+    entry.anchor =
+      entry.item.type === "user_message" &&
+      !entry.item.message.runtimeGuidance &&
+      entry.item.position === undefined
+        ? -Infinity
+        : (entry.item.position ??
+          observedAnchors?.get(entry.item.id) ??
+          nextPosition);
+  }
+  return ordered
+    .sort(
+      (left, right) =>
+        left.anchor - right.anchor ||
+        Number(left.item.position !== undefined) -
+          Number(right.item.position !== undefined) ||
+        left.index - right.index,
+    )
+    .map(({ item }) => item);
 }
 
 export function removeEquivalentAssistantTextItems(
@@ -467,14 +565,43 @@ export function assistantTextRepresentationContent(
 
 export function mergeRuntimeConversationItem(
   local: RuntimeConversationItem | undefined,
+  snapshot: Extract<RuntimeConversationItem, { type: "block" }>,
+  preserveLocalTerminal: boolean,
+): Extract<RuntimeConversationItem, { type: "block" }>;
+export function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
+  snapshot: RuntimeConversationItem,
+  preserveLocalTerminal: boolean,
+): RuntimeConversationItem;
+export function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
   snapshot: RuntimeConversationItem,
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {
+  snapshot = { ...snapshot, position: snapshot.position ?? local?.position };
+  if (local?.type === "user_message" && snapshot.type === "user_message") {
+    return { ...snapshot, message: { ...local.message, ...snapshot.message } };
+  }
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
-  const snapshotBlock = preserveToolOutput(
+  let snapshotBlock = preserveToolOutput(
     local.block,
     preserveRequestUserInputResponse(local.block, snapshot.block),
   );
+
+  if (
+    local.block.type === "subagent" &&
+    snapshotBlock.type === "subagent" &&
+    !(
+      local.block.agentThreadId &&
+      snapshotBlock.agentThreadId &&
+      local.block.agentThreadId !== snapshotBlock.agentThreadId
+    )
+  ) {
+    snapshotBlock = nestWorkbenchProcessingBlocks([
+      local.block,
+      snapshotBlock,
+    ])[0];
+  }
 
   if (
     preserveLocalTerminal &&

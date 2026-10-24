@@ -2,8 +2,8 @@ import {
   RUNTIME_RECONNECTING_TOOL_NAME,
   MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS,
   processingBlocks,
-  preserveProcessingBlockTiming,
 } from "./runtime-turn-helpers";
+import { mergeRuntimeConversationItem } from "./runtime-turn-merge";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
 import type { TurnFileChangesSummary } from "./runtime";
@@ -29,9 +29,7 @@ export function seedRuntimeConversationTurns(
   for (const message of messages) {
     if (message.role !== "user") continue;
     const existing = turns.some((turn) =>
-      turn.items.some(
-        (item) => item.type === "user_message" && item.id === message.id,
-      ),
+      hasRuntimeConversationUserIdentity(turn, message.id),
     );
     if (!existing) {
       turns = appendOptimisticUser(turns, message);
@@ -48,11 +46,7 @@ export function appendAcceptedRuntimeConversationUser(
 ): RuntimeConversationTurn[] {
   if (message.role !== "user") return appendOptimisticUser(turns, message);
   if (
-    turns.some((turn) =>
-      turn.items.some(
-        (item) => item.type === "user_message" && item.id === message.id,
-      ),
-    )
+    turns.some((turn) => hasRuntimeConversationUserIdentity(turn, message.id))
   ) {
     return turns;
   }
@@ -98,6 +92,17 @@ export function appendAcceptedRuntimeConversationUser(
   });
 }
 
+function hasRuntimeConversationUserIdentity(
+  turn: RuntimeConversationTurn,
+  id: string,
+): boolean {
+  return turn.items.some(
+    (item) =>
+      item.type === "user_message" &&
+      (item.id === id || item.message.id === id),
+  );
+}
+
 export function hasRuntimeConversationUser(
   turn: RuntimeConversationTurn,
 ): boolean {
@@ -110,11 +115,7 @@ export function appendOptimisticUser(
 ): RuntimeConversationTurn[] {
   if (message.role !== "user") return turns;
   if (
-    turns.some((turn) =>
-      turn.items.some(
-        (item) => item.type === "user_message" && item.id === message.id,
-      ),
-    )
+    turns.some((turn) => hasRuntimeConversationUserIdentity(turn, message.id))
   ) {
     return turns;
   }
@@ -160,11 +161,7 @@ export function updateStartedTurn(
     ? turns.findIndex(
         (turn) =>
           turn.clientUserMessageId === action.clientUserMessageId ||
-          turn.items.some(
-            (item) =>
-              item.type === "user_message" &&
-              item.id === action.clientUserMessageId,
-          ),
+          hasRuntimeConversationUserIdentity(turn, action.clientUserMessageId!),
       )
     : findLastIndex(
         turns,
@@ -181,8 +178,8 @@ export function updateStartedTurn(
       id: action.subtaskId,
       status: optimistic.status === "cancelled" ? "cancelled" : "streaming",
       startedAt:
-        action.startedAt ??
         optimistic.startedAt ??
+        action.startedAt ??
         runtimeMessageTimestampFromTurn(optimistic),
       durationMs:
         optimistic.status === "cancelled" ? optimistic.durationMs : undefined,
@@ -458,15 +455,16 @@ export function upsertBlocks(
           )
         : -1;
     const index = exactIndex >= 0 ? exactIndex : contextCompactionIndex;
-    const canonicalItem: RuntimeConversationItem = {
-      id: block.id,
-      type: "block",
-      block: limitWorkbenchProcessingBlock(
-        index >= 0 && next[index]?.type === "block"
-          ? preserveProcessingBlockTiming(next[index].block, block)
-          : block,
-      ),
-    };
+    const canonicalItem = mergeRuntimeConversationItem(
+      index >= 0 ? next[index] : undefined,
+      {
+        id: block.id,
+        position: index >= 0 ? next[index]?.position : undefined,
+        type: "block",
+        block: limitWorkbenchProcessingBlock(block),
+      },
+      false,
+    );
     next =
       index < 0
         ? insertRuntimeBlockBeforeLaterGuidance(next, canonicalItem)
@@ -510,6 +508,7 @@ export function replaceAssistantTextWithBlock(
   if (index < 0) return upsertBlocks(items, [block]);
   return replaceAt(items, index, {
     id: block.id,
+    position: items[index].position,
     type: "block",
     block: limitWorkbenchProcessingBlock(block),
   });
@@ -601,7 +600,8 @@ export function boundVisibleRuntimeProcessingBlocks(
   items: RuntimeConversationItem[],
 ): Pick<RuntimeConversationTurn, "items" | "contentTruncated"> {
   const blockCount = items.reduce(
-    (count, item) => count + (item.type === "block" ? 1 : 0),
+    (count, item) =>
+      count + (item.type === "block" && item.position === undefined ? 1 : 0),
     0,
   );
   if (blockCount <= MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS) {
@@ -614,7 +614,12 @@ export function boundVisibleRuntimeProcessingBlocks(
   let blocksToDrop = blockCount - MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS;
   return {
     items: items.filter((item) => {
-      if (item.type !== "block" || blocksToDrop <= 0) return true;
+      if (
+        item.type !== "block" ||
+        item.position !== undefined ||
+        blocksToDrop <= 0
+      )
+        return true;
       blocksToDrop -= 1;
       return false;
     }),

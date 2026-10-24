@@ -226,10 +226,12 @@ type ProcessingSegment = {
 
 type RuntimeDisplaySegment =
   | {
+      id: string;
       kind: "content";
       content: string;
     }
   | {
+      id: string;
       kind: "processing";
       blocks: ProcessingBlock[];
     };
@@ -254,12 +256,7 @@ export function getOrderedRuntimeDisplaySegments(
   items.forEach((item) => {
     if (item.type === "assistant_text") {
       if (!item.content.trim()) return;
-      const previous = segments.at(-1);
-      if (previous?.kind === "content") {
-        previous.content = `${previous.content}\n\n${item.content}`;
-      } else {
-        segments.push({ kind: "content", content: item.content });
-      }
+      segments.push({ id: item.id, kind: "content", content: item.content });
       return;
     }
 
@@ -273,7 +270,7 @@ export function getOrderedRuntimeDisplaySegments(
     if (previous?.kind === "processing") {
       previous.blocks.push(block);
     } else {
-      segments.push({ kind: "processing", blocks: [block] });
+      segments.push({ id: item.id, kind: "processing", blocks: [block] });
     }
   });
 

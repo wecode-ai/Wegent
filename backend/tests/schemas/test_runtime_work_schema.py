@@ -25,8 +25,13 @@ def test_transcript_preserves_canonical_turns_and_execution_state():
 
     payload = {
         "taskId": "task-1",
+        "threadId": "thread-native",
         "workspacePath": "/repo",
         "runtime": "codex",
+        "runtimeTurns": [
+            {"id": "turn-1", "items": [{"id": "live-command", "type": "block"}]}
+        ],
+        "supersededTurnIds": ["old-attempt"],
         "turns": [
             {
                 "id": "turn-1",
@@ -316,3 +321,10 @@ def test_runtime_task_create_rejects_invalid_supervisor_interval() -> None:
                 "intervalSeconds": 15,
             },
         )
+
+
+def test_transcript_message_preserves_guidance_boundary():
+    from app.schemas.runtime_work import NormalizedRuntimeMessage
+
+    message = NormalizedRuntimeMessage(id="guidance", role="user", runtimeGuidance=True)
+    assert message.model_dump(by_alias=True)["runtimeGuidance"] is True

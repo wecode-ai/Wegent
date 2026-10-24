@@ -19,6 +19,7 @@ fn cached_transcript_response(
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty());
     let mut response = transcript_response(TranscriptResponseInput {
+        canonical_turns: None,
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
         runtime: link.runtime.clone(),
@@ -26,9 +27,12 @@ fn cached_transcript_response(
         context_usage,
         running,
         pagination: if runtime_has_provider_transcript_reader(&link.runtime) {
-            let (before_cursor, after_cursor) = transcript_snapshot_pagination(link)
-                .unwrap_or((None, None));
-            TranscriptPagination::Opaque { before_cursor, after_cursor }
+            let (before_cursor, after_cursor) =
+                transcript_snapshot_pagination(link).unwrap_or((None, None));
+            TranscriptPagination::Opaque {
+                before_cursor,
+                after_cursor,
+            }
         } else {
             transcript_pagination(
                 &link.runtime,
@@ -43,6 +47,8 @@ fn cached_transcript_response(
         turn_navigation,
     });
     response["historyUnavailable"] = Value::Bool(history_unavailable);
+    response["threadId"] = json!(link.thread_id);
+    response["supersededTurnIds"] = json!(superseded_transcript_turn_ids(&link.runtime_handle));
     if link.runtime == "claude_code" && link.status == "interrupted" && !running {
         if let Some(turn) = response
             .get_mut("turns")
@@ -104,11 +110,8 @@ fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: 
     }
 }
 
-pub(super) fn remove_superseded_transcript_turns(
-    messages: &mut Vec<Value>,
-    runtime_handle: &Value,
-) {
-    let superseded_turn_ids = runtime_handle
+pub(super) fn superseded_transcript_turn_ids(runtime_handle: &Value) -> Vec<&str> {
+    runtime_handle
         .get("supersededTranscriptTurnIds")
         .and_then(Value::as_array)
         .into_iter()
@@ -116,7 +119,14 @@ pub(super) fn remove_superseded_transcript_turns(
         .filter_map(Value::as_str)
         .map(str::trim)
         .filter(|turn_id| !turn_id.is_empty())
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+pub(super) fn remove_superseded_transcript_turns(
+    messages: &mut Vec<Value>,
+    runtime_handle: &Value,
+) {
+    let superseded_turn_ids = superseded_transcript_turn_ids(runtime_handle);
     if superseded_turn_ids.is_empty() {
         return;
     }
@@ -149,19 +159,32 @@ fn merge_latest_completed_transcript_messages(
         {
             // Exit snapshots are authoritative; running commands use their live event buffer.
             visit_transcript_blocks_mut(&mut completed, |block| {
-                if block.pointer("/render_payload/kind").and_then(Value::as_str)
+                if block
+                    .pointer("/render_payload/kind")
+                    .and_then(Value::as_str)
                     != Some("command_execution")
                 {
                     return;
                 }
-                if let Some(native) = existing.get("blocks").and_then(Value::as_array)
-                    .into_iter().flatten().find(|native| {
+                if let Some(native) = existing
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find(|native| {
                         native.get("id") == block.get("id")
-                            && native.pointer("/render_payload/kind").and_then(Value::as_str) == Some("command_execution")
-                            && matches!(native.get("status").and_then(Value::as_str), Some("done" | "error"))
+                            && native
+                                .pointer("/render_payload/kind")
+                                .and_then(Value::as_str)
+                                == Some("command_execution")
+                            && matches!(
+                                native.get("status").and_then(Value::as_str),
+                                Some("done" | "error")
+                            )
                     })
                 {
-                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object()) {
+                    if let (Some(block), Some(native)) = (block.as_object_mut(), native.as_object())
+                    {
                         block.extend(native.clone());
                     }
                 }
@@ -184,6 +207,7 @@ struct TranscriptResponseInput {
     workspace_path: String,
     runtime: String,
     messages: Vec<Value>,
+    canonical_turns: Option<Vec<Value>>,
     context_usage: Option<Value>,
     running: bool,
     pagination: TranscriptPagination,
@@ -240,6 +264,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         workspace_path,
         runtime,
         mut messages,
+        canonical_turns,
         context_usage,
         running,
         pagination,
@@ -301,7 +326,11 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
             }
         }
     };
-    let turns = transcript_canonical_turns(&messages, turn_item_source);
+    let turns = if conversation_context_only {
+        transcript_canonical_turns(&messages, turn_item_source)
+    } else {
+        canonical_turns.unwrap_or_else(|| transcript_canonical_turns(&messages, turn_item_source))
+    };
     json!({
         "success": true,
         "taskId": local_task_id,
@@ -370,7 +399,6 @@ fn transcript_canonical_turns(
         }
         for key in [
             "status",
-            "runtimeStatus",
             "completedAt",
             "error",
             "errorType",
@@ -382,6 +410,10 @@ fn transcript_canonical_turns(
             if let Some(value) = message.get(key) {
                 turn.insert(key.to_owned(), value.clone());
             }
+        }
+        // Status aliases must describe the same message, not an earlier user item.
+        if let Some(status) = message.get("runtimeStatus").or_else(|| message.get("status")) {
+            turn.insert("runtimeStatus".to_owned(), status.clone());
         }
         let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) else {
             continue;
@@ -398,6 +430,7 @@ fn transcript_canonical_turns(
                 "id": item_id,
                 "type": "user_message",
                 "message": message,
+                "position": message.get("position"),
             }));
             continue;
         }
@@ -413,6 +446,17 @@ fn transcript_canonical_turns(
         }
     }
 
+    for turn in &mut turns {
+        if let Some(position) = turn["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["position"].as_u64())
+            .min()
+        {
+            turn["position"] = json!(position);
+        }
+    }
     turns
 }
 
@@ -524,6 +568,7 @@ fn transcript_navigation_response(
     turn_navigation: Vec<Value>,
 ) -> Value {
     transcript_response(TranscriptResponseInput {
+        canonical_turns: None,
         local_task_id,
         workspace_path,
         runtime: "codex".to_owned(),
@@ -729,6 +774,51 @@ fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: V
         false,
         false,
     );
+}
+
+fn native_page_user_presentations(mut presentations: Vec<Value>, thread: &Value) -> Vec<Value> {
+    if thread["timeline"] != true {
+        return presentations;
+    }
+    let owning_turns = thread["turns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|turn| turn["ownsUserPresentation"] == true)
+        .filter_map(|turn| turn["id"].as_str())
+        .collect::<Vec<_>>();
+    // A turn can span pages. Only its native user entry or opening boundary owns a prompt.
+    for presentation in &mut presentations {
+        let turn_id =
+            string_field(presentation, "turnId").or_else(|| string_field(presentation, "turn_id"));
+        if !turn_id.is_some_and(|id| owning_turns.contains(&id.as_str())) {
+            presentation["ensureVisible"] = json!(false);
+        }
+    }
+    presentations
+}
+
+fn bind_native_user_presentations(messages: &mut [Value], presentations: &[Value]) {
+    for index in 0..messages.len() {
+        let message = &messages[index];
+        if message["role"] != "user" || message.get("clientUserMessageId").is_some() {
+            continue;
+        }
+        let turn_id = &message["turnId"];
+        let users = messages
+            .iter()
+            .filter(|message| message["role"] == "user" && &message["turnId"] == turn_id)
+            .count();
+        let owners = presentations
+            .iter()
+            .filter(|presentation| &presentation["turnId"] == turn_id)
+            .collect::<Vec<_>>();
+        if users == 1 && owners.len() == 1 {
+            if let Some(id) = owners[0].get("clientUserMessageId") {
+                messages[index]["clientUserMessageId"] = id.clone();
+            }
+        }
+    }
 }
 
 fn attach_user_message_presentations_for_page(

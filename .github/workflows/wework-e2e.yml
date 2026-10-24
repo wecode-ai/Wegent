@@ -365,7 +365,7 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -649,13 +649,13 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Windows Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64
 
       - name: Download Windows Redis E2E tools
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-redis-e2e-tools
           path: wework/test-results/windows-e2e-tools/redis
@@ -773,6 +773,8 @@ jobs:
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
+        # Finish before the job deadline so failure logs and artifacts can upload.
+        timeout-minutes: 40
         continue-on-error: true
         shell: pwsh
         env:
@@ -795,6 +797,13 @@ jobs:
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
+              Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |
+                Select-Object Name, Length, Attributes | Format-Table | Out-String | Write-Host
+              if (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue) {
+                Get-MpThreatDetection -ErrorAction Continue |
+                  Select-Object InitialDetectionTime, ActionSuccess, Resources |
+                  ConvertTo-Json -Depth 3 | Write-Host
+              }
               throw "Missing Windows Wework desktop E2E resource: $path"
             }
           }
@@ -878,7 +887,7 @@ jobs:
           persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -1013,7 +1022,7 @@ jobs:
           filter: blob:none
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
