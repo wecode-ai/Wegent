@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { waitForProcessExit } from '../process-lifecycle.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
@@ -1499,6 +1500,17 @@ async function main() {
         'Wework did not persist a valid Electron device identity before restart'
       )
       const readyCountBeforeRestart = control.readyCount
+      if (process.platform === 'win32' && options?.graceful === true) {
+        // taskkill /T can kill Codex before its executor observes owner shutdown.
+        // A normal restart must let the native quit path persist active Goals.
+        const activated = JSON.parse(
+          await control.command('activateApplicationMenu', 'body', {
+            value: JSON.stringify({ id: 'application.quit' }),
+          })
+        )
+        assert.equal(activated, true, 'The native application quit action was unavailable')
+        await waitForProcessExit(app, DEFAULT_STEP_TIMEOUT_MS)
+      }
       await stopDesktopAppProcess(app)
       await beforeStart?.()
       if (typeof options === 'object' && options?.appEnvironmentOverrides) {

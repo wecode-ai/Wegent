@@ -666,7 +666,10 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
         sync::Mutex,
     };
     for method in ["thread/goal/set", "thread/goal/clear"] {
-        let client = CodexAppServerClient::new(format!("goal-recovery-gate-{method}"));
+        let mut client = CodexAppServerClient::new(format!("goal-recovery-gate-{method}"));
+        client.state = Arc::new(Mutex::new(
+            super::super::CodexAppServerSharedState::default(),
+        ));
         client.mark_thread_active("root-thread").await;
         let mut command = tokio::process::Command::new("sh");
         command
@@ -761,5 +764,145 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
             .unwrap();
         assert_eq!(user_mutation.await.unwrap().unwrap(), response);
         client.restart().await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_drains_a_goal_completed_during_backoff() {
+    assert_goal_completion_during_backoff(true).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_settles_user_completion_without_a_new_turn() {
+    assert_goal_completion_during_backoff(false).await;
+}
+
+#[cfg(unix)]
+async fn assert_goal_completion_during_backoff(resumed: bool) {
+    use super::super::{
+        read_shared_turn_notifications, CodexAppServerClient, CodexAppServerProcess,
+        CodexNotificationHub,
+    };
+    use std::{
+        collections::{BTreeMap, HashMap},
+        process::Stdio,
+        sync::Arc,
+    };
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        sync::Mutex,
+    };
+
+    let mut client = CodexAppServerClient::new("goal-completed-during-backoff");
+    client.state = Arc::new(Mutex::new(
+        super::super::CodexAppServerSharedState::default(),
+    ));
+    client.mark_thread_active("root-thread").await;
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .args(["-c", "cat"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    super::super::configure_codex_app_server_process_group(&mut command);
+    let mut child = command.spawn().unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let mut requests = BufReader::new(child.stdout.take().unwrap()).lines();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    {
+        let mut shared = client.state.lock().await;
+        shared.process_environment =
+            client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
+        // Force a capability revision change while the reader owns its thread.
+        shared.process_environment.insert(
+            "WEGENT_CAPABILITY_REVISION".to_owned(),
+            "before-overload-backoff".to_owned(),
+        );
+        shared.process = Some(CodexAppServerProcess {
+            child,
+            stdin: Arc::new(Mutex::new(stdin)),
+            pending: Arc::clone(&pending),
+            notifications: CodexNotificationHub::new(),
+            reader_task: tokio::spawn(async {}),
+        });
+    }
+    let (sender, mut receiver) = tokio::sync::broadcast::channel(16);
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+    sender
+        .send(blocked_goal(json!("failed-turn")).into())
+        .unwrap();
+    sender.send(overload_error().into()).unwrap();
+    sender.send(completed("failed").into()).unwrap();
+    let mut state = state();
+    let read = read_shared_turn_notifications(
+        &client,
+        &mut receiver,
+        "root-thread",
+        &mut state,
+        10,
+        tokio::time::Instant::now() + Duration::from_secs(10),
+        shared_options(notify_tx, None),
+    );
+    let complete = async {
+        let request: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(request["method"], "thread/goal/get");
+        let mut goal = blocked_goal(Value::Null)["params"]["goal"].clone();
+        goal["status"] = json!("complete");
+        let mut active_goal = goal.clone();
+        active_goal["status"] = json!("active");
+        if resumed {
+            for message in [
+                json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":active_goal}}),
+                json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"interim-turn"}}}),
+                json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"interim-turn","delta":"Interim response"}}),
+                json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"interim-turn","status":"completed"}}}),
+                json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"resumed-turn"}}}),
+                json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"resumed-turn","delta":"Goal completed"}}),
+                json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":goal}}),
+                json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"resumed-turn","status":"completed"}}}),
+            ] {
+                sender.send(message.into()).unwrap();
+            }
+        } else {
+            sender.send(json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":goal}}).into()).unwrap();
+        }
+        pending
+            .lock()
+            .await
+            .remove(&request["id"].as_u64().unwrap())
+            .unwrap()
+            .send(Ok(json!({"goal":goal})))
+            .unwrap();
+    };
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(read, complete)
+    })
+    .await;
+    client.restart().await;
+    let (outcome, ()) = result.unwrap();
+    assert_eq!(
+        outcome.unwrap(),
+        if resumed {
+            ExecutionOutcome::Completed {
+                content: "Goal completed".to_owned(),
+            }
+        } else {
+            ExecutionOutcome::Cancelled {
+                message: "Goal changed during model overload recovery".to_owned(),
+            }
+        }
+    );
+    if resumed {
+        assert!(
+            std::iter::from_fn(|| notify_rx.try_recv().ok()).any(|message| message
+                .pointer("/params/turn/id")
+                .and_then(Value::as_str)
+                == Some("resumed-turn")
+                && message["method"] == "turn/completed")
+        );
     }
 }

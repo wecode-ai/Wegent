@@ -498,6 +498,10 @@ class RealCloudEnvironment {
         '127.0.0.1',
         '--port',
         String(this.pythonBackendPort),
+        // Match backend-rs/scripts/start-hybrid-backend.sh: retiring upstream
+        // sockets at Uvicorn's 5s default races the gateway's pooled requests.
+        '--timeout-keep-alive',
+        '2400',
       ],
       {
         cwd: join(repoDir, 'backend'),

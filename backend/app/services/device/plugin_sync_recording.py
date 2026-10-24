@@ -3,6 +3,7 @@
 
 """Record only acknowledged plugin state that still matches the account."""
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,8 @@ from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def stable_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
@@ -83,17 +86,50 @@ def record_versioned_result(
     }
     acknowledgements = {str(item.id): item for item in result.plugins}
     for installed in installs:
-        if generation < plugin_snapshot_watermark(
+        watermark = plugin_snapshot_watermark(
             sync_state, result.device_id, installed.id
-        ):
+        )
+        if generation < watermark:
+            logger.info(
+                "Plugin acknowledgement ignored: user_id=%s device_id=%s installed_id=%s "
+                "reason=older_generation generation=%s watermark=%s",
+                user_id,
+                result.device_id,
+                installed.id,
+                generation,
+                watermark,
+            )
             continue
         item = acknowledgements.get(str(installed.id))
         if item is not None and item.status == "superseded":
+            logger.info(
+                "Plugin acknowledgement ignored: user_id=%s device_id=%s installed_id=%s "
+                "reason=superseded generation=%s",
+                user_id,
+                result.device_id,
+                installed.id,
+                generation,
+            )
             continue
         desired = current.get(installed.id)
         previous = expected.get(installed.id)
         if previous is not None and desired is not None:
             if stable_plugin(desired) != stable_plugin(previous):
+                changed_fields = sorted(
+                    key
+                    for key in set(desired) | set(previous)
+                    if key not in {"download_path", "download_url_expires_at"}
+                    and desired.get(key) != previous.get(key)
+                )
+                logger.info(
+                    "Plugin acknowledgement ignored: user_id=%s device_id=%s installed_id=%s "
+                    "reason=desired_changed generation=%s changed_fields=%s",
+                    user_id,
+                    result.device_id,
+                    installed.id,
+                    generation,
+                    changed_fields,
+                )
                 continue
             recorder._record_desired_install(
                 db,

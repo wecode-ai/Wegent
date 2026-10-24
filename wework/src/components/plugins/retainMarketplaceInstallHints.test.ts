@@ -116,6 +116,15 @@ describe('retainMarketplaceInstallHints', () => {
     ])
   })
 
+  test('does not infer local presence from account installation hints', () => {
+    const previous = [
+      item({ installed: true, installedLocally: undefined, installedPluginId: 101 }),
+    ]
+    const next = [item({ installedPluginId: 101 })]
+
+    expect(retainMarketplaceInstallHints(previous, next)[0]?.installedLocally).toBe(false)
+  })
+
   test('does not revive an install after the row was cleared', () => {
     const previous = [item({ installed: false, installedPluginId: null })]
     const next = [item({ installed: false, installedPluginId: null })]

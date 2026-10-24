@@ -38,6 +38,15 @@ case "$url" in
   */artifacts/201/zip)
     while (($#)); do
       if [[ "$1" == "--output" ]]; then
+        if [[ "$TEST_CASE" == "transfer-failure" ]]; then
+          printf 'partial download\n' >"$2"
+          echo 'curl: (18) transfer closed with bytes remaining to read' >&2
+          exit 18
+        fi
+        if [[ "$TEST_CASE" == "corrupt-archive" ]]; then
+          printf 'invalid ZIP\n' >"$2"
+          exit 0
+        fi
         cp "$TEST_TEMP_DIR/artifact.zip" "$2"
         exit 0
       fi
@@ -72,7 +81,7 @@ TEST_CASE=queued ACTIONS_ARTIFACT_WAIT_SECONDS=5 \
   "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/queued-run"
 cmp "$temp_dir/fixture/wegent-executor" "$temp_dir/queued-run/wegent-executor"
 
-for failure_case in wrong-sha missing duplicate; do
+for failure_case in wrong-sha missing duplicate transfer-failure corrupt-archive; do
   export TEST_CASE="$failure_case"
   if "$script_dir/download-actions-artifact.sh" executor-e2e-binary "$temp_dir/rejected" >"$temp_dir/error" 2>&1; then
     echo "Downloader unexpectedly accepted $failure_case" >&2
@@ -83,6 +92,8 @@ for failure_case in wrong-sha missing duplicate; do
     wrong-sha) grep -Fq 'was not available' "$temp_dir/error" ;;
     missing) grep -Fq 'completed without artifact' "$temp_dir/error" ;;
     duplicate) grep -Fq 'Expected at most one active artifact' "$temp_dir/error" ;;
+    transfer-failure) grep -Fq 'transfer closed with bytes remaining' "$temp_dir/error" ;;
+    corrupt-archive) grep -Fq 'BadZipFile' "$temp_dir/error" ;;
   esac
 done
 

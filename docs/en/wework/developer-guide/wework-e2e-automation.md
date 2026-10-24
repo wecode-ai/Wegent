@@ -173,11 +173,18 @@ CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
 Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+Core uses 11 shards, with Windows sharing the same matrix, and Cloud uses 8.
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
-within a runner. The two Core benchmark shards and three Cloud account-auth and
-long-plugin-list shards remain separate. The concurrency limit must accommodate
+within a runner. The two Core benchmark shards, one Core permission deadline shard,
+and three Cloud account-auth and long-plugin-list shards remain separate.
+`permission-modes` owns shard 11: its serial production deadlines include ten minutes
+for URL authorization, five minutes for a form, and five minutes for concurrent input.
+Run `40071612969` measured Windows shard 3 at 27 minutes 26 seconds, including only
+58 seconds for the old permission scenario. Keeping the added waits there would put
+the projected load above its 40-minute step budget. The dedicated shard preserves
+all assertions and deadlines through the existing runner and CI matrix.
+The concurrency limit must accommodate
 the complete matrix in one scheduling wave; classifier regression tests enforce
 both the shard budget and this constraint. Shared runner capacity can still
 introduce external queueing.
@@ -189,7 +196,8 @@ Cleanup and diagnostic upload steps retain their existing cancellation handling.
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards
 consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
-was higher in the second sample. The final 18 shards remove 24 setup cycles.
+was higher in the second sample. That historical configuration used 18 shards,
+removing 24 setup cycles.
 
 Checkpoint timings from `39930854745` drive the final allocation: longest tasks
 start first and cumulative work is balanced, while CLI and Electron preparation
@@ -474,9 +482,17 @@ produce a fabricated failed-action result. E2E Electron logs retain loopback req
 network error codes without headers or query parameters. Windows failure artifacts include
 `windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
 to diagnose Winsock resource exhaustion.
+The reply-prediction restart scenario verifies the Executor executable and task workspace through Node filesystem APIs in the real Codex shell. Compare actual directories with `realpathSync` instead of comparing native Windows paths with POSIX `$PWD` strings. Retain the success-marker assertion; missing binaries, directories in place of binaries, and incorrect workspaces must fail.
+When starting a personal task from an Issue, await its in-progress update during task preparation after binding and before launching the Runtime. Updating status in the post-launch creation callback races with AI delivery creation and finalization, which advance the Issue version and can produce a 409 conflict. A rejected status update retains the existing error notice and independent personal task execution; deliveries must not advance the Issue status.
+Codex MCP tool approvals must use their independent elicitation channel (`features.tool_call_mcp_elicitation=true`). Disabling it routes tool approvals through ordinary `request_user_input`, whose single waiter per turn can be overwritten during concurrent calls, cancelling the ordinary question. Preserve the existing permission policy: only full-access mode automatically approves tool calls; ordinary questions and actual MCP business forms remain separate interactions.
+Refreshing task lists must preserve the skill catalog source when its workspace is unchanged. Depend on the actual directory and plugin API so sent skill labels do not degrade to raw references while reloading. After an autonomous continuation such as supervisor correction starts, reject prior-turn snapshots by observed turn identity, including the first completion snapshot of the previous turn. This protection must not depend on an already-recorded completion timestamp.
+During reload recovery, preserve the latest turn identity from the Executor snapshot even before an active turn is restored. History reporting `running=false` must not replace that identity with a different streaming turn: doing so makes the real continuation appear stale and prevents its background Goal completion from becoming unread. Recovery from history remains valid when no turn identity is known.
+A Goal resumed by the user can finish during model-overload backoff. Drain its queued native turn events through the final Goal completion, preserving intermediate continuations, rather than reporting cancellation merely because the recovery snapshot is no longer active. When the user completes the Goal without starting another turn, settle the old reader immediately; lost notifications or a closed connection must still report an error.
+Overload-reader unit fixtures must hold the same active-thread admission as production and force a capability revision change to verify that backoff preserves the existing process.
 Task-board bulk actions confirm that the blank conversation is active before each input;
 the editor node alone is insufficient. Goal restart fixtures observe one running task and
 one queued task before releasing the model response occupying the single execution slot.
+On Windows, normal Goal restart fixtures use the native quit menu and wait for process exit instead of simulating a normal shutdown with `taskkill /T /F`. Killing the process tree can terminate Codex first, which the surviving executor observes as an unexpected exit. Forced-exit scenarios continue to verify process cleanup separately.
 Work-list refreshes preserve the device owning an opened workspace so an earlier response
 cannot replace a newly selected cloud workspace.
 Workbench and conversation diagnostics share a 100ms publication scheduler. Continuous state updates must not cancel a pending publication, and each publication reads the latest state. Disabling diagnostics or unmounting cancels pending work so an inactive pane cannot overwrite the current snapshot. A failed conversation-title isolation assertion retains its assistant-count baseline and the title, lifecycle, and message summary from each poll.
@@ -541,15 +557,7 @@ On macOS, desktop E2E injects the test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` set
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Electron application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
-The hybrid Backend launcher gives Python Uvicorn a 2,400-second upstream HTTP
-keep-alive, longer than the workflow's longest 35-minute hybrid E2E job.
-`brz-http-gateway` 0.1.4 builds a hyper-util connection pool without installing
-its idle-connection timer. If Uvicorn expires an idle socket first, the gateway
-can reuse that upstream-closed connection and incorrectly return `502 fallback
-upstream unavailable`. Bounding the upstream lifetime beyond the job prevents
-that stale-socket window in this local hybrid launcher. The setting affects only
-the local Rust-to-Python fallback connection and does not disable keep-alive
-between external clients and the gateway.
+Both the main hybrid Backend launcher and the desktop cloud scenario's direct launcher must set Python Uvicorn's upstream HTTP keep-alive to 2,400 seconds. The upstream idle lifetime must exceed the gateway hyper-util pool's default 90-second retention period, preventing the upstream from closing a connection while the gateway sends a request on it. A real forwarding experiment with Uvicorn 0.38.0 and brz-http-gateway 0.2.11 reproduced the default five-second configuration as 502 SendRequest responses whose requests never reached Python. This setting only affects the local Rust-to-Python connection, preserving external client connection reuse.
 
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
 
@@ -835,6 +843,8 @@ Authenticated flows should create users and data through backend APIs before the
 
 During installation reconciliation, plugin install/update primary actions and update confirmation reflect the same pending state as their handlers. Healthy installed plugins without updates remain available for immediate use. `plugin-runtime-path-recovery` retains its update confirmation, real invocation, uninstall, and restart assertions.
 
+Clearing the plugin catalog cache also invalidates older reads still waiting for Executor startup. A controlled Promise regression fixes the startup/invalidation order and verifies that the old read neither starts further catalog RPCs nor rebuilds the cleared snapshot. Catalog `installedVersion` must come from an observed local version or an explicit local snapshot, never the account's declared version. Unknown local presence must not default to true because the account has installed the plugin. Regressions also preserve status reporting from genuine cached local packages.
+
 `voice-input` uses `clickWhenEnabled` for New Task on initial entry and after restart. Control-channel and telemetry-dialog readiness do not establish sidebar readiness. Preserve the shared 10-second action budget and all first-use setup, dialog dismissal, and post-restart assertions.
 
 xterm updates all accessible row contents before batching transform resets, width measurements, and transform writes. This avoids per-row forced layouts. The dependency patch covers source, CommonJS, and ESM; a regression uses real xterm to verify all row contents are updated before the first measurement. `background-terminals` retains native paging, history, and accessibility assertions, with CPU profiles available to inspect layout hotspots.
@@ -843,7 +853,7 @@ Transcript conversion updates `runtimeStatus` together with the current message'
 
 Smart app verification sets `NPM_CONFIG_WORKSPACE_DIR` to the project itself and disables implicit dependency installation before scripts. Typechecking, tests, builds, and runtime probes still execute. Verification must not read or install the containing host workspace. Real pnpm regressions cover a conflicting host package-manager version and prevent creation of its lockfile.
 
-Desktop artifacts restore through `actions/download-artifact@v6`, including the upstream fix that rejects the pending promise on stream timeout instead of exiting successfully with a partial directory. See the [artifact SDK timeout fix](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc). Windows network-failure diagnostics retain connection states, dynamic/excluded port ranges, socket-exhaustion events, and memory-pool counters without process command lines or credentials.
+Linux desktop artifacts restore through `actions/download-artifact@v6`, including the upstream fix that rejects the pending promise on stream timeout instead of exiting successfully with a partial directory. See the [artifact SDK timeout fix](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc). Windows application and Redis artifacts reuse `download-actions-artifact.sh`, which downloads the complete ZIP before extracting it locally with `uv run --no-project python`. This separates extraction backpressure from the downloader's chunk timeout. The script logs download and extraction completion separately; transfer failures and corrupt ZIPs fail the job. Windows network-failure diagnostics retain connection states, dynamic/excluded port ranges, socket-exhaustion events, and memory-pool counters without process command lines or credentials.
 
 Stand-in completion can arrive before the runtime unread flag. A new completion after observation starts must remain unread, and delivery must consult the current read ledger rather than consume it as restored history. Persist delivery records once per batch before sending alerts. Regressions cover late unread updates, no replay after reload, and a single delivery-ledger write for 1,000 records.
 

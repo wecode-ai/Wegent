@@ -75,6 +75,31 @@ test('wegent cloud catalog rows inherit local wegent installs without marketplac
   ])
   installed.metadata.namespace = 'wework-personal'
   installed.spec.source.marketplace = 'wework-personal'
+  const accountOnly = {
+    ...installed,
+    spec: {
+      ...installed.spec,
+      pluginId: Number(item.id),
+      version: item.version,
+      sourcePayload: null,
+    },
+  }
+  for (const previous of [
+    item,
+    {
+      ...item,
+      installed: true,
+      enabled: true,
+      installedLocally: false,
+      installedVersion: item.version,
+    },
+  ]) {
+    expect(applyInstalledPluginsToMarketplaceItems([previous], [accountOnly])[0]).toMatchObject({
+      installedLocally: false,
+      installedVersion: null,
+    })
+  }
+
   installed.spec.source.providerKey = 'wework-personal'
   installed.spec.sourcePayload = { marketplaceName: 'wework-personal', cloudPluginId: item.id }
   expect(applyInstalledPluginsToMarketplaceItems([item], [installed])[0]).toMatchObject({

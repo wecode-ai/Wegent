@@ -68,8 +68,8 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
-const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
-    "features.tool_call_mcp_elicitation=false";
+const CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
+    "features.tool_call_mcp_elicitation=true";
 const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
 const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
@@ -2450,7 +2450,15 @@ async fn read_shared_turn_notifications(
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
     let mut overload_recovery = overload_recovery::OverloadRecovery::default();
+    let mut draining_completed_goal = false;
     loop {
+        // The Goal snapshot response follows earlier notifications on this reader.
+        // An empty queue without a new turn means the user completed the Goal.
+        if draining_completed_goal && notification_rx.is_empty() && !notification_rx.is_closed() {
+            return Ok(ExecutionOutcome::Cancelled {
+                message: "Goal changed during model overload recovery".to_owned(),
+            });
+        }
         let receive_notification = async {
             if let Some(cancel_rx) = options.cancellation.as_mut() {
                 tokio::select! {
@@ -2537,14 +2545,15 @@ async fn read_shared_turn_notifications(
         let executor_shutdown_requested =
             matches!(received, Err(broadcast::error::RecvError::Closed))
                 && client.state.lock().await.executor_shutdown_requested;
-        let notification = shared_notification_result(
-            received,
-            last_outcome.clone(),
-            executor_shutdown_requested,
-        )?;
+        let notification = shared_notification_result(received, executor_shutdown_requested)?;
         let mut message = match notification {
             SharedNotification::Message(message) => message,
             SharedNotification::Lagged(skipped) => {
+                if draining_completed_goal {
+                    return Err(format!(
+                        "Goal completion notifications were lost during overload recovery: {skipped}"
+                    ));
+                }
                 log_executor_event(
                     "codex shared notification stream recovered from lag",
                     &[
@@ -2554,16 +2563,10 @@ async fn read_shared_turn_notifications(
                 );
                 continue;
             }
-            SharedNotification::Completed(outcome) => {
-                if cancellation_requested {
-                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
-                }
-                return Ok(outcome);
-            }
         };
         if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
-            if let Some(outcome) = last_outcome {
-                return Ok(outcome);
+            if client.state.lock().await.executor_shutdown_requested {
+                return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
             }
             return Err(message
                 .get("params")
@@ -2591,6 +2594,7 @@ async fn read_shared_turn_notifications(
             state,
         );
         if let Some((turn_id, source)) = active_turn_update {
+            draining_completed_goal = false;
             if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
                 log_executor_event(
                     "codex shared active turn corrected",
@@ -2710,14 +2714,20 @@ async fn read_shared_turn_notifications(
                             thread_id,
                             &response,
                         );
-                        if !restarted && !state.goal_is_active() {
+                        let goal_completed =
+                            state.goal_status_snapshot().1.as_deref() == Some("complete");
+                        draining_completed_goal = !restarted && goal_completed;
+                        if !restarted && !state.goal_is_active() && !goal_completed {
                             return Ok(ExecutionOutcome::Cancelled {
                                 message: "Goal changed during model overload recovery".to_owned(),
                             });
                         }
+                        // A resumed Goal can finish during backoff. Its native turn
+                        // notifications are still queued and own the final outcome.
                         // Activating an idle Goal starts its native continuation.
                         // Do not race it with a second turn/start request.
-                        options.wait_for_goal_continuation = state.goal_is_active();
+                        options.wait_for_goal_continuation =
+                            state.goal_is_active() || goal_completed;
                     } else {
                         options.active_turn_id = turn_start_response_id(&response);
                     }
@@ -2979,12 +2989,10 @@ fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunStat
 enum SharedNotification {
     Message(CodexNotification),
     Lagged(u64),
-    Completed(ExecutionOutcome),
 }
 
 fn shared_notification_result(
     result: Result<CodexNotification, broadcast::error::RecvError>,
-    last_outcome: Option<ExecutionOutcome>,
     executor_shutdown_requested: bool,
 ) -> Result<SharedNotification, String> {
     match result {
@@ -2992,16 +3000,11 @@ fn shared_notification_result(
         Err(broadcast::error::RecvError::Lagged(skipped)) => {
             Ok(SharedNotification::Lagged(skipped))
         }
-        Err(broadcast::error::RecvError::Closed) => last_outcome
-            .map(SharedNotification::Completed)
-            .ok_or_else(|| {
-                if executor_shutdown_requested {
-                    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
-                } else {
-                    "codex app-server notification stream closed before completing the turn"
-                        .to_owned()
-                }
-            }),
+        Err(broadcast::error::RecvError::Closed) => Err(if executor_shutdown_requested {
+            CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
+        } else {
+            "codex app-server notification stream closed before completing the turn".to_owned()
+        }),
     }
 }
 
@@ -4136,7 +4139,7 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
-    overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
     overrides.push(format!(
@@ -6961,6 +6964,9 @@ fn extract_text(item: &Value) -> Option<String> {
         Some(text)
     }
 }
+
+#[cfg(test)]
+mod goal_process_exit_tests;
 
 #[cfg(test)]
 #[path = "codex/tests.rs"]

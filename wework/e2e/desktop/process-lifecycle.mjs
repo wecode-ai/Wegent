@@ -35,7 +35,7 @@ function withTimeout(promise, timeoutMs, message) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout))
 }
 
-function waitForProcessExit(child, timeoutMs) {
+export function waitForProcessExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return withTimeout(
     new Promise(resolvePromise => {

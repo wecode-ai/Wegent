@@ -139,15 +139,15 @@ Also keep:
 
 ```toml
 [features]
-tool_call_mcp_elicitation = false
+tool_call_mcp_elicitation = true
 ```
 
 These switches control different behavior:
 
 - `approvalPolicy.granular.mcp_elicitations: true` allows plugin business forms to be forwarded from the MCP runtime to the Wework UI.
 - `mcp_servers.<name>.default_tools_approval_mode = "approve"` makes normal MCP tool calls not require approval cards.
-- `features.tool_call_mcp_elicitation: false` only means Codex should not wrap tool-call approval cards as MCP elicitation forms. If the tool approval mode still requires approval, Codex sends a normal `item/tool/requestUserInput` request whose question ID is `mcp_tool_call_approval_<call-id>`.
-- Full access mode automatically accepts MCP elicitations marked with `_meta.codex_approval_kind = "mcp_tool_call"` and the `requestUserInput` compatibility approval above, while continuing to forward ordinary user questions and plugin business forms.
+- `features.tool_call_mcp_elicitation: true` gives tool approvals their independent MCP elicitation channel and distinguishes them from business forms through `_meta.codex_approval_kind`. Disabling it routes approvals through ordinary `item/tool/requestUserInput`, which can overwrite the single ordinary-question waiter during concurrent calls; that mode cannot support concurrent interactions.
+- Full access mode automatically accepts MCP elicitations marked with `_meta.codex_approval_kind = "mcp_tool_call"` and legacy `requestUserInput` approvals, while continuing to forward ordinary user questions and plugin business forms.
 
 ## Implementation Boundary
 
@@ -163,7 +163,7 @@ Keep these boundaries when supporting plugin forms so existing approval behavior
 Code-level boundaries:
 
 - Codex thread/turn params use granular approval policy and only enable `mcp_elicitations`.
-- `features.tool_call_mcp_elicitation=false` prevents normal MCP tool approval from being wrapped as a business form.
+- `features.tool_call_mcp_elicitation=true` separates MCP tool approvals from ordinary questions; approval metadata distinguishes them from business forms.
 - Request/bot MCP config defaults to `default_tools_approval_mode = "approve"`, with explicit `prompt` taking precedence.
 - Full access recognizes an MCP elicitation with `_meta.codex_approval_kind = "mcp_tool_call"` or a `requestUserInput` containing exactly one `mcp_tool_call_approval_<call-id>` question. It returns the corresponding `accept` or `Allow` response without forwarding that approval event to the chat UI.
 - `mcp_servers.wegent_apps` is the Wework Connector Apps built-in persistent server, so Wework writes it and refreshes it during configure/app sync with the same default `approve` behavior.

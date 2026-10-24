@@ -97,7 +97,7 @@ export function createDesktopScenario(options) {
       }
       let address
       try {
-        for (const action of ['continue', 'resume', 'paused', 'clear']) {
+        for (const action of ['continue', 'resume', 'paused', 'complete', 'clear']) {
           const continuing = action === 'continue' || action === 'resume'
           reset()
           await control.command('click', '[data-testid="new-chat-button"]')

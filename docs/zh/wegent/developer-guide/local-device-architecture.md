@@ -106,6 +106,8 @@ Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENA
 
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
+`WEGENT_PLUGIN_RUNTIME_TARGET` 由默认插件 Store 入口读取，供应用选择 Codex 单运行时。显式构造的 `GlobalCapabilityStore` 默认管理两种运行时，需要 Codex 单运行时的调用方显式设置该选项，避免注入的独立目录受到宿主环境影响。
+
 续聊保留任务 ID，但每轮使用新的子任务 ID，以刷新 MCP 上下文并区分消息。会话读取和续聊使用首次执行所属的原生 Home；不同 Home 的 Codex 查询进程互相隔离，历史刷新只读且不恢复会话，以免占用下一轮执行所需的写锁；续轮保存用户及 Team 身份但不保存凭据。后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
 
 同名 Home 的复用不再要求后端 URL、Team ID、Bot ID 或 Shell 类型与旧标记一致；任务绑定和会话仍保留。任务技能查询要求认证用户 ID 和已记录的任务绑定匹配，但不使用后端 URL 作为身份。因此，共享工作台根目录不会隔离用户和任务 ID 重叠的独立后端；支持这种隔离需要由认证协议提供稳定后端身份。
@@ -137,6 +139,8 @@ Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup
 如果用户在普通回合仍运行时创建目标，Wework 会保留该目标请求，等待当前回合明确结束后以 `initialGoal` 启动新的目标回合。active goal 会让任务继续显示为运行中，但不能阻止这次已排队的目标接力；普通排队消息仍然只能在任务真正空闲时发送。executor 只在目标已经于回合开始前处于 active 状态时等待 Codex 自动续轮；若目标是在普通回合中途创建，当前执行必须先正常收敛，让 Wework 能够启动排队的目标回合。该边界避免前端等待任务空闲、executor 同时等待并不存在的自动续轮所形成的死锁。
 
 为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
+
+Codex 进程退出或通知流关闭时，不得把 Goal 上一轮的完成结果用于结束当前执行。executor 正常关闭应保留中断标记和待恢复记录；非预期的 Codex 退出应报告错误，不能投影为成功或删除尚未完成的 Goal。
 
 恢复后的 Goal turn 使用新的原生 turn 身份，不得复用已持久化请求中的 `clientUserMessageId`、用户消息展示绑定或生成用户消息标记。原用户消息与原 turn 的映射保持不变；该规则同样适用于需要用户操作后的原生 Goal 恢复。
 
