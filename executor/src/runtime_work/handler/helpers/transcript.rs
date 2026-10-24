@@ -552,10 +552,11 @@ fn transcript_navigation_from_codex_turns(navigation: CodexTranscriptNavigation)
             json!({
                 "id": entry.turn_id,
                 "turnId": entry.turn_id,
+                "userMessageId": entry.user_message_id,
                 "turnIndex": turn_index,
                 "messageIndex": turn_index,
-                "promptPreview": "",
-                "responsePreview": "",
+                "promptPreview": truncate_navigation_preview(&entry.prompt_preview),
+                "responsePreview": truncate_navigation_preview(&entry.response_preview),
                 "cursor": entry.cursor,
             })
         })
