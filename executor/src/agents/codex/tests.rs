@@ -65,7 +65,7 @@ fn stand_in_confirmation_covers_mcp_servers_in_default_and_named_homes() {
         let request: ExecutionRequest = serde_json::from_value(json!({
             "user_name":"synthetic", "team_namespace":"default", "team_name":"review",
             "team_id":team_id, "bot":[{"id":31,"shell_type":"Codex"}],
-            "origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true}
+            "origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true,"userId":7,"deviceId":"mac","standInId":"default","workId":"work"}
         }))
         .unwrap();
         let home =
@@ -89,6 +89,9 @@ approval_mode = "approve"
         assert!(config
             .config_overrides
             .contains(&"mcp_servers.home_only.tools.send.approval_mode=\"writes\"".into()));
+        assert!(!config
+            .config_overrides
+            .contains(&"mcp_servers.home_only.enabled=false".into()));
     }
 }
 
@@ -5590,6 +5593,28 @@ fn stand_in_mcp_elicitation_confirmation_removes_persistent_approval() {
         payload["questions"][0]["options"].as_array().unwrap().len(),
         2
     );
+}
+
+#[test]
+fn source_content_safety_applies_to_each_tool_enabled_thread_entry() {
+    for origin in [
+        json!({"type":"dingtalk_work"}),
+        json!({"type":"issue_dispatch"}),
+        json!({"type":"stand_in_identity"}),
+        Value::Null,
+    ] {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin);
+        let launch = CodexLaunchConfig::default();
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_resume_params("thread-1", &request, &launch),
+            thread_fork_params("thread-1", None, &request, &launch),
+        ] {
+            let instructions = params["developerInstructions"].as_str().unwrap();
+            assert!(instructions.contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+        }
+    }
 }
 
 #[test]

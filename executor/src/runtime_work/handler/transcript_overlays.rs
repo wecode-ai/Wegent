@@ -3,7 +3,7 @@
 
 use super::*;
 
-// Codex owns historical text/order; Executor owns live commands and user-input answers.
+// Codex owns historical text/order; Executor owns live commands, answers and approval evidence.
 pub(super) fn runtime_transcript_overlay_turns(
     link: &RuntimeTaskLink,
     native_turns: &[Value],
@@ -36,13 +36,16 @@ fn runtime_transcript_overlay_messages(
         .filter_map(|mut message| {
             let source = message["runtimeItems"].as_array()?;
             let turn_id = message["turnId"].as_str().unwrap_or_default();
-            let is_page_interaction = |item: &Value| {
-                page_turns.contains(turn_id) && is_runtime_user_interaction(item, turn_id)
+            let is_page_overlay = |item: &Value| {
+                page_turns.contains(turn_id)
+                    && (is_runtime_user_interaction(item, turn_id)
+                        || (item["type"] == "block"
+                            && item["block"]["tool_name"] == "auto_approval_review"))
             };
             if message["role"] != "assistant"
                 || !source
                     .iter()
-                    .any(|item| is_running_runtime_command(item) || is_page_interaction(item))
+                    .any(|item| is_running_runtime_command(item) || is_page_overlay(item))
             {
                 return None;
             }
@@ -53,7 +56,7 @@ fn runtime_transcript_overlay_messages(
                         .as_str()
                         .and_then(|id| native_items.get(&(turn_id, id)))
                         .copied();
-                    if is_page_interaction(item)
+                    if is_page_overlay(item)
                         || (is_running_runtime_command(item)
                             && !native.is_some_and(|native| {
                                 matches!(

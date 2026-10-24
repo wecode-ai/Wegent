@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
@@ -75,14 +75,14 @@ it('limits manual message moves to this role and sends the durable record ID', a
   const item = work()
   const target = work('target')
   const otherRole = { ...work('other-role'), roleId: 'other' }
-  const adjustMessage = vi.fn(async () => target)
+  const organizeWork = vi.fn().mockResolvedValueOnce(target).mockResolvedValueOnce(item)
   const api = {
-    adjustMessage,
+    organizeWork,
     workMessages: vi.fn(async () => ({ messages: [item.latestMessage] })),
   } as unknown as StandInExecutorApi
   render(
     <StandInWorkList
-      items={[inboxRuntimeItem(item, 'device')]}
+      items={[item, target, otherRole].map(value => inboxRuntimeItem(value, 'device'))}
       inbox={[item, target, otherRole]}
       api={api}
       userId={7}
@@ -91,10 +91,82 @@ it('limits manual message moves to this role and sends the durable record ID', a
   )
   await user.click(screen.getByTestId('stand-in-activity-task-work'))
   await user.click(screen.getByTestId('stand-in-work-messages-toggle'))
-  const select = await screen.findByTestId('stand-in-message-move-message')
-  expect(select.querySelector('option[value="other-role"]')).toBeNull()
-  await user.selectOptions(select, 'target')
-  expect(adjustMessage).toHaveBeenCalledWith(7, 'device', 'work', 'record', 'target')
+  await user.click(await screen.findByTestId('stand-in-message-move-message'))
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-activity-task-other-role'))
+  expect(organizeWork).not.toHaveBeenCalled()
+  await user.click(screen.getByTestId('stand-in-activity-task-target'))
+  await screen.findByTestId('stand-in-organization-done')
+  expect(organizeWork).toHaveBeenCalledWith(7, 'device', 'work', ['record'], 'target')
+  await user.click(screen.getByTestId('stand-in-organization-undo'))
+  await waitFor(() =>
+    expect(organizeWork).toHaveBeenLastCalledWith(7, 'device', 'target', ['record'], 'work')
+  )
+})
+
+it('merges complete work through a direct drop in one atomic request', async () => {
+  const source = work()
+  const target = work('target')
+  const organizeWork = vi.fn(async () => target)
+  const api = {
+    organizeWork,
+    workMessages: vi.fn(async () => ({
+      messages: [source.latestMessage, { ...source.latestMessage, recordId: 'second' }],
+    })),
+  } as unknown as StandInExecutorApi
+  render(
+    <StandInWorkList
+      items={[source, target].map(value => inboxRuntimeItem(value, 'device'))}
+      inbox={[source, target]}
+      api={api}
+      userId={7}
+      deviceId="device"
+    />
+  )
+  const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' }
+  fireEvent.dragStart(screen.getByTestId('stand-in-activity-task-work'), { dataTransfer })
+  fireEvent.dragOver(screen.getByTestId('stand-in-activity-task-target'), { dataTransfer })
+  expect(screen.getByTestId('stand-in-activity-task-target')).toHaveTextContent('松开')
+  fireEvent.drop(screen.getByTestId('stand-in-activity-task-target'), { dataTransfer })
+  await waitFor(() =>
+    expect(organizeWork).toHaveBeenCalledExactlyOnceWith(
+      7,
+      'device',
+      'work',
+      ['record', 'second'],
+      'target'
+    )
+  )
+})
+
+it('splits a message directly with an accessible button and offers undo', async () => {
+  const user = userEvent.setup()
+  const source = { ...work(), messageCount: 2 }
+  const separated = work('separated')
+  const organizeWork = vi.fn(async () => separated)
+  const api = {
+    organizeWork,
+    workMessages: vi.fn(async () => ({
+      messages: [
+        source.latestMessage,
+        { ...source.latestMessage, id: 'second', recordId: 'second' },
+      ],
+    })),
+  } as unknown as StandInExecutorApi
+  render(
+    <StandInWorkList
+      items={[inboxRuntimeItem(source, 'device')]}
+      inbox={[source]}
+      api={api}
+      userId={7}
+      deviceId="device"
+    />
+  )
+  await user.click(screen.getByTestId('stand-in-activity-task-work'))
+  await user.click(screen.getByTestId('stand-in-work-split'))
+  await user.click(await screen.findByTestId('stand-in-message-split-message'))
+  await screen.findByTestId('stand-in-organization-done')
+  expect(organizeWork).toHaveBeenCalledExactlyOnceWith(7, 'device', 'work', ['record'], undefined)
 })
 
 it('supports an empty original association after its last message moves elsewhere', () => {
@@ -117,4 +189,10 @@ it('keeps authoritative turn completion when inbox task metadata still says acti
     task: { ...runtimeItem.task, status: 'active', running: false },
   }
   expect(standInState(inboxRuntimeItem(stale, 'device', current)).status).toBe('completed')
+})
+
+it('projects completed history without a runtime task as completed', () => {
+  expect(standInState(inboxRuntimeItem({ ...work(), status: 'sent' }, 'device')).status).toBe(
+    'completed'
+  )
 })

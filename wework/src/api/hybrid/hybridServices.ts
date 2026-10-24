@@ -1682,6 +1682,15 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async memories(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
+      },
+      async saveMemory(userId, deviceId, memory) {
+        return (await standInApiForDevice(deviceId)).saveMemory(userId, deviceId, memory)
+      },
+      async deleteMemory(userId, deviceId, id, version) {
+        return (await standInApiForDevice(deviceId)).deleteMemory(userId, deviceId, id, version)
+      },
       async inbox(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).inbox(userId, deviceId)
       },
@@ -1690,6 +1699,15 @@ export function createHybridWorkbenchServices(
       },
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
+      },
+      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId) {
+        return (await standInApiForDevice(deviceId)).organizeWork(
+          userId,
+          deviceId,
+          workId,
+          messageIds,
+          targetWorkId
+        )
       },
       async adjustMessage(userId, deviceId, workId, messageId, targetWorkId) {
         return (await standInApiForDevice(deviceId)).adjustMessage(

@@ -13,7 +13,7 @@ export function inboxRuntimeItem(
       title: work.title,
       runtime: 'codex' as const,
       workspacePath: '',
-      status: 'pending',
+      status: work.status === 'sent' ? 'done' : 'pending',
       running: false,
       updatedAt: work.updatedAt,
     }

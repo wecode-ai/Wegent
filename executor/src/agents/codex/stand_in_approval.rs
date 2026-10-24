@@ -3,7 +3,7 @@ use super::{config_override_entry, toml_json_value, toml_key_path, toml_value, E
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fs, path::Path};
 
-fn read_home_mcp_config(home: &Path) -> Result<Value, String> {
+pub(super) fn read_home_mcp_config(home: &Path) -> Result<Value, String> {
     let path = home.join("config.toml");
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
@@ -55,7 +55,11 @@ pub(super) fn stand_in_mcp_approval_overrides(
     }
     let mut result = Vec::new();
     for (name, tools) in servers {
-        let mode = if name == crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
+        let mode = if super::external_work::applies(request)
+            && !crate::runtime_work::stand_in_requires_confirmation(request)
+        {
+            "prompt"
+        } else if name == crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
             && request
                 .extra
                 .get("origin")

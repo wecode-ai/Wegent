@@ -328,9 +328,11 @@ impl LocalTaskStore {
         }
         let roles = value["roles"]
             .as_array()
-            .filter(|roles| !roles.is_empty() && roles.len() <= 100)
+            .filter(|roles| roles.len() <= 100)
             .ok_or_else(|| {
-                TaskRuntimeError::Invalid("at least one personal role is required".into())
+                TaskRuntimeError::Invalid(
+                    "personal roles must be an array of at most 100 roles".into(),
+                )
             })?;
         if value["autoSelect"].as_bool().is_none() || value["executionDeviceId"] != device {
             return Err(TaskRuntimeError::Invalid(
@@ -427,7 +429,7 @@ impl LocalTaskStore {
 }
 
 fn stamp_dingtalk_connections(identity: &mut Value, previous: &Value) {
-    let enabled = identity["enabled"] == true && previous["enabled"] == true;
+    let preserve = identity["enabled"] == previous["enabled"];
     for source in identity
         .get_mut("dingtalk")
         .and_then(Value::as_array_mut)
@@ -442,7 +444,7 @@ fn stamp_dingtalk_connections(identity: &mut Value, previous: &Value) {
             })
         });
         source["enabledAfter"] = before
-            .filter(|_| enabled)
+            .filter(|_| preserve)
             .and_then(|source| source.get("enabledAfter"))
             .cloned()
             .unwrap_or_else(|| json!(now()));
@@ -450,10 +452,8 @@ fn stamp_dingtalk_connections(identity: &mut Value, previous: &Value) {
 }
 
 fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
-    identity["enabledAfter"] = if previous["enabled"] == true
-        && identity["enabled"] == true
-        && previous["collaboration"]["enabled"] == true
-        && identity["collaboration"]["enabled"] == true
+    identity["enabledAfter"] = if identity["enabled"] == previous["enabled"]
+        && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"]
     {
         previous["enabledAfter"]
             .as_str()

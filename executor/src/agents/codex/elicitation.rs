@@ -27,13 +27,21 @@ pub(super) fn timeout_for(params: &Value) -> Duration {
 
 /// Adds a single deadline before forwarding a request to both UI and response handling.
 pub(super) fn prepare(message: &mut Value) {
-    if message["method"] != "mcpServer/elicitation/request" {
+    if message["method"] != "mcpServer/elicitation/request"
+        && !message["method"]
+            .as_str()
+            .is_some_and(super::is_codex_approval_request_method)
+    {
         return;
     }
     let deadline = now_ms().saturating_add(timeout_for(message_params(message)).as_millis() as u64);
     if let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) {
-        params.insert("expiresAtUnixMs".to_owned(), json!(deadline));
-        params.insert("interactionStatus".to_owned(), json!("pending"));
+        params
+            .entry("expiresAtUnixMs")
+            .or_insert_with(|| json!(deadline));
+        params
+            .entry("interactionStatus")
+            .or_insert_with(|| json!("pending"));
     }
     log_event("codex mcp elicitation request received", message);
 }

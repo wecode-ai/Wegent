@@ -22,7 +22,9 @@ export interface StandInProjectPolicy extends StandInProjectRef {
   policy: StandInHandlingPolicy
 }
 
-export interface StandInIdentity {
+export interface StandInIdentity extends Partial<
+  Pick<WorkspaceStandInSettings, 'model' | 'modelOptions' | 'workspace'>
+> {
   enabled: boolean
   prompt: string
   preferences: string

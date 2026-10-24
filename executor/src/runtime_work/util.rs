@@ -254,6 +254,8 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
     if runtime_handle["origin"]["initiatedBy"] == "stand_in"
         || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
+        || runtime_handle["origin"]["type"] == "issue_dispatch"
+        || runtime_handle["origin"]["type"] == "dingtalk_work"
     {
         let mut origin = runtime_handle["origin"].clone();
         if request
@@ -275,6 +277,23 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
         .cloned()
     {
         request.extra.insert("origin".to_owned(), origin);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExternalWorkKind {
+    Message,
+    Project,
+}
+
+pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
+    let origin = request.extra.get("origin")?;
+    if origin["type"] == "dingtalk_work" {
+        Some(ExternalWorkKind::Message)
+    } else if origin["type"] == "issue_dispatch" {
+        Some(ExternalWorkKind::Project)
+    } else {
+        None
     }
 }
 
@@ -506,6 +525,7 @@ pub(crate) fn is_codex_tool_item_type(item_type: &str) -> bool {
     matches!(
         item_type,
         "commandexecution"
+            | "autoapprovalreview"
             | "shellcall"
             | "localshellcall"
             | "functioncall"

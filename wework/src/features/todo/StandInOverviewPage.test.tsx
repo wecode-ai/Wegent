@@ -30,7 +30,9 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
     ] as CollaborationProject[],
     services: {
       getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
+      modelApi: { listModels: async () => ({ data: [] }) },
       standInApi: {
+        catalog: async () => ({ models: [] }),
         personalGet: vi.fn(async () => ({
           userId: 7,
           executionDeviceId: 'device',

@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, type ComponentProps } from 'react'
-import { MessageSquare, Plus, Settings } from 'lucide-react'
+import { Brain, MessageSquare, Plus, Settings } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { StandInIcon } from '@wegent/collaboration'
 import {
@@ -17,6 +17,7 @@ import { StandInSettingsPage } from './StandInSettingsPage'
 import { StandInConversation } from './StandInConversation'
 import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
+import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInProposalCard } from './StandInProposalCard'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
@@ -38,7 +39,7 @@ export function StandInOverviewPage({
   const state = usePersonalStandIn(props.services, props.userId, props.initialDeviceId, false)
   const [roleId, setRoleId] = useState<string>()
   const [chatting, setChatting] = useState(false)
-  const [profile, setProfile] = useState<'primary' | 'role' | 'create' | null>(
+  const [profile, setProfile] = useState<'primary' | 'role' | 'create' | 'memory' | null>(
     initialPrimaryProfile ? 'primary' : null
   )
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
@@ -216,12 +217,25 @@ export function StandInOverviewPage({
               {t(
                 conversation
                   ? 'standIn.workspace.work_list'
-                  : role
-                    ? 'standIn.workspace.role_chat'
-                    : 'standIn.title'
+                  : proposal && (proposal.roleId ?? undefined) === roleId
+                    ? 'standIn.workspace.review_pending_changes'
+                    : role
+                      ? 'standIn.workspace.role_chat'
+                      : 'standIn.title'
               )}
             </button>
           }
+          {api && saved && (
+            <button
+              type="button"
+              data-testid="stand-in-memory-open"
+              onClick={() => setProfile('memory')}
+              className="inline-flex min-h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted"
+            >
+              <Brain className="h-4 w-4" />
+              {t('standIn.memory.title')}
+            </button>
+          )}
           <button
             type="button"
             data-testid="stand-in-settings-open"
@@ -250,27 +264,6 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {proposal && (proposal.roleId ?? undefined) === roleId && state.saved && (
-              <StandInProposalCard
-                proposal={proposal}
-                projects={props.projects}
-                current={state.saved}
-                busy={resolving}
-                onResolve={async accept => {
-                  if (!api || !deviceId) return
-                  setResolving(true)
-                  try {
-                    await api.resolveProposal(props.userId, deviceId, proposal.id, accept)
-                    setProposal(null)
-                    reload()
-                  } catch (cause) {
-                    setProposalError(String(cause))
-                  } finally {
-                    setResolving(false)
-                  }
-                }}
-              />
-            )}
             {(proposalError || inbox.error) && (
               <p role="alert" className="px-5 py-2 text-sm text-error">
                 {proposalError || inbox.error}
@@ -330,6 +323,29 @@ export function StandInOverviewPage({
                 userId={props.userId}
                 deviceId={deviceId}
                 roleId={roleId}
+                pendingConfiguration={
+                  proposal && (proposal.roleId ?? undefined) === roleId && state.saved ? (
+                    <StandInProposalCard
+                      proposal={proposal}
+                      projects={props.projects}
+                      current={state.saved}
+                      busy={resolving}
+                      onResolve={async accept => {
+                        if (!api || !deviceId) return
+                        setResolving(true)
+                        try {
+                          await api.resolveProposal(props.userId, deviceId, proposal.id, accept)
+                          setProposal(null)
+                          reload()
+                        } catch (cause) {
+                          setProposalError(String(cause))
+                        } finally {
+                          setResolving(false)
+                        }
+                      }}
+                    />
+                  ) : null
+                }
                 onOpenTask={onOpenTask}
               />
             ) : (
@@ -354,17 +370,30 @@ export function StandInOverviewPage({
                 role="dialog"
                 aria-modal="true"
                 aria-label={t(
-                  profile === 'primary'
-                    ? 'standIn.workspace.primary_profile'
-                    : 'standIn.workspace.role_profile'
+                  profile === 'memory'
+                    ? 'standIn.memory.title'
+                    : profile === 'primary'
+                      ? 'standIn.workspace.primary_profile'
+                      : 'standIn.workspace.role_profile'
                 )}
                 data-testid="stand-in-profile-panel"
                 className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
               >
-                {profile === 'primary' && state.draft ? (
+                {profile === 'memory' && api && saved ? (
+                  <StandInMemoryPanel
+                    key={saved.executionDeviceId}
+                    api={api}
+                    settings={saved}
+                    onClose={() => setProfile(null)}
+                  />
+                ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
+                    key={state.draft.executionDeviceId}
                     settings={state.draft}
-                    saving={state.saving}
+                    saving={state.saving || state.loading}
+                    services={props.services}
+                    devices={props.devices}
+                    onSelectDevice={state.setDeviceId}
                     onClose={() => {
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()
@@ -385,6 +414,12 @@ export function StandInOverviewPage({
                     {...props}
                     initialProfileId={roleId}
                     initialCreate={profile === 'create'}
+                    onDeleted={() => {
+                      setRoleId(undefined)
+                      setChatting(false)
+                      reload()
+                      setProfile(null)
+                    }}
                     onCancel={() => setProfile(null)}
                     onSaved={() => {
                       reload()

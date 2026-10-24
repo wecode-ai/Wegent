@@ -48,6 +48,22 @@ export interface StandInProposal {
   status: 'pending' | 'accepted' | 'rejected'
 }
 
+export type StandInMemoryScope =
+  | { kind: 'personal' }
+  | { kind: 'role'; roleId: string }
+  | { kind: 'project'; id: string; store: 'local' | 'cloud' }
+  | { kind: 'dingtalk'; id: string; profile: string; conversationKind: 'group' | 'direct' }
+
+export interface StandInMemory {
+  id: string
+  content: string
+  scope: StandInMemoryScope
+  version: number
+  createdAt: string
+  updatedAt: string
+  sourceTaskId?: string | null
+}
+
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
 export type StandInProjectSettings = WorkspaceStandInSettings & {
@@ -56,6 +72,20 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   userId: number
 }
 export interface StandInExecutorApi {
+  organizeWork(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    messageIds: string[],
+    targetWorkId?: string
+  ): Promise<StandInInboxWork>
+  memories(userId: number, deviceId: string): Promise<StandInMemory[]>
+  saveMemory(
+    userId: number,
+    deviceId: string,
+    memory: Pick<StandInMemory, 'content' | 'scope'> & Partial<StandInMemory>
+  ): Promise<StandInMemory>
+  deleteMemory(userId: number, deviceId: string, id: string, version: number): Promise<void>
   inbox(
     userId: number,
     deviceId: string
@@ -148,11 +178,30 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    memories: async (userId, deviceId) =>
+      (
+        await request<{ items: StandInMemory[] }>(
+          'runtime.stand_in.memory.list',
+          { userId },
+          deviceId
+        )
+      ).items,
+    saveMemory: (userId, deviceId, memory) =>
+      request('runtime.stand_in.memory.save', { userId, memory }, deviceId),
+    deleteMemory: async (userId, deviceId, id, version) => {
+      await request('runtime.stand_in.memory.delete', { userId, id, version }, deviceId)
+    },
     inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
     runWork: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.run', { userId, workId }, deviceId),
+    organizeWork: (userId, deviceId, workId, messageIds, targetWorkId) =>
+      request(
+        'runtime.stand_in.work.organize',
+        { userId, workId, messageIds, targetWorkId },
+        deviceId
+      ),
     adjustMessage: (userId, deviceId, workId, messageId, targetWorkId) =>
       request(
         'runtime.stand_in.work.adjust',

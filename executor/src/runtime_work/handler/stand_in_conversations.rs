@@ -66,17 +66,22 @@ impl RuntimeWorkRpcHandler {
             .and_then(|role| role["name"].as_str())
             .filter(|name| !name.is_empty())
             .unwrap_or("我的分身");
-        let instructions = format!(
-            "You are the user's persistent {}. Keep this conversation for communication, clarification, responsibilities and progress; each concrete work item has its own Runtime conversation. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim a role is enabled or a configuration is saved until the user confirms it in Wework. Ask follow-up questions when scope is ambiguous. Never grant broader access than the user requested. Use tools to read current state instead of relying on stale conversation context. Personal preferences are editable, and business context is fetched only as needed. User instructions: {}\nShared personal preferences: {}",
-            if role.is_some() { "scenario role" } else { "complete personal stand-in; coordinate scenario roles" },
-            role.map(|role| &role["prompt"]).unwrap_or(&personal["primary"]["prompt"]).as_str().unwrap_or_default(),
-            personal["primary"]["preferences"].as_str().unwrap_or_default()
-        );
+        let instructions = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress; each concrete work item has its own Runtime conversation. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
         let origin = json!({"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
-        let mut config = role.cloned().unwrap_or_else(|| json!({}));
+        let mut config = role
+            .cloned()
+            .or_else(|| {
+                personal
+                    .get("primary")
+                    .filter(|value| value.is_object())
+                    .cloned()
+            })
+            .unwrap_or_else(|| json!({}));
         config["userId"] = json!(user);
         config["handlingPolicy"] = json!({"automatic":false,"askBeforeAct":true});
-        config["modelOptions"] = payload["options"]["modelOptions"].clone();
+        if payload["options"]["modelOptions"].is_object() {
+            config["modelOptions"] = payload["options"]["modelOptions"].clone();
+        }
         if let Some(model_id) = payload["options"]["modelId"].as_str() {
             if matches!(
                 payload["options"]["modelType"].as_str(),

@@ -485,6 +485,24 @@ describe('TemporaryChatPanel', () => {
     mocks.runtimeWork = null
   })
 
+  it('places contextual configuration decisions beside the composer and hides them when inactive', () => {
+    const props = {
+      currentProject: null,
+      source: null,
+      instanceId: 'configuration',
+      composerHeader: <div data-testid="pending-configuration">Review changes</div>,
+    }
+    const { rerender } = render(<TemporaryChatPanel {...props} />)
+    const decision = screen.getByTestId('pending-configuration')
+    const composer = screen.getByTestId('mock-composer')
+    expect(decision.parentElement).toContainElement(composer)
+    expect(
+      decision.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    rerender(<TemporaryChatPanel {...props} active={false} />)
+    expect(screen.queryByTestId('pending-configuration')).not.toBeInTheDocument()
+  })
+
   it('binds parallel drawer catalogs to their own devices and tasks', async () => {
     const second = { deviceId: 'device-2', taskId: 'task-2' }
     render(

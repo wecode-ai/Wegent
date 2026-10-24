@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -13,6 +13,7 @@ export function StandInConversation({
   roleId,
   onOpenTask,
   active = true,
+  pendingConfiguration,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -20,6 +21,7 @@ export function StandInConversation({
   roleId?: string
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   active?: boolean
+  pendingConfiguration?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const [address, setAddress] = useState<RuntimeTaskAddress | null>()
@@ -73,8 +75,10 @@ export function StandInConversation({
       testId="stand-in-conversation"
       initialAddress={address}
       sendEphemeral={false}
+      showExecutionTools={false}
       expanded
       active={active}
+      composerHeader={pendingConfiguration}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}
       emptyStateText={t(
         roleId ? 'standIn.workspace.role_empty' : 'standIn.workspace.primary_empty'

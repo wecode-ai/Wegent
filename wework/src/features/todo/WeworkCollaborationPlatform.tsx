@@ -1602,15 +1602,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
           },
-          renderIssueComposer: composerProps => (
-            <WeworkIssueHomeComposer
-              {...composerProps}
-              api={platformApi}
-              userId={Number(props.user.id)}
-              services={props.services}
-              devices={props.devices ?? []}
-            />
-          ),
+          renderIssueComposer: composerProps => <WeworkIssueHomeComposer {...composerProps} />,
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(

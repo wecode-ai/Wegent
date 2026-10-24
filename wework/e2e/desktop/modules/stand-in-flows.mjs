@@ -21,6 +21,8 @@ export async function openProjectStandIn(
   await control.command('waitFor', '[data-testid="stand-in-auto"]')
   if (connect) {
     await control.command('click', '[data-testid="stand-in-connections-open"]')
+    await control.command('click', '[data-testid="stand-in-add-connection"]')
+    await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
     await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
     const enabled = await control.command(
       'getAttribute',

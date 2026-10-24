@@ -1,12 +1,17 @@
 import type { CollaborationProject } from '@wegent/collaboration'
-import type { StandInIdentity, StandInRole } from '@/api/personalStandIn'
+import { dequal } from 'dequal'
+import type { StandInIdentity, StandInHandlingPolicy, StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
+
+type Sources = Pick<StandInIdentity, 'dingtalk' | 'collaboration'>
 
 export function StandInProposalSources({
   identity,
+  previous,
   projects,
 }: {
-  identity: Pick<StandInIdentity, 'dingtalk' | 'collaboration'>
+  identity: Sources
+  previous?: Sources
   projects: CollaborationProject[]
 }) {
   const { t } = useTranslation('common')
@@ -15,52 +20,116 @@ export function StandInProposalSources({
       project =>
         project.id === id && (project.project_store === 'local' ? 'local' : 'cloud') === store
     )?.name ?? t('standIn.workspace.unavailable_project')
-  const policyName = (policy: { automatic: boolean; askBeforeAct: boolean }) =>
-    t(
-      !policy.automatic
-        ? 'standIn.workspace.policy_manual'
-        : policy.askBeforeAct
-          ? 'standIn.workspace.policy_confirm'
-          : 'standIn.workspace.policy_automatic'
-    )
-  const source: StandInRole['collaboration'] | undefined = identity.collaboration
+  const policyName = (policy?: StandInHandlingPolicy) =>
+    policy
+      ? t(
+          !policy.automatic
+            ? 'standIn.workspace.policy_manual'
+            : policy.askBeforeAct
+              ? 'standIn.workspace.policy_confirm'
+              : 'standIn.workspace.policy_automatic'
+        )
+      : t('standIn.workspace.inherited_policy')
+  const sourceKey = (row: NonNullable<Sources['dingtalk']>[number]) =>
+    JSON.stringify([row.profile, row.kind, row.id])
+  const before = previous?.dingtalk ?? []
+  const after = identity.dingtalk ?? []
+  const changed = after.filter(
+    row =>
+      !dequal(
+        row,
+        before.find(old => sourceKey(old) === sourceKey(row))
+      )
+  )
+  const removed = before.filter(row => !after.some(next => sourceKey(next) === sourceKey(row)))
+  const scope = (source?: StandInRole['collaboration']) =>
+    !source?.enabled
+      ? t('standIn.workspace.no_project_connection')
+      : source.allProjects
+        ? t('standIn.workspace.all_projects_with_exclusions', {
+            count: source.excludedProjects.length,
+          })
+        : source.projects.map(ref => projectName(ref.id, ref.store)).join('、') ||
+          t('standIn.workspace.no_project_connection')
+  const collaborationChanged = !dequal(previous?.collaboration, identity.collaboration)
+  const source = identity.collaboration
   return (
-    <div className="space-y-1 text-text-secondary">
-      {source?.enabled && (
-        <>
-          <p>
-            {t('standIn.personal.collaboration')} ·{' '}
-            {source.allProjects
-              ? t('standIn.personal.all_projects')
-              : source.projects.map(project => projectName(project.id, project.store)).join(' · ')}
-          </p>
-          {source.policy && <p>{policyName(source.policy)}</p>}
-          {source.excludedProjects.map(project => (
-            <p key={`${project.store}:${project.id}`}>
-              {t('standIn.workspace.excluded_project', {
-                name: projectName(project.id, project.store),
-              })}
-            </p>
-          ))}
-          {source.projectPolicies?.map(project => (
-            <p key={`${project.store}:${project.id}`}>
-              {projectName(project.id, project.store)} · {policyName(project.policy)}
-            </p>
-          ))}
-          {!!source.tags.length && <p>{source.tags.join(' · ')}</p>}
-        </>
-      )}
-      {identity.dingtalk?.map(row => (
-        <p key={`${row.profile}:${row.kind}:${row.id}`}>
-          {row.name} ·{' '}
-          {t(
-            row.kind === 'group'
-              ? 'standIn.workspace.group_mentions'
-              : 'standIn.workspace.direct_messages'
-          )}{' '}
-          · {policyName(row.policy)}
+    <div className="space-y-2 text-sm">
+      {changed.map(row => (
+        <p key={sourceKey(row)}>
+          <span className="text-text-muted">
+            {t(
+              before.some(old => sourceKey(old) === sourceKey(row))
+                ? 'standIn.workspace.connection_updated'
+                : 'standIn.workspace.connection_added'
+            )}
+            ：
+          </span>
+          {row.name}
+          <span className="text-text-secondary">
+            {' '}
+            ·{' '}
+            {t(
+              row.kind === 'group'
+                ? 'standIn.workspace.group_mentions'
+                : 'standIn.workspace.direct_messages'
+            )}{' '}
+            · {policyName(row.policy)}
+          </span>
         </p>
       ))}
+      {removed.map(row => (
+        <p key={sourceKey(row)}>
+          <span className="text-text-muted">{t('standIn.workspace.connection_removed')}：</span>
+          {row.name}
+        </p>
+      ))}
+      {collaborationChanged && (
+        <>
+          <p>
+            <span className="text-text-muted">{t('standIn.personal.collaboration')}：</span>
+            {previous?.collaboration && <>{scope(previous.collaboration)} → </>}
+            {scope(source)}
+          </p>
+          {source?.enabled && (
+            <>
+              {!dequal(previous?.collaboration?.policy, source.policy) && (
+                <p>
+                  {t('standIn.workspace.handling_changed')}：{policyName(source.policy)}
+                </p>
+              )}
+              {!dequal(previous?.collaboration?.excludedProjects, source.excludedProjects) &&
+                source.excludedProjects.length > 0 && (
+                  <p>
+                    {t('standIn.workspace.excluded_projects_label')}：
+                    {source.excludedProjects.map(ref => projectName(ref.id, ref.store)).join('、')}
+                  </p>
+                )}
+              {!dequal(previous?.collaboration?.tags, source.tags) && (
+                <p>
+                  {t('standIn.workspace.task_tags_label')}：
+                  {source.tags.join('、') || t('standIn.workspace.no_tag_limit')}
+                </p>
+              )}
+              {source.projectPolicies
+                ?.filter(
+                  row =>
+                    !dequal(
+                      row,
+                      previous?.collaboration?.projectPolicies?.find(
+                        old => old.id === row.id && old.store === row.store
+                      )
+                    )
+                )
+                .map(row => (
+                  <p key={`${row.store}:${row.id}`}>
+                    {projectName(row.id, row.store)} · {policyName(row.policy)}
+                  </p>
+                ))}
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }

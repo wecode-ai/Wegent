@@ -63,6 +63,52 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('returns the created role to its parent after the first save', async () => {
+    const { props, personalSave } = fixture({ roles: [] })
+    const user = userSetup()
+    const onSaved = vi.fn()
+    render(<StandInSettingsPage {...props} initialCreate onSaved={onSaved} />)
+    await user.type(await screen.findByTestId('stand-in-role-name'), 'Review role')
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
+    expect(personalSave).toHaveBeenCalledOnce()
+    expect(onSaved.mock.calls[0][0].name).toBe('Review role')
+  })
+
+  it('confirms deleting the last scene role without saving unrelated draft edits', async () => {
+    const { props, personalSave } = fixture()
+    const user = userSetup()
+    const onDeleted = vi.fn()
+    render(<StandInSettingsPage {...props} initialProfileId="default" onDeleted={onDeleted} />)
+    await user.click(await screen.findByTestId('stand-in-role-delete'))
+    expect(personalSave).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-role-delete-cancel'))
+    expect(personalSave).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-role-delete'))
+    await user.click(screen.getByTestId('stand-in-role-delete-confirm'))
+    await waitFor(() =>
+      expect(personalSave).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ roles: [], version: 0 }),
+        'mac'
+      )
+    )
+    expect(onDeleted).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the role and shows a failed deletion instead of closing', async () => {
+    const { props, personalSave } = fixture()
+    personalSave.mockRejectedValue(new Error('task changed'))
+    const onDeleted = vi.fn()
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialProfileId="default" onDeleted={onDeleted} />)
+    await user.click(await screen.findByTestId('stand-in-role-delete'))
+    await user.click(screen.getByTestId('stand-in-role-delete-confirm'))
+    expect(await screen.findByText('Error: task changed')).toBeInTheDocument()
+    expect(onDeleted).not.toHaveBeenCalled()
+    expect(screen.getByTestId('stand-in-role-delete-confirm')).toBeInTheDocument()
+  })
+
   it('preserves unsaved changes when the workbench recreates services for the same owner and device', async () => {
     const { props, personalGet } = fixture()
     const user = userSetup()
@@ -332,6 +378,8 @@ describe('Personal stand-in settings', () => {
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-add-connection'))
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
     await user.click(screen.getByTestId('stand-in-source-collaboration'))
     expect(screen.getByTestId('stand-in-all-projects')).toBeChecked()
     expect(screen.getByTestId('stand-in-connect-project-one')).toBeChecked()
@@ -470,6 +518,8 @@ describe('Personal stand-in settings', () => {
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-add-connection'))
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
     await user.click(screen.getByTestId('stand-in-source-collaboration'))
     await user.click(screen.getByTestId('stand-in-back'))
     expect(screen.getByTestId('stand-in-sources-empty')).toBeInTheDocument()

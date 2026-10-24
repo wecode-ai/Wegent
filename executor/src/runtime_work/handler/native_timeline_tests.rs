@@ -313,3 +313,54 @@ async fn native_timeline_binds_plain_execution_identity_without_synthesizing_a_p
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn native_timeline_restores_completed_approval_evidence_with_native_history() {
+    let (mut handler, root) = native_handler("native-approval-evidence");
+    fs::write(
+        root.join("thread_timeline_list.json"),
+        json!({"data":[
+        {"type":"turnStarted", "position":1, "turnId":"current"},
+        {"type":"item", "position":2, "turnId":"current", "item":{
+            "id":"current-text", "type":"agentMessage", "phase":"final_answer", "text":"Current"
+        }},
+        {"type":"turnCompleted", "position":3, "turnId":"current", "status":"completed"}
+    ], "nextCursor":null})
+        .to_string(),
+    )
+    .unwrap();
+    handler.begin_active_codex_transcript("task-1", "thread-1", "current");
+    for (id, status, rationale) in [
+        ("allow", "completed", "Read authorized work context"),
+        (
+            "deny",
+            "failed",
+            "Private data is outside the assigned task",
+        ),
+    ] {
+        handler.record_active_codex_transcript_item("task-1", "current", &json!({
+            "method":"item/completed", "params":{"threadId":"thread-1", "turnId":"current", "item":{
+                "id":id,"type":"autoApprovalReview","name":"auto_approval_review",
+                "status":status,"arguments":{"type":"command"},"output":{"rationale":rationale}
+            }}
+        }));
+    }
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    let response = read_and_stop(&mut handler).await.unwrap();
+    let reviews = response["runtimeTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .map(|item| &item["block"])
+        .filter(|block| block["tool_name"] == "auto_approval_review")
+        .collect::<Vec<_>>();
+    assert_eq!(reviews.len(), 2);
+    assert!(reviews.iter().any(|block| block["status"] == "done"));
+    assert!(reviews.iter().any(|block| block["status"] == "error"));
+    assert!(reviews
+        .iter()
+        .any(|block| block["tool_output"]["rationale"]
+            == "Private data is outside the assigned task"));
+    fs::remove_dir_all(root).unwrap();
+}

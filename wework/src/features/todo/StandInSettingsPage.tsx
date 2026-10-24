@@ -8,7 +8,7 @@ import {
   useState,
   type Ref,
 } from 'react'
-import { ArrowLeft, Bot, ChevronRight, Folder, Plus, X } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronRight, Folder, Plus, Trash2, X } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   CollaborationProject,
@@ -31,8 +31,8 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useStandInProjectAgents, projectAgentChoiceValue } from './useStandInProjectAgents'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { StandInProjectSetup } from './StandInProjectSetup'
-import { StandInConnections } from './StandInConnections'
-import { StandInDingTalkConnections } from './StandInDingTalkConnections'
+import { StandInConnectionSettings } from './StandInConnectionSettings'
+import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInRoleScheduling } from './StandInRoleScheduling'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
@@ -55,6 +55,7 @@ export function StandInSettingsPage({
   initialProject,
   onCancel,
   onSaved,
+  onDeleted,
   onSavingChange,
   onOpenPersonalSettings,
   ref,
@@ -70,6 +71,7 @@ export function StandInSettingsPage({
   initialProject?: CollaborationProject
   onCancel?(): void
   onSaved?(settings: WorkspaceStandInSettings): void
+  onDeleted?(): void
   onSavingChange?(saving: boolean): void
   onOpenPersonalSettings?(roleId: string, deviceId: string): void
   ref?: Ref<StandInSettingsHandle>
@@ -79,6 +81,7 @@ export function StandInSettingsPage({
   const canLoadPersonalAgents = cloudConnection?.isConnected ?? true
   const state = usePersonalStandIn(services, userId, initialDeviceId, canLoadPersonalAgents)
   const { draft, saved, setDraft, updateRole, loading, saving, setError } = state
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const executionDeviceId = draft?.executionDeviceId
   const [selectedId, setSelectedId] = useState(initialProfileId ?? '')
   const [view, setView] = useState<View>(initialProject ? 'project' : 'main')
@@ -249,7 +252,7 @@ export function StandInSettingsPage({
     if (!result) return
     setHistory([])
     setNotice(true)
-    if (initialProject && ['project', 'main', 'create'].includes(view))
+    if ((initialProject || initialCreate) && ['project', 'main', 'create'].includes(view))
       onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
     else if (view !== 'main') setView('main')
     else onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
@@ -756,25 +759,16 @@ export function StandInSettingsPage({
                 </>
               )}
               {view === 'connections' && (
-                <>
-                  <StandInConnections
-                    role={role}
-                    projects={availableProjects}
-                    focusedProjectId={initialProject?.id}
-                    disabled={saving}
-                    onChange={changeRole}
-                  />
-                  {services.standInApi && (
-                    <StandInDingTalkConnections
-                      role={role}
-                      api={services.standInApi}
-                      deviceId={draft.executionDeviceId}
-                      localDeviceId={state.currentDeviceId}
-                      disabled={saving}
-                      onChange={changeRole}
-                    />
-                  )}
-                </>
+                <StandInConnectionSettings
+                  role={role}
+                  projects={availableProjects}
+                  focusedProjectId={initialProject?.id}
+                  disabled={saving}
+                  onChange={changeRole}
+                  api={services.standInApi}
+                  deviceId={draft.executionDeviceId}
+                  localDeviceId={state.currentDeviceId}
+                />
               )}
               {view === 'scheduling' && (
                 <StandInRoleScheduling settings={draft} onChange={setDraft} disabled={saving} />
@@ -810,36 +804,18 @@ export function StandInSettingsPage({
                   devices={devices}
                   services={services}
                   deviceControl={
-                    <select
-                      data-testid="stand-in-device"
-                      aria-label={t('standIn.device')}
+                    <StandInDeviceSelect
                       value={draft.executionDeviceId}
+                      currentDeviceId={state.currentDeviceId}
+                      devices={devices}
                       disabled={saving || dirty}
-                      onChange={event => {
+                      onChange={value => {
                         setHistory(current => current.map(entry => ({ ...entry, draft: null })))
                         setSelectedId('')
                         setNotice(false)
-                        state.setDeviceId(event.target.value)
+                        state.setDeviceId(value)
                       }}
-                      className="min-h-8 max-w-full bg-transparent px-2"
-                    >
-                      <option value={state.currentDeviceId}>{t('standIn.current_device')}</option>
-                      {devices
-                        .filter(
-                          device =>
-                            device.device_id !== state.currentDeviceId &&
-                            device.app_device_id !== state.currentDeviceId
-                        )
-                        .map(device => (
-                          <option
-                            key={device.device_id}
-                            value={device.device_id}
-                            disabled={device.status === 'offline'}
-                          >
-                            {device.name}
-                          </option>
-                        ))}
-                    </select>
+                    />
                   }
                 />
               )}
@@ -891,6 +867,21 @@ export function StandInSettingsPage({
               )}
             </div>
             <footer className="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
+              {initialProfileId &&
+                !initialProject &&
+                view === 'main' &&
+                saved?.roles.some(row => row.id === role.id) && (
+                  <button
+                    type="button"
+                    data-testid="stand-in-role-delete"
+                    disabled={saving || loading}
+                    onClick={() => setConfirmDelete(true)}
+                    className="inline-flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-error hover:bg-muted"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {t('standIn.personal.delete_role')}
+                  </button>
+                )}
               <span className="mr-auto text-xs text-text-muted">
                 {view === 'scheduling' ? (
                   t('standIn.personal.shared_scheduling')
@@ -935,6 +926,49 @@ export function StandInSettingsPage({
                 )}
               </button>
             </footer>
+            {confirmDelete && saved && (
+              <div
+                role="alertdialog"
+                aria-label={t('standIn.personal.delete_role')}
+                className="border-t border-border px-5 py-4"
+              >
+                <p className="text-sm">
+                  {t('standIn.personal.delete_role_help', {
+                    name: role.name || t('standIn.personal.default_role'),
+                  })}
+                </p>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    data-testid="stand-in-role-delete-cancel"
+                    disabled={saving}
+                    onClick={() => setConfirmDelete(false)}
+                    className="min-h-8 rounded-md px-3 hover:bg-muted"
+                  >
+                    {t('standIn.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="stand-in-role-delete-confirm"
+                    disabled={saving}
+                    onClick={async () => {
+                      const result = await state.save({
+                        ...saved,
+                        roles: saved.roles.filter(row => row.id !== role.id),
+                      })
+                      if (result) {
+                        setConfirmDelete(false)
+                        onDeleted?.()
+                        onCancel?.()
+                      }
+                    }}
+                    className="min-h-8 rounded-md bg-text-primary px-3 text-background disabled:opacity-50"
+                  >
+                    {t('standIn.personal.confirm_delete_role')}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <div className="px-5 pb-5" role="alert">

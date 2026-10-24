@@ -139,6 +139,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
+mod external_work;
 mod reply_prediction;
 mod text_generation;
 use text_generation::configure_text_generation;
@@ -1610,7 +1611,7 @@ async fn read_persistent_codex_app_server_stdout(
 
         log_codex_mcp_startup_status(&message);
 
-        notifications.send(message);
+        notifications.send(external_work::project_review_notification(message));
     }
 }
 
@@ -1788,9 +1789,11 @@ fn config_reload_resume_thread_id<'a>(
                     .keys()
                     .any(|key| key.starts_with("mcp_servers.wework_space."))
             });
-    (has_project_space_config || crate::runtime_work::stand_in_requires_confirmation(request))
-        .then(|| params.get("threadId").and_then(Value::as_str))
-        .flatten()
+    (has_project_space_config
+        || crate::runtime_work::stand_in_requires_confirmation(request)
+        || crate::runtime_work::external_work_kind(request).is_some())
+    .then(|| params.get("threadId").and_then(Value::as_str))
+    .flatten()
 }
 
 fn thread_id_from_response(
@@ -1923,6 +1926,20 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
                 let response = client.request(operation, params).await?;
+                if external_work::applies(request) {
+                    log_executor_event("codex source sandbox applied", &[
+                        ("task_id", request.task_id.clone()),
+                        ("profile", response["activePermissionProfile"].to_string()),
+                        ("sandbox", response["sandbox"].to_string()),
+                        ("reviewer", response["approvalsReviewer"].to_string()),
+                        ("workspace_roots", response["runtimeWorkspaceRoots"].to_string()),
+                    ]);
+                    if response["activePermissionProfile"]["id"] != codex_runtime_permission_profile(request)
+                        || response["approvalsReviewer"] != external_work::reviewer(request)
+                    {
+                        return Err("Codex did not apply the required source permissions and reviewer".into());
+                    }
+                }
                 let thread_id = thread_id_from_response(
                     operation,
                     &response,
@@ -3121,10 +3138,15 @@ fn spawn_shared_approval_response(
             let response = if let (Some(receiver), Some(correlation_key)) =
                 (request_user_input_answers, correlation_key)
             {
-                receiver
-                    .receive(correlation_key)
-                    .await?
-                    .unwrap_or_else(|| json!({}))
+                match tokio::time::timeout(
+                    elicitation::remaining(&message),
+                    receiver.receive(correlation_key),
+                )
+                .await
+                {
+                    Ok(response) => response?.unwrap_or_else(|| json!({})),
+                    Err(_) => json!({}),
+                }
             } else {
                 json!({})
             };
@@ -3841,6 +3863,18 @@ fn build_codex_launch_config_with_route_scope(
     launch_config
         .config_overrides
         .push(shell_path_config_override());
+    if request.extra.get("origin").is_some_and(|origin| {
+        matches!(
+            origin["initiatedBy"].as_str(),
+            Some("stand_in" | "stand_in_identity")
+        )
+    }) {
+        // Wework owns memory scope and deletion; never mix in CODEX_HOME-wide memories.
+        launch_config.config_overrides.extend([
+            "memories.use_memories=false".into(),
+            "memories.generate_memories=false".into(),
+        ]);
+    }
     // Native authorization and agent tools must use the same gh profile.
     if let Ok(config_dir) = env::var("GH_CONFIG_DIR") {
         if !config_dir.is_empty() {
@@ -4022,6 +4056,8 @@ fn build_codex_launch_config_with_route_scope(
 
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
         configure_text_generation(&mut launch_config);
+    } else {
+        external_work::configure(request, &mut launch_config, &codex_home)?;
     }
 
     Ok(launch_config)
@@ -4193,6 +4229,9 @@ fn explicit_codex_upstream(
 }
 
 pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
+    if crate::runtime_work::external_work_kind(request).is_some() {
+        return external_work::permission_config(request);
+    }
     task_identity_env(request)
         .into_iter()
         .map(|(key, value)| {
@@ -5939,7 +5978,9 @@ pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
-    if crate::runtime_work::stand_in_requires_confirmation(request) {
+    if external_work::applies(request)
+        || crate::runtime_work::stand_in_requires_confirmation(request)
+    {
         return json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}});
     }
     match codex_runtime_permission_profile(request) {
@@ -5961,6 +6002,9 @@ fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
 }
 
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
+    if let Some(profile) = external_work::profile(request) {
+        return profile;
+    }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         return CODEX_READ_ONLY_PERMISSION_PROFILE;
     }
@@ -5983,6 +6027,12 @@ fn insert_codex_runtime_permissions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
 ) {
+    if external_work::applies(request) {
+        params.insert(
+            "approvalsReviewer".into(),
+            json!(external_work::reviewer(request)),
+        );
+    }
     params.insert(
         "permissions".to_owned(),
         Value::String(codex_runtime_permission_profile(request).to_owned()),
@@ -6186,6 +6236,10 @@ fn insert_codex_developer_instructions(
             &request.system_prompt,
         )
     };
+    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
+        instructions.push_str("\n\n");
+        instructions.push_str(external_work::SOURCE_CONTENT_INSTRUCTIONS);
+    }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the work list and conversation input area. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }

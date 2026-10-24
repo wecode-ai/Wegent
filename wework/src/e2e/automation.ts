@@ -1372,6 +1372,16 @@ function dragDesktopControlDataTransfer(command: DesktopControlCommand): string 
   return endDesktopControlDataTransfer(command)
 }
 
+function hoverDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  const activeDrag = activeDesktopControlDataTransfer
+  if (!activeDrag) throw new Error('No data-transfer drag is active')
+  const target = findDesktopControlElements(command.selector)[0]
+  if (!target) throw new Error(`Unable to find selector "${command.selector}"`)
+  dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
+  dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
+  return target.textContent?.trim() ?? ''
+}
+
 function contextMenuDesktopControlElement(selector: string): string {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
@@ -2463,6 +2473,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return startDesktopControlDataTransfer(command)
     case 'dragDataTransferEnd':
       return endDesktopControlDataTransfer(command)
+    case 'dragDataTransferOver':
+      return hoverDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
     case 'doubleClick':

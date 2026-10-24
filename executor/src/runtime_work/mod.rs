@@ -31,6 +31,7 @@ pub(crate) use transcript::codex_file_change_content;
 mod transcript_page;
 mod transcript_transport;
 mod util;
+pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;
 mod worktrees;
 
