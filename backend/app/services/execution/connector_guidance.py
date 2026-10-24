@@ -21,7 +21,10 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.services.connector_apps import ConnectorApp, ConnectorAppService
-from app.services.mcp_provider_registry import get_mcp_service_by_connector_slug
+from app.services.mcp_provider_registry import (
+    get_mcp_service_by_connector_slug,
+    get_mcp_service_by_skill_name,
+)
 from app.services.user_mcp_service import user_mcp_service
 
 logger = logging.getLogger(__name__)
@@ -152,7 +155,11 @@ def _is_in_use(app: ConnectorApp, mention: str) -> bool:
 
 
 def build_connector_guidance_section(
-    db: Session, user: User, *, mention: str = ""
+    db: Session,
+    user: User,
+    *,
+    mention: str = "",
+    provider_skills: set[str] | None = None,
 ) -> str:
     """Return the guidance section for the user's connector apps."""
     try:
@@ -165,12 +172,25 @@ def build_connector_guidance_section(
     # Static apps are expected to be directly available, so a pending static
     # app always warrants an authorization hint. Lazy apps are only surfaced
     # when the current message explicitly mentions or matches one of them.
+    provider_connectors = {
+        runtime[1].get("connector_slug")
+        for runtime in (
+            get_mcp_service_by_skill_name(skill_name)
+            for skill_name in provider_skills or set()
+        )
+        if runtime and runtime[1].get("connector_slug")
+    }
     selected = [
         app
         for app in pending
-        if not _has_personal_mcp_config(user, app) and _is_in_use(app, mention)
+        if not _has_personal_mcp_config(user, app)
+        and (app.slug in provider_connectors or _is_in_use(app, mention))
     ]
-    in_use = [app for app in available if _is_in_use(app, mention)]
+    in_use = [
+        app
+        for app in available
+        if app.slug in provider_connectors or _is_in_use(app, mention)
+    ]
 
     sections: list[str] = []
     if selected:

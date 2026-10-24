@@ -406,6 +406,9 @@ async def build_execution_request(
                 db,
                 user,
                 mention=TaskRequestBuilder._extract_prompt_text(message),
+                # A provider-native selection activates the connector even
+                # when the message itself does not repeat the app keywords.
+                provider_skills=set(provider_skills),
             )
             if connector_section:
                 # The list depends on this message and resumed sessions keep
