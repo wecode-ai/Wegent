@@ -231,22 +231,32 @@ impl RuntimeWorkRpcHandler {
                 return Ok(json!({"success": false, "error": error}));
             }
         }
-        latest_link.title = title.clone();
-        latest_link.updated_at = now_ms();
-        self.upsert_local_task(latest_link);
-        emit_response_event(
-            &self.event_tx,
-            &self.device_id,
-            "runtime.task.title.updated",
-            &local_task_id,
-            &request,
-            json!({"title": title}),
-        );
+        self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
             "friendly task title generation completed",
             &[("local_task_id", local_task_id)],
         );
         Ok(json!({"success": true, "title": title}))
+    }
+
+    pub(super) fn commit_runtime_task_title(
+        &self,
+        mut link: RuntimeTaskLink,
+        title: String,
+    ) -> RuntimeTaskLink {
+        link.title = title.clone();
+        link.updated_at = now_ms();
+        self.upsert_local_task(link.clone());
+        let request = runtime_event_request_from_link(&link);
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.task.title.updated",
+            &link.local_task_id,
+            &request,
+            json!({"title": title}),
+        );
+        link
     }
 
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {

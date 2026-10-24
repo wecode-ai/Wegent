@@ -1700,7 +1700,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...currentRuntimeTask,
         threadId: selectedSubagentConversationId,
       },
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
       .then(transcript => {
         setSubagentTranscripts(current => ({

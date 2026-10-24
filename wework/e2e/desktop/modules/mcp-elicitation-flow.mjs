@@ -269,10 +269,18 @@ async function readMcpInteractions(control, taskId) {
     })
   )
   assert.equal(transcript.success, true, 'The real executor could not read the task transcript')
-  assert.ok(Array.isArray(transcript.messages), 'The executor transcript omitted its messages')
-  return transcript.messages
-    .flatMap(message => message.blocks ?? [])
-    .map(block => block.render_payload)
+  assert.ok(Array.isArray(transcript.turns), 'The executor transcript omitted its native turns')
+  assert.ok(Array.isArray(transcript.runtimeTurns), 'The executor omitted its runtime overlays')
+  // Match the renderer: runtime-owned state overlays native history by turn/item identity.
+  const items = new Map()
+  for (const turn of [...transcript.turns, ...transcript.runtimeTurns]) {
+    for (const item of turn.items) {
+      items.set(JSON.stringify([turn.id, item.id]), item)
+    }
+  }
+  return [...items.values()]
+    .filter(item => item.type === 'block')
+    .map(item => item.block.render_payload)
     .filter(payload => payload?.kind === 'request_user_input' && payload.interactionScope)
 }
 

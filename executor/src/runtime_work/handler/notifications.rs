@@ -347,6 +347,7 @@ impl RuntimeWorkRpcHandler {
         if !item.is_object() {
             return;
         }
+        item["lifecycleCompleted"] = json!(notification.method == "item/completed");
         if is_codex_context_compaction_item_type(&item_type(&item)) {
             item["status"] = json!(if notification.method == "item/completed" {
                 "done"
@@ -414,9 +415,15 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .ok()
             .and_then(|items| items.get(local_task_id).cloned());
-        let Some(active) = active.filter(|active| !active.items.is_empty()) else {
+        let Some(active) = active else {
             return;
         };
+        let positioned = thread["timeline"] == true;
+        let active_items = active
+            .items
+            .into_iter()
+            .filter(|item| !positioned || item["lifecycleCompleted"] != true)
+            .collect::<Vec<_>>();
         let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) else {
             return;
         };
@@ -424,13 +431,41 @@ impl RuntimeWorkRpcHandler {
             .iter_mut()
             .find(|turn| string_field(turn, "id").as_deref() == Some(active.turn_id.as_str()))
         {
-            turn["status"] = json!("inProgress");
-            merge_codex_turn_items(turn, active.items);
+            // Turn-list status can synthesize interruption without a terminal boundary.
+            // Execution identity remains authoritative for this open turn even when
+            // every observed item has already been persisted.
+            if !positioned || turn["timelineCompleted"] != true {
+                turn["status"] = json!("inProgress");
+                turn["completedAt"] = Value::Null;
+                turn["durationMs"] = Value::Null;
+                turn["error"] = Value::Null;
+            }
+            let active_items = active_items
+                .into_iter()
+                .filter(|item| {
+                    if !positioned {
+                        return true;
+                    }
+                    let existing = turn["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|native| native["id"] == item["id"]);
+                    existing.map_or(true, |native| {
+                        item_type(native) == "commandexecution"
+                            && !matches!(native["status"].as_str(), Some("completed" | "failed"))
+                    })
+                })
+                .collect();
+            merge_codex_turn_items(turn, active_items);
+            return;
+        }
+        if active_items.is_empty() {
             return;
         }
         turns.push(json!({
             "id": active.turn_id,
-            "items": active.items,
+            "items": active_items,
             "itemsView": "full",
             "status": "inProgress",
         }));

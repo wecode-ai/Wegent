@@ -327,155 +327,56 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     let fake_codex = write_fake_paginated_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
-    let latest = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-1"},
-                "limit": 1000
-            }
-        }))
-        .await
-        .expect("latest transcript page should succeed");
-    let older = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-1"},
-                "limit": 1,
-                "beforeCursor": "older-turns"
-            }
-        }))
-        .await
-        .expect("older transcript page should succeed");
-    let navigation = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-1"},
-                "navigationOnly": true
-            }
-        }))
-        .await
-        .expect("turn navigation should succeed");
-    let cached_navigation = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-1"},
-                "navigationOnly": true
-            }
-        }))
-        .await
-        .expect("cached turn navigation should succeed");
-    let navigation_cursor = navigation["turnNavigation"][0]["cursor"]
-        .as_str()
-        .expect("older navigation turn should have an opaque cursor");
-    let targeted_older = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-1"},
-                "limit": 1,
-                "beforeCursor": navigation_cursor
-            }
-        }))
-        .await
-        .expect("navigation cursor should resolve the exact older turn");
-    let newer = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-1"},
-                "limit": 1,
-                "afterCursor": "newer-from-old"
-            }
-        }))
-        .await
-        .expect("newer transcript page should succeed");
-
-    assert_eq!(latest["messages"].as_array().unwrap().len(), 2);
+    let read = |extra: Value| {
+        let mut payload = json!({"taskId":"thread-1","workspacePath":"/tmp/project","runtimeHandle":{"threadId":"thread-1"},"limit":1});
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json!({"method":"runtime.tasks.transcript","payload":payload})
+    };
+    let latest = handler.handle_runtime_rpc(read(json!({}))).await.unwrap();
     assert_eq!(latest["messages"][0]["content"], "new prompt");
     assert_eq!(latest["hasMoreBefore"], true);
-    assert_eq!(latest["beforeCursor"], "older-turns");
-    assert_eq!(latest["hasMoreAfter"], false);
-    assert_eq!(latest["afterCursor"], Value::Null);
-    assert_eq!(latest["rangeStart"], Value::Null);
-    assert_eq!(latest["rangeEnd"], Value::Null);
-    assert_eq!(latest["turnNavigation"], json!([]));
+    let cursor = latest["beforeCursor"].as_str().unwrap();
+    assert!(cursor.starts_with("wework-codex-timeline:"));
+    let older = handler
+        .handle_runtime_rpc(read(json!({"beforeCursor":cursor})))
+        .await
+        .unwrap();
+    assert_eq!(older["messages"][0]["content"], "old prompt");
+    assert_eq!(older["messages"][1]["content"], "old answer");
+    assert_eq!(older["hasMoreBefore"], false);
+    let navigation = handler
+        .handle_runtime_rpc(read(json!({"navigationOnly":true})))
+        .await
+        .unwrap();
+    let cached_navigation = handler
+        .handle_runtime_rpc(read(json!({"navigationOnly":true})))
+        .await
+        .unwrap();
     assert_eq!(navigation["messages"], json!([]));
     assert_eq!(navigation["turns"], json!([]));
     assert_eq!(navigation["turnNavigation"].as_array().unwrap().len(), 2);
-    assert_eq!(navigation["turnNavigation"][0]["id"], "turn-old");
-    assert_eq!(navigation["turnNavigation"][0]["turnId"], "turn-old");
-    assert_eq!(navigation["turnNavigation"][0]["promptPreview"], "");
-    assert_eq!(navigation["turnNavigation"][1]["id"], "turn-new");
-    assert_eq!(navigation["turnNavigation"][1]["cursor"], Value::Null);
     assert_eq!(
         navigation["turnNavigation"],
         cached_navigation["turnNavigation"]
     );
-    assert!(navigation["turnNavigation"][0]["cursor"]
-        .as_str()
-        .is_some_and(|cursor| cursor.starts_with("wework-codex-navigation:")));
-    assert_eq!(targeted_older["messages"][0]["content"], "old prompt");
-    assert_eq!(older["messages"].as_array().unwrap().len(), 2);
-    assert_eq!(older["messages"][0]["content"], "old prompt");
-    assert_eq!(older["hasMoreBefore"], false);
-    assert_eq!(older["beforeCursor"], Value::Null);
-    assert_eq!(older["hasMoreAfter"], true);
-    assert_eq!(older["afterCursor"], "newer-from-old");
-    assert_eq!(newer["messages"].as_array().unwrap().len(), 2);
-    assert_eq!(newer["messages"][0]["content"], "new prompt");
-
+    let target = navigation["turnNavigation"][0]["cursor"].as_str().unwrap();
+    assert!(target.starts_with("wework-codex-turn:"));
+    let targeted = handler
+        .handle_runtime_rpc(read(json!({"beforeCursor":target})))
+        .await
+        .unwrap();
+    assert_eq!(targeted["messages"][0]["content"], "old prompt");
     let calls = read_json_lines(&log_path);
-    let read_count = calls
+    assert!(!calls
         .iter()
-        .filter(|line| line["method"] == "thread/read")
-        .count();
-    let turns_list_count = calls
+        .any(|call| call["method"] == "thread/items/list"));
+    assert!(calls
         .iter()
-        .filter(|line| line["method"] == "thread/turns/list")
-        .count();
-    let items_list_count = calls
-        .iter()
-        .filter(|line| line["method"] == "thread/items/list")
-        .count();
-    assert_eq!(read_count, 5);
-    assert_eq!(turns_list_count, 6);
-    assert_eq!(items_list_count, 4);
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|call| call["method"] == "thread/turns/list"
-                && call["params"]["itemsView"] == "notLoaded"
-                && call["params"]["limit"] == 100)
-            .count(),
-        2
-    );
-    assert!(calls.iter().any(|call| {
-        call["method"] == "thread/turns/list"
-            && call["params"]["cursor"] == "newer-from-old"
-            && call["params"]["sortDirection"] == "asc"
-    }));
-    assert!(calls.iter().any(|call| {
-        call["method"] == "thread/turns/list"
-            && call["params"]["cursor"].is_null()
-            && call["params"]["limit"] == 40
-            && call["params"]["sortDirection"] == "desc"
-    }));
+        .any(|call| call["method"] == "thread/timeline/list"
+            && call["params"]["cursor"] == "opaque-older"));
 }
 
 #[tokio::test]
@@ -507,7 +408,7 @@ async fn app_runtime_pages_codex_turn_items_before_older_turns() {
     let item_cursor = latest["beforeCursor"]
         .as_str()
         .expect("partial turn should return an item cursor");
-    assert!(item_cursor.starts_with("wework-codex-items:"));
+    assert!(item_cursor.starts_with("wework-codex-timeline:"));
     assert_eq!(latest["messages"][0]["content"], "new answer");
     assert_eq!(
         latest["turns"][0]["items"]
@@ -531,8 +432,8 @@ async fn app_runtime_pages_codex_turn_items_before_older_turns() {
         .await
         .expect("older item page should succeed");
 
-    assert_eq!(older_items["beforeCursor"], "older-turns");
-    assert_eq!(older_items["turns"][0]["itemMerge"], "prepend");
+    assert_eq!(older_items["beforeCursor"], Value::Null);
+    assert_eq!(older_items["turns"][0]["items"][0]["position"], 0);
     assert_eq!(older_items["turns"][0]["items"][0]["type"], "user_message");
     assert_eq!(older_items["turns"][0]["items"][1]["type"], "block");
     assert_eq!(
@@ -544,22 +445,17 @@ async fn app_runtime_pages_codex_turn_items_before_older_turns() {
     assert_eq!(
         calls
             .iter()
-            .filter(|call| call["method"] == "thread/turns/list")
-            .count(),
-        1
-    );
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|call| call["method"] == "thread/items/list")
+            .filter(|call| call["method"] == "thread/timeline/list")
             .count(),
         2
     );
-    assert!(calls.iter().any(|call| {
-        call["method"] == "thread/items/list"
-            && call["params"]["cursor"] == "older-items"
-            && call["params"]["sortDirection"] == "desc"
-    }));
+    assert!(calls
+        .iter()
+        .any(|call| call["method"] == "thread/timeline/list"
+            && call["params"]["cursor"] == "opaque-older"));
+    assert!(!calls
+        .iter()
+        .any(|call| call["method"] == "thread/items/list"));
 }
 
 #[tokio::test]
@@ -606,17 +502,13 @@ async fn app_runtime_loads_full_codex_transcript_across_opaque_pages() {
     assert_eq!(
         calls
             .iter()
-            .filter(|call| call["method"] == "thread/turns/list")
+            .filter(|call| call["method"] == "thread/timeline/list")
             .count(),
         2
     );
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|call| call["method"] == "thread/items/list")
-            .count(),
-        2
-    );
+    assert!(!calls
+        .iter()
+        .any(|call| call["method"] == "thread/items/list"));
 }
 
 #[tokio::test]
@@ -1206,7 +1098,7 @@ async fn app_runtime_fork_loads_paginated_transcript_before_returning() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    for method in ["thread/fork", "thread/turns/list", "thread/items/list"] {
+    for method in ["thread/fork", "thread/turns/list", "thread/timeline/list"] {
         assert!(
             calls.iter().any(|call| call["method"] == method),
             "{method}"
@@ -1238,14 +1130,11 @@ while IFS= read -r line; do
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       ;;
+    *'"method":"thread/timeline/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},"type":"item","position":0}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},"type":"item","position":1}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},"type":"item","position":2}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}},"type":"item","position":3}}],"nextCursor":null}}}}'
+      ;;
     *'"method":"thread/turns/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/items/list"'*'"sortDirection":"desc"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/items/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/fork"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","historyMode":"paginated","turns":[]}}}}}}'
@@ -1382,124 +1271,61 @@ done
 }
 
 fn write_fake_paginated_codex(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-app-runtime-pagination", "sh");
-    let _ = fs::remove_file(log_path);
-    let content = format!(
-        r#"#!/bin/sh
-LOG_PATH='{}'
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$LOG_PATH"
-  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
-      ;;
-    *'"method":"initialized"'*)
-      ;;
-    *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
-      ;;
-    *'"method":"thread/turns/list"'*'"cursor":"older-turns"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
-      ;;
-    *'"method":"thread/turns/list"'*'"cursor":"newer-from-old"'*'"sortDirection":"desc"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
-      ;;
-    *'"method":"thread/turns/list"'*'"limit":100'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/items/list"'*'"sortDirection":"desc"'*'"turnId":"turn-old"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-old","item":{{"id":"agent-old","type":"agentMessage","text":"old answer","phase":"final_answer"}}}},{{"turnId":"turn-old","item":{{"id":"user-old","type":"userMessage","content":[{{"type":"text","text":"old prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"old-items-head"}}}}'
-      ;;
-    *'"method":"thread/items/list"'*'"turnId":"turn-old"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-old","item":{{"id":"user-old","type":"userMessage","content":[{{"type":"text","text":"old prompt"}}]}}}},{{"turnId":"turn-old","item":{{"id":"agent-old","type":"agentMessage","text":"old answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"old-items-head"}}}}'
-      ;;
-    *'"method":"thread/items/list"'*'"sortDirection":"desc"'*'"turnId":"turn-new"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}},{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"new-items-head"}}}}'
-      ;;
-    *'"method":"thread/items/list"'*'"turnId":"turn-new"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}},{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"new-items-head"}}}}'
-      ;;
-  esac
-done
-"#,
-        log_path.display()
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
+    write_fake_native_pages(log_path, false)
 }
 
 fn write_fake_incremental_items_codex(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-app-runtime-item-pagination", "sh");
-    let _ = fs::remove_file(log_path);
-    let mut recent_entries = vec![json!({
-        "turnId": "turn-new",
-        "item": {
-            "id": "agent-new",
-            "type": "agentMessage",
-            "text": "new answer",
-            "phase": "final_answer",
+    write_fake_native_pages(log_path, true)
+}
+
+fn write_fake_native_pages(log_path: &Path, split_turn: bool) -> PathBuf {
+    let path = write_fake_codex(log_path);
+    let old_turn = if split_turn { "turn-new" } else { "turn-old" };
+    let user = |id: &str, text: &str| json!({"id":id,"type":"userMessage","content":[{"type":"text","text":text}]});
+    let answer = |id: &str, text: &str| json!({"id":id,"type":"agentMessage","text":text,"phase":"final_answer"});
+    let mut older = vec![user(
+        if split_turn { "user-new" } else { "user-old" },
+        if split_turn {
+            "new prompt"
+        } else {
+            "old prompt"
         },
-    })];
-    recent_entries.extend((0..99).map(|index| {
-        json!({
-            "turnId": "turn-new",
-            "item": {
-                "id": format!("tool-new-{index}"),
-                "type": "commandExecution",
-                "command": format!("newer-tool-{index}"),
-                "status": "completed",
-                "aggregatedOutput": "new",
-            },
-        })
-    }));
-    let recent_entries = serde_json::to_string(&recent_entries).unwrap();
-    let content = format!(
-        r#"#!/bin/sh
-LOG_PATH='{}'
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$LOG_PATH"
-  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
-      ;;
-    *'"method":"initialized"'*)
-      ;;
-    *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
-      ;;
-    *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/items/list"'*'"cursor":"older-items"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"tool-old","type":"commandExecution","command":"older-tool","status":"completed","aggregatedOutput":"old"}}}},{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"newer-items"}}}}'
-      ;;
-    *'"method":"thread/items/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":{recent_entries},"nextCursor":"older-items","backwardsCursor":null}}}}'
-      ;;
-  esac
-done
-"#,
-        log_path.display(),
-        recent_entries = recent_entries,
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
+    )];
+    older.push(if split_turn {
+        json!({"id":"tool-old","type":"commandExecution","command":"older-tool","status":"completed","aggregatedOutput":"old"})
+    } else { answer("agent-old", "old answer") });
+    let mut recent = Vec::new();
+    if !split_turn {
+        recent.push(user("user-new", "new prompt"));
     }
+    while recent.len() < 99 {
+        let index = recent.len();
+        recent.push(json!({"id":format!("tool-new-{index}"),"type":"commandExecution","command":format!("newer-tool-{index}"),"status":"completed","aggregatedOutput":"new"}));
+    }
+    recent.push(answer("agent-new", "new answer"));
+    let entries = |items: Vec<Value>, turn: &str, base: usize| {
+        items.into_iter().enumerate().map(|(index,item)| json!({"type":"item","turnId":turn,"position":base+index,"item":item})).collect::<Vec<_>>()
+    };
+    let old_page = json!({"data":entries(older,old_turn,0),"nextCursor":null});
+    let new_page = json!({"data":entries(recent,"turn-new",100),"nextCursor":"opaque-older"});
+    let turns = if split_turn {
+        json!([{"id":"turn-new","status":"completed","items":[]}])
+    } else {
+        json!([{"id":"turn-new","status":"completed","items":[]},{"id":"turn-old","status":"completed","items":[]}])
+    };
+    let mut script = fs::read_to_string(&path).unwrap();
+    for method in ["thread/timeline/list", "thread/turns/list"] {
+        let marker = format!("    *'\"method\":\"{method}\"'*)");
+        let start = script.find(&marker).unwrap();
+        let end = start + script[start..].find("      ;;").unwrap() + "      ;;".len();
+        let response = if method == "thread/turns/list" {
+            format!("    *'\"method\":\"thread/turns/list\"'*)\n      printf '%s\\n' '{{\"id\":'\"$request_id\"',\"result\":{}}}'\n      ;;", json!({"data":turns,"nextCursor":null}))
+        } else {
+            format!("    *'\"method\":\"thread/timeline/list\"'*'\"cursor\":\"opaque-older\"'*)\n      printf '%s\\n' '{{\"id\":'\"$request_id\"',\"result\":{old_page}}}'\n      ;;\n    *'\"method\":\"thread/timeline/list\"'*)\n      printf '%s\\n' '{{\"id\":'\"$request_id\"',\"result\":{new_page}}}'\n      ;;")
+        };
+        script.replace_range(start..end, &response);
+    }
+    fs::write(&path, script).unwrap();
     path
 }
 

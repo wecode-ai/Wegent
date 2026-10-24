@@ -308,7 +308,7 @@ fn mcp_elicitation_terminal_turn_and_expired_deadline_cannot_restore_pending_car
 #[tokio::test]
 async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_is_cleared() {
     for completion_notification in [false, true] {
-        let (handler, root) = isolated_runtime_work_handler("elicitation-answered-history");
+        let (mut handler, root) = isolated_runtime_work_handler("elicitation-answered-history");
         let mut link = RuntimeTaskLink::new_pending(
             "task-1".to_owned(),
             "/tmp/project".to_owned(),
@@ -316,6 +316,14 @@ async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_i
         );
         link.thread_id = Some("thread-1".to_owned());
         handler.upsert_local_task(link);
+        install_native_history(
+            &mut handler,
+            &root,
+            vec![json!({"id":"turn-1", "status":"completed", "items":[
+                {"id":"native-answer", "type":"agentMessage", "text":"Done"}
+            ]})],
+            None,
+        );
         start_test_execution(&handler, "task-1");
         handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
         let cases = [
@@ -378,11 +386,17 @@ async fn mcp_elicitation_completed_history_restores_answers_after_active_cache_i
             }))
             .await
             .unwrap();
-        let blocks = transcript["messages"]
+        handler
+            .codex_app_server
+            .request("test/stop", json!({}))
+            .await
+            .unwrap();
+        let blocks = transcript["runtimeTurns"]
             .as_array()
             .unwrap()
             .iter()
-            .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+            .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+            .map(|item| &item["block"])
             .filter(|block| block["tool_name"] == "request_user_input")
             .collect::<Vec<_>>();
         assert_eq!(blocks.len(), cases.len());
@@ -452,6 +466,28 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
         assert_eq!(response["interactionScope"], *turn_id);
         assert_eq!(response["answers"]["action"]["answers"][0], *choice);
     }
+    let link = handler.local_task_link("task-1").unwrap();
+    let overlay = super::super::transcript_overlays::runtime_transcript_overlay_turns;
+    assert!(overlay(&link, &[]).is_empty());
+    assert!(overlay(&link, &[json!({"id":"other-page", "items":[]})]).is_empty());
+    for (turn_id, choice) in [("turn-1", "preview"), ("turn-2", "production")] {
+        let turns = overlay(&link, &[json!({"id":turn_id, "items":[]})]);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["id"], turn_id);
+        assert_eq!(turns[0]["items"].as_array().unwrap().len(), 1);
+        let payload = &turns[0]["items"][0]["block"]["render_payload"];
+        assert_eq!(payload["interactionScope"], turn_id);
+        assert_eq!(
+            payload["response"]["answers"]["action"]["answers"][0],
+            choice
+        );
+    }
+    handler.record_superseded_runtime_transcript_turn("task-1", "turn-1");
+    assert!(overlay(
+        &handler.local_task_link("task-1").unwrap(),
+        &[json!({"id":"turn-1", "items":[]})]
+    )
+    .is_empty());
     let _ = fs::remove_dir_all(root);
 }
 

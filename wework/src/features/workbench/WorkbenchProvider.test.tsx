@@ -13471,7 +13471,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
-    expect(screen.getByTestId('message-roles')).not.toHaveTextContent('assistant:streamed answer')
+    expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
 
     await act(async () => {
       transcript.resolve({
@@ -16811,7 +16811,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       chatStream: { subscribe } as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(<RuntimeOpenProbe />, services)
+    renderWorkbenchWithLifecycleCoordinator(<RuntimeOpenProbe />, services)
 
     await userEvent.click(await screen.findByText('open runtime a'))
     await waitFor(() =>
@@ -16833,7 +16833,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: 'runtime-a',
       workspacePath: '/workspace/project-alpha',
-      limit: 5,
+      limit: 50,
       refresh: true,
     })
     await waitFor(() =>

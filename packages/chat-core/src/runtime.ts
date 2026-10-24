@@ -58,6 +58,8 @@ export interface NormalizedRuntimeMessage {
   completed_at?: string | number | null;
   stoppedNotice?: boolean | null;
   stopped_notice?: boolean | null;
+  runtimeGuidance?: boolean | null;
+  runtime_guidance?: boolean | null;
   runtimeGoalRequest?: boolean | null;
   runtime_goal_request?: boolean | null;
   source?: RuntimeMessageSource | null;
@@ -107,9 +109,12 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
+  runtimeTurns?: RuntimeTranscriptTurn[] | null;
+  supersededTurnIds?: string[];
   origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
   historyUnavailable?: boolean;
   taskId?: string;
+  threadId?: string | null;
   workspacePath: string;
   runtime: RuntimeName;
   running?: boolean;
@@ -130,6 +135,7 @@ export interface RuntimeTranscriptResponse {
 
 export interface RuntimeTranscriptTurn {
   id: string;
+  position?: number;
   items: RuntimeTranscriptTurnItem[];
   itemMerge?: "prepend";
   messageIndex?: number | null;
@@ -146,7 +152,7 @@ export interface RuntimeTranscriptTurn {
   memoryCitations?: CodexMemoryCitation[] | null;
 }
 
-export type RuntimeTranscriptTurnItem =
+export type RuntimeTranscriptTurnItem = { position?: number | null } & (
   | {
       id: string;
       type: "user_message";
@@ -162,7 +168,8 @@ export type RuntimeTranscriptTurnItem =
       id: string;
       type: "block";
       block: ChatBlock;
-    };
+    }
+);
 
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   limit?: number;
