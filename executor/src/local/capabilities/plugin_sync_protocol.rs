@@ -152,23 +152,28 @@ impl ConnectionBinding {
     }
 
     pub(super) fn check(&self) -> Result<(), CapabilitySyncError> {
-        if *self
+        self.lock_active().map(drop)
+    }
+
+    pub(super) fn lock_active(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, String>, CapabilitySyncError> {
+        let active = self
             .active
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            != self.instance
-        {
+            .unwrap_or_else(|error| error.into_inner());
+        if *active != self.instance {
             return Err(invalid(
                 "Plugin sync belongs to an inactive backend connection",
             ));
         }
-        Ok(())
+        Ok(active)
     }
 
-    fn bind_manifest(&self, manifest: &mut Value) -> Result<bool, CapabilitySyncError> {
-        self.check()?;
+    fn bind_manifest(&self, manifest: &mut Value) -> bool {
+        // The caller holds the active binding through the manifest commit.
         if manifest.get("plugin_sync_binding").and_then(Value::as_str) == Some(&self.identity) {
-            return Ok(false);
+            return false;
         }
         // Tokens are never persisted or logged. Changing the connection creates
         // a fresh ordering namespace while package caches remain reusable.
@@ -179,7 +184,7 @@ impl ConnectionBinding {
                 plugin.remove("plugin_sync_generation");
             }
         }
-        Ok(true)
+        true
     }
 }
 
@@ -325,93 +330,104 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let queued_ms = started.elapsed().as_millis();
         let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
-        let mut manifest = self.store.manifest.load()?;
-        if self.plugin_sync_binding.bind_manifest(&mut manifest)? {
-            self.store
-                .manifest
-                .save_with_revision_bump(manifest.clone())?;
-        }
-        if request.complete && request.generation < complete_generation(&manifest) {
-            let mut results = request
-                .plugins
-                .iter()
-                .map(|spec| acknowledgement(spec, request.generation, "superseded", "upsert"))
-                .collect::<Vec<_>>();
-            results.extend(
-                request
-                    .removals
+        let mut manifest;
+        let mut results = Vec::new();
+        {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            manifest = self.store.manifest.load()?;
+            if self.plugin_sync_binding.bind_manifest(&mut manifest) {
+                self.store
+                    .manifest
+                    .save_with_revision_bump(manifest.clone())?;
+            }
+            if request.complete && request.generation < complete_generation(&manifest) {
+                let mut results = request
+                    .plugins
                     .iter()
-                    .map(|spec| acknowledgement(spec, request.generation, "superseded", "remove")),
-            );
-            return Ok(
-                json!({"success": true, "scope": payload.get("scope").and_then(Value::as_str).unwrap_or("all"),
+                    .map(|spec| acknowledgement(spec, request.generation, "superseded", "upsert"))
+                    .collect::<Vec<_>>();
+                results.extend(
+                    request.removals.iter().map(|spec| {
+                        acknowledgement(spec, request.generation, "superseded", "remove")
+                    }),
+                );
+                return Ok(
+                    json!({"success": true, "scope": payload.get("scope").and_then(Value::as_str).unwrap_or("all"),
                 "skills": [], "plugins": results,
                 "plugin_sync": {"version": 2, "generation": request.generation, "complete": true}}),
-            );
-        }
-        if request.complete && request.generation > complete_generation(&manifest) {
-            // Acceptance fences delayed deltas even when materialization fails.
-            let state = protocol_state(&mut manifest);
-            state.insert("complete_generation".to_owned(), json!(request.generation));
-            // The complete fence supersedes strictly older intents and tombstones.
-            // Keep entries at the fence: an equal-generation removal must still
-            // block a delayed install of the same generation.
-            for collection in ["entries", "removals"] {
-                if let Some(records) = state.get_mut(collection).and_then(Value::as_object_mut) {
-                    records.retain(|_, record| {
-                        record
-                            .get("generation")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0)
-                            >= request.generation
-                    });
-                }
+                );
             }
-            self.store
-                .manifest
-                .save_with_revision_bump(manifest.clone())?;
-        }
-        let mut results = Vec::new();
-        for spec in &request.removals {
-            results.push(self.remove_ordered_plugin(spec, request.generation, &mut manifest)?);
-        }
-        if request.complete {
-            let desired = request
-                .plugins
-                .iter()
-                .map(|spec| spec.key.clone())
-                .collect::<BTreeSet<_>>();
-            let omitted = object_map(manifest.get("plugins"))
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|(key, plugin)| !desired.contains(key) && is_reconcilable(key, plugin))
-                .map(|(key, plugin)| PluginSyncSpec::from_manifest_entry(&key, &plugin))
-                .collect::<Vec<_>>();
-            for spec in omitted {
+            if request.complete && request.generation > complete_generation(&manifest) {
+                // Acceptance fences delayed deltas even when materialization fails.
+                let state = protocol_state(&mut manifest);
+                state.insert("complete_generation".to_owned(), json!(request.generation));
+                // The complete fence supersedes strictly older intents and tombstones.
+                // Keep entries at the fence: an equal-generation removal must still
+                // block a delayed install of the same generation.
+                for collection in ["entries", "removals"] {
+                    if let Some(records) = state.get_mut(collection).and_then(Value::as_object_mut)
+                    {
+                        records.retain(|_, record| {
+                            record
+                                .get("generation")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0)
+                                >= request.generation
+                        });
+                    }
+                }
+                self.store
+                    .manifest
+                    .save_with_revision_bump(manifest.clone())?;
+            }
+            for spec in &request.removals {
                 results.push(self.remove_ordered_plugin(
-                    &spec,
+                    spec,
                     request.generation,
                     &mut manifest,
                 )?);
             }
+            if request.complete {
+                let desired = request
+                    .plugins
+                    .iter()
+                    .map(|spec| spec.key.clone())
+                    .collect::<BTreeSet<_>>();
+                let omitted = object_map(manifest.get("plugins"))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(key, plugin)| !desired.contains(key) && is_reconcilable(key, plugin))
+                    .map(|(key, plugin)| PluginSyncSpec::from_manifest_entry(&key, &plugin))
+                    .collect::<Vec<_>>();
+                for spec in omitted {
+                    results.push(self.remove_ordered_plugin(
+                        &spec,
+                        request.generation,
+                        &mut manifest,
+                    )?);
+                }
+            }
         }
         for mut spec in request.plugins {
-            self.plugin_sync_binding.check()?;
-            if is_superseded(&manifest, &spec, request.generation, false) {
-                results.push(acknowledgement(
-                    &spec,
-                    request.generation,
-                    "superseded",
-                    "upsert",
-                ));
-                continue;
+            {
+                let _binding = self.plugin_sync_binding.lock_active()?;
+                if is_superseded(&manifest, &spec, request.generation, false) {
+                    results.push(acknowledgement(
+                        &spec,
+                        request.generation,
+                        "superseded",
+                        "upsert",
+                    ));
+                    continue;
+                }
+                record_intent(&mut manifest, &spec, request.generation, false);
+                self.store
+                    .manifest
+                    .save_with_revision_bump(manifest.clone())?;
             }
-            record_intent(&mut manifest, &spec, request.generation, false);
-            self.store
-                .manifest
-                .save_with_revision_bump(manifest.clone())?;
             spec.sync_generation = Some(request.generation);
             let mut result = self.sync_plugin(&spec, &mut manifest).await;
+            let _binding = self.plugin_sync_binding.lock_active()?;
             result["generation"] = json!(request.generation);
             result["operation"] = json!("upsert");
             if result.get("status").and_then(Value::as_str) == Some("synced") {
@@ -431,17 +447,21 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .iter()
                 .map(|spec| spec.name.clone())
                 .collect();
-            self.remove_stale_managed_skills(&desired, &mut manifest)?;
+            {
+                let _binding = self.plugin_sync_binding.lock_active()?;
+                self.remove_stale_managed_skills(&desired, &mut manifest)?;
+            }
             for spec in &request.skills {
                 skill_results.push(self.sync_skill(spec, &mut manifest).await);
             }
+            let _binding = self.plugin_sync_binding.lock_active()?;
             self.record_mcps(payload.get("mcps"), "replace", &mut manifest)?;
         }
         let success = results
             .iter()
             .chain(&skill_results)
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
-        self.plugin_sync_binding.check()?;
+        let _binding = self.plugin_sync_binding.lock_active()?;
         if request.complete
             || results
                 .iter()

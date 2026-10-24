@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::command_items::preserve_newer_command_output;
 use super::*;
 use crate::runtime_work::events::push_limited_tool_output;
 use crate::runtime_work::transcript::tool_update_from_notification;
@@ -102,6 +101,80 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+pub(super) fn runtime_background_command_turns(
+    link: &RuntimeTaskLink,
+    native_turns: &[Value],
+) -> Vec<Value> {
+    let mut messages = runtime_background_command_messages(link, native_turns);
+    remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
+    transcript_canonical_turns(&messages, TranscriptTurnItemSource::CachedMessages)
+}
+
+fn runtime_background_command_messages(
+    link: &RuntimeTaskLink,
+    native_turns: &[Value],
+) -> Vec<Value> {
+    let native_items = native_turns
+        .iter()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .filter_map(|item| Some((item["id"].as_str()?, item)))
+        .collect::<std::collections::HashMap<_, _>>();
+    completed_transcript_messages(link)
+        .into_iter()
+        .filter_map(|mut message| {
+            let source = message["runtimeItems"].as_array()?;
+            if message["role"] != "assistant" || !source.iter().any(is_running_runtime_command) {
+                return None;
+            }
+            let items = source
+                .iter()
+                .filter_map(|item| {
+                    let native = item["id"]
+                        .as_str()
+                        .and_then(|id| native_items.get(id))
+                        .copied();
+                    if is_running_runtime_command(item)
+                        && !native.is_some_and(|native| {
+                            matches!(
+                                native.pointer("/block/status").and_then(Value::as_str),
+                                Some("done" | "error")
+                            )
+                        })
+                    {
+                        let mut runtime = item.clone();
+                        if let Some(position) = native.and_then(|item| item.get("position")) {
+                            runtime["position"] = position.clone();
+                        }
+                        Some(runtime)
+                    } else {
+                        // Use current native values only. These identities witness the command's
+                        // observed neighbors without replaying historical cached text into a page.
+                        native.cloned()
+                    }
+                })
+                .collect::<Vec<_>>();
+            message["runtimeItems"] = json!(items);
+            Some(message)
+        })
+        .collect()
+}
+
+fn is_running_runtime_command(item: &Value) -> bool {
+    item["type"] == "block"
+        && item
+            .pointer("/block/render_payload/kind")
+            .and_then(Value::as_str)
+            == Some("command_execution")
+        && item
+            .pointer("/block/render_payload/status")
+            .and_then(Value::as_str)
+            == Some("inProgress")
+        && !matches!(
+            item.pointer("/block/status").and_then(Value::as_str),
+            Some("done" | "error")
+        )
+}
+
 fn append_command_output(value: &mut Value, field: &str, delta: &str) {
     let mut output = raw_string_field(value, field).unwrap_or_default();
     push_limited_tool_output(&mut output, delta);
@@ -127,12 +200,10 @@ fn update_completed_command(handle: &mut Value, id: &str, updates: &Value) {
             }
             if let Some(delta) = updates.get("tool_output_delta").and_then(Value::as_str) {
                 append_command_output(block, "tool_output", delta);
-            } else {
-                let mut updates = updates.clone();
-                preserve_newer_command_output(block, &mut updates, "tool_output");
-                if let (Some(block), Some(updates)) = (block.as_object_mut(), updates.as_object()) {
-                    block.extend(updates.clone());
-                }
+            } else if let (Some(block), Some(updates)) =
+                (block.as_object_mut(), updates.as_object())
+            {
+                block.extend(updates.clone());
             }
         });
     }

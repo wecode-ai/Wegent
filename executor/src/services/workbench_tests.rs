@@ -155,7 +155,7 @@ fn plugin_archive_retains_original_manifest_without_runtime_cache_changes() {
 }
 
 #[test]
-fn corrupt_managed_plugin_is_repaired_and_healthy_package_is_never_rewritten() {
+fn cached_plugin_verification_preserves_healthy_and_corrupt_packages() {
     let root = tempfile::tempdir().unwrap();
     let bytes = zip(&[
         (".claude-plugin/plugin.json", "{\"name\":\"demo\"}"),
@@ -181,58 +181,15 @@ fn corrupt_managed_plugin_is_repaired_and_healthy_package_is_never_rewritten() {
     );
     assert_eq!(fs::read(&metadata).unwrap(), original_record);
     fs::write(package.path.join("payload.txt"), "corrupt").unwrap();
-    let repaired =
-        publish_plugin_archive(root.path(), &bytes, Some(&package.archive_hash)).unwrap();
-    assert_eq!(repaired.path, package.path);
+    assert!(publish_plugin_archive(root.path(), &bytes, Some(&package.archive_hash)).is_err());
+    assert!(
+        verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).is_err()
+    );
     assert_eq!(
         fs::read_to_string(package.path.join("payload.txt")).unwrap(),
-        "verified"
-    );
-    verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
-    let quarantine = fs::read_dir(root.path().join("shared/quarantine"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    assert_eq!(
-        fs::read_to_string(quarantine.join("package/payload.txt")).unwrap(),
         "corrupt"
     );
-    assert_eq!(
-        fs::read(quarantine.join("record.json")).unwrap(),
-        original_record
-    );
-}
-
-#[test]
-fn failed_repair_validation_preserves_current_package_and_record() {
-    let root = tempfile::tempdir().unwrap();
-    let package = plugin_fixture(root.path());
-    let record = root
-        .path()
-        .join("shared/metadata")
-        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
-    let original_record = fs::read(&record).unwrap();
-    let source = package.path.join("README.md");
-    fs::write(&source, "corrupt but retained").unwrap();
-    let _lock = lock_package(root.path(), PackageKind::Plugin, &package.archive_hash).unwrap();
-    assert!(repair_plugin_package(
-        root.path(),
-        b"invalid zip",
-        &package.archive_hash,
-        &package.path,
-        &record
-    )
-    .is_err());
-    assert_eq!(fs::read_to_string(&source).unwrap(), "corrupt but retained");
-    assert_eq!(fs::read(&record).unwrap(), original_record);
-    assert_eq!(
-        fs::read_dir(root.path().join("shared/quarantine"))
-            .unwrap()
-            .count(),
-        0
-    );
+    assert_eq!(fs::read(&metadata).unwrap(), original_record);
 }
 
 #[test]
@@ -254,7 +211,7 @@ fn corrupt_unmanaged_hash_directory_is_not_replaced() {
 
 #[test]
 #[cfg(unix)]
-fn plugin_repair_rejects_symbolic_store_paths_and_preserves_outside_data() {
+fn plugin_cache_rejects_symbolic_store_paths_and_preserves_outside_data() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let bytes = zip(&[(".claude-plugin/plugin.json", "{\"name\":\"demo\"}")]);
@@ -267,6 +224,28 @@ fn plugin_repair_rejects_symbolic_store_paths_and_preserves_outside_data() {
         "keep"
     );
     assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 1);
+    assert!(
+        verify_published_package(root.path(), PackageKind::Plugin, &archive_hash(&bytes)).is_err()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_cache_rejects_symbolic_integrity_records() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    let record = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let outside = root.path().join("original-record.json");
+    fs::rename(&record, &outside).unwrap();
+    let original = fs::read(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &record).unwrap();
+    assert!(
+        verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).is_err()
+    );
+    assert_eq!(fs::read(&outside).unwrap(), original);
 }
 
 fn plugin_fixture(root: &Path) -> PublishedPackage {

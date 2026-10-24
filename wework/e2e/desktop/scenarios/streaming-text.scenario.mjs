@@ -1,3 +1,4 @@
+import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import {
   createMarkdownLinkChecks,
@@ -107,6 +108,7 @@ export function createDesktopScenario({
 }) {
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
+  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -325,6 +327,7 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
+      if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
       if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
         recordScenarioRequest('markdown_original_links', body)
@@ -887,6 +890,7 @@ export function createDesktopScenario({
         ['streaming-timers', verifyTimers],
         ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],
+        ['streaming-conversation-switching', conversationSwitching.verify],
         ['streaming-subagents', verifySubagentStreamingPanel],
       ])
       const selectedCheckpoint = checkpoint?.startsWith('streaming-')

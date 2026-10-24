@@ -1,5 +1,4 @@
 import { rendererCrashStore } from './rendererCrashStore'
-import { collectBackgroundTerminalDiagnostics } from './background-terminal-diagnostics'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -29,7 +28,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
-import { createDesktopInputTracer, parseDesktopControlKey } from './desktop-control-keyboard'
+import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
@@ -1111,26 +1110,15 @@ async function pressNativeDesktopControlKey(
   measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
-  const { inputDiagnosticId, trace } = createDesktopInputTracer({
+  await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
-    selector,
-    key,
-    phase,
   })
-  await invokeDesktopHost(
-    windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow',
-    { windowLabel, inputDiagnosticId },
-    stage => trace(`focus.${stage}`)
-  )
-  trace('focus.tick-start')
   await waitForDesktopControlTick()
-  trace('focus.tick-complete')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
-  trace('target-focused')
   const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
   const expectedKey = parseDesktopControlKey(key).key
@@ -1145,14 +1133,13 @@ async function pressNativeDesktopControlKey(
   }
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost(
-      'e2e.pressKey',
-      { windowLabel, key, phase, focus: false, inputDiagnosticId },
-      stage => trace(`key.${stage}`)
-    )
-    trace('key.tick-start')
+    await invokeDesktopHost('e2e.pressKey', {
+      windowLabel,
+      key,
+      phase,
+      focus: false,
+    })
     await waitForDesktopControlTick()
-    trace('key.tick-complete')
     if (!received.some(event => event.isTrusted && event.target === element)) {
       throw new Error(
         `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
@@ -1160,7 +1147,6 @@ async function pressNativeDesktopControlKey(
           `received=${received.map(event => event.key).join(',')}`
       )
     }
-    trace('verified')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
@@ -3076,21 +3062,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return String(finishedCount)
     }
-    case 'getWorkbenchDebugSnapshot': {
-      const debugSnapshot = getWorkbenchDebugSnapshot()
-      const address =
-        debugSnapshot.pane?.currentRuntimeTask ?? debugSnapshot.workbench?.currentRuntimeTask
+    case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
-        ...debugSnapshot,
-        ...(command.value && address
-          ? {
-              backgroundTerminals: collectBackgroundTerminalDiagnostics(
-                getRuntimeConversationMessagesForLogicalAddress(address),
-                address.taskId,
-                command.value
-              ),
-            }
-          : {}),
+        ...getWorkbenchDebugSnapshot(),
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {
@@ -3108,7 +3082,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           }
         }),
       })
-    }
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())
     case 'getConversationDiagnosticsSnapshot':
@@ -3337,30 +3310,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
-function traceDesktopControlTransport(
-  stage: string,
-  context: { clientId: string; commandId?: string; action?: string; status?: number }
-): void {
-  console.info(
-    `[desktop-e2e-control] ${JSON.stringify({ ...context, stage, at: new Date().toISOString() })}`
-  )
-}
-
-async function postDesktopControlResult(
-  url: string,
-  result: DesktopControlResult,
-  action: string
-): Promise<void> {
-  const context = { clientId: result.clientId, commandId: result.id, action }
-  traceDesktopControlTransport('result-post', context)
+async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
   const response = await fetch(`${url}/results`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify(result),
   })
-  traceDesktopControlTransport('result-headers', { ...context, status: response.status })
-  await response.text()
-  traceDesktopControlTransport('result-body', context)
   if (!response.ok) {
     throw new Error(`Desktop E2E control result failed with ${response.status}`)
   }
@@ -3385,7 +3340,6 @@ async function postDesktopControlStarted(
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
       body: JSON.stringify({ id: command.id, clientId }),
     })
-    await response.text()
   } finally {
     window.clearInterval(probe)
     maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
@@ -3408,18 +3362,11 @@ async function postDesktopControlStarted(
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
-  const pollForCommand = async () => {
-    traceDesktopControlTransport('poll-request', { clientId })
-    const response = await fetch(
-      `${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`,
-      {
-        cache: 'no-store',
-        headers: desktopControlHeaders(),
-      }
-    )
-    traceDesktopControlTransport('poll-headers', { clientId, status: response.status })
-    return response
-  }
+  const pollForCommand = () =>
+    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
+      cache: 'no-store',
+      headers: desktopControlHeaders(),
+    })
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
@@ -3427,7 +3374,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
-  await readyResponse.text()
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
@@ -3444,7 +3390,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       const command = (await response.json()) as DesktopControlCommand
       const diagnostic = { commandId: command.id, action: command.action, clientId }
-      traceDesktopControlTransport('command-read', diagnostic)
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
       await postDesktopControlStarted(url, command, clientId)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
@@ -3462,7 +3407,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       try {
         logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
-        await postDesktopControlResult(url, result, command.action)
+        await postDesktopControlResult(url, result)
         logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
         console.error('[Wework] Desktop E2E result acknowledgement failed:', {

@@ -104,16 +104,9 @@ async function waitForLastElementAbove(control, selector, top, description) {
   throw new Error(`${description}: ${JSON.stringify(element)}`)
 }
 
-async function sendPrompt(control, selector, prompt, { assertDraftBeforeSubmit = false } = {}) {
+async function sendPrompt(control, selector, prompt) {
   await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
-  if (assertDraftBeforeSubmit) {
-    assert.equal(
-      await control.command('getText', selector),
-      prompt,
-      'A previous send cleared the next composer draft before submission'
-    )
-  }
   await control.command('press', selector, { key: 'Enter' })
 }
 

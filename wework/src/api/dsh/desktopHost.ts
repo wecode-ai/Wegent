@@ -44,22 +44,18 @@ let desktopHostEventLoopGeneration = 0
 
 export async function invokeDesktopHost<Result>(
   capability: string,
-  params: Record<string, unknown> = {},
-  onProgress?: (stage: 'fetch-start' | 'response-headers' | 'response-body') => void
+  params: Record<string, unknown> = {}
 ): Promise<Result> {
-  onProgress?.('fetch-start')
   const response = await fetch('/wework/electron-host/v1/invoke', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ capability, params }),
   })
-  onProgress?.('response-headers')
   const body = (await response.json()) as {
     ok?: boolean
     result?: Result
     error?: DesktopHostErrorPayload
   }
-  onProgress?.('response-body')
   if (!response.ok || body.ok !== true) {
     throw new DesktopHostError(
       body.error?.code ?? `http_${response.status}`,

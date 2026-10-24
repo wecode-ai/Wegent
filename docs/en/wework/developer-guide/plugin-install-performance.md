@@ -42,7 +42,7 @@ A trusted SHA256 triggers local shared-package verification before download. Cha
 
 Runtime directories behave as on main: every sync rewrites the runtime copy and configuration from the verified local package, with no state-comparison skip; missing or damaged runtime files are repaired by that rewrite. Targeted sync only ships changed plugins, so unchanged plugins never have their runtime directories touched.
 
-Damaged shared packages use package locking, validated staging, quarantine and rollback. Failed publication preserves the existing runtime. Missing or damaged ownership records, mismatched identities and occupied symlinks are rejected rather than overwritten; ownership-record damage still needs manual repair.
+Shared packages retain main's immutable publication policy: damaged existing packages are rejected even after a downloaded archive passes validation, preserving the current runtime until the cache is repaired manually. Missing or damaged ownership records, mismatched identities and occupied symlinks are rejected rather than overwritten; a directory name alone never establishes ownership.
 
 `plugin_sync_completed` logs queue and total time. Plugin phase logs include verification, download, package processing, local activation, bytes and cache hits. Backend records RPC time, plugin counts and generation.
 
@@ -50,7 +50,7 @@ Damaged shared packages use package locking, validated staging, quarantine and r
 
 `executor/tests/plugin_install_performance.rs` uses a real temporary filesystem, 13 warmed plugins and three new installations. Only package transport is simulated with a 10ms delay. The same fixture runs against a temporary `upstream/main` source snapshot (`64def2c13`) with `WEGENT_PLUGIN_PERF_BASELINE=1` and against the new code in its default mode. Compilation is excluded.
 
-Under these conditions main processes complete lists of 14, 15 and 16 plugins. The optimized path sends three single-plugin deltas. A single debug-build measurement on 2026-10-22 produced the following results; each of the 16 ZIP packages was 329 bytes:
+Under these conditions main processes complete lists of 14, 15 and 16 plugins. The optimized path sends three single-plugin deltas. The following historical debug-build measurement was taken on 2026-10-22, rather than remeasured at the current commit; each of the 16 ZIP packages was 329 bytes:
 
 | Metric                                |        main | Optimized |
 | ------------------------------------- | ----------: | --------: |

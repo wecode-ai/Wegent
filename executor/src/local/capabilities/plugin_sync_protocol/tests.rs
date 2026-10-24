@@ -528,3 +528,147 @@ async fn account_switch_resets_ordering_namespace_and_rejects_old_handlers() {
         .get("beta@wework")
         .is_none());
 }
+
+struct HeldProvider {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+impl HeldProvider {
+    async fn wait(&self) {
+        self.entered.notify_one();
+        self.release.notified().await;
+    }
+}
+
+impl CapabilityPackageProvider for HeldProvider {
+    fn stage_skill<'a>(
+        &'a self,
+        _spec: &'a SkillSyncSpec,
+        target: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.wait().await;
+            fs::create_dir_all(target)?;
+            fs::write(target.join("SKILL.md"), "Old account skill")?;
+            Ok(())
+        })
+    }
+
+    fn download_skill<'a>(
+        &'a self,
+        _spec: &'a SkillSyncSpec,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.wait().await;
+            let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            archive
+                .start_file("SKILL.md", zip::write::FileOptions::default())
+                .unwrap();
+            archive.write_all(b"Old account skill").unwrap();
+            Ok(archive.finish().unwrap().into_inner())
+        })
+    }
+
+    fn download_plugin<'a>(
+        &'a self,
+        _path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.wait().await;
+            Ok(package("alpha"))
+        })
+    }
+}
+
+#[tokio::test]
+async fn account_switch_during_download_prevents_old_publication() {
+    for shared in [false, true] {
+        for versioned in [false, true] {
+            for skill in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let mut store = GlobalCapabilityStore::new(
+                    root.path().join("capabilities/manifest.json"),
+                    root.path().join(".claude/skills"),
+                )
+                .with_store_dir(root.path().join("store"));
+                if shared {
+                    store = store.with_workbench_root(root.path().join("workbench"));
+                }
+                let entered = Arc::new(Notify::new());
+                let release = Arc::new(Notify::new());
+                let account_a = CapabilitySyncHandler::with_package_provider(
+                    "account-a",
+                    store.clone(),
+                    HeldProvider {
+                        entered: entered.clone(),
+                        release: release.clone(),
+                    },
+                );
+                let mut payload = json!({"mode":"replace", "plugins":[], "skills":[], "mcps":[]});
+                if skill {
+                    payload["skills"] = json!([{"name":"old-account", "skill_id":1}]);
+                } else {
+                    payload["plugins"] = json!([plugin("alpha", 1)]);
+                }
+                if versioned {
+                    payload["plugin_sync"] =
+                        json!({"version":2, "generation":100, "complete":true});
+                }
+                let (result, (account_b, before)) =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        tokio::join!(account_a.apply_sync(payload), async {
+                            entered.notified().await;
+                            let before = store.manifest.load().unwrap();
+                            let account_b = CapabilitySyncHandler::with_package_provider(
+                                "account-b",
+                                store.clone(),
+                                Provider::default(),
+                            );
+                            release.notify_one();
+                            (account_b, before)
+                        })
+                    })
+                    .await
+                    .unwrap();
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("inactive backend connection"));
+                assert_eq!(store.manifest.load().unwrap(), before);
+                assert!(!store.skills_dir.join("old-account").exists());
+                assert!(!store.codex_skills_dir.join("old-account").exists());
+                assert!(!store
+                    .plugin_runtime_link(&PluginSyncSpec::from_value(&plugin("alpha", 1)).unwrap())
+                    .exists());
+                assert!(!store
+                    .plugin_codex_link(&PluginSyncSpec::from_value(&plugin("alpha", 1)).unwrap())
+                    .exists());
+                assert!(!store.plugins_dir.join("installed_plugins.json").exists());
+                assert!(!store
+                    .plugins_dir
+                    .parent()
+                    .unwrap()
+                    .join("settings.json")
+                    .exists());
+                assert!(!store
+                    .codex_plugins_dir
+                    .parent()
+                    .unwrap()
+                    .join("config.toml")
+                    .exists());
+                assert_eq!(
+                    account_b
+                        .apply_sync(complete(1, vec![plugin("beta", 2)]))
+                        .await
+                        .unwrap()["success"],
+                    true,
+                );
+                let current = store.manifest.load().unwrap();
+                assert_eq!(current["plugin_sync"]["complete_generation"], 1);
+                assert!(current["plugins"].get("alpha@wework").is_none());
+                assert!(current["skills"].get("old-account").is_none());
+            }
+        }
+    }
+}

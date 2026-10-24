@@ -1324,7 +1324,6 @@ where
         let queued_ms = started.elapsed().as_millis();
         let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
-        self.plugin_sync_binding.check()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
         if plugins_only
             && (payload.get("plugins").and_then(Value::as_array).is_none()
@@ -1348,25 +1347,31 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut manifest = if plugin_specs.is_empty() || self.store.shared_packages {
-            self.store.manifest.load()?
-        } else {
-            self.store.load_manifest_with_plugin_store_migration()?
+        let mut manifest = {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            if plugin_specs.is_empty() || self.store.shared_packages {
+                self.store.manifest.load()?
+            } else {
+                self.store.load_manifest_with_plugin_store_migration()?
+            }
         };
 
-        if mode == "replace" || plugins_only {
-            let desired_skills = skill_specs
-                .iter()
-                .map(|spec| spec.name.clone())
-                .collect::<BTreeSet<_>>();
-            let desired_plugins = plugin_specs
-                .iter()
-                .map(|spec| spec.key.clone())
-                .collect::<BTreeSet<_>>();
-            if !plugins_only {
-                self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+        {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            if mode == "replace" || plugins_only {
+                let desired_skills = skill_specs
+                    .iter()
+                    .map(|spec| spec.name.clone())
+                    .collect::<BTreeSet<_>>();
+                let desired_plugins = plugin_specs
+                    .iter()
+                    .map(|spec| spec.key.clone())
+                    .collect::<BTreeSet<_>>();
+                if !plugins_only {
+                    self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+                }
+                self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
             }
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -1377,6 +1382,7 @@ where
         for spec in &plugin_specs {
             plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
         }
+        let _binding = self.plugin_sync_binding.lock_active()?;
         if !plugins_only {
             self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
         }
@@ -1444,9 +1450,21 @@ where
             ));
         }
 
-        if !is_installed_skill_current(spec, &store_path, manifest) {
+        let staging = if !is_installed_skill_current(spec, &store_path, manifest) {
+            let parent = store_path.parent().expect("skill store parent");
+            fs::create_dir_all(parent)?;
+            let staging = tempfile::tempdir_in(parent)?;
+            self.package_provider
+                .stage_skill(spec, &staging.path().join("package"))
+                .await?;
+            Some(staging)
+        } else {
+            None
+        };
+        let _binding = self.plugin_sync_binding.lock_active()?;
+        if let Some(staging) = staging {
             remove_existing_path(&store_path)?;
-            self.package_provider.stage_skill(spec, &store_path).await?;
+            fs::rename(staging.path().join("package"), &store_path)?;
         }
         link_or_copy_dir(&store_path, &runtime_link)?;
         link_or_copy_dir(&store_path, &codex_link)?;
@@ -1507,6 +1525,10 @@ where
             return self.try_sync_shared_plugin(spec, manifest).await;
         }
         let Some(store_path) = self.store.plugin_store_path(spec) else {
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
             ensure_object_field(manifest, "plugins").insert(
                 spec.key.clone(),
                 json!({
@@ -1553,6 +1575,10 @@ where
                 .map_err(|error| {
                     PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
                 })?;
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
             if let Some(expected) = &spec.checksum {
                 let actual = sha256_digest(&package);
                 if &actual != expected {
@@ -1616,6 +1642,10 @@ where
             ));
         }
 
+        let _binding = self
+            .plugin_sync_binding
+            .lock_active()
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         self.store
             .install_plugin_runtime_metadata(spec, &store_path, manifest)
             .map_err(PluginSyncFailure::runtime_metadata)?;

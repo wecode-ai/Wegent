@@ -5,7 +5,6 @@ import {
   isRuntimeGoalContinuationTurn,
   projectRuntimeGoalContinuing,
   projectRuntimeGoalContinuationActive,
-  shouldReconcileActiveRuntimeGoalTranscript,
   updateRuntimeGoalContinuation,
 } from './runtime-goal'
 
@@ -94,7 +93,7 @@ describe('runtime goal continuation', () => {
       ],
     },
   ] as Partial<WorkbenchMessage>[])(
-    'stops showing startup after continuation output while keeping history reconciliation active',
+    'keeps continuation active without treating visible output as startup',
     output => {
       const assistant = { ...continuedAssistantMessage, ...output }
       const input = {
@@ -106,13 +105,6 @@ describe('runtime goal continuation', () => {
       }
       expect(projectRuntimeGoalContinuing(input)).toBe(false)
       expect(projectRuntimeGoalContinuationActive(input)).toBe(true)
-      expect(
-        shouldReconcileActiveRuntimeGoalTranscript({
-          goalContinuing: projectRuntimeGoalContinuationActive(input),
-          messages: input.messages,
-          activeAssistantMessage: assistant,
-        })
-      ).toBe(true)
     }
   )
 
@@ -145,66 +137,6 @@ describe('runtime goal continuation', () => {
         taskRunning: true,
         messages,
         activeAssistantMessage: initialAssistantMessage,
-      })
-    ).toBe(false)
-  })
-
-  test('does not equate unidentified assistants from different turns', () => {
-    const assistant = { ...continuedAssistantMessage, turnId: undefined, subtaskId: undefined }
-    expect(
-      shouldReconcileActiveRuntimeGoalTranscript({
-        goalContinuing: true,
-        messages: [
-          { ...assistant, id: 'previous-assistant', status: 'done', content: 'Previous result' },
-          assistant,
-        ],
-        activeAssistantMessage: assistant,
-      })
-    ).toBe(true)
-  })
-
-  test('keeps reconciliation active while earlier Goal results are visible', () => {
-    expect(
-      shouldReconcileActiveRuntimeGoalTranscript({
-        goalContinuing: true,
-        messages: [initialUserMessage, continuedAssistantMessage],
-        activeAssistantMessage: continuedAssistantMessage,
-      })
-    ).toBe(true)
-
-    expect(
-      shouldReconcileActiveRuntimeGoalTranscript({
-        goalContinuing: true,
-        messages: [
-          initialUserMessage,
-          {
-            id: 'assistant-1',
-            role: 'assistant',
-            content: 'Initial Goal result',
-            status: 'done',
-            turnId: 'turn-1',
-            subtaskId: 'turn-1',
-            createdAt: '2026-08-25T00:00:01.000Z',
-          },
-          continuedAssistantMessage,
-        ],
-        activeAssistantMessage: continuedAssistantMessage,
-      })
-    ).toBe(true)
-    expect(
-      shouldReconcileActiveRuntimeGoalTranscript({
-        goalContinuing: true,
-        messages: [
-          initialUserMessage,
-          {
-            ...continuedAssistantMessage,
-            id: 'settled-current-turn',
-            status: 'done',
-            content: 'Current result',
-          },
-          continuedAssistantMessage,
-        ],
-        activeAssistantMessage: continuedAssistantMessage,
       })
     ).toBe(false)
   })

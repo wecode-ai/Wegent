@@ -65,12 +65,6 @@ test('delivers the runner wait budget to the renderer and preserves explicit bud
     await post(control, 'started', { id: command.id, clientId: 'main-1' })
     await post(control, 'results', { id: command.id, clientId: 'main-1', ok: true, value: 'ready' })
     assert.equal(await result, 'ready')
-    assert.deepEqual(
-      control.controlTransportHistory
-        .filter(event => event.commandId === command.id)
-        .map(event => event.event),
-      ['result-received', 'result-resolving', 'result-ack-finished']
-    )
   }
 })
 

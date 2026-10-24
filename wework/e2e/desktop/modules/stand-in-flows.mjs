@@ -4,8 +4,9 @@ export async function openProjectStandIn(
   entry,
   { connect = false, requirements = true, onConnections } = {}
 ) {
-  // Closing personal settings may still be remounting the project surface.
-  await control.command('clickWhenEnabled', entry)
+  // Returning from personal settings remounts the project page asynchronously.
+  await control.command('waitFor', entry)
+  await control.command('click', entry)
   await control.command('waitFor', '[data-testid="stand-in-project-select"]')
   const selected = await control.command('getValue', '[data-testid="stand-in-project-select"]')
   if (!selected) {

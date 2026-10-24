@@ -10,30 +10,6 @@ const NAMED_CODE_KEYS = new Set([
   'ArrowRight',
 ])
 
-export function createDesktopInputTracer(context: {
-  windowLabel: string
-  selector: string
-  key: string
-  phase: string
-}): { inputDiagnosticId: string; trace: (stage: string) => void } {
-  const startedAt = performance.now()
-  const inputDiagnosticId = crypto.randomUUID()
-  return {
-    inputDiagnosticId,
-    trace: stage => {
-      console.info(
-        `[desktop-e2e-input] ${JSON.stringify({
-          ...context,
-          inputDiagnosticId,
-          stage,
-          at: new Date().toISOString(),
-          elapsedMs: Math.round(performance.now() - startedAt),
-        })}`
-      )
-    },
-  }
-}
-
 export function parseDesktopControlKey(value: string): KeyboardEventInit {
   if (value === '+') return { key: '+' }
   const parts = value.split('+').filter(Boolean)

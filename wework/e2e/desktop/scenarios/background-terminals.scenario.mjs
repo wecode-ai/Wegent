@@ -109,25 +109,6 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, 'body')
-  const verifyHistory = async (control, phase) => {
-    const saveDiagnostics = async () => {
-      const snapshot = await control.command('getWorkbenchDebugSnapshot', 'body', {
-        value: MARKERS[0],
-      })
-      await writeFile(join(resultDir, `background-terminal-history-${phase}.json`), snapshot)
-    }
-    try {
-      await verifyTerminalHistory(control, uiTimeoutMs)
-    } catch (error) {
-      try {
-        await saveDiagnostics()
-      } catch (diagnosticError) {
-        throw new AggregateError([error, diagnosticError], error.message)
-      }
-      throw error
-    }
-    await saveDiagnostics()
-  }
   let active = false
   let launched = false
   const toolResults = []
@@ -242,7 +223,7 @@ export function createDesktopScenario({
         `${SECTION} [data-testid^="open-background-terminal-"][title*="${MARKERS[0]}"]`
       )
       await control.command('waitFor', '[data-testid="background-terminal-output-panel"] .xterm')
-      await verifyHistory(control, 'initial')
+      await verifyTerminalHistory(control, uiTimeoutMs)
       await control.command('waitFor', '[data-testid^="right-workspace-background-terminal:"]', {
         text: MARKERS[0],
       })
@@ -286,7 +267,7 @@ export function createDesktopScenario({
         'click',
         `${SECTION} [data-testid^="open-background-terminal-"][title*="${MARKERS[0]}"]`
       )
-      await verifyHistory(control, 'restored')
+      await verifyTerminalHistory(control, uiTimeoutMs)
       await capture(control, 'background-terminals-04b-restored-output.png')
       await showSummary(control)
       await control.command('hover', `${SECTION} [data-testid^="open-background-terminal-"]`)

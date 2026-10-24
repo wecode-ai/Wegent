@@ -69,13 +69,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
   assert.equal(
     response.ok,
     true,
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
-  return body
+  return text ? JSON.parse(text) : null
 }
 
 function managerToolEvents(body, toolName, toolCallId, argumentsValue) {

@@ -604,7 +604,7 @@ async fn marketplace_identity_and_codex_product_drift_are_repaired_from_cache() 
 }
 
 #[tokio::test]
-async fn corrupt_cached_package_downloads_once_and_recovers_without_losing_runtime() {
+async fn corrupt_cached_package_is_rejected_without_losing_runtime() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = counted("v1");
@@ -615,12 +615,8 @@ async fn corrupt_cached_package_downloads_once_and_recovers_without_losing_runti
     let source = PathBuf::from(entry["store_path"].as_str().unwrap());
     let runtime = PathBuf::from(entry["runtime"]["claude_link"].as_str().unwrap());
     fs::write(source.join("payload.txt"), "corrupt cache").unwrap();
-    let wrong =
-        CapabilitySyncHandler::with_package_provider("", store.clone(), counted("wrong bytes"));
-    assert_eq!(
-        wrong.apply_sync(payload.clone()).await.unwrap()["success"],
-        false
-    );
+    let original_manifest = store.manifest.load().unwrap();
+    assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], false);
     assert_eq!(
         fs::read_to_string(runtime.join("payload.txt")).unwrap(),
         "v1"
@@ -629,16 +625,10 @@ async fn corrupt_cached_package_downloads_once_and_recovers_without_losing_runti
         fs::read_to_string(source.join("payload.txt")).unwrap(),
         "corrupt cache"
     );
-    let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
     assert_eq!(
-        handler.apply_sync(payload.clone()).await.unwrap()["success"],
-        true
+        store.manifest.load().unwrap()["plugins"],
+        original_manifest["plugins"]
     );
-    assert_eq!(
-        fs::read_to_string(source.join("payload.txt")).unwrap(),
-        "v1"
-    );
-    assert_eq!(handler.apply_sync(payload).await.unwrap()["success"], true);
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 2);
 }
 

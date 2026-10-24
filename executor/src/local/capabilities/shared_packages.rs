@@ -356,22 +356,26 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             .get("skills")
             .and_then(|skills| skills.get(&spec.name))
             .cloned();
-        for (link, field) in links.iter().zip(["claude_link", "codex_link"]) {
-            if previous
-                .as_ref()
-                .and_then(|entry| entry.get("managed"))
-                .and_then(Value::as_bool)
-                == Some(true)
-            {
-                recover_skill_entry(link, previous.as_ref())?;
-            }
-            if occupied_unmanaged(link, previous.as_ref(), field) {
-                return Err(CapabilitySyncError::invalid_payload(
-                    "Skill path is occupied by an unmanaged item",
-                ));
+        {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            for (link, field) in links.iter().zip(["claude_link", "codex_link"]) {
+                if previous
+                    .as_ref()
+                    .and_then(|entry| entry.get("managed"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    recover_skill_entry(link, previous.as_ref())?;
+                }
+                if occupied_unmanaged(link, previous.as_ref(), field) {
+                    return Err(CapabilitySyncError::invalid_payload(
+                        "Skill path is occupied by an unmanaged item",
+                    ));
+                }
             }
         }
         let bytes = self.package_provider.download_skill(spec).await?;
+        let _binding = self.plugin_sync_binding.lock_active()?;
         let root = self.store.shared_root()?;
         let package = publish_skill_archive(&root, &bytes, spec.content_hash.as_deref())
             .map_err(CapabilitySyncError::invalid_payload)?;
@@ -430,27 +434,48 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             }
         });
         let verify_started = Instant::now();
-        let cached = expected.and_then(|checksum| {
-            verify_published_package(&root, PackageKind::Plugin, checksum).ok()
-        });
+        let cached = {
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
+            expected.and_then(|checksum| {
+                verify_published_package(&root, PackageKind::Plugin, checksum).ok()
+            })
+        };
         let verify_ms = verify_started.elapsed().as_millis();
         let cache_hit = cached.is_some();
         let mut download_ms = 0;
         let mut download_bytes = 0;
         let mut package_ms = 0;
+        let downloaded = if cached.is_none() {
+            if let Some(download) = &spec.download_path {
+                let download_started = Instant::now();
+                let bytes = self
+                    .package_provider
+                    .download_plugin(download)
+                    .await
+                    .map_err(|error| {
+                        PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
+                    })?;
+                download_ms = download_started.elapsed().as_millis();
+                download_bytes = bytes.len();
+                Some(bytes)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Rebinding uses this same lock, so a download cannot publish after its
+        // connection is replaced, including during the synchronous commit.
+        let _binding = self
+            .plugin_sync_binding
+            .lock_active()
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         let package = if let Some(package) = cached {
             package
-        } else if let Some(download) = &spec.download_path {
-            let download_started = Instant::now();
-            let bytes = self
-                .package_provider
-                .download_plugin(download)
-                .await
-                .map_err(|error| {
-                    PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
-                })?;
-            download_ms = download_started.elapsed().as_millis();
-            download_bytes = bytes.len();
+        } else if let Some(bytes) = downloaded {
             let package_started = Instant::now();
             let package = publish_plugin_archive(&root, &bytes, spec.checksum.as_deref()).map_err(
                 |error| {
