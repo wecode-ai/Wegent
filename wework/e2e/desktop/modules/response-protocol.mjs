@@ -465,8 +465,12 @@ function matrixPatch(model) {
   ].join('\n')
 }
 
+const requestBodies = new WeakMap()
+
 function readRequestBody(request) {
-  return new Promise((resolvePromise, reject) => {
+  const cached = requestBodies.get(request)
+  if (cached) return cached
+  const parsed = new Promise((resolvePromise, reject) => {
     let body = ''
     request.setEncoding('utf8')
     request.on('data', chunk => {
@@ -481,6 +485,8 @@ function readRequestBody(request) {
     })
     request.once('error', reject)
   })
+  requestBodies.set(request, parsed)
+  return parsed
 }
 
 function readRawRequestBody(request) {

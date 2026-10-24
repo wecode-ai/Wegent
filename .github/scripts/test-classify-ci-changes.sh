@@ -2017,6 +2017,7 @@ fi
 
 for sandbox_job in "$wework_desktop_core_job" "$wework_desktop_cloud_job"; do
   if [[ "$sandbox_job" != *"--cap-add=SYS_ADMIN"* ]] ||
+    [[ "$sandbox_job" != *".github/scripts/run-ci-mysqld.sh"* ]] ||
     [[ "$sandbox_job" != *"--security-opt seccomp=unconfined"* ]] ||
     [[ "$sandbox_job" != *"--security-opt apparmor=unconfined"* ]] ||
     [[ "$sandbox_job" != *"--security-opt systempaths=unconfined"* ]] ||

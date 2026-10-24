@@ -16,3 +16,7 @@ done
 # Exercise the namespace and proc-mount primitives required by native Codex.
 # Never disable the product sandbox when the outer runner cannot host it.
 unshare --user --map-root-user --mount --pid --fork --mount-proc /bin/true
+
+# The host service profile must not override the per-test database directory.
+command -v aa-exec
+bash .github/scripts/run-ci-mysqld.sh --version
