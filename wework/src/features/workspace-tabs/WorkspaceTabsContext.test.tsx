@@ -262,6 +262,35 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
   })
 
+  test.each(['/app/custom', '/app/custom/details', '/custom-native'])(
+    'opens registered app destinations without replacing the project space: %s',
+    async contentRoute => {
+      await installDshUiTestContributions(
+        {
+          [WEWORK_DSH_SLOTS.app]: [
+            { id: 'custom', label: 'Custom', mode: 'iframe' },
+            { id: 'custom-native', label: 'Custom native', mode: 'native', path: '/custom-native' },
+          ],
+        },
+        {}
+      )
+      window.history.replaceState({}, '', '/todo?projectId=one')
+      let current!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          onContextValue={value => {
+            current = value
+          }}
+        />
+      )
+      const source = { ...current.activeTab }
+      act(() => navigateTo(contentRoute))
+      expect(current.activeTab.kind).toBe('auxiliary')
+      expect(current.activeTab.contentRoute).toBe(contentRoute)
+      expect(current.tabs.find(tab => tab.id === source.id)).toEqual(source)
+    }
+  )
+
   test.each([true, false])(
     'opens plugin routes in a task tab and preserves collaboration (task exists: %s)',
     async hasTask => {

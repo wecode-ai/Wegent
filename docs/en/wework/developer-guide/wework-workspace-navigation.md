@@ -6,7 +6,7 @@ sidebar_position: 41
 
 Inbox entries, system notifications, tray actions, and cross-product links select a
 tab of the destination kind. `navigateTo` dispatches the shared navigation event
-for built-in task, project-space, Agent, and registered DSH routes.
+for built-in task, project-space, Agent, registered DSH routes, and app destinations.
 `navigateWorkspaceTab` selects the destination without converting the current
 project-space tab into a task tab. `resolveWorkspaceTabKind` is shared by
 navigation and tab-kind inference.
@@ -37,7 +37,10 @@ The checkpoint creates its own project and task; the shared runner cleans up
 isolated directories and processes. Unit tests also cover built-in routes,
 existing conversations, repeated navigation, settings, and explicitly addressed tabs.
 
-Local verification on 2026-10-24 passed 99 tests across seven focused Vitest
+App destinations include declared native paths, `/app/<id>`, and nested paths,
+so app-switching links also preserve the current tab.
+
+Local verification on 2026-10-24 passed 102 tests across seven focused Vitest
 files, TypeScript, ESLint, formatting, CI classification tests, and the checkpoint
 in isolated macOS Electron. An additional `ai:verify` check opened a notification
 for an unavailable device and returned to the original project-space tab.

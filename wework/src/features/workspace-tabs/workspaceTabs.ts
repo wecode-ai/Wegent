@@ -64,7 +64,11 @@ export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | nu
   ) {
     return 'task'
   }
-  return route ? 'auxiliary' : null
+  const app = getDshApps().find(app => {
+    const prefix = `/app/${encodeURIComponent(app.id)}`
+    return app.path === pathname || pathname === prefix || pathname.startsWith(`${prefix}/`)
+  })
+  return route || app ? 'auxiliary' : null
 }
 
 export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
@@ -172,3 +176,4 @@ export const workspaceTabParams = {
   title: WORKSPACE_TAB_TITLE_PARAM,
 }
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import { getDshApps } from '@/features/dsh-runtime/dshApps'
