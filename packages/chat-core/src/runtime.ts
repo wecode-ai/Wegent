@@ -76,6 +76,7 @@ export interface NormalizedRuntimeMessage {
 
 export interface RuntimeTurnNavigationItem {
   id: string;
+  userMessageId?: string | null;
   turnId?: string | null;
   turnIndex: number;
   messageIndex: number;

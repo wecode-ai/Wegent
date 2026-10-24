@@ -62,6 +62,8 @@ sidebar_position: 18
 
 ## Runtime 事件流
 
+会话流协调器始终只保留一个订阅，并优先使用活动页面的服务实例。活动页面切换到不同的服务实例时，先释放旧订阅再订阅新实例，避免隐藏页面保留的设备路由遗漏事件。同一服务实例内转移活动页面时保留原订阅，消息仍只交给活动页面处理。
+
 1. 新消息提交时，`sendPhase` 进入 `submitting`。
 2. runtime 接受请求后，`sendPhase` 进入 `awaiting_assistant`。
 3. `chat:start` 转换为 `assistant_started`，消息 reducer 创建/更新 assistant streaming 消息，`sendPhase` 回到 `idle`。

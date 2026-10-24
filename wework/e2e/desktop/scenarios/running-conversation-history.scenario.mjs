@@ -227,7 +227,10 @@ async function waitForTranscriptState(control, predicate, description, timeoutMs
 
 async function reloadWorkbench(control) {
   const readyCount = control.readyCount
-  await control.command('reloadMainWindow', 'body')
+  // Reload flushes durable storage before replacing the renderer and reconnecting.
+  await control.command('reloadMainWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   let timeout
   try {
     await Promise.race([
