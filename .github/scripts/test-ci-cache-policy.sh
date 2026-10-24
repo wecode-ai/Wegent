@@ -273,6 +273,16 @@ for manifest in "${node_manifests[@]}"; do
 done
 
 python_action="$action_dir/setup-python-uv-cache/action.yml"
+ruby -r yaml - "$workflow_dir/lint.yml" <<'RUBY'
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+steps = workflow.fetch("jobs").fetch("check-settings-config").fetch("steps")
+setup = steps.index { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }
+tests = steps.index { |step| step["run"] == ".github/scripts/test-ci-cache-policy.sh" }
+unless setup && tests && setup < tests
+  abort "CI cache policy regressions require Python and uv setup before execution"
+end
+RUBY
+
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'default: "false"' "$python_action" ||
