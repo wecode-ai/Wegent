@@ -214,9 +214,11 @@ async fn background_terminal_old_turn_output_is_recorded_once_during_a_new_turn(
         "thread-1".into(),
         "new-turn-1".into(),
     );
-    let message = json!({"method": "item/commandExecution/outputDelta", "params": {
-        "threadId": "thread-1", "turnId": "old-turn-1", "itemId": "command-1", "delta": "tick\n"
-    }});
+    let message = CodexNotification::from(
+        json!({"method": "item/commandExecution/outputDelta", "params": {
+            "threadId": "thread-1", "turnId": "old-turn-1", "itemId": "command-1", "delta": "tick\n"
+        }}),
+    );
     handler.route_codex_notification(message.clone());
     handler
         .map_execution_codex_notification(

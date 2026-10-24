@@ -260,6 +260,7 @@ async fn native_timeline_restores_only_runtime_commands_outside_durable_history(
 async fn native_timeline_keeps_inflight_items_separate_from_historical_page_order() {
     let (mut handler, root) = native_handler("native-runtime-inflight");
     handler.active_codex_transcript_items.lock().unwrap().insert("task-1".into(), ActiveCodexTranscriptItems {
+        user_input_requests: HashMap::new(),
         thread_id: "thread-1".into(), turn_id: "current".into(), items: vec![
             json!({"id":"old-cached","type":"agentMessage","text":"Old cache","lifecycleCompleted":true}),
             json!({"id":"current-text","type":"agentMessage","text":"Stale cache","lifecycleCompleted":true}),

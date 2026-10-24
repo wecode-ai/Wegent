@@ -249,18 +249,37 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn discovers_configured_hosts_once_without_exposing_credentials() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::symlink;
         let fixture = tempfile::tempdir().unwrap();
         let executable = fixture.path().join("gh");
         let log = fixture.path().join("probe.log");
-        std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_HOST_LOG\"\nprintf '%s\\n' '[\"ghe.company.test\"]'\n").unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let env = HashMap::from([
+        // As in harness discovery tests, never execute a freshly written file:
+        // another parallel test's fork may inherit its writer and cause ETXTBSY.
+        let cli_fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/configured-host-cli.sh");
+        symlink(&cli_fixture, &executable).unwrap();
+        let mut env = HashMap::from([
             ("PATH".to_owned(), fixture.path().display().to_string()),
+            ("WEWORK_RUNTIME_BIN".to_owned(), String::new()),
             ("GH_HOST".to_owned(), String::new()),
             ("GITLAB_HOST".to_owned(), String::new()),
             ("FIXTURE_HOST_LOG".to_owned(), log.display().to_string()),
         ]);
+        // All cache-key inputs belong to this fixture, even while other tests
+        // temporarily change process-wide home/configuration directories.
+        for key in [
+            "HOME",
+            "USERPROFILE",
+            "XDG_CONFIG_HOME",
+            "GH_CONFIG_DIR",
+            "GLAB_CONFIG_DIR",
+        ] {
+            env.insert(key.to_owned(), fixture.path().display().to_string());
+        }
+        assert_eq!(
+            resolve_cli_executable("gh", &build_env(&env)),
+            Some(executable)
+        );
         let allowed = args(&["https://ghe.company.test/org/app/pull/42"]);
         let denied = args(&["https://attacker.test/org/app/pull/42"]);
         let (first, second, third) = tokio::join!(
@@ -268,14 +287,15 @@ mod tests {
             validate_linked_request("github", &allowed, &env),
             validate_linked_request("github", &denied, &env),
         );
-        assert!(first.is_ok() && second.is_ok() && third.is_err());
+        assert_eq!(first, Ok(()), "First configured-host lookup failed");
+        assert_eq!(second, Ok(()), "Cached configured-host lookup failed");
+        assert_eq!(third, Err("Untrusted change request host".to_owned()));
         assert_eq!(
             std::fs::read_to_string(log).unwrap(),
             "auth status --json hosts --jq .hosts | keys\n"
         );
         let glab = fixture.path().join("glab");
-        std::fs::write(&glab, "#!/bin/sh\n[ \"$*\" = 'config get host --global' ] || exit 1\nprintf '%s\\n' 'http://gitlab.company.test:8080'\n").unwrap();
-        std::fs::set_permissions(&glab, std::fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&cli_fixture, &glab).unwrap();
         assert!(validate_linked_request(
             "gitlab",
             &args(&[

@@ -227,7 +227,10 @@ async function waitForTranscriptState(control, predicate, description, timeoutMs
 
 async function reloadWorkbench(control) {
   const readyCount = control.readyCount
-  await control.command('reloadMainWindow', 'body')
+  // Reload flushes durable storage before replacing the renderer and reconnecting.
+  await control.command('reloadMainWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   let timeout
   try {
     await Promise.race([
@@ -653,7 +656,9 @@ export function createDesktopScenario({
           control,
           snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
           'Native item pagination did not finish',
-          uiTimeoutMs
+          // This checkpoint deliberately delays transcript reads and restores 1,250 native
+          // items. Include queued reads and hydration in the existing restoration budget.
+          WORKBENCH_READY_TIMEOUT_MS
         )
       }
       const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))

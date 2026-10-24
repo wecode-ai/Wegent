@@ -3,6 +3,11 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "conversation.request_user_input.expires_in":
+      "请在 {{time}} 内回复，超时后需重新发起。",
+    "conversation.request_user_input.expired":
+      "请求已超时，未确认操作。请在对话中要求重新发起。",
+    "conversation.request_user_input.cancelled": "请求已取消，未确认操作。",
     "conversation.request_user_input.url_title": "{{server}} 请求浏览器授权",
     "conversation.request_user_input.url_destination": "将打开：{{host}}",
     "conversation.request_user_input.url_hint":
@@ -378,6 +383,12 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    "conversation.request_user_input.expires_in":
+      "Reply within {{time}}. After expiry, request a new confirmation.",
+    "conversation.request_user_input.expired":
+      "This request expired without confirmation. Ask in the conversation to start it again.",
+    "conversation.request_user_input.cancelled":
+      "This request was cancelled without confirmation.",
     "conversation.request_user_input.url_title":
       "{{server}} requests browser authorization",
     "conversation.request_user_input.url_destination": "Destination: {{host}}",

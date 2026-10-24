@@ -43,6 +43,50 @@ function deferred<T>() {
 }
 afterEach(clearRuntimeConversationCacheForTests)
 
+test('keeps the started native turn when an earlier user-only snapshot resolves', async () => {
+  const user = { id: 'user', role: 'user' as const, content: 'Start a child agent' }
+  applyRuntimeConversationAction(address, { type: 'user_added', message: user })
+  const pending = deferred<RuntimeTranscriptResponse>()
+  const read = vi.fn(() => pending.promise)
+  const hydration = synchronizeRuntimeConversation(read, address)
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+  applyRuntimeConversationAction(address, {
+    type: 'assistant_started',
+    subtaskId: 'native-turn',
+    clientUserMessageId: user.id,
+  })
+  pending.resolve({
+    ...response(''),
+    turns: [],
+    messages: [user],
+  })
+  await hydration
+  expect(getRuntimeConversationTurns(address)[0]).toMatchObject({
+    id: 'native-turn',
+    status: 'streaming',
+  })
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({
+    type: 'user_message',
+    message: { subtaskId: 'native-turn', turnId: 'native-turn' },
+  })
+  applyRuntimeConversationAction(address, {
+    type: 'block_created',
+    subtaskId: 'native-turn',
+    block: {
+      id: 'child-reasoning',
+      subtaskId: 'native-turn',
+      type: 'thinking',
+      content: 'Child reasoning',
+      parentToolUseId: 'child',
+      status: 'done',
+      createdAt: 1,
+    },
+  })
+  expect(getRuntimeConversationTurns(address)[0].items).toContainEqual(
+    expect.objectContaining({ id: 'child-reasoning' })
+  )
+})
+
 test('removes explicit superseded turns and rejects their late live events', async () => {
   await synchronizeRuntimeConversation(
     async () => ({ ...response('Old'), threadId: 'thread' }),

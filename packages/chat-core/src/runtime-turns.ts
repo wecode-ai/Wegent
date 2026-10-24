@@ -53,10 +53,19 @@ export function hydrateRuntimeConversationTurns(
   const superseded = new Set(supersededTurnIds);
   local = local.filter((turn) => !turn.id || !superseded.has(turn.id));
   const localIds = new Set(local.map((turn) => turn.id));
+  const localUserIds = new Set(
+    local.flatMap(runtimeConversationTurnClientUserMessageIds),
+  );
   // A viewer can attach after turn/start. Native history supplies that turn's prerequisites.
   let observed = [
     ...local,
-    ...snapshot.filter((turn) => !localIds.has(turn.id)),
+    ...snapshot.filter(
+      (turn) =>
+        !localIds.has(turn.id) &&
+        !runtimeConversationTurnClientUserMessageIds(turn).some((id) =>
+          localUserIds.has(id),
+        ),
+    ),
   ];
   const updatedTextIds = new Set<string>();
   for (const action of actions) {
@@ -208,8 +217,15 @@ export function runtimeConversationTurnClientUserMessageIds(
 export function runtimeConversationTurnAssistantItemIds(
   turn: RuntimeConversationTurn,
 ): string[] {
+  // Interaction request ids are scoped to a turn and may be reused by later turns.
+  // They cannot establish that two native/runtime turn identities are aliases.
   return turn.items.flatMap((item) =>
-    item.type === "user_message" ? [] : [item.id],
+    item.type === "user_message" ||
+    (item.type === "block" &&
+      item.block.type === "tool" &&
+      item.block.toolName === "request_user_input")
+      ? []
+      : [item.id],
   );
 }
 

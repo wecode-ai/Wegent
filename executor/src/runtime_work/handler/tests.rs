@@ -20,6 +20,9 @@ mod runtime_rpc_tests;
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 
+#[path = "mcp_elicitation_tests.rs"]
+mod mcp_elicitation_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
@@ -4234,10 +4237,16 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             CodexTranscriptNavigationTurn {
                 turn_id: "turn-old".to_owned(),
                 cursor: Some("opaque-old".to_owned()),
+                user_message_id: Some("user-old".to_owned()),
+                prompt_preview: "Old request".to_owned(),
+                response_preview: "Old response".to_owned(),
             },
             CodexTranscriptNavigationTurn {
                 turn_id: "turn-new".to_owned(),
                 cursor: Some("opaque-new".to_owned()),
+                user_message_id: Some("user-new".to_owned()),
+                prompt_preview: "New request".to_owned(),
+                response_preview: "New response".to_owned(),
             },
         ],
         complete: true,
@@ -4249,19 +4258,21 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             {
                 "id": "turn-old",
                 "turnId": "turn-old",
+                "userMessageId": "user-old",
                 "turnIndex": 0,
                 "messageIndex": 0,
-                "promptPreview": "",
-                "responsePreview": "",
+                "promptPreview": "Old request",
+                "responsePreview": "Old response",
                 "cursor": "opaque-old",
             },
             {
                 "id": "turn-new",
                 "turnId": "turn-new",
+                "userMessageId": "user-new",
                 "turnIndex": 1,
                 "messageIndex": 1,
-                "promptPreview": "",
-                "responsePreview": "",
+                "promptPreview": "New request",
+                "responsePreview": "New response",
                 "cursor": "opaque-new",
             },
         ])
@@ -4274,6 +4285,9 @@ fn incomplete_codex_transcript_navigation_is_hidden() {
         turns: vec![CodexTranscriptNavigationTurn {
             turn_id: "turn-1".to_owned(),
             cursor: Some("opaque".to_owned()),
+            user_message_id: None,
+            prompt_preview: String::new(),
+            response_preview: String::new(),
         }],
         complete: false,
     });
@@ -5386,7 +5400,7 @@ fn child_notifications_remain_ordered_while_pending_notifications_replay() {
             route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
             notifications: vec![PendingCodexNotification {
                 thread_id: "thread-child".to_owned(),
-                message: child_started,
+                message: child_started.into(),
             }],
         })
     };
@@ -5470,7 +5484,8 @@ fn pending_notifications_do_not_cross_thread_route_generations() {
                         "itemId": "child-message",
                         "delta": "stale child output"
                     }
-                }),
+                })
+                .into(),
             }],
         })
     };
@@ -6118,6 +6133,23 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
 
 #[tokio::test]
 async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn() {
+    assert_queued_notification_routing(false, false).await;
+}
+
+#[tokio::test]
+async fn execution_mapper_keeps_notification_when_router_observed_previous_active_turn() {
+    assert_queued_notification_routing(true, false).await;
+}
+
+#[tokio::test]
+async fn execution_mapper_delivers_before_lagged_global_router_exactly_once() {
+    assert_queued_notification_routing(false, true).await;
+}
+
+async fn assert_queued_notification_routing(
+    router_before_continuation: bool,
+    execution_before_router: bool,
+) {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-turn-race");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -6152,7 +6184,7 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
     let active_turn = handler
         .active_codex_turn(local_task_id)
         .expect("continuation turn should be active");
-    let message = json!({
+    let message = CodexNotification::from(json!({
         "method": "item/completed",
         "params": {
             "threadId": "thread-1",
@@ -6164,9 +6196,25 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
                 "text": "Initial goal turn complete"
             }
         }
-    });
+    }));
 
-    handler.route_codex_notification(message.clone());
+    if router_before_continuation {
+        handler.record_active_codex_turn(
+            local_task_id,
+            execution_id,
+            "thread-1".to_owned(),
+            "turn-initial".to_owned(),
+        );
+    }
+    if !execution_before_router {
+        handler.route_codex_notification(message.clone());
+    }
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-continuation".to_owned(),
+    );
     let mut execution_mapper = CodexNotificationEventMapper::default();
     handler
         .map_execution_codex_notification(
@@ -6175,13 +6223,16 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
             &request,
             Some(active_turn),
             &mut execution_mapper,
-            message,
+            message.clone(),
         )
         .await;
+    if execution_before_router {
+        handler.route_codex_notification(message);
+    }
 
     let event = event_rx
         .try_recv()
-        .expect("the global router should emit the historical turn once");
+        .expect("one notification path must emit the historical turn");
     assert_eq!(event["event"], "response.output_text.done");
     assert_eq!(event["payload"]["subtaskId"], "turn-initial");
     assert_eq!(
@@ -6199,7 +6250,7 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
         "the historical item must not pollute the continuation transcript"
     );
 
-    let continuation_message = json!({
+    let continuation_message = CodexNotification::from(json!({
         "method": "item/completed",
         "params": {
             "threadId": "thread-1",
@@ -6210,7 +6261,7 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
                 "text": "Automatic continuation running"
             }
         }
-    });
+    }));
     handler.route_codex_notification(continuation_message.clone());
     assert!(
         event_rx.try_recv().is_err(),
@@ -6290,6 +6341,7 @@ async fn execution_mapper_persists_request_user_input_without_settling_execution
     let active_turn = handler
         .active_codex_turn(local_task_id)
         .expect("request user input turn should be active");
+    handler.begin_active_codex_transcript(local_task_id, "thread-waiting", "turn-waiting");
     let message = json!({
         "id": 42,
         "method": "item/tool/requestUserInput",

@@ -5,6 +5,7 @@ import type {
 } from "@wegent/chat-core/runtime";
 import { useConversationTranslation } from "./ConversationTranslation";
 import { useMarkdownServices } from "../markdown/MarkdownServices";
+import { requestUserInputExpired } from "./useRequestUserInputDeadline";
 
 export interface McpUrlAuthorizationCardProps {
   payload: RequestUserInputPayload;
@@ -13,6 +14,7 @@ export interface McpUrlAuthorizationCardProps {
     response: RequestUserInputResponse,
   ) => boolean | void | Promise<boolean | void>;
   onOpenAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>;
+  remainingTime?: string | null;
 }
 
 export function McpUrlAuthorizationCard({
@@ -20,6 +22,7 @@ export function McpUrlAuthorizationCard({
   disabled,
   onSubmit,
   onOpenAuthorizationUrl,
+  remainingTime,
 }: McpUrlAuthorizationCardProps) {
   const { t } = useConversationTranslation();
   const { openExternalUrl, openAuthorizationUrl } = useMarkdownServices();
@@ -31,7 +34,13 @@ export function McpUrlAuthorizationCard({
   const isDisabled = disabled || pending || submitted || !onSubmit;
 
   const respond = async (action: "accept" | "cancel") => {
-    if (isDisabled || inFlight.current || !onSubmit) return;
+    if (
+      isDisabled ||
+      inFlight.current ||
+      !onSubmit ||
+      requestUserInputExpired(payload)
+    )
+      return;
     inFlight.current = true;
     setPending(true);
     setError(false);
@@ -45,9 +54,13 @@ export function McpUrlAuthorizationCard({
         )(url.href);
         if (opened === false) throw new Error("Browser did not open");
       }
+      if (requestUserInputExpired(payload)) return;
       const accepted = await onSubmit({
         requestId: payload.requestId ?? payload.request_id,
         itemId: payload.itemId ?? payload.item_id,
+        ...(payload.interactionScope
+          ? { interactionScope: payload.interactionScope }
+          : {}),
         answers: { __mcp_url: { answers: [action] } },
       });
       if (accepted === false) setError(true);
@@ -76,6 +89,16 @@ export function McpUrlAuthorizationCard({
         data-testid="mcp-url-authorization-card"
         className="flex flex-col gap-2"
       >
+        {remainingTime && (
+          <p
+            data-testid="request-user-input-deadline"
+            role="timer"
+            aria-live="off"
+            className="text-sm text-text-muted"
+          >
+            {t("request_user_input.expires_in", { time: remainingTime })}
+          </p>
+        )}
         <div className="text-sm font-medium text-text-primary">
           {t("request_user_input.url_title", {
             server: payload.serverName ?? "MCP",

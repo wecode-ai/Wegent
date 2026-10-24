@@ -1,93 +1,144 @@
 import assert from 'node:assert/strict'
-import { afterEach, test, vi } from 'vitest'
-import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
+import { afterEach, beforeEach, test, vi } from 'vitest'
+
+const { requestExecutor } = vi.hoisted(() => ({ requestExecutor: vi.fn() }))
+vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({ requestExecutor }))
+
 import { verifyIssueRuntimeTitleIsolation } from '../e2e/desktop/modules/issue-runtime-title-isolation.mjs'
-import { CHECKPOINT_TASK_COMPLETION_TEXT } from '../e2e/desktop/modules/shared.mjs'
+import {
+  CHECKPOINT_TASK_COMPLETION_TEXT,
+  DEFAULT_STEP_TIMEOUT_MS,
+} from '../e2e/desktop/modules/shared.mjs'
 
-vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({ requestExecutor: vi.fn() }))
-afterEach(() => vi.restoreAllMocks())
-
-const issue = { id: 'issue-1', title: 'Public Issue', version: 3 }
-const binding = { device_id: 'local', task_id: 'runtime-1' }
+const binding = { device_id: 'device-1', task_id: 'task-1' }
+const issue = { id: 'ISSUE-1', title: 'Shared Issue', version: 4 }
+const project = { id: 'project-1' }
 const content = '[data-testid="workspace-tab-content-task-1"]'
 
-function fixture({
-  turnId = 'follow-up',
+beforeEach(() => {
+  vi.useFakeTimers()
+  requestExecutor
+    .mockReset()
+    .mockImplementation(async (_control, method) => {
+      if (method === 'runtime.tasks.rename') return { accepted: true }
+      if (method === 'todos.get') return issue
+      throw new Error(`Unexpected RPC: ${method}`)
+    })
+})
+
+afterEach(() => {
+  vi.clearAllTimers()
+  vi.useRealTimers()
+})
+
+function createControl({
+  taskId = binding.task_id,
+  turnId = 'new-turn',
   outcome = 'succeeded',
   running = false,
-  taskId = binding.task_id,
   staleReply = false,
 } = {}) {
-  let clock = 0
-  let snapshots = 0
+  let submitted = false
   const commands = []
-  vi.spyOn(Date, 'now').mockImplementation(() => clock)
-  vi.mocked(requestExecutor).mockImplementation(async (_control, method) => {
-    if (method === 'runtime.tasks.rename') return { accepted: true }
-    if (method === 'todos.get') return issue
-    throw new Error(`Unexpected RPC: ${method}`)
-  })
-  const control = {
+  return {
+    commands,
     setScenario: vi.fn(),
+    awaitNextScenarioRequest: vi.fn(async () => ({})),
     async command(action, selector, options = {}) {
       commands.push({ action, selector, options })
+      // A virtualized/reconciled conversation can keep the same DOM row count.
+      if (action === 'getElementCount') return selector.includes('pause-response') ? '0' : '1'
+      if (action === 'press') {
+        assert.equal(submitted, false, 'The follow-up was submitted twice')
+        submitted = true
+      }
+      if (action === 'waitFor' && selector.includes('[data-message-id=')) {
+        const renderedTurnId = staleReply ? 'previous-turn' : turnId
+        assert.ok(
+          selector.includes('runtime-view:' + renderedTurnId + ':assistant'),
+          'The renamed conversation did not render its follow-up reply'
+        )
+      }
       if (action === 'getWorkbenchDebugSnapshot') {
-        const initial = snapshots++ === 0
-        clock += 6000
         return JSON.stringify({
           workbench: {
-            currentRuntimeTask: { taskId: initial ? binding.task_id : taskId },
-            activeTask: { title: 'Private conversation for issue-1' },
-            activeLifecycle: { turn: { latestId: initial ? 'original' : turnId, outcome } },
-            lifecycleCurrentTaskRunning: initial ? false : running,
-          },
-          pane: {
-            messageSummary: {
-              lastMessage: {
-                id: `runtime-view:${initial || staleReply ? 'original' : turnId}:assistant`,
-                role: 'assistant',
-                status: 'done',
+            activeTask: {
+              taskId: submitted ? taskId : binding.task_id,
+              title: `Private conversation for ${issue.id}`,
+            },
+            lifecycleCurrentTaskRunning: submitted ? running : false,
+            activeLifecycle: {
+              turn: {
+                latestId: submitted ? turnId : 'previous-turn',
+                outcome: submitted ? outcome : 'succeeded',
               },
             },
           },
         })
       }
       if (['fill', 'press', 'waitFor'].includes(action)) return ''
-      throw new Error(`Unexpected action: ${action}; mounted DOM counts are not turn evidence`)
+      throw new Error(`Unexpected action: ${action}`)
     },
   }
-  return { control, commands }
 }
 
-test('verifies a new completed turn even when virtualization keeps the mounted reply count unchanged', async () => {
-  const { control, commands } = fixture()
-  await verifyIssueRuntimeTitleIsolation(control, content, { id: 1 }, issue, binding)
-  assert.ok(
-    commands.some(
-      command =>
-        command.action === 'waitFor' &&
-        command.selector.includes('runtime-view:follow-up:assistant') &&
-        command.options.text === CHECKPOINT_TASK_COMPLETION_TEXT
-    )
+test('recognizes a new completed turn even when assistant DOM row count does not grow', async () => {
+  const control = createControl()
+  const verification = verifyIssueRuntimeTitleIsolation(
+    control,
+    content,
+    project,
+    issue,
+    binding
+  ).then(
+    () => null,
+    error => error
   )
+
+  await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 100)
+
+  assert.equal(await verification, null)
+  const responseWait = control.commands.find(
+    command =>
+      command.action === 'waitFor' && command.options.text === CHECKPOINT_TASK_COMPLETION_TEXT
+  )
+  assert.ok(responseWait.selector.includes('runtime-view:new-turn:assistant'))
+  assert.equal(responseWait.options.visible, true)
   assert.equal(
-    commands.some(command => command.action === 'getElementCount'),
+    control.commands.some(
+      command => command.action === 'getElementCount' && command.selector.includes('message')
+    ),
     false
   )
+  assert.equal(requestExecutor.mock.calls.filter(call => call[1] === 'todos.get').length, 2)
 })
 
-for (const [name, state] of [
-  ['the previous completed turn', { turnId: 'original' }],
-  ['a failed follow-up', { outcome: 'failed' }],
+for (const [description, result] of [
+  ['the previous completed turn', { turnId: 'previous-turn' }],
+  ['a failed new turn', { outcome: 'failed' }],
+  ['another task completing', { taskId: 'other-task' }],
   ['a still-running follow-up', { running: true }],
-  ['a completed turn from another task', { taskId: 'runtime-other' }],
   ['the previous reply with a newer lifecycle snapshot', { staleReply: true }],
 ]) {
-  test(`rejects ${name}`, async () => {
-    const { control } = fixture(state)
-    await assert.rejects(
-      verifyIssueRuntimeTitleIsolation(control, content, { id: 1 }, issue, binding),
-      /The renamed conversation did not finish its follow-up turn/
+  test(`does not treat ${description} as the renamed follow-up completing`, async () => {
+    const control = createControl(result)
+    const verification = verifyIssueRuntimeTitleIsolation(
+      control,
+      content,
+      project,
+      issue,
+      binding
+    ).then(
+      () => null,
+      error => error
     )
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 100)
+
+    assert.match(
+      String(await verification),
+      result.staleReply ? /did not render its follow-up reply/ : /did not finish its follow-up turn/
+    )
+    assert.equal(requestExecutor.mock.calls.filter(call => call[1] === 'todos.get').length, 1)
   })
 }

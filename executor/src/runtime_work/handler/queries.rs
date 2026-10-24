@@ -920,7 +920,7 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .filter(|_| !direct_thread_override && thread["timeline"] == true)
             .map(|link| {
-                super::background_terminals::runtime_background_command_turns(link, &native_turns)
+                super::transcript_overlays::runtime_transcript_overlay_turns(link, &native_turns)
             });
         let mut response = transcript_response(TranscriptResponseInput {
             canonical_turns: (thread.get("timeline").and_then(Value::as_bool) == Some(true))
