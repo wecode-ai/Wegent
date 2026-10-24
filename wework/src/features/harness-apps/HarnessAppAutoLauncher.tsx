@@ -8,14 +8,17 @@ import {
 import {
   harnessAppDecisionScope,
   registerHarnessAppTab,
+  storeHarnessAppAdditionalProxyTokens,
   storeHarnessAppContextToken,
   storeHarnessAppDecisionToken,
   storeHarnessAppProxyToken,
+  takeHarnessAppAdditionalProxyTokens,
   takeHarnessAppContextToken,
   takeHarnessAppDecisionToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
+import { registerAdditionalHarnessAppModels } from '@/features/harness-apps/harnessAppModelRoutes'
 import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -47,7 +50,8 @@ export function HarnessAppAutoLauncher({
     const settle = () => {
       if (!cancelled) onStartupSettled?.(installationId)
     }
-    if (!services.localHarnessModelApi) {
+    const modelApi = services.localHarnessModelApi
+    if (!modelApi) {
       settle()
       return
     }
@@ -92,11 +96,13 @@ export function HarnessAppAutoLauncher({
         const decisionApi = services.localDecisionRouterApi
         const decisionGranted = installation.grantedCapabilities?.decisionModel === true
         let proxyToken: string | null = null
+        const additionalProxyTokens: string[] = []
         let contextToken: string | null = null
         let decisionToken: string | null = null
         let started = false
+        let stage = 'default-model-route'
         try {
-          const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
+          const launch = await modelApi.resolveLaunch('opencode', model)
           if (!launch) {
             throw new Error(
               t('workbench.smart_apps_model_proxy_unavailable', '智能工作台模型代理不可用')
@@ -104,8 +110,16 @@ export function HarnessAppAutoLauncher({
           }
           proxyToken = launch.proxyToken
           contextToken = launch.context?.token ?? null
+          stage = 'additional-model-routes'
+          const additionalModels = await registerAdditionalHarnessAppModels(
+            model,
+            modelOptions,
+            modelApi,
+            token => additionalProxyTokens.push(token)
+          )
           let decision: { baseUrl: string; protocolVersion: number } | null = null
           if (decisionGranted) {
+            stage = 'decision-route'
             if (!decisionApi) {
               throw new Error(
                 t('workbench.smart_apps_decision_router_unavailable', '智能工作台决策路由不可用')
@@ -122,9 +136,11 @@ export function HarnessAppAutoLauncher({
               protocolVersion: decisionLaunch.protocolVersion,
             }
           }
+          stage = 'start-runtime'
           const running = await harnessAppsApi.start({
             installationId,
             modelBaseUrl: launch.baseUrl,
+            ...(additionalModels.length ? { additionalModels } : {}),
             contextBaseUrl: launch.context?.baseUrl ?? null,
             contextToken: launch.context?.token ?? null,
             decisionBaseUrl: decision?.baseUrl ?? null,
@@ -134,9 +150,21 @@ export function HarnessAppAutoLauncher({
           if (!running.webUrl) {
             throw new Error(t('workbench.smart_apps_missing_web_url', '智能工作台没有返回可用地址'))
           }
+          stage = 'store-default-proxy-token'
           await storeHarnessAppProxyToken(installationId, launch.proxyToken)
-          if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
-          if (decisionToken) await storeHarnessAppDecisionToken(installationId, decisionToken)
+          if (additionalProxyTokens.length) {
+            stage = 'store-additional-proxy-tokens'
+            await storeHarnessAppAdditionalProxyTokens(installationId, additionalProxyTokens)
+          }
+          if (contextToken) {
+            stage = 'store-context-token'
+            await storeHarnessAppContextToken(installationId, contextToken)
+          }
+          if (decisionToken) {
+            stage = 'store-decision-token'
+            await storeHarnessAppDecisionToken(installationId, decisionToken)
+          }
+          stage = 'register-tab'
           registerHarnessAppTab(running)
           notifyHarnessAppInstallationsChanged({
             type: 'updated',
@@ -145,21 +173,30 @@ export function HarnessAppAutoLauncher({
           })
           if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
         } catch (error) {
-          console.warn(`[Wework] failed to auto-launch Smart app ${installationId}`, error)
+          console.warn(
+            `[Wework] Smart app launch diagnostic ${JSON.stringify({
+              installationId,
+              stage,
+              started,
+              errorName: error instanceof Error ? error.name : 'unknown',
+            })}`
+          )
           if (started) {
             await harnessAppsApi.stop(installationId).catch(() => undefined)
             unregisterHarnessAppTab(installationId)
             await takeHarnessAppProxyToken(installationId)
+            await takeHarnessAppAdditionalProxyTokens(installationId)
             await takeHarnessAppContextToken(installationId)
             await takeHarnessAppDecisionToken(installationId)
           }
           if (proxyToken) {
-            await services.localHarnessModelApi?.unregisterProxy(proxyToken).catch(() => undefined)
+            await modelApi.unregisterProxy(proxyToken).catch(() => undefined)
           }
+          await Promise.allSettled(
+            additionalProxyTokens.map(token => modelApi.unregisterProxy(token))
+          )
           if (contextToken) {
-            await services.localHarnessModelApi
-              ?.unregisterContext(contextToken)
-              .catch(() => undefined)
+            await modelApi.unregisterContext(contextToken).catch(() => undefined)
           }
           if (decisionToken) {
             await decisionApi?.unregister(decisionToken).catch(() => undefined)

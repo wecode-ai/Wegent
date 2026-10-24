@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   takeContextToken: vi.fn(),
   takeDecisionToken: vi.fn(),
   takeProxyToken: vi.fn(),
+  takeAdditionalProxyTokens: vi.fn(),
   unregisterDecision: vi.fn(),
   unregister: vi.fn(),
   unregisterContext: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('./harnessAppTabs', async importOriginal => {
     takeHarnessAppContextToken: mocks.takeContextToken,
     takeHarnessAppDecisionToken: mocks.takeDecisionToken,
     takeHarnessAppProxyToken: mocks.takeProxyToken,
+    takeHarnessAppAdditionalProxyTokens: mocks.takeAdditionalProxyTokens,
     unregisterHarnessAppTab: mocks.unregister,
   }
 })
@@ -118,6 +120,7 @@ describe('useHarnessAppManagement', () => {
     mocks.takeContextToken.mockReset().mockResolvedValue(null)
     mocks.takeDecisionToken.mockReset().mockResolvedValue(null)
     mocks.takeProxyToken.mockReset().mockResolvedValue(null)
+    mocks.takeAdditionalProxyTokens.mockReset().mockResolvedValue([])
     mocks.unregisterDecision.mockReset().mockResolvedValue(undefined)
     mocks.unregister.mockReset()
     mocks.unregisterContext.mockReset()
@@ -154,6 +157,7 @@ describe('useHarnessAppManagement', () => {
   test('stops the runtime, clears registrations, and closes its workspace tab', async () => {
     workspaceTabs.tabs = [{ id: 'app-tab', contentRoute: '/app/harness-smart-app-1' }]
     mocks.takeProxyToken.mockResolvedValue('proxy-token')
+    mocks.takeAdditionalProxyTokens.mockResolvedValue(['second-token'])
     const { result } = renderManagement([running])
 
     await act(async () => {
@@ -164,6 +168,7 @@ describe('useHarnessAppManagement', () => {
     expect(mocks.unregister).toHaveBeenCalledWith(running.id)
     expect(mocks.closeTab).toHaveBeenCalledWith('app-tab')
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token')
     expect(onRefresh).toHaveBeenCalled()
   })
 
