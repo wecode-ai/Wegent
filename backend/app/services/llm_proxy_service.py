@@ -6,13 +6,14 @@
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import getproxies
 
 import httpx
 from fastapi import HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -20,7 +21,10 @@ from app.models.user import User
 from app.services import model_credential_service
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
-from app.services.wework_model_config import wework_model_config_options
+from app.services.wework_model_config import (
+    positive_token_limit,
+    wework_model_config_options,
+)
 from shared.utils.crypto import CryptoConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -78,6 +82,77 @@ RUNTIME_METADATA_HEADERS = {
     "x-openai-subagent",
     "x-responsesapi-include-timing-metrics",
 }
+LONG_CONTEXT_SUFFIXES = ("[1m]", "+1m")
+CONTEXT_OVERFLOW_STATUSES = {400, 413, 422, 460}
+CONTEXT_OVERFLOW_MARKERS = (
+    "对话内容太长",
+    "exceeds the context limit",
+    "maximum context length",
+    "context_length_exceeded",
+    "prompt is too long",
+    "input is too long",
+)
+# Rough characters-per-token ratio used when a provider error carries no count.
+CONTEXT_OVERFLOW_CHARS_PER_TOKEN = 4
+TOKEN_COUNT_PATTERN = re.compile(r"(?i)(\d{3,})\s*tokens?\b")
+
+
+def strip_long_context_suffix(model_name: str) -> str:
+    """Remove the Claude Code long-context alias from a model identifier.
+
+    Claude Code addresses long-context models through a ``[1m]`` alias, but the
+    suffix is a client-side hint: it never names a Model CRD or an upstream
+    model.
+    """
+    normalized = model_name.strip()
+    for suffix in LONG_CONTEXT_SUFFIXES:
+        if len(normalized) > len(suffix) and normalized.lower().endswith(suffix):
+            return normalized[: -len(suffix)].rstrip()
+    return normalized
+
+
+def _normalize_context_overflow(
+    *,
+    status_code: int,
+    body: bytes,
+    request_body_length: int,
+    context_window: int | None,
+) -> dict[str, Any] | None:
+    """Translate a provider context-overflow error for Anthropic clients."""
+    if status_code not in CONTEXT_OVERFLOW_STATUSES:
+        return None
+    text = body.decode("utf-8", errors="replace")
+    lowered = text.lower()
+    if not any(marker in lowered for marker in CONTEXT_OVERFLOW_MARKERS):
+        return None
+
+    match = TOKEN_COUNT_PATTERN.search(text)
+    actual_tokens = (
+        int(match.group(1))
+        if match
+        else max(request_body_length // CONTEXT_OVERFLOW_CHARS_PER_TOKEN, 1)
+    )
+    # Claude Code needs positive counts with actual > limit to size compaction.
+    actual_tokens = max(actual_tokens, 2)
+    limit_tokens = (
+        context_window
+        if context_window is not None and 0 < context_window < actual_tokens
+        else max(actual_tokens - 1, 1)
+    )
+    return {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": (
+                f"prompt is too long: {actual_tokens} tokens > "
+                f"{limit_tokens} maximum"
+            ),
+        },
+    }
+
+
+def _is_anthropic_messages_request(path: Any) -> bool:
+    return isinstance(path, str) and path.rstrip("/").endswith("/messages")
 
 
 def resolve_llm_proxy_protocol(
@@ -410,9 +485,10 @@ async def proxy_llm_responses(
     request: Request,
     db: Session,
     current_user: User,
-) -> StreamingResponse:
+) -> Response:
     """Resolve a cloud model for the authenticated user and stream its response."""
     body_json, model_name = _parse_request_body(await request.body())
+    model_name = strip_long_context_suffix(model_name)
     model_type = _required_header(request, MODEL_TYPE_HEADER)
     namespace = _required_header(request, MODEL_NAMESPACE_HEADER)
     resource_user_id = _resource_user_id(request)
@@ -439,7 +515,7 @@ async def proxy_llm_responses(
             detail="Model configuration incomplete",
         )
 
-    body_json["model"] = provider_model_id
+    body_json["model"] = strip_long_context_suffix(provider_model_id)
     body_bytes = json.dumps(body_json).encode("utf-8")
     # Validate the endpoint before invoking a deployment credential service.
     resolve_llm_proxy_protocol(model_name, model_config)
@@ -513,6 +589,45 @@ async def proxy_llm_responses(
             await client.aclose()
 
     content_type = upstream_response.headers.get("content-type", "text/event-stream")
+    if upstream_response.status_code >= 400:
+        try:
+            error_body = await upstream_response.aread()
+        except httpx.HTTPError as exc:
+            logger.error(
+                "LLM proxy failed to read upstream error body for user %s: %s",
+                current_user.id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Upstream request failed: {exc}",
+            ) from exc
+        finally:
+            await client.aclose()
+        if _is_anthropic_messages_request(request.url.path):
+            normalized = _normalize_context_overflow(
+                status_code=upstream_response.status_code,
+                body=error_body,
+                request_body_length=len(body_bytes),
+                context_window=positive_token_limit(model_config.get("context_window")),
+            )
+            if normalized is not None:
+                logger.warning(
+                    "LLM proxy normalized context overflow user=%s model=%s "
+                    "upstream_status=%s detail=%s",
+                    current_user.id,
+                    model_name,
+                    upstream_response.status_code,
+                    error_body[:1024].decode("utf-8", errors="replace"),
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST, content=normalized
+                )
+        return Response(
+            content=error_body,
+            status_code=upstream_response.status_code,
+            media_type=content_type,
+        )
     return StreamingResponse(
         response_stream(),
         status_code=upstream_response.status_code,

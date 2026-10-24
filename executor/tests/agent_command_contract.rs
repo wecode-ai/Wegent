@@ -289,6 +289,182 @@ fn claude_command_applies_context_window_precedence() {
 }
 
 #[test]
+fn claude_command_configures_autocompact_for_long_context_models() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+    let request = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "model": "claude",
+            "model_id": "huoshan-deepseek-v4.1-flash",
+            "context_window": 1_000_000,
+            "max_output_tokens": 128_000,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    let model_index = spec
+        .args()
+        .iter()
+        .position(|argument| argument == "--model")
+        .expect("model flag");
+    assert_eq!(
+        spec.args()[model_index + 1],
+        "huoshan-deepseek-v4.1-flash[1m]"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").unwrap(),
+        "1000000"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
+        "800000"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
+        "96000"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_MODEL").unwrap(),
+        "huoshan-deepseek-v4.1-flash[1m]"
+    );
+}
+
+#[test]
+fn claude_command_keeps_standard_context_models_unchanged() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+
+    for window in [200_000_u64, 262_144] {
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config: json!({
+                "model_id": "claude-sonnet-4",
+                "context_window": window,
+                "max_output_tokens": 64_000,
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        let model_index = spec
+            .args()
+            .iter()
+            .position(|argument| argument == "--model")
+            .expect("model flag");
+        assert_eq!(spec.args()[model_index + 1], "claude-sonnet-4");
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").unwrap(),
+            &window.to_string()
+        );
+        assert!(!spec.envs().contains_key("CLAUDE_CODE_AUTO_COMPACT_WINDOW"));
+        assert!(!spec.envs().contains_key("CLAUDE_CODE_MAX_OUTPUT_TOKENS"));
+        assert!(!spec.envs().contains_key("ANTHROPIC_MODEL"));
+    }
+}
+
+#[test]
+fn claude_command_preserves_existing_long_context_suffix() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+
+    for model_id in ["deepseek-v4.1-flash[1m]", "deepseek-v4.1-flash+1M"] {
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config: json!({
+                "model_id": model_id,
+                "context_window": 1_000_000,
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        let model_index = spec
+            .args()
+            .iter()
+            .position(|argument| argument == "--model")
+            .expect("model flag");
+        assert_eq!(spec.args()[model_index + 1], model_id);
+        assert_eq!(spec.envs().get("ANTHROPIC_MODEL").unwrap(), model_id);
+    }
+}
+
+#[test]
+fn claude_command_defaults_and_clamps_long_context_output_budget() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+
+    let cases = [
+        (None, "96000"),
+        (Some(json!(0)), "96000"),
+        (Some(json!("invalid")), "96000"),
+        (Some(json!(8_000)), "16000"),
+        (Some(json!(500_000)), "96000"),
+    ];
+
+    for (max_output_tokens, expected) in cases {
+        let mut model_config = json!({
+            "model_id": "deepseek-v4.1-flash",
+            "context_window": 1_000_000,
+        });
+        if let Some(max_output_tokens) = max_output_tokens {
+            model_config["max_output_tokens"] = max_output_tokens;
+        }
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config,
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
+            expected
+        );
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
+            "800000"
+        );
+    }
+}
+
+#[test]
+fn claude_command_keeps_explicit_output_budget_environment() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+    let request = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "model_id": "deepseek-v4.1-flash",
+            "context_window": 1_000_000,
+            "env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"},
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
+        "32000"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
+        "800000"
+    );
+}
+
+#[test]
 fn claude_command_uses_explicit_default_models_when_set() {
     let _lock = env_lock();
     let _default_haiku = EnvGuard::set("ANTHROPIC_DEFAULT_HAIKU_MODEL", "process-haiku");
