@@ -352,8 +352,12 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
   macOS memory gate use sccache. The `main` warmup runs the same Electron
   desktop build on `macos-14`; non-`main` jobs access the shared compiler cache
-  in read-only mode. If sccache installation is temporarily unavailable, jobs
-  emit a warning and compile without the cache instead of failing.
+  in read-only mode. Unavailable installation or cache backend startup produces
+  a warning and direct compilation. Configuration enables `RUSTC_WRAPPER` only
+  after `sccache --start-server` verifies backend availability; `--show-stats`
+  can succeed without a running server and is not a health check. Startup
+  diagnostics stay out of CI logs to avoid exposing temporary signed cache URLs.
+  Actual compilation and tests still run normally and retain their failures.
 - Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
   several desktop jobs must reuse the same complete binary output.
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in

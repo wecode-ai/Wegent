@@ -17,12 +17,24 @@ mkdir "$test_dir/bin"
 cat > "$test_dir/bin/sccache" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == '--show-stats' ]]
 [[ "$SCCACHE_GHA_ENABLED" == true ]]
 [[ "$SCCACHE_BASEDIRS" == '/test/workspace' ]]
 [[ "$SCCACHE_GHA_VERSION" == 'wegent-sccache-v1-Linux-X64' ]]
 printf '%s\n' "${SCCACHE_GHA_RW_MODE-unset}" >> "$SCCACHE_TEST_CALLS"
-exit "$SCCACHE_TEST_EXIT"
+case "$*" in
+  --show-stats)
+    exit 0
+    ;;
+  --start-server)
+    if [[ "$SCCACHE_TEST_EXIT" != 0 ]]; then
+      echo 'cache startup failed: ?sig=synthetic-cache-token' >&2
+    fi
+    exit "$SCCACHE_TEST_EXIT"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
 SH
 chmod +x "$test_dir/bin/sccache"
 
@@ -48,14 +60,18 @@ run_case() {
       ! grep -q '^SCCACHE_GHA_RW_MODE=' "$test_dir/$name.env"
     fi
   else
-    [[ ! -s "$test_dir/$name.env" ]]
+    if [[ -s "$test_dir/$name.env" ]]; then
+      printf 'Unavailable cache server must not enable a Rust compiler wrapper\n' >&2
+      return 1
+    fi
     grep -Fq 'continuing without Rust compiler caching' "$test_dir/$name.log"
   fi
+  ! grep -Fq 'synthetic-cache-token' "$test_dir/$name.log"
 }
 
+run_case startup-failure 2 false refs/pull/4053/merge READ_ONLY
 run_case pull-request 0 false refs/pull/4053/merge READ_ONLY
 run_case main 0 false refs/heads/main unset
 run_case warmup 0 true refs/heads/cache-warmup unset
-run_case startup-failure 2 false refs/pull/4053/merge READ_ONLY
 
 printf 'sccache configuration tests passed\n'

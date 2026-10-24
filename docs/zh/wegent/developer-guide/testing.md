@@ -332,8 +332,11 @@ CI 稳定性依赖以下约束：
   依赖图和包完整性的 npm 安装。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
   输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的 Electron 桌面构建，
-  非 `main` 任务以只读模式访问共享 sccache。sccache 临时无法安装时，任务会输出
-  告警并直接编译，不会因为缓存优化不可用而失败。
+  非 `main` 任务以只读模式访问共享 sccache。安装或缓存后端启动不可用时，任务会
+  告警并直接编译。配置通过 `sccache --start-server` 验证后端可用后才启用
+  `RUSTC_WRAPPER`；`--show-stats` 在服务未启动时也可成功，不能作为健康检查。
+  启动诊断输出不进入 CI 日志，避免缓存服务的临时签名 URL 泄漏；实际编译和测试
+  仍照常执行并保留失败结果。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
