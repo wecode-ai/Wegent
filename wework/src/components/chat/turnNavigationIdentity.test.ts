@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { runtimeMessagesToWorkbenchMessages } from '@wegent/chat-core/runtime-transcript'
 import {
   buildUserTurnsForNavigation,
   findLoadedNavigationMessageId,
@@ -18,6 +19,34 @@ describe('paginated turn navigation identity', () => {
     { id: 'user-24', turnId: 'turn-24', role: 'user', content: 'Request 24' },
     { id: 'reply-24', turnId: 'turn-24', role: 'assistant', content: 'Latest reply' },
   ]
+
+  it('matches the client identity selected by the actual transcript projection', () => {
+    const projected = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'user-native',
+        clientUserMessageId: 'user-client',
+        turnId: 'turn-24',
+        role: 'user',
+        content: 'Request 24',
+        status: 'done',
+      },
+    ])
+    expect(projected[0].id).toBe('user-client')
+    const indexed = navigation.map(item =>
+      item.turnId === 'turn-24' ? { ...item, userMessageId: 'user-client' } : item
+    )
+    const turns = buildUserTurnsForNavigation(projected, indexed)
+    expect(turns).toHaveLength(25)
+    expect(turns[24]).toMatchObject({ id: 'user-client', loaded: true })
+    expect(
+      findLoadedNavigationMessageId(projected, {
+        navigationId: 'turn-24',
+        userMessageId: 'user-client',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBe('user-client')
+  })
 
   it('does not bind the first historical turn to the first message of the loaded page', () => {
     const turns = buildUserTurnsForNavigation(messages, navigation)

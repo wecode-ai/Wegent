@@ -589,7 +589,8 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       const groupingSaved = page.waitForResponse(
         response =>
           response.request().method() === 'PATCH' &&
-          response.url().endsWith(`/cloud-projects/${projectId}`)
+          response.url().endsWith(`/cloud-projects/${projectId}`) &&
+          response.ok()
       )
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()

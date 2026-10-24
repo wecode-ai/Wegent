@@ -53,6 +53,7 @@ import {
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { requestExecutor } from './executor-rpc.mjs'
 
 export function createStreamingToolChecks({
   uiTimeoutMs,
@@ -299,6 +300,10 @@ export function createStreamingToolChecks({
   }
 
   const verifySubagentStreamingPanel = async control => {
+    await control.command('setLocalStorageItem', 'body', {
+      value: JSON.stringify({ key: 'wework:debug-runtime', value: '1' }),
+    })
+    await requestExecutor(control, 'runtime.codex.stream_debug.set', { enabled: true }, uiTimeoutMs)
     const previousSize = JSON.parse(
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1600, height: 900 }),
@@ -520,6 +525,10 @@ export function createStreamingToolChecks({
     await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
     await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
     await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
+    await requestExecutor(control, 'runtime.codex.stream_debug.set', { enabled: false }, uiTimeoutMs)
+    await control.command('setLocalStorageItem', 'body', {
+      value: JSON.stringify({ key: 'wework:debug-runtime', value: '0' }),
+    })
   }
 
   const verifyTools = async control => {

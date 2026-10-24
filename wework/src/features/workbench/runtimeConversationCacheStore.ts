@@ -288,6 +288,20 @@ export function notifyRuntimeConversation(key: string, action?: RuntimePaneMessa
 }
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
+  if (globalThis.localStorage?.getItem('wework:debug-runtime') === '1') {
+    console.debug('[Wework] Runtime conversation cache update', {
+      key,
+      turns: turns.map(turn => ({
+        id: turn.id,
+        status: turn.status,
+        items: turn.items.map(item => ({
+          id: item.id,
+          type: item.type === 'block' ? item.block.type : item.type,
+          ...(item.type === 'block' && { parentToolUseId: item.block.parentToolUseId }),
+        })),
+      })),
+    })
+  }
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
