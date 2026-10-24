@@ -842,7 +842,13 @@ function ScrollableMessagePaneContent({
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
                 conversationKey={conversationKey}
-                forceVirtualMessageId={searchTarget?.messageId ?? turnNavigationTargetMessageId}
+                forceVirtualMessageId={
+                  searchTarget?.messageId ??
+                  turnNavigationTargetMessageId ??
+                  (currentScrollKey
+                    ? getConversationScrollSnapshot(currentScrollKey)?.anchor?.messageId
+                    : null)
+                }
                 searchMessageId={searchTarget?.messageId}
                 isWaitingForAssistant={isWaitingForAssistant}
                 disableContentVisibility={turnNavigationLoading}

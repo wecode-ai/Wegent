@@ -31,6 +31,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-home-developer',
   'ui-git',
   'ui-outputs',
+  'voice-input',
   ...INTERNAL_CORE_PLUGINS.map(plugin => plugin.source),
 ]
 
@@ -55,6 +56,7 @@ const CORE_PLUGIN_TARGETS = {
   'ui-home-developer': 'wework-ui-home-developer',
   'ui-git': 'wework-ui-git',
   'ui-outputs': 'wework-ui-outputs',
+  'voice-input': 'wework-voice-input',
 }
 
 export function corePluginTarget(directory) {

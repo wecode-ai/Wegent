@@ -36,6 +36,7 @@ export interface WorkbenchDebugSnapshot {
   idleTasks: ReturnType<typeof getIdleTaskSchedulerDiagnostics>
   updatedAt: string
   workbench: {
+    publishedAt: string
     isBootstrapping: boolean
     error: string | null
     currentProject: WorkbenchState['currentProject']
@@ -262,7 +263,7 @@ const MEMORY_ESTIMATE_NODE_LIMIT = 20_000
 const TOP_TOOL_OUTPUT_LIMIT = 8
 const DEBUG_PANEL_ID = 'wework-debug-panel'
 const RUNTIME_MEMORY_DIAGNOSTICS_STORAGE_KEY = 'wework:debug-runtime-memory'
-export const DEBUG_SNAPSHOT_DEBOUNCE_MS = 100
+export const DEBUG_SNAPSHOT_INTERVAL_MS = 100
 
 let installed = false
 let debugLogSequence = 0
@@ -302,6 +303,7 @@ export function updateWorkbenchDebugSnapshot({
     : null
   const lifecycleCurrentTaskRunning = activeLifecycle?.derived.isRunning ?? false
   workbenchSnapshot = {
+    publishedAt: new Date().toISOString(),
     isBootstrapping: state.isBootstrapping,
     error: state.error,
     currentProject: state.currentProject,

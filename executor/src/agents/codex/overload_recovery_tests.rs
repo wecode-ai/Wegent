@@ -306,7 +306,7 @@ async fn overload_recovery_backoff_completes_without_cancellation() {
 }
 
 fn shared_options(
-    notifications: tokio::sync::mpsc::UnboundedSender<Value>,
+    notifications: tokio::sync::mpsc::UnboundedSender<super::super::CodexNotification>,
     cancellation: Option<oneshot::Receiver<()>>,
 ) -> super::super::SharedTurnNotificationOptions {
     super::super::SharedTurnNotificationOptions {
@@ -331,8 +331,8 @@ async fn overload_recovery_shared_reader_keeps_failure_internal_and_cancels_back
     let (sender, mut receiver) = tokio::sync::broadcast::channel(16);
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (cancel_tx, cancel_rx) = oneshot::channel();
-    sender.send(overload_error()).unwrap();
-    sender.send(completed("failed")).unwrap();
+    sender.send(overload_error().into()).unwrap();
+    sender.send(completed("failed").into()).unwrap();
     let mut state = state();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut options = shared_options(notify_tx, Some(cancel_rx));
@@ -378,7 +378,7 @@ async fn overload_recovery_shared_reader_does_not_retry_other_terminal_errors() 
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut error = overload_error();
     error["params"]["error"]["codexErrorInfo"] = json!("usageLimitExceeded");
-    sender.send(error.clone()).unwrap();
+    sender.send(error.clone().into()).unwrap();
     let mut state = state();
     let result = read_shared_turn_notifications(
         &client,
@@ -392,7 +392,7 @@ async fn overload_recovery_shared_reader_does_not_retry_other_terminal_errors() 
     .await
     .unwrap();
     assert!(matches!(result, ExecutionOutcome::Failed { .. }));
-    assert_eq!(notify_rx.recv().await.unwrap(), error);
+    assert_eq!(*notify_rx.recv().await.unwrap(), error);
 }
 
 #[cfg(unix)]
@@ -401,7 +401,7 @@ async fn overload_recovery_native_reader_continues_only_after_completion() {
     use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
     use std::process::Stdio;
     let script = format!(
-        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{error}' '{completed}'
+        r#"printf '%s\n' '{{"id":1,"result":{{"turn":{{"id":"failed-turn"}}}}}}' '{error}' '{completed}'
 IFS= read -r continuation
 printf '%s\n' "{{\"method\":\"test/continuation\",\"params\":$continuation}}" '{{"id":2,"result":{{}}}}'
 printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn"}}}}}}'
@@ -426,6 +426,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (active_tx, mut active_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let params = continuation_params(json!({
         "threadId": "root-thread", "model": "original-model",
@@ -438,6 +439,9 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: Some(Box::new(move |thread_id, turn_id| {
+                    active_tx.send((thread_id, turn_id)).unwrap();
+                })),
                 overload_turn_recovering: Some(Box::new(move |thread_id, turn_id| {
                     recovery_tx.send((thread_id, turn_id)).unwrap();
                 })),
@@ -483,6 +487,15 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         ("root-thread".to_owned(), "failed-turn".to_owned())
     );
     assert!(recovery_rx.try_recv().is_err());
+    assert_eq!(
+        active_rx.try_recv().unwrap(),
+        ("root-thread".to_owned(), "failed-turn".to_owned())
+    );
+    assert_eq!(
+        active_rx.try_recv().unwrap(),
+        ("root-thread".to_owned(), "recovered-turn".to_owned())
+    );
+    assert!(active_rx.try_recv().is_err());
     assert!(child.wait().await.unwrap().success());
 }
 
@@ -536,6 +549,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
                 notifications: Some(notify_tx),
@@ -610,6 +624,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
                 notifications: Some(notify_tx),

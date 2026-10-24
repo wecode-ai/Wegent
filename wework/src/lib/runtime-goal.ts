@@ -81,29 +81,6 @@ export function projectRuntimeGoalContinuing(
   return !(assistant && matchesContinuation && hasVisibleAssistantProjection(assistant))
 }
 
-export function shouldReconcileActiveRuntimeGoalTranscript({
-  goalContinuing,
-  messages,
-  activeAssistantMessage,
-}: {
-  goalContinuing: boolean
-  messages: WorkbenchMessage[]
-  activeAssistantMessage: WorkbenchMessage | null
-}): boolean {
-  if (!goalContinuing || !activeAssistantMessage) return false
-
-  const activeTurnId = activeAssistantMessage.turnId || activeAssistantMessage.subtaskId
-  if (!activeTurnId) return true
-  return !messages.some(
-    message =>
-      message.id !== activeAssistantMessage.id &&
-      (message.turnId || message.subtaskId) === activeTurnId &&
-      message.role === 'assistant' &&
-      message.status !== 'streaming' &&
-      hasVisibleAssistantProjection(message)
-  )
-}
-
 function hasVisibleAssistantProjection(message: WorkbenchMessage): boolean {
   return Boolean(
     message.content.trim() ||

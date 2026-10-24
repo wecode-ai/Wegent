@@ -218,6 +218,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import {
   getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
@@ -1699,7 +1700,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...currentRuntimeTask,
         threadId: selectedSubagentConversationId,
       },
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
       .then(transcript => {
         setSubagentTranscripts(current => ({
@@ -2978,6 +2979,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneMessages,
     paneSession.answeredRequestUserInputIds
   )
+  useRequestUserInputExpiryRefresh(pendingRequestUserInput?.expiresAtUnixMs)
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]
@@ -5306,7 +5308,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       displayedRightPanelExpanded && 'z-critical'
                     )}
                     stickyFooter={
-                      temporaryChatExpanded || isCreatingWorktree ? null : (
+                      (temporaryChatExpanded && !pendingRequestUserInput) ||
+                      isCreatingWorktree ? null : (
                         <>
                           <div
                             className={cn(
@@ -5365,7 +5368,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     {t('workbench.back_to_work_item', '返回 Issue')}
                                   </button>
                                 </div>
-                              ) : !displayedRightPanelExpanded ? (
+                              ) : !displayedRightPanelExpanded || pendingRequestUserInput ? (
                                 <>
                                   {showConversationDeviceBanner ? (
                                     <ConversationDeviceOfflineBanner

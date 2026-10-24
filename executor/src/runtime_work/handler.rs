@@ -26,7 +26,7 @@ use crate::{
         bind_codex_thread_model_route, codex_notification_requires_user_input,
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -144,11 +144,13 @@ mod runner_cloud_models;
 mod sidebar;
 mod stand_in;
 mod stand_in_agent;
+mod stand_in_events;
 mod stand_in_workspace;
 mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_overlays;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -196,7 +198,7 @@ use super::{
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
         full_transcript_messages, normalized_user_request_content, notification_item,
-        transcript_messages,
+        project_transcript, transcript_messages,
     },
     transcript_page::transcript_page,
     util::{
@@ -691,6 +693,8 @@ struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
     items: Vec<Value>,
+    // Keep settled request IDs until the turn ends so replay cannot reopen them.
+    user_input_requests: HashMap<String, bool>,
 }
 
 #[derive(Clone)]
@@ -718,7 +722,7 @@ struct RuntimeThreadEventRouting {
 
 struct PendingCodexNotification {
     thread_id: String,
-    message: Value,
+    message: CodexNotification,
 }
 
 struct PendingCodexNotificationReplay {
@@ -977,7 +981,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
-        self.start_stand_in_scheduler();
+        self.start_local_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
@@ -1123,6 +1127,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
             "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
             "runtime.stand_in.run" => self.run_stand_in(payload).await,
+            "runtime.stand_in.assignment" => {
+                self.handle_stand_in_assignment(payload).await?;
+                Ok(json!({"success":true}))
+            }
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),

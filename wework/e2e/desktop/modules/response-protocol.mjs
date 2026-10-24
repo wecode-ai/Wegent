@@ -172,6 +172,34 @@ function responseFailed(id, message, code = 'context_length_exceeded') {
   }
 }
 
+function toolOutputText(request, callId) {
+  const findOutput = value => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const output = findOutput(item)
+        if (output != null) return output
+      }
+      return null
+    }
+    if (!value || typeof value !== 'object') return null
+    if (
+      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
+      value.call_id === callId
+    ) {
+      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
+    }
+    if (value.type === 'tool_search_output' && value.call_id === callId) {
+      return JSON.stringify(value.tools ?? [])
+    }
+    for (const item of Object.values(value)) {
+      const output = findOutput(item)
+      if (output != null) return output
+    }
+    return null
+  }
+  return findOutput(request.input ?? [])
+}
+
 function functionCall(callId, name, argumentsValue, outputIndex = 0) {
   const argumentsText = JSON.stringify(argumentsValue)
   const itemId = `fc_${callId}`
@@ -884,6 +912,7 @@ export {
   mcpToolRequestEvents,
   selectToolSearch,
   toolSearchResponseEvents,
+  toolOutputText,
   requestToolSearchResults,
   selectShellTool,
   selectShellToolCommand,

@@ -5,19 +5,17 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 
-use futures_util::{stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 
 use crate::agents::CodexAppServerClient;
+use crate::codex_phase::{codex_phase_is_final, codex_phase_name};
 
-use super::util::string_field;
+use super::transcript::normalized_user_request_content;
+use super::util::{extract_text, item_type, string_field};
 
 const CODEX_ITEM_PAGE_SIZE: usize = 100;
-const CODEX_ITEM_LOAD_CONCURRENCY: usize = 5;
-const CODEX_INITIAL_ITEM_BUDGET_TURN_CAP: usize = 5;
-const CODEX_INCREMENTAL_CURSOR_PREFIX: &str = "wework-codex-items:";
 const CODEX_NAVIGATION_CURSOR_PREFIX: &str = "wework-codex-navigation:";
 const CODEX_NAVIGATION_MAX_PAGES: usize = 10;
 const CODEX_TRANSCRIPT_STARTUP_RETRY_ATTEMPTS: usize = 50;
@@ -51,34 +49,21 @@ pub(crate) struct CodexTranscriptPage {
     pub thread: Value,
     pub before_cursor: Option<String>,
     pub after_cursor: Option<String>,
-    pub prepend_item_turn_ids: HashSet<String>,
 }
 
 #[derive(Clone)]
 pub(crate) struct CodexTranscriptNavigationTurn {
     pub turn_id: String,
     pub cursor: Option<String>,
+    pub user_message_id: Option<String>,
+    pub prompt_preview: String,
+    pub response_preview: String,
 }
 
 #[derive(Clone)]
 pub(crate) struct CodexTranscriptNavigation {
     pub turns: Vec<CodexTranscriptNavigationTurn>,
     pub complete: bool,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexIncrementalCursor {
-    turn_cursor: Option<String>,
-    pending_turns: Vec<CodexTurnItemCursor>,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexTurnItemCursor {
-    turn: Value,
-    cursor: Option<String>,
-    started: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -105,6 +90,20 @@ pub(crate) async fn load_codex_transcript(
             return Ok(page);
         }
     }
+    if thread_uses_paginated_history(&thread) {
+        if request.direction != CodexTranscriptDirection::Descending {
+            return Err("Native timeline history only supports backwards pagination".to_owned());
+        }
+        return super::codex_timeline::load_timeline_page(
+            client,
+            thread,
+            request.thread_id,
+            request.cursor,
+            request.limit,
+            request.full_content,
+        )
+        .await;
+    }
     let navigation_cursor = request
         .cursor
         .map(parse_navigation_cursor)
@@ -119,31 +118,9 @@ pub(crate) async fn load_codex_transcript(
         None
     };
     let request_cursor = resolved_navigation_cursor.as_deref().or(request.cursor);
-    let paginated_history = thread_uses_paginated_history(&thread);
-    let incremental_cursor = if paginated_history
-        && !request.full_content
-        && request.direction == CodexTranscriptDirection::Descending
-    {
-        request_cursor
-            .map(parse_incremental_cursor)
-            .transpose()?
-            .flatten()
-    } else {
-        None
-    };
-    if let Some(cursor) = incremental_cursor
-        .as_ref()
-        .filter(|cursor| !cursor.pending_turns.is_empty())
-    {
-        return load_incremental_item_page(client, thread, request.thread_id, cursor).await;
-    }
-    let mut cursor = incremental_cursor
-        .as_ref()
-        .and_then(|cursor| cursor.turn_cursor.clone())
-        .or_else(|| request_cursor.map(ToOwned::to_owned));
+    let mut cursor = request_cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
     let mut backwards_cursor = None;
-    let mut pending_turns = Vec::new();
     let mut seen_cursors = HashSet::new();
     if let Some(cursor) = cursor.as_ref() {
         seen_cursors.insert(cursor.clone());
@@ -156,26 +133,17 @@ pub(crate) async fn load_codex_transcript(
             cursor.as_deref(),
             request.limit,
             request.direction,
-            paginated_history,
+            false,
         )
         .await?;
         if backwards_cursor.is_none() {
             backwards_cursor = string_field(&page, "backwardsCursor");
         }
-        let mut page_turns = page
+        let page_turns = page
             .get("data")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        if paginated_history && request.full_content {
-            page_turns = load_full_turn_items(client, request.thread_id, page_turns).await?;
-        } else if paginated_history {
-            let hydrated =
-                load_initial_turn_items(client, request.thread_id, page_turns, request.limit)
-                    .await?;
-            page_turns = hydrated.turns;
-            pending_turns.extend(hydrated.pending_turns);
-        }
         turns.extend(page_turns);
 
         let next_cursor = string_field(&page, "nextCursor");
@@ -190,16 +158,10 @@ pub(crate) async fn load_codex_transcript(
                 } else {
                     (backwards_cursor, next_cursor)
                 };
-            let before_cursor = if request.full_content {
-                before_cursor
-            } else {
-                incremental_before_cursor(before_cursor, pending_turns)?
-            };
             return Ok(CodexTranscriptPage {
                 thread,
                 before_cursor,
                 after_cursor,
-                prepend_item_turn_ids: HashSet::new(),
             });
         }
         let next_cursor = next_cursor.expect("checked above");
@@ -269,10 +231,11 @@ pub(crate) async fn load_codex_transcript_navigation(
                     let turn_id = string_field(&turn, "id").ok_or_else(|| {
                         "canonical Codex rollout returned a turn without id".to_owned()
                     })?;
-                    navigation_turns.push(CodexTranscriptNavigationTurn {
+                    navigation_turns.push(navigation_turn(
+                        &turn,
                         turn_id,
-                        cursor: Some(rollout_cursor(index + 1)),
-                    });
+                        Some(rollout_cursor(index + 1)),
+                    ));
                 }
                 return Ok(CodexTranscriptNavigation {
                     turns: navigation_turns,
@@ -293,7 +256,7 @@ pub(crate) async fn load_codex_transcript_navigation(
                 "cursor": cursor,
                 "limit": CODEX_ITEM_PAGE_SIZE,
                 "sortDirection": "desc",
-                "itemsView": "notLoaded",
+                "itemsView": "summary",
             }),
         )
         .await?;
@@ -307,12 +270,14 @@ pub(crate) async fn load_codex_transcript_navigation(
             let turn_id = string_field(&turn, "id").ok_or_else(|| {
                 "thread/turns/list returned a navigation turn without id".to_owned()
             })?;
-            turns.push(CodexTranscriptNavigationTurn {
-                turn_id,
-                cursor: page_backwards_cursor
+            let cursor = if thread_uses_paginated_history(thread) {
+                Some(super::codex_timeline::turn_cursor(&turn_id))
+            } else {
+                page_backwards_cursor
                     .as_ref()
-                    .map(|page_cursor| navigation_cursor(page_cursor, descending_offset)),
-            });
+                    .map(|page_cursor| navigation_cursor(page_cursor, descending_offset))
+            };
+            turns.push(navigation_turn(&turn, turn_id, cursor));
         }
         let Some(next_cursor) = string_field(&page, "nextCursor") else {
             turns.reverse();
@@ -330,6 +295,47 @@ pub(crate) async fn load_codex_transcript_navigation(
         turns: Vec::new(),
         complete: false,
     })
+}
+
+fn navigation_turn(
+    turn: &Value,
+    turn_id: String,
+    cursor: Option<String>,
+) -> CodexTranscriptNavigationTurn {
+    let items = turn.get("items").and_then(Value::as_array);
+    let preview = |kind: &str| {
+        items
+            .into_iter()
+            .flatten()
+            .find(|item| item_type(item) == kind)
+            .and_then(extract_text)
+            .unwrap_or_default()
+    };
+    let user_message_id = items
+        .into_iter()
+        .flatten()
+        .find(|item| item_type(item) == "usermessage")
+        .and_then(|item| {
+            string_field(item, "clientId")
+                .or_else(|| string_field(item, "client_id"))
+                .or_else(|| string_field(item, "id"))
+        });
+    let response = items
+        .into_iter()
+        .flatten()
+        .find(|item| {
+            item_type(item) == "agentmessage"
+                && codex_phase_is_final(codex_phase_name(item).as_deref())
+        })
+        .and_then(extract_text)
+        .unwrap_or_else(|| preview("agentmessage"));
+    CodexTranscriptNavigationTurn {
+        turn_id,
+        cursor,
+        user_message_id,
+        prompt_preview: normalized_user_request_content(&preview("usermessage")),
+        response_preview: response,
+    }
 }
 
 fn navigation_cursor(page_backwards_cursor: &str, descending_offset: usize) -> String {
@@ -398,7 +404,6 @@ async fn load_rollout_transcript_page(
             thread,
             before_cursor: None,
             after_cursor: None,
-            prepend_item_turn_ids: HashSet::new(),
         }));
     }
 
@@ -427,7 +432,6 @@ async fn load_rollout_transcript_page(
         thread,
         before_cursor,
         after_cursor,
-        prepend_item_turn_ids: HashSet::new(),
     }))
 }
 
@@ -572,7 +576,7 @@ async fn load_turn_page(
     .await
 }
 
-async fn request_codex_turn_page(
+pub(super) async fn request_codex_turn_page(
     client: &CodexAppServerClient,
     params: Value,
 ) -> Result<Value, String> {
@@ -606,299 +610,6 @@ fn turn_items_view(paginated_history: bool) -> &'static str {
         "notLoaded"
     } else {
         "full"
-    }
-}
-
-struct InitialTurnItems {
-    turns: Vec<Value>,
-    pending_turns: Vec<CodexTurnItemCursor>,
-}
-
-async fn load_initial_turn_items(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    turns: Vec<Value>,
-    turn_limit: usize,
-) -> Result<InitialTurnItems, String> {
-    let mut remaining_items = turn_limit
-        .min(CODEX_INITIAL_ITEM_BUDGET_TURN_CAP)
-        .saturating_mul(CODEX_ITEM_PAGE_SIZE);
-    let mut page_turns = Vec::with_capacity(turns.len());
-    let mut pending_turns = Vec::new();
-    for turn in turns {
-        let metadata = turn_metadata(&turn);
-        let turn_id = string_field(&turn, "id")
-            .ok_or_else(|| "thread/turns/list returned a turn without id".to_owned())?;
-        let mut items = Vec::new();
-        let mut cursor: Option<String> = None;
-        let mut started = false;
-        let mut seen_cursors = HashSet::new();
-        let mut seen_item_ids = HashSet::new();
-        while (!started || cursor.is_some()) && remaining_items > 0 {
-            if let Some(cursor) = cursor.as_ref() {
-                if !seen_cursors.insert(cursor.clone()) {
-                    return Err(format!(
-                        "thread/items/list returned a repeated cursor for turn {turn_id}"
-                    ));
-                }
-            }
-            started = true;
-            let page = load_turn_item_page(
-                client,
-                thread_id,
-                &turn_id,
-                cursor.as_deref(),
-                remaining_items.min(CODEX_ITEM_PAGE_SIZE),
-            )
-            .await?;
-            let page_items = turn_items_from_page(&page, &turn_id)?
-                .into_iter()
-                .filter(|item| {
-                    string_field(item, "id")
-                        .map(|item_id| seen_item_ids.insert(item_id))
-                        .unwrap_or(true)
-                })
-                .collect::<Vec<_>>();
-            remaining_items = remaining_items.saturating_sub(page_items.len());
-            items.splice(0..0, page_items);
-            let next_cursor = string_field(&page, "nextCursor");
-            if next_cursor.is_some() && next_cursor == cursor {
-                return Err(format!(
-                    "thread/items/list returned an unchanged cursor for turn {turn_id}"
-                ));
-            }
-            cursor = next_cursor;
-        }
-
-        let mut turn = turn;
-        turn["items"] = Value::Array(items);
-        turn["itemsView"] = Value::String(
-            if started && cursor.is_none() {
-                "full"
-            } else {
-                "summary"
-            }
-            .to_owned(),
-        );
-        let pending = (!started || cursor.is_some()).then_some(CodexTurnItemCursor {
-            turn: metadata,
-            cursor,
-            started,
-        });
-        page_turns.push(turn);
-        if let Some(pending) = pending {
-            pending_turns.push(pending);
-        }
-    }
-    Ok(InitialTurnItems {
-        turns: page_turns,
-        pending_turns,
-    })
-}
-
-async fn load_incremental_item_page(
-    client: &CodexAppServerClient,
-    mut thread: Value,
-    thread_id: &str,
-    cursor: &CodexIncrementalCursor,
-) -> Result<CodexTranscriptPage, String> {
-    let mut pending_turns = cursor.pending_turns.clone();
-    let mut pending = pending_turns.remove(0);
-    let turn_id = string_field(&pending.turn, "id")
-        .ok_or_else(|| "Codex item cursor contains a turn without id".to_owned())?;
-    let page = load_turn_item_page(
-        client,
-        thread_id,
-        &turn_id,
-        pending.cursor.as_deref(),
-        CODEX_ITEM_PAGE_SIZE,
-    )
-    .await?;
-    let next_cursor = string_field(&page, "nextCursor");
-    if pending.started && next_cursor == pending.cursor {
-        return Err(format!(
-            "thread/items/list returned an unchanged cursor for turn {turn_id}"
-        ));
-    }
-    let items = turn_items_from_page(&page, &turn_id)?;
-    let mut turn = pending.turn.clone();
-    turn["items"] = Value::Array(items);
-    turn["itemsView"] = Value::String(
-        if next_cursor.is_some() {
-            "summary"
-        } else {
-            "full"
-        }
-        .to_owned(),
-    );
-    if let Some(next_cursor) = next_cursor {
-        pending.cursor = Some(next_cursor);
-        pending.started = true;
-        pending_turns.insert(0, pending);
-    }
-    thread["turns"] = Value::Array(vec![turn]);
-    let before_cursor = incremental_before_cursor(cursor.turn_cursor.clone(), pending_turns)?;
-    Ok(CodexTranscriptPage {
-        thread,
-        before_cursor,
-        after_cursor: None,
-        prepend_item_turn_ids: HashSet::from([turn_id]),
-    })
-}
-
-fn turn_metadata(turn: &Value) -> Value {
-    let mut metadata = turn.clone();
-    if let Some(object) = metadata.as_object_mut() {
-        object.insert("items".to_owned(), Value::Array(Vec::new()));
-        object.insert(
-            "itemsView".to_owned(),
-            Value::String("notLoaded".to_owned()),
-        );
-    }
-    metadata
-}
-
-async fn load_turn_item_page(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    turn_id: &str,
-    cursor: Option<&str>,
-    limit: usize,
-) -> Result<Value, String> {
-    client
-        .request(
-            "thread/items/list",
-            json!({
-                "threadId": thread_id,
-                "turnId": turn_id,
-                "cursor": cursor,
-                "limit": limit,
-                "sortDirection": "desc",
-            }),
-        )
-        .await
-}
-
-fn turn_items_from_page(page: &Value, turn_id: &str) -> Result<Vec<Value>, String> {
-    let mut items = Vec::new();
-    for entry in page
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        if string_field(entry, "turnId").as_deref() != Some(turn_id) {
-            return Err(format!(
-                "thread/items/list returned an item for a different turn than {turn_id}"
-            ));
-        }
-        let item = entry
-            .get("item")
-            .cloned()
-            .ok_or_else(|| "thread/items/list returned an entry without item".to_owned())?;
-        items.push(item);
-    }
-    items.reverse();
-    Ok(items)
-}
-
-fn incremental_before_cursor(
-    turn_cursor: Option<String>,
-    pending_turns: Vec<CodexTurnItemCursor>,
-) -> Result<Option<String>, String> {
-    if pending_turns.is_empty() {
-        return Ok(turn_cursor);
-    }
-    let state = CodexIncrementalCursor {
-        turn_cursor,
-        pending_turns,
-    };
-    serde_json::to_string(&state)
-        .map(|encoded| Some(format!("{CODEX_INCREMENTAL_CURSOR_PREFIX}{encoded}")))
-        .map_err(|error| format!("failed to encode Codex transcript cursor: {error}"))
-}
-
-fn parse_incremental_cursor(cursor: &str) -> Result<Option<CodexIncrementalCursor>, String> {
-    let Some(encoded) = cursor.strip_prefix(CODEX_INCREMENTAL_CURSOR_PREFIX) else {
-        return Ok(None);
-    };
-    serde_json::from_str(encoded)
-        .map(Some)
-        .map_err(|error| format!("invalid Codex transcript item cursor: {error}"))
-}
-
-async fn load_full_turn_items(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    turns: Vec<Value>,
-) -> Result<Vec<Value>, String> {
-    stream::iter(turns.into_iter().map(|turn| {
-        let client = client.clone();
-        Ok::<_, String>(async move {
-            let turn_id = string_field(&turn, "id")
-                .ok_or_else(|| "thread/turns/list returned a turn without id".to_owned())?;
-            let items = load_turn_items(&client, thread_id, &turn_id).await?;
-            let mut turn = turn;
-            turn["items"] = Value::Array(items);
-            turn["itemsView"] = Value::String("full".to_owned());
-            Ok::<Value, String>(turn)
-        })
-    }))
-    .try_buffered(CODEX_ITEM_LOAD_CONCURRENCY)
-    .try_collect()
-    .await
-}
-
-async fn load_turn_items(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    turn_id: &str,
-) -> Result<Vec<Value>, String> {
-    let mut items = Vec::new();
-    let mut cursor = None;
-    let mut seen_cursors = HashSet::new();
-
-    loop {
-        let response = client
-            .request(
-                "thread/items/list",
-                json!({
-                    "threadId": thread_id,
-                    "turnId": turn_id,
-                    "cursor": cursor,
-                    "limit": CODEX_ITEM_PAGE_SIZE,
-                    "sortDirection": "asc",
-                }),
-            )
-            .await?;
-        for entry in response
-            .get("data")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if string_field(entry, "turnId").as_deref() != Some(turn_id) {
-                return Err(format!(
-                    "thread/items/list returned an item for a different turn than {turn_id}"
-                ));
-            }
-            let item = entry
-                .get("item")
-                .cloned()
-                .ok_or_else(|| "thread/items/list returned an entry without item".to_owned())?;
-            items.push(item);
-        }
-
-        let next_cursor = string_field(&response, "nextCursor");
-        let Some(next_cursor) = next_cursor else {
-            return Ok(items);
-        };
-        if !seen_cursors.insert(next_cursor.clone()) {
-            return Err(format!(
-                "thread/items/list returned a repeated cursor for turn {turn_id}"
-            ));
-        }
-        cursor = Some(next_cursor);
     }
 }
 
@@ -998,6 +709,36 @@ mod tests {
     fn requests_unloaded_items_for_paginated_history() {
         assert_eq!(turn_items_view(true), "notLoaded");
         assert_eq!(turn_items_view(false), "full");
+    }
+
+    #[test]
+    fn navigation_preserves_visible_summaries_without_tool_payloads() {
+        let turn = json!({"items": [
+            {"type": "UserMessage", "content": [{"type": "text", "text":
+                "## My request for Codex:\n<application_context>hidden</application_context>\nFix navigation"}]},
+            {"type": "CommandExecution", "aggregatedOutput": "private tool output"},
+            {"type": "AgentMessage", "text": "Navigation fixed"},
+            {"type": "AgentMessage", "text": "Later legacy response"}
+        ]});
+        let entry = super::navigation_turn(&turn, "turn-1".into(), Some("cursor".into()));
+        assert_eq!(entry.prompt_preview, "Fix navigation");
+        assert_eq!(entry.response_preview, "Navigation fixed");
+        assert_eq!(entry.cursor.as_deref(), Some("cursor"));
+    }
+
+    #[test]
+    fn navigation_prefers_final_response_and_preserves_original_user_identity() {
+        let turn = json!({"items": [
+            {"id":"user-native", "clientId":"user-client", "type":"userMessage", "text":"Original request"},
+            {"type":"agentMessage", "phase":"commentary", "text":"Working"},
+            {"type":"userMessage", "id":"guidance", "text":"Continue"},
+            {"type":"agentMessage", "phase":"final_answer", "text":"Finished"},
+            {"type":"agentMessage", "phase":"commentary", "text":"Later commentary"}
+        ]});
+        let entry = super::navigation_turn(&turn, "turn-1".into(), None);
+        assert_eq!(entry.user_message_id.as_deref(), Some("user-client"));
+        assert_eq!(entry.prompt_preview, "Original request");
+        assert_eq!(entry.response_preview, "Finished");
     }
 
     #[test]

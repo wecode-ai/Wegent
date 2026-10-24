@@ -2092,6 +2092,33 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('任务启动更顺')
   })
 
+  test.each(['pending', 'expired'] as const)(
+    'keeps an expired %s interaction visible while a new pending card is in the composer',
+    status => {
+      const expiredBlock: ProcessingBlock = {
+        id: 'request-expired',
+        subtaskId: 9,
+        type: 'tool',
+        toolName: 'request_user_input',
+        status: 'done',
+        createdAt: Date.now() - 1000,
+        renderPayload: {
+          kind: 'request_user_input',
+          requestId: 0,
+          interactionScope: 'old-turn',
+          interactionStatus: status,
+          expiresAtUnixMs: Date.now() - 1,
+          questions: [{ id: 'decision', question: '是否发布？' }],
+        },
+      }
+      render(
+        <ToolBlocksDisplay blocks={[expiredBlock]} isStreaming={true} hideRequestUserInputBlocks />
+      )
+      expect(screen.getByTestId('request-user-input-expired')).toHaveTextContent('请求已超时')
+      expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    }
+  )
+
   test('can hide pending request user input blocks by request id', () => {
     const block: ProcessingBlock = {
       id: 'request-1',

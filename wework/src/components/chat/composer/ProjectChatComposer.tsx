@@ -40,6 +40,7 @@ import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
 
 interface ProjectChatComposerProps {
+  composerScopeKey?: string
   presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
@@ -126,6 +127,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
   function ProjectChatComposer(
     {
       value,
+      composerScopeKey,
       presentation,
       onChange,
       onBlur,
@@ -225,6 +227,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
         },
         focus: () => composerRef.current?.focus(),
         getValue: () => composerRef.current?.getValue() ?? value,
+        captureInsertion: () => composerRef.current?.captureInsertion?.() ?? null,
         insertReference: reference => composerRef.current?.insertReference(reference),
         setValue: (nextValue, selectionOffset) =>
           composerRef.current?.setValue(nextValue, selectionOffset),
@@ -382,6 +385,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           )}
           renderToolbar={toolbarProps => (
             <ComposerToolbar
+              composerScopeKey={composerScopeKey}
+              captureInsertion={() => composerRef.current?.captureInsertion?.() ?? null}
               onInsertPluginReference={reference => {
                 composerRef.current?.insertReference(reference)
                 composerRef.current?.focus()

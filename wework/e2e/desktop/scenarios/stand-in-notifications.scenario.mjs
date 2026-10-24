@@ -144,6 +144,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const readyBeforeReload = control.readyCount
       await control.command('reloadApp', 'body')
       await control.awaitReadyAfter(readyBeforeReload)
+      await control.command('waitFor', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
@@ -223,6 +224,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
         text: issue.id,
       })
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
       assert.equal(
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
         '在通知内继续处理分身任务'

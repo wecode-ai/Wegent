@@ -130,6 +130,8 @@ Static checks provide fast feedback for deterministic errors. Service availabili
 
 ## Five verification gates
 
+Installed Smart apps launch DSH with `--port 0`, letting the operating system assign the loopback port when the server binds. Wework reuses the runtime's listening announcement and readiness probes, then persists the actual address from `WorkbenchRuntimeSnapshot.url`. It does not probe and release a free port before launch, avoiding port allocation races between concurrent processes.
+
 ### 1. Structure and security
 
 Extend existing manifest checks to validate:

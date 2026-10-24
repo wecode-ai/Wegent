@@ -26,6 +26,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
@@ -75,6 +76,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'streaming-timers': './scenarios/streaming-text.scenario.mjs',
   'streaming-scroll': './scenarios/streaming-text.scenario.mjs',
   'streaming-message-order': './scenarios/streaming-text.scenario.mjs',
+  'streaming-conversation-switching': './scenarios/streaming-text.scenario.mjs',
   'streaming-subagents': './scenarios/streaming-text.scenario.mjs',
 
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
@@ -113,6 +115,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'stand-in-assignment-notifications': './scenarios/stand-in-assignment-notifications.scenario.mjs',
   'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
@@ -160,6 +163,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'voice-input',
   'archived-worktree-cleanup',
   'plugin-toggle-persistence',
   'streaming-content',
@@ -167,6 +171,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'streaming-timers',
   'streaming-scroll',
   'streaming-message-order',
+  'streaming-conversation-switching',
   'streaming-subagents',
 
   'goal-state-sync',
@@ -215,6 +220,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-assignment-notifications',
   'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',

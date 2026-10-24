@@ -1,6 +1,7 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
   app,
@@ -1265,6 +1266,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       webviewTag: true,
     },
   })
+  installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
@@ -1729,14 +1731,12 @@ function prepareApplicationShutdown(): Promise<void> {
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
-  if (!desktopRuntime) return null
+  const runtime = desktopRuntime
+  if (!runtime) return null
   return {
-    open: async launch => {
-      await desktopRuntime?.openWorkbenchRuntime(launch)
-    },
-    close: tabId => desktopRuntime?.closeWorkbenchRuntime(tabId) ?? Promise.resolve(),
-    runningTabIds: () =>
-      new Set(desktopRuntime?.diagnostics().workbenchRuntimes.map(item => item.tabId) ?? []),
+    open: launch => runtime.openWorkbenchRuntime(launch),
+    close: tabId => runtime.closeWorkbenchRuntime(tabId),
+    runningTabIds: () => new Set(runtime.diagnostics().workbenchRuntimes.map(item => item.tabId)),
   }
 }
 

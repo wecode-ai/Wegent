@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { act, createRef, useState } from 'react'
+import { act, createRef, startTransition, Suspense, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import { ProjectComposerBody, type ProjectComposerBodyProps } from './ProjectComposerBody'
 import { ComposerTextInput } from './ComposerTextInput'
+import { ComposerAutocompleteInput } from './ComposerAutocompleteInput'
 import type { ComposerInputHandle } from './composerInputTypes'
 import type { ComposerTransferServices } from './useComposerTransfers'
 import { createCollaborationTranslator } from '../i18n'
@@ -122,6 +123,35 @@ describe('shared PC composer body', () => {
       target === 'surface' ? button('project-chat-composer-form') : input.current!.element!
     await act(async () => element.dispatchEvent(event))
   }
+  it('submits the visible ready composer while a model readiness transition suspends', async () => {
+    const pending = new Promise<void>(() => {})
+    const suspended = vi.fn()
+    function Suspend({ active }: { active: boolean }) {
+      if (active) {
+        suspended()
+        throw pending
+      }
+      return null
+    }
+    function Frame({ ready }: { ready: boolean }) {
+      return (
+        <Suspense fallback={<div>Loading models</div>}>
+          <Harness isModelSelectionReady={ready} />
+          <Suspend active={!ready} />
+        </Suspense>
+      )
+    }
+    await act(async () => root.render(<Frame ready />))
+    await setValue('请先迁移当前进程，并验证任务仍在运行。')
+    await act(async () => {
+      startTransition(() => root.render(<Frame ready={false} />))
+    })
+    expect(suspended).toHaveBeenCalled()
+    expect(button('send').disabled).toBe(false)
+    await enter()
+    expect(submit).toHaveBeenCalledWith('请先迁移当前进程，并验证任务仍在运行。', undefined)
+  })
+
   it('submits live editor text before the outer buffered draft acknowledges it', async () => {
     await mount({ buffered: true })
     await setValue('Newest draft')
@@ -129,6 +159,20 @@ describe('shared PC composer body', () => {
     expect(button('send').disabled).toBe(false)
     await click('send')
     expect(submit).toHaveBeenCalledWith('Newest draft', undefined)
+  })
+  it('inserts a delayed voice result through the complete editor handle chain', async () => {
+    await mount({
+      renderEditor: props => (
+        <ComposerAutocompleteInput {...props} translate={createCollaborationTranslator('en')} />
+      ),
+    })
+    const insertion = input.current!.captureInsertion?.()
+    expect(insertion).toBeTruthy()
+    await act(async () => {
+      expect(insertion!.insertText('Voice transcript')).toBe(true)
+    })
+    expect(input.current!.getValue()).toBe('Voice transcript')
+    expect(change).toHaveBeenCalledWith('Voice transcript')
   })
   it.each(['chat', 'document'] as const)(
     'preserves the %s editor surface and separate toolbar',

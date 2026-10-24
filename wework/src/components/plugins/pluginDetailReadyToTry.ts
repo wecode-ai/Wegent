@@ -2,6 +2,17 @@ import type { PluginMarketplaceItem } from '@/types/api'
 import { hasLocalCodexMaterialization, storeDirMatchesPluginKey } from './installedPluginMerge'
 import type { InstalledPluginItem } from './PluginManagementRows'
 
+export function pluginDetailPrimaryActionPending(state: {
+  operationPending: boolean
+  reconciling: boolean
+  readyToTry: boolean
+  updateAvailable: boolean
+}): boolean {
+  return (
+    state.operationPending || (state.reconciling && (state.updateAvailable || !state.readyToTry))
+  )
+}
+
 function installedBelongsToMarketplaceItem(
   plugin: InstalledPluginItem,
   item: PluginMarketplaceItem
