@@ -76,6 +76,17 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         `${otherProjectRow} [data-testid="stand-in-project-${otherProject.id}"]`
       )
       const saved = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
+      for (const row of [projectRow, otherProjectRow]) {
+        for (const dimension of ['width', 'height']) {
+          assert.equal(
+            await control.command('getComputedStyleValue', `${row} ${badge} svg`, {
+              value: dimension,
+            }),
+            '16px',
+            `Enabled project stand-in icons must have a 16px ${dimension}`
+          )
+        }
+      }
       assert.equal(saved.roles[0].enabled, true)
       assert.equal(saved.roles[0].collaboration.enabled, true)
       assert.equal(saved.roles[0].collaboration.allProjects, false)

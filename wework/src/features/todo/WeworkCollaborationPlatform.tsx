@@ -1587,7 +1587,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 aria-label={t('standIn.project_enabled')}
                 data-testid={`stand-in-project-${project.id}`}
               >
-                <StandInIcon enabled className="h-6 w-6" />
+                <StandInIcon enabled className="h-4 w-4" />
               </span>
             )
           },
