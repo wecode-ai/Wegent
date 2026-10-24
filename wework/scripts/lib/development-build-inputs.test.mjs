@@ -1,7 +1,13 @@
 import { mkdtemp, mkdir, writeFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
+import { readdirSync, rmSync, writeFileSync } from 'node:fs'
+
+vi.mock('node:fs', async importOriginal => {
+  const original = await importOriginal()
+  return { ...original, readdirSync: vi.fn(original.readdirSync) }
+})
 import { developmentBuildInputs } from './development-build-inputs.mjs'
 
 test('ignores delayed startup notifications and duplicate events but detects input edits', async () => {
@@ -49,6 +55,55 @@ test('detects directory moves and new sources while excluding emitted output', a
     expect(changed(output, root)).toBe(false)
     await writeFile(path.join(moved, 'another.js'), 'two')
     expect(changed(moved, root)).toBe(true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test.each(['deleted', 'replaced'])(
+  'records a directory %s between stat and traversal',
+  async outcome => {
+    const root = await mkdtemp(path.join(tmpdir(), 'build-inputs-race-'))
+    const directory = path.join(root, 'source')
+    const actual = await vi.importActual('node:fs')
+    try {
+      await mkdir(directory)
+      await writeFile(path.join(directory, 'entry.js'), 'original')
+      const changed = developmentBuildInputs({
+        directories: [root],
+        files: [],
+        excluded: () => false,
+      })
+      vi.mocked(readdirSync).mockImplementationOnce(filename => {
+        expect(filename).toBe(directory)
+        rmSync(directory, { recursive: true })
+        if (outcome === 'replaced') writeFileSync(directory, 'replacement file')
+        return actual.readdirSync(filename)
+      })
+      expect(changed(directory, root)).toBe(true)
+      expect(changed(directory, root)).toBe(false)
+    } finally {
+      vi.mocked(readdirSync).mockReset().mockImplementation(actual.readdirSync)
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+test('tracks a file replaced by a directory instead of using the single-file path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'build-inputs-type-'))
+  const source = path.join(root, 'source')
+  try {
+    await writeFile(source, 'original')
+    const changed = developmentBuildInputs({
+      directories: [root],
+      files: [],
+      excluded: () => false,
+    })
+    await rm(source)
+    await mkdir(source)
+    await writeFile(path.join(source, 'entry.js'), 'replacement')
+    expect(changed(source, root)).toBe(true)
+    expect(changed(source, root)).toBe(false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

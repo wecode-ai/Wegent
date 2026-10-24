@@ -15,9 +15,16 @@ export function developmentBuildInputs({ directories, files, excluded }) {
       throw error
     }
     if (stat.isDirectory()) {
-      for (const name of readdirSync(filename)) {
-        collect(path.join(filename, name), directory, snapshot)
+      let names
+      try {
+        names = readdirSync(filename)
+      } catch (error) {
+        if (error.code === 'ENOENT') return
+        if (error.code !== 'ENOTDIR') throw error
+        collect(filename, directory, snapshot)
+        return
       }
+      for (const name of names) collect(path.join(filename, name), directory, snapshot)
     } else {
       snapshot.set(filename, `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.mode}`)
     }
@@ -27,6 +34,13 @@ export function developmentBuildInputs({ directories, files, excluded }) {
   return (filename, directory) => {
     const next = new Map()
     collect(filename, directory, next)
+    if (versions.has(filename) && (next.size === 0 || next.has(filename))) {
+      const previous = versions.get(filename)
+      const current = next.get(filename)
+      if (current === undefined) versions.delete(filename)
+      else versions.set(filename, current)
+      return previous !== current
+    }
     let changed = false
     for (const [name, version] of next) {
       if (versions.get(name) !== version) changed = true
