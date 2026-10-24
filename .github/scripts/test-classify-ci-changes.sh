@@ -740,6 +740,19 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$stand_in_path"
 done
 
+for stand_in_work_path in \
+  "wework/src/features/todo/StandInWorkList.tsx" \
+  "wework/src/features/todo/StandInWorkConfirmation.tsx" \
+  "wework/src/features/todo/StandInConversation.tsx"; do
+  assert_desktop_case "stand-in work surfaces retain workspace and conversation coverage" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-action-confirmation,stand-in-list-confirmation"},{"id":"core-7","name":"Core / shard 7","segments":"stand-in-workspace"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$stand_in_work_path"
+done
+
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

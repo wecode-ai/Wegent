@@ -826,7 +826,9 @@ classify_wework_path() {
     wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
       select_target "core:stand-in-identities"
       select_target "core:stand-in-action-confirmation"
-  select_target "core:stand-in-list-confirmation"
+      select_target "core:stand-in-list-confirmation"
+      select_target "core:stand-in"
+      select_target "core:stand-in-workspace"
       return
       ;;
     wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs)
@@ -846,7 +848,7 @@ classify_wework_path() {
       select_target "core:stand-in"
       select_target "core:stand-in-identities"
       select_target "core:stand-in-action-confirmation"
-  select_target "core:stand-in-list-confirmation"
+      select_target "core:stand-in-list-confirmation"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-project-enable"
