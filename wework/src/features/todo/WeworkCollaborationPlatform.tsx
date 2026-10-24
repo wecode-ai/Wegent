@@ -1581,14 +1581,16 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )
+            if (!enabled) return null
+
             return (
               <span
                 className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
-                title={t(enabled ? 'standIn.project_enabled' : 'standIn.auto_off')}
-                aria-label={t(enabled ? 'standIn.project_enabled' : 'standIn.auto_off')}
-                data-testid={enabled ? `stand-in-project-${project.id}` : undefined}
+                title={t('standIn.project_enabled')}
+                aria-label={t('standIn.project_enabled')}
+                data-testid={`stand-in-project-${project.id}`}
               >
-                <StandInIcon enabled={enabled} className="h-6 w-6" />
+                <StandInIcon enabled className="h-4 w-4" />
               </span>
             )
           },

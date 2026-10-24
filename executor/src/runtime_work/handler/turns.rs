@@ -937,8 +937,9 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         active_turn: Option<ActiveCodexTurn>,
         event_mapper: &mut CodexNotificationEventMapper,
-        message: Value,
+        message: impl Into<CodexNotification>,
     ) {
+        let mut message = message.into();
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
@@ -953,23 +954,40 @@ impl RuntimeWorkRpcHandler {
             if notification_turn_id != active_turn.turn_id {
                 if codex_stream_debug_enabled() {
                     log_executor_event(
-                        "runtime work execution mapper dropped non-active turn notification",
+                        "runtime work execution mapper reroutes non-active turn notification",
                         &[
                             ("local_task_id", local_task_id.to_owned()),
                             ("active_turn_id", active_turn.turn_id.clone()),
-                            ("notification_turn_id", notification_turn_id),
+                            ("notification_turn_id", notification_turn_id.clone()),
                         ],
+                    );
+                }
+                // The global router may have skipped this notification while its turn was
+                // still active. Deliver it with its own identity; the shared claim also
+                // prevents a duplicate when the global router already delivered it.
+                if message.claim_runtime_delivery() {
+                    self.record_background_terminal_notification(local_task_id, &message);
+                    let event_request = self.request_for_codex_event(
+                        local_task_id,
+                        request,
+                        Some(&notification_turn_id),
+                    );
+                    event_mapper.map(
+                        &self.event_tx,
+                        &self.device_id,
+                        local_task_id,
+                        &event_request,
+                        message.into_value(),
                     );
                 }
                 return;
             }
         }
-        let notification = codex_notification(&message);
-        let command_notification = notification.method.starts_with("item/commandExecution/")
-            || item_type(&notification_item(notification.params)) == "commandexecution";
-        if codex_notification_requires_user_input(&message) {
-            self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
-        } else if matches!(
+        if !message.claim_runtime_delivery() {
+            return;
+        }
+        self.record_background_terminal_notification(local_task_id, &message);
+        if matches!(
             message.get("method").and_then(Value::as_str),
             Some("item/completed")
         ) && crate::runtime_work::codex_user_input::async_question_payload_from_item(
@@ -1022,27 +1040,24 @@ impl RuntimeWorkRpcHandler {
             request,
             active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
         );
-        let _command_delivery = if command_notification {
-            Some(
-                match self.claim_codex_command_notification(local_task_id, &message, false) {
-                    Some(guard) => guard,
-                    None => return,
-                },
-            )
-        } else {
-            None
-        };
-        self.record_background_terminal_notification(local_task_id, &message);
         if let Some(active_turn) = active_turn {
             event_mapper.observe_root_thread_id(&active_turn.thread_id);
             self.record_active_codex_transcript_item(local_task_id, &active_turn.turn_id, &message);
+            if !self.normalize_pending_mcp_elicitation(local_task_id, &mut message) {
+                return;
+            }
+        }
+        if codex_notification_requires_user_input(&message)
+            || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
+        {
+            self.refresh_pending_user_input_status(local_task_id);
         }
         event_mapper.map(
             &self.event_tx,
             &self.device_id,
             local_task_id,
             &event_request,
-            message,
+            message.into_value(),
         );
     }
 
@@ -1218,7 +1233,8 @@ impl RuntimeWorkRpcHandler {
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
             handler.ensure_notification_router().await;
-            let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
+            let (notification_tx, mut notification_rx) =
+                mpsc::unbounded_channel::<CodexNotification>();
             let mapper_handler = handler.clone();
             let mapper_local_task_id = turn_local_task_id.clone();
             let mapper_execution_id = execution_id;

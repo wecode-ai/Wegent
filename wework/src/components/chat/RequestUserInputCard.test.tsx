@@ -2,8 +2,8 @@ import '@/i18n'
 
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
-import { RequestUserInputCard } from './RequestUserInputCard'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { RequestUserInputCard, RequestUserInputSummary } from './RequestUserInputCard'
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
 
@@ -19,6 +19,73 @@ const urlPayload = {
   url: 'https://chatgpt.com/connect/github?state=secret',
   elicitationId: 'github-auth-1',
 }
+
+describe('MCP form cancellation', () => {
+  test.each(['button', 'Escape'])(
+    '%s cancels only the correlated form and preserves retry after rejection',
+    async action => {
+      const onSubmit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const onIgnore = vi.fn()
+      render(
+        <RequestUserInputCard
+          payload={{
+            kind: 'request_user_input',
+            interactionKind: 'mcp_form',
+            requestId: 7,
+            itemId: 'mcp_server_elicitation',
+            interactionScope: 'turn-7',
+            questions: [{ id: 'audience', question: 'Publish?', options: [{ label: 'Owner' }] }],
+          }}
+          onSubmit={onSubmit}
+          onIgnore={onIgnore}
+        />
+      )
+      const button = screen.getByTestId('request-user-input-ignore-button')
+      const cancel = async () => {
+        if (action === 'button') await userEvent.click(button)
+        else
+          await act(async () => {
+            fireEvent.keyDown(button, { key: 'Escape' })
+          })
+      }
+      await cancel()
+      expect(button).toBeEnabled()
+      expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+        requestId: 7,
+        itemId: 'mcp_server_elicitation',
+        interactionScope: 'turn-7',
+        answers: {},
+      })
+      expect(onIgnore).not.toHaveBeenCalled()
+      await cancel()
+      expect(onSubmit).toHaveBeenCalledTimes(2)
+      expect(button).toBeDisabled()
+      expect(onIgnore).not.toHaveBeenCalled()
+    }
+  )
+
+  test('a message-only MCP form can cancel without a task cancellation handler', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    render(
+      <RequestUserInputCard
+        compact
+        payload={{
+          kind: 'request_user_input',
+          interactionKind: 'mcp_form',
+          requestId: 8,
+          questions: [],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      requestId: 8,
+      itemId: undefined,
+      answers: {},
+    })
+  })
+})
 
 describe('MCP browser authorization', () => {
   test('shows the host and opens the system browser only after explicit consent', async () => {
@@ -533,6 +600,148 @@ describe('RequestUserInputCard', () => {
     await user.keyboard('{Escape}')
 
     expect(onIgnore).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MCP interaction deadline', () => {
+  afterEach(() => vi.useRealTimers())
+
+  test('counts down from the runtime deadline and expires without submitting a choice', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-22T03:37:25Z'))
+    const onSubmit = vi.fn()
+    const timedPayload = {
+      ...payload,
+      interactionKind: 'mcp_form',
+      interactionScope: 'turn-publish',
+      interactionStatus: 'pending' as const,
+      expiresAtUnixMs: Date.now() + 5 * 60_000,
+    }
+    const view = render(<RequestUserInputCard payload={timedPayload} onSubmit={onSubmit} />)
+    expect(screen.getByRole('timer')).toHaveTextContent('5:00')
+    act(() => vi.advanceTimersByTime(4 * 60_000))
+    expect(screen.getByRole('timer')).toHaveTextContent('1:00')
+
+    view.unmount()
+    render(<RequestUserInputCard payload={timedPayload} onSubmit={onSubmit} />)
+    expect(screen.getByRole('timer')).toHaveTextContent('1:00')
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(screen.getByRole('status')).toHaveTextContent('请求已超时，未确认操作')
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  test('checks the deadline at click time even when the timer has not run', () => {
+    vi.useFakeTimers()
+    const now = Date.now()
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{ ...payload, expiresAtUnixMs: now + 1000 }}
+        onSubmit={onSubmit}
+      />
+    )
+    vi.setSystemTime(now + 1001)
+    fireEvent.click(screen.getByTestId('request-user-input-option-goal-0'))
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  test.each(['expired', 'cancelled'] as const)(
+    'preserves explicit %s status over a cached answer and local deadline',
+    status => {
+      const onSubmit = vi.fn()
+      render(
+        <RequestUserInputCard
+          payload={{
+            ...payload,
+            interactionStatus: status,
+            expiresAtUnixMs: Date.now() - 1,
+            response: { answers: { goal: { answers: ['技术决策'] } } },
+          }}
+          onSubmit={onSubmit}
+        />
+      )
+      expect(screen.getByTestId(`request-user-input-${status}`)).toBeVisible()
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      expect(onSubmit).not.toHaveBeenCalled()
+    }
+  )
+
+  test('preserves the turn scope in a submitted form response', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{ ...payload, interactionScope: 'turn-new', expiresAtUnixMs: Date.now() + 60_000 }}
+        onSubmit={onSubmit}
+      />
+    )
+    await userEvent.click(screen.getByTestId('request-user-input-option-goal-1'))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 42,
+        interactionScope: 'turn-new',
+        answers: { goal: { answers: ['技术决策'] } },
+      })
+    )
+  })
+
+  test('does not expire an already answered request after its original deadline', () => {
+    render(
+      <RequestUserInputCard
+        payload={{ ...payload, interactionStatus: 'answered', expiresAtUnixMs: Date.now() - 1 }}
+      />
+    )
+    expect(screen.getByTestId('request-user-input-summary')).toBeVisible()
+    expect(screen.queryByTestId('request-user-input-expired')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  test('keeps an acknowledged answer after expiry and remount without a settled event', async () => {
+    vi.useFakeTimers()
+    const onSubmit = vi.fn().mockResolvedValue(true)
+    const timedPayload = {
+      ...payload,
+      interactionKind: 'mcp_form',
+      interactionScope: 'turn-acknowledged',
+      interactionStatus: 'pending' as const,
+      expiresAtUnixMs: Date.now() + 1000,
+    }
+    const view = render(<RequestUserInputCard payload={timedPayload} onSubmit={onSubmit} />)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('request-user-input-option-goal-1'))
+    })
+    const acknowledgedPayload = { ...timedPayload, response: onSubmit.mock.calls[0][0] }
+    view.rerender(<RequestUserInputCard payload={acknowledgedPayload} onSubmit={onSubmit} />)
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('技术决策')
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(2000))
+    view.rerender(<RequestUserInputSummary payload={acknowledgedPayload} />)
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('技术决策')
+    expect(screen.queryByTestId('request-user-input-expired')).not.toBeInTheDocument()
+
+    view.unmount()
+    render(<RequestUserInputCard payload={acknowledgedPayload} onSubmit={onSubmit} />)
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('技术决策')
+    expect(screen.queryByTestId('request-user-input-expired')).not.toBeInTheDocument()
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not open an authorization window after its deadline', () => {
+    vi.mocked(openExternalUrl).mockClear()
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{ ...urlPayload, expiresAtUnixMs: Date.now() - 1 }}
+        onSubmit={onSubmit}
+      />
+    )
+    expect(screen.getByTestId('request-user-input-expired')).toBeVisible()
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })
 

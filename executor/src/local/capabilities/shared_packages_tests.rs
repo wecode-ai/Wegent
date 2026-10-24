@@ -9,9 +9,9 @@ use std::sync::{
 };
 
 #[derive(Clone)]
-struct Packages {
+pub(super) struct Packages {
     skill: Vec<u8>,
-    plugin: Vec<u8>,
+    pub(super) plugin: Vec<u8>,
 }
 
 impl CapabilityPackageProvider for Packages {
@@ -60,7 +60,7 @@ fn packages(version: &str) -> Packages {
     }
 }
 
-fn store(root: &Path) -> GlobalCapabilityStore {
+pub(super) fn store(root: &Path) -> GlobalCapabilityStore {
     let mut store = GlobalCapabilityStore::new(
         root.join("state/manifest-v2.json"),
         root.join("claude/skills"),
@@ -413,9 +413,9 @@ fn failed_manifest_commit_restores_managed_directory() {
 }
 
 #[derive(Clone)]
-struct CountedPackages {
-    package: Packages,
-    downloads: Arc<AtomicUsize>,
+pub(super) struct CountedPackages {
+    pub(super) package: Packages,
+    pub(super) downloads: Arc<AtomicUsize>,
 }
 
 impl CapabilityPackageProvider for CountedPackages {
@@ -436,7 +436,7 @@ impl CapabilityPackageProvider for CountedPackages {
     }
 }
 
-fn counted(version: &str) -> CountedPackages {
+pub(super) fn counted(version: &str) -> CountedPackages {
     CountedPackages {
         package: packages(version),
         downloads: Arc::new(AtomicUsize::new(0)),

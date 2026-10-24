@@ -187,9 +187,12 @@ pub(super) fn sync_goal_snapshot(
         } else {
             "thread/goal/updated"
         };
-        let _ = sender.send(json!({"method": method, "params": {
-            "threadId": thread_id, "turnId": null, "goal": goal,
-        }}));
+        let _ = sender.send(
+            json!({"method": method, "params": {
+                "threadId": thread_id, "turnId": null, "goal": goal,
+            }})
+            .into(),
+        );
     }
 }
 

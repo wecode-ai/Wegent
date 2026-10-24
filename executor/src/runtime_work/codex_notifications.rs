@@ -10,8 +10,6 @@ use super::util::{
     is_likely_codex_tool_output_item_type, item_type,
 };
 
-pub(crate) const CODEX_NOTIFICATION_SEQUENCE_FIELD: &str = "_wegentNotificationSequence";
-
 pub(crate) struct CodexNotification<'a> {
     pub(crate) method: String,
     pub(crate) params: &'a Value,

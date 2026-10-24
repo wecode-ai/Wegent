@@ -534,20 +534,15 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
 
     hub.send(message.clone());
 
-    let delivered = all.recv().await.unwrap();
-    assert_eq!(thread_a.recv().await.unwrap(), delivered);
-    let sequence = delivered[crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD]
-        .as_u64()
-        .unwrap();
-    let mut original = delivered.as_object().unwrap().clone();
-    original.remove(crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD);
-    assert_eq!(Value::Object(original), message);
+    let global = all.recv().await.unwrap();
+    let scoped = thread_a.recv().await.unwrap();
+    assert_eq!(*global, message);
+    assert_eq!(*scoped, message);
+    assert!(global.claim_runtime_delivery());
+    assert!(!scoped.claim_runtime_delivery());
+    hub.send(message.clone());
+    assert!(thread_a.recv().await.unwrap().claim_runtime_delivery());
     assert!(thread_b.try_recv().is_err());
-    hub.send(message);
-    assert_ne!(
-        all.recv().await.unwrap()[crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD],
-        sequence
-    );
 }
 
 #[tokio::test]
@@ -978,7 +973,7 @@ async fn mcp_shared_unsupported_elicitation_does_not_wait_for_invisible_input() 
     .unwrap()
     .unwrap()
     .unwrap();
-    assert_eq!(result["action"], "decline");
+    assert_eq!(result.result["action"], "decline");
 }
 
 #[tokio::test]
@@ -1002,7 +997,8 @@ async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
             .await
             .unwrap()
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .map(|outcome| outcome.result),
         Some(json!({"action": "cancel"}))
     );
 }
@@ -5638,4 +5634,36 @@ fn stand_in_mcp_answers_decline_malformed_entries_without_panicking() {
             json!({"answers":{"approval":{"answers":["Cancel"]}}})
         );
     }
+}
+
+#[tokio::test]
+async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers() {
+    let mut message = json!({"id": 71, "method":"mcpServer/elicitation/request","params":{
+        "mode":"form","serverName":"wework_stand_in","message":"Allow reply?",
+        "requestedSchema":{"type":"object","properties":{}},
+        "_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"]}
+    }});
+    elicitation::prepare(&mut message);
+    let deadline = message["params"]["expiresAtUnixMs"].clone();
+    restrict_stand_in_approval(&mut message);
+    assert_eq!(message["params"]["expiresAtUnixMs"], deadline);
+    for (answer, action) in [("Allow", "accept"), ("Allow for this session", "decline")] {
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender
+            .send(json!({"answers":{"__mcp_approval":{"answers":[answer]}}}))
+            .await
+            .unwrap();
+        let result = receive_mcp_server_elicitation_response(&message, Some(&mut receiver), false)
+            .await
+            .unwrap();
+        assert_eq!(result.result["action"], action);
+        assert!(result.result["_meta"]["persist"].is_null());
+    }
+    message["params"]["expiresAtUnixMs"] = json!(0);
+    let (_sender, mut receiver) = mpsc::channel(1);
+    let result = receive_mcp_server_elicitation_response(&message, Some(&mut receiver), false)
+        .await
+        .unwrap();
+    assert_eq!(result.result["action"], "cancel");
+    assert_eq!(result.status, "expired");
 }

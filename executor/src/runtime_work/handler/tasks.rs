@@ -1787,13 +1787,12 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         response: Value,
     ) -> Result<Value, AppIpcError> {
-        let sender = self
+        let pending_request = self
             .active_request_user_inputs
             .lock()
             .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned())
-            .map(|request| request.sender);
-        let Some(sender) = sender else {
+            .and_then(|requests| requests.get(local_task_id).cloned());
+        let Some(pending_request) = pending_request else {
             return Ok(json!({
                 "success": false,
                 "error": "request_user_input is not pending",
@@ -1802,7 +1801,50 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         };
-        if sender.send(response).await.is_err() {
+        let active_turn = self.active_codex_turn(local_task_id);
+        let scoped_to_other_turn = response.get("interactionScope").is_some_and(|scope| {
+            active_turn
+                .as_ref()
+                .map_or(true, |turn| scope.as_str() != Some(turn.turn_id.as_str()))
+        }) || active_turn
+            .as_ref()
+            .is_some_and(|turn| turn.execution_id != pending_request.execution_id);
+        let invalid_mcp_response = self
+            .active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|items| {
+                items.get(local_task_id).map(|active| {
+                    active
+                        .items
+                        .iter()
+                        .find_map(|item| {
+                            super::super::mcp_elicitation::accepts_response(item, &response)
+                        })
+                        .map(|accepted| !accepted)
+                        .unwrap_or_else(|| {
+                            super::super::mcp_elicitation::response_id(&response).is_none()
+                                && active.items.iter().any(|item| {
+                                    item["type"] == "mcpElicitation"
+                                        && item["renderPayload"]["interactionStatus"] == "pending"
+                                })
+                        })
+                })
+            })
+            .unwrap_or(false);
+        if scoped_to_other_turn || invalid_mcp_response {
+            return Ok(json!({
+                "success": false, "code": "stale_request_user_input",
+                "error": "This interaction is expired, settled, or belongs to another turn",
+                "taskId": local_task_id, "runtime": "codex",
+            }));
+        }
+        let response_key = active_turn.as_ref().and_then(|turn| {
+            self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
+        });
+        // Reserve the validated channel before recording the answer. Delivery can
+        // immediately finish the turn, so history must be updated before send.
+        let Ok(permit) = pending_request.sender.reserve().await else {
             return Ok(json!({
                 "success": false,
                 "error": "request_user_input response channel is closed",
@@ -1810,8 +1852,18 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id,
                 "runtime": "codex",
             }));
+        };
+        if self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
+            if let Some(turn) = active_turn {
+                self.settle_request_user_input_response(
+                    local_task_id,
+                    &turn.turn_id,
+                    response_key.as_deref(),
+                    &response,
+                );
+            }
         }
-        self.set_interaction_status(local_task_id, None);
+        permit.send(response);
         Ok(json!({
             "success": true,
             "accepted": true,

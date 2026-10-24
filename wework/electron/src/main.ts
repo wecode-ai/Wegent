@@ -1734,14 +1734,12 @@ function prepareApplicationShutdown(): Promise<void> {
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
-  if (!desktopRuntime) return null
+  const runtime = desktopRuntime
+  if (!runtime) return null
   return {
-    open: async launch => {
-      await desktopRuntime?.openWorkbenchRuntime(launch)
-    },
-    close: tabId => desktopRuntime?.closeWorkbenchRuntime(tabId) ?? Promise.resolve(),
-    runningTabIds: () =>
-      new Set(desktopRuntime?.diagnostics().workbenchRuntimes.map(item => item.tabId) ?? []),
+    open: launch => runtime.openWorkbenchRuntime(launch),
+    close: tabId => runtime.closeWorkbenchRuntime(tabId),
+    runningTabIds: () => new Set(runtime.diagnostics().workbenchRuntimes.map(item => item.tabId)),
   }
 }
 

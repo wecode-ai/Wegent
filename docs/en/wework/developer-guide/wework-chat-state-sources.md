@@ -66,6 +66,8 @@ The project-space board Hover task panel is a split view of the original task co
 
 ## Runtime Event Flow
 
+The conversation stream coordinator retains exactly one subscription and prefers the active page's service instance. When the active page uses a different instance, it releases the old subscription before subscribing to the new instance so a hidden page's retained device routes cannot lose events. Moving active ownership within the same service instance preserves the subscription. Only the active page handles messages.
+
 1. A new message submit sets `sendPhase` to `submitting`.
 2. After runtime accepts the request, `sendPhase` becomes `awaiting_assistant`.
 3. `chat:start` becomes `assistant_started`; the reducer creates or updates the assistant streaming message and `sendPhase` returns to `idle`.

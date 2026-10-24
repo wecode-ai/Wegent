@@ -902,6 +902,12 @@ jobs:
           setup-python: "false"
           setup-uv: "false"
 
+      - name: Set up real object storage for plugin sync recovery E2E
+        if: contains(matrix.segments, 'plugin-write-coordination')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
         run: |

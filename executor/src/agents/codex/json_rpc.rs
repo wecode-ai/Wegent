@@ -29,6 +29,7 @@ pub(super) struct JsonRpcConnection {
 }
 
 pub(super) struct TurnReadOptions {
+    pub active_turn_started: Option<super::CodexActiveTurnCallback>,
     pub overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
     pub overload_continuation_params: Value,
     pub notifications: Option<CodexNotificationSender>,
@@ -36,6 +37,21 @@ pub(super) struct TurnReadOptions {
     pub auto_approve_mcp_tool_calls: bool,
     pub defer_interactive_forms: bool,
     pub stand_in_single_approval: bool,
+}
+
+fn notify_active_turn(
+    callback: &Option<super::CodexActiveTurnCallback>,
+    active_turn_id: &mut Option<String>,
+    thread_id: &str,
+    observed: Option<String>,
+) {
+    let Some(turn_id) = observed.filter(|turn_id| active_turn_id.as_ref() != Some(turn_id)) else {
+        return;
+    };
+    if let Some(callback) = callback.as_ref() {
+        callback(thread_id.to_owned(), turn_id.clone());
+    }
+    *active_turn_id = Some(turn_id);
 }
 
 impl JsonRpcConnection {
@@ -119,6 +135,7 @@ impl JsonRpcConnection {
         options: TurnReadOptions,
     ) -> Result<ExecutionOutcome, String> {
         let TurnReadOptions {
+            active_turn_started,
             overload_turn_recovering,
             overload_continuation_params,
             notifications,
@@ -128,13 +145,18 @@ impl JsonRpcConnection {
             stand_in_single_approval,
         } = options;
         let mut saw_turn_response = false;
+        let mut active_turn_id = None;
+        let thread_id = overload_continuation_params["threadId"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned();
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
         let mut overload_recovery = super::overload_recovery::OverloadRecovery::default();
         let mut recovering_goal = false;
         loop {
-            let message = if waiting_for_initial_progress {
+            let mut message = if waiting_for_initial_progress {
                 match timeout_at(startup_deadline, self.read_message()).await {
                     Ok(result) => result?,
                     Err(_) => {
@@ -148,12 +170,27 @@ impl JsonRpcConnection {
             };
             if response_id(&message) == Some(turn_request_id) {
                 let response = response_result(message)?;
+                notify_active_turn(
+                    &active_turn_started,
+                    &mut active_turn_id,
+                    &thread_id,
+                    super::turn_start_response_id(&response),
+                );
                 if recovering_goal {
                     super::sync_goal_status_from_response(state, &response);
                 }
                 saw_turn_response = true;
                 continue;
             }
+            let observed =
+                super::observed_active_turn_id(active_turn_id.as_deref(), None, &message, state)
+                    .map(|(turn_id, _)| turn_id);
+            notify_active_turn(
+                &active_turn_started,
+                &mut active_turn_id,
+                &thread_id,
+                observed,
+            );
             if waiting_for_initial_progress
                 && codex_notification_has_initial_progress(&message, state)
             {
@@ -183,7 +220,7 @@ impl JsonRpcConnection {
                     }
                     let _ = state.handle_message(&message);
                     if let Some(sender) = &notifications {
-                        let _ = sender.send(notification);
+                        let _ = sender.send(notification.into());
                     }
                     tokio::time::sleep(delay).await;
                     startup_deadline =
@@ -236,7 +273,7 @@ impl JsonRpcConnection {
                     continue;
                 }
             }
-            let mut message = message;
+            super::elicitation::prepare(&mut message);
             if stand_in_single_approval {
                 super::restrict_stand_in_approval(&mut message);
             }
@@ -244,7 +281,7 @@ impl JsonRpcConnection {
                 auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
             if !auto_approve_mcp_tool_call {
                 if let Some(sender) = &notifications {
-                    let _ = sender.send(message.clone());
+                    let _ = sender.send(message.clone().into());
                 }
             }
             if defer_interactive_forms
@@ -285,6 +322,7 @@ impl JsonRpcConnection {
                     &message,
                     &mut request_user_input_answers,
                     auto_approve_mcp_tool_calls,
+                    notifications.as_ref(),
                 )
                 .await?;
                 continue;
@@ -397,18 +435,30 @@ impl JsonRpcConnection {
         message: &Value,
         request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
         auto_approve_mcp_tool_calls: bool,
+        notifications: Option<&CodexNotificationSender>,
     ) -> Result<(), String> {
         let request_id = json_rpc_request_id(message)
             .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
+        // Auto-approved requests were not forwarded to the UI and must not create
+        // a settled interaction or clear another request's waiting state.
+        let notifications = notifications.filter(|_| {
+            !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message))
+        });
         let result = receive_mcp_server_elicitation_response(
             message,
             request_user_input_answers.as_mut(),
             auto_approve_mcp_tool_calls,
         )
         .await?;
+        if let Some(sender) = notifications {
+            let _ = sender.send(
+                super::elicitation::settled(message, result.status, result.response.as_ref())
+                    .into(),
+            );
+        }
         self.write_message(json!({
             "id": request_id,
-            "result": result,
+            "result": result.result,
         }))
         .await
     }

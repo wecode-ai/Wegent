@@ -260,9 +260,11 @@ async fn verify_background_terminal_goal_handoff(router_observed_completion: boo
         .await;
     while event_rx.try_recv().is_ok() {}
     for sequence in [2, 3] {
-        let output = json!({"_wegentNotificationSequence": sequence, "method": "item/commandExecution/outputDelta", "params": {
-            "threadId": "thread-1", "turnId": "turn-1", "itemId": "command-1", "delta": "tick\n"
-        }});
+        let output = CodexNotification::from(
+            json!({"method": "item/commandExecution/outputDelta", "params": {
+                "threadId": "thread-1", "turnId": "turn-1", "itemId": "command-1", "delta": "tick\n"
+            }}),
+        );
         if sequence == 2 {
             handler.route_codex_notification(output.clone());
             if router_observed_completion {
@@ -329,11 +331,10 @@ async fn background_terminal_concurrent_receivers_preserve_native_output_order()
     }});
     handler.persist_completed_codex_turn_from_notification("task-1", &completion);
     handler.route_codex_notification(completion);
-    let messages = (1..=100).map(|sequence| json!({
-        "_wegentNotificationSequence": sequence,
+    let messages = (1..=100).map(|sequence| CodexNotification::from(json!({
         "method": "item/commandExecution/outputDelta",
         "params": {"threadId":"thread-1", "turnId":"turn-1", "itemId":"command-1", "delta":format!("tick-{sequence}\n")}
-    })).collect::<Vec<_>>();
+    }))).collect::<Vec<_>>();
     let global_handler = handler.clone();
     let global_messages = messages.clone();
     let global = tokio::task::spawn_blocking(move || {
@@ -410,9 +411,11 @@ async fn background_terminal_old_turn_output_is_recorded_once_during_a_new_turn(
         "thread-1".into(),
         "new-turn-1".into(),
     );
-    let message = json!({"method": "item/commandExecution/outputDelta", "params": {
-        "threadId": "thread-1", "turnId": "old-turn-1", "itemId": "command-1", "delta": "tick\n"
-    }});
+    let message = CodexNotification::from(
+        json!({"method": "item/commandExecution/outputDelta", "params": {
+            "threadId": "thread-1", "turnId": "old-turn-1", "itemId": "command-1", "delta": "tick\n"
+        }}),
+    );
     handler.route_codex_notification(message.clone());
     handler
         .map_execution_codex_notification(
