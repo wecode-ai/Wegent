@@ -333,7 +333,7 @@ jobs:
       HOME: /root
     container:
       # Codex creates its own user/mount namespaces inside this disposable runner.
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -876,7 +876,7 @@ jobs:
       HOME: /root
     container:
       # Codex creates its own user/mount namespaces inside this disposable runner.
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -1024,7 +1024,7 @@ jobs:
       HOME: /root
     container:
       # Codex creates its own user/mount namespaces inside this disposable runner.
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}

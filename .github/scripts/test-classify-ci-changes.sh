@@ -2016,7 +2016,8 @@ if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||
 fi
 
 for sandbox_job in "$wework_desktop_core_job" "$wework_desktop_cloud_job"; do
-  if [[ "$sandbox_job" != *"--security-opt seccomp=unconfined"* ]] ||
+  if [[ "$sandbox_job" != *"--cap-add=SYS_ADMIN"* ]] ||
+    [[ "$sandbox_job" != *"--security-opt seccomp=unconfined"* ]] ||
     [[ "$sandbox_job" != *"--security-opt apparmor=unconfined"* ]] ||
     [[ "$sandbox_job" != *"--security-opt systempaths=unconfined"* ]] ||
     [[ "$sandbox_job" != *"bash .github/scripts/verify-native-sandbox-namespaces.sh"* ]]; then
