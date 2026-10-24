@@ -7,6 +7,7 @@ import {
   syncTrayMenuState,
 } from './trayNavigation'
 import { EMPTY_TRAY_MENU_TASK_GROUPS } from './trayMenuState'
+import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn().mockResolvedValue(undefined),
@@ -45,6 +46,16 @@ describe('trayNavigation', () => {
     expect(i18n.on).toHaveBeenCalledTimes(1)
     expect(i18n.on).toHaveBeenCalledWith('languageChanged', expect.any(Function))
     expect(desktopHostMocks.subscribe).toHaveBeenCalledTimes(1)
+
+    const open = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
+    const onEvent = desktopHostMocks.subscribe.mock.calls[0][0]
+    onEvent({ type: 'tray.action', payload: { type: 'open-task', taskId: 'device:task' } })
+    expect(open).toHaveBeenCalledOnce()
+    expect(open.mock.calls[0][0].detail).toBe('wework://tasks/device/task')
+    onEvent({ type: 'tray.action', payload: { type: 'open-task', taskId: 'invalid' } })
+    expect(open).toHaveBeenCalledOnce()
+    window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
   })
 
   test('does not install tray listeners outside the main window', () => {
