@@ -7,13 +7,17 @@ sidebar_position: 41
 Inbox entries, system notifications, tray actions, and cross-product links select a
 tab of the destination kind. `navigateTo` dispatches the shared navigation event
 for built-in task, project-space, Agent, registered DSH routes, and app destinations.
-`navigateWorkspaceTab` selects the destination without converting the current
+For cross-surface navigation, `navigateWorkspaceTab` selects the destination without converting the current
 project-space tab into a task tab. `resolveWorkspaceTabKind` is shared by
 navigation and tab-kind inference.
 
-Tasks first match an existing conversation by device ID and task ID. Otherwise,
+Inbox and tray entries use the shared task scheme. Tasks first match an existing conversation by device ID and task ID. Otherwise,
 navigation reuses the active tab of that kind, a fixed tab, or another tab of the
 same kind, creating one only when none exists. Repeated clicks do not add tabs.
+Ordinary navigation within the same surface keeps the existing location update
+without synchronously reselecting the tab. Tasks and auxiliary pages share the
+workbench surface, so opening an app or returning to a new conversation preserves
+the tab and pending conversation state updates.
 Settings temporarily replace the surface and retain the return location.
 Routes containing `workspaceTab` explicitly address a tab and bypass navigation
 events. Non-workspace routes such as login retain page navigation.
@@ -40,9 +44,12 @@ existing conversations, repeated navigation, settings, and explicitly addressed 
 App destinations include declared native paths, `/app/<id>`, and nested paths,
 so app-switching links also preserve the current tab.
 
-Local verification on 2026-10-24 passed 102 tests across seven focused Vitest
-files, TypeScript, ESLint, formatting, CI classification tests, and the checkpoint
+Local verification on 2026-10-24 passed focused Vitest
+tests, TypeScript, ESLint, formatting, CI classification tests, and the checkpoint
 in isolated macOS Electron. An additional `ai:verify` check opened a notification
 for an unavailable device and returned to the original project-space tab.
 Temporary evidence stays in local `wework/test-results/`; runtime directories and
 session files are not committed.
+The existing new-conversation and in-tab app-navigation E2E assertions remain
+intact; after the correction, local `workspace-tabs` and `priority-filter`
+checkpoints passed.

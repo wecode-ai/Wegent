@@ -211,7 +211,7 @@ describe('WorkspaceTabsProvider routing', () => {
   ])(
     'routes built-in navigation to its own tab without replacing another kind: %s',
     contentRoute => {
-      window.history.replaceState({}, '', '/sites')
+      window.history.replaceState({}, '', contentRoute === '/app/wegent' ? '/todo' : '/app/wegent')
       let current!: WorkspaceTabsContextValue
       render(
         <RoutingHarness
@@ -260,6 +260,56 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(current.activeTabId).toBe(matchingId)
     expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+  })
+
+  test('new chat navigation stays in the active task tab without selecting another blank tab', () => {
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    let taskId = ''
+    act(() => {
+      taskId = current.openTab('task', {
+        contentRoute: '/runtime-tasks?deviceId=device&taskId=completed',
+      }).id
+    })
+    const count = current.tabs.length
+    act(() => navigateTo('/'))
+    expect(current.activeTabId).toBe(taskId)
+    expect(current.activeTab.contentRoute).toBe('/')
+    expect(current.tabs).toHaveLength(count)
+    expect(new URLSearchParams(window.location.search).has('workspaceTab')).toBe(false)
+  })
+
+  test('registered auxiliary pages replace the task surface in place', async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.route]: [{ id: 'sites', path: '/sites', telemetryFeature: 'sites' }],
+      },
+      {}
+    )
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    const originalId = current.activeTabId
+    const count = current.tabs.length
+    act(() => navigateTo('/sites'))
+    expect(current.activeTabId).toBe(originalId)
+    expect(current.activeTab.kind).toBe('auxiliary')
+    expect(current.tabs).toHaveLength(count)
+    act(() => navigateTo('/'))
+    expect(current.activeTabId).toBe(originalId)
+    expect(current.activeTab.kind).toBe('task')
+    expect(current.tabs).toHaveLength(count)
   })
 
   test.each(['/app/custom', '/app/custom/details', '/custom-native'])(

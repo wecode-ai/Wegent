@@ -530,6 +530,14 @@ export function WorkspaceTabsProvider({
   useEffect(() => {
     const onNavigate = (event: Event) => {
       const { kind, contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
+      const activeTab = stateRef.current.tabs.find(tab => tab.id === stateRef.current.activeTabId)
+      const isTaskSurface = (value: WorkspaceTabKind) => value === 'task' || value === 'auxiliary'
+      if (
+        activeTab &&
+        (activeTab.kind === kind || (isTaskSurface(activeTab.kind) && isTaskSurface(kind)))
+      ) {
+        return
+      }
       event.preventDefault()
       navigateWorkspaceTab({ ...stateRef.current, selectTab, openTab }, kind, contentRoute)
     }
