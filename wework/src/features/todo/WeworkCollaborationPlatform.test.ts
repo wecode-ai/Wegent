@@ -1803,13 +1803,24 @@ describe('Wework collaboration workspace API', () => {
         name: 'Local environment project',
         project_store: 'local',
       }
+      const statusUpdate = deferred<void>()
+      const updateIssue = vi.fn(() => statusUpdate.promise)
+      const issues = {
+        get: vi.fn().mockResolvedValue({
+          id: 'ISSUE-ENV',
+          status: 'pending',
+          tags: [],
+          version: 4,
+        }),
+        update: updateIssue,
+      }
       render(
         createElement(WeworkSharedProject, {
           api: {
             projects: {
               list: vi.fn().mockResolvedValue([project]),
             },
-            issues: {},
+            issues,
           } as unknown as SharedWorkspaceApi,
           localProjects: [],
           locale: 'zh-CN',
@@ -1886,7 +1897,16 @@ describe('Wework collaboration workspace API', () => {
       }) as {
         props: {
           conversation: {
-            props: { initialTaskRequest?: unknown; initialTaskInput?: string }
+            props: {
+              initialTaskRequest?: unknown
+              initialTaskInput?: string
+              prepareTask: (address: { deviceId: string; taskId: string }) => Promise<unknown>
+              onTaskCreated: (
+                address: { deviceId: string; taskId: string },
+                localProject: null,
+                deviceWorkspaceId: null
+              ) => Promise<void>
+            }
           } | null
         }
       }
@@ -1908,6 +1928,26 @@ describe('Wework collaboration workspace API', () => {
       expect(detail.props.conversation?.props.initialTaskInput).toContain(
         '[$#1 · Use the prepared environment](wework-issue://local-environment-project/ISSUE-ENV)'
       )
+      const composer = detail.props.conversation!.props
+      const address = { deviceId: 'local-device', taskId: 'private-task' }
+      let prepared = false
+      const preparation = composer.prepareTask(address).then(() => {
+        prepared = true
+      })
+      await waitFor(() =>
+        expect(updateIssue).toHaveBeenCalledWith('ISSUE-ENV', {
+          status: 'in_progress',
+          version: 4,
+        })
+      )
+      expect(prepared).toBe(false)
+      statusUpdate.resolve()
+      await act(async () => {
+        await preparation
+        await composer.onTaskCreated(address, null, null)
+      })
+      expect(prepared).toBe(true)
+      expect(updateIssue).toHaveBeenCalledTimes(1)
     }
   )
 
