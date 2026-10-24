@@ -442,6 +442,15 @@ class PluginDeviceInstallationService:
             return
         row = self._device_row(db, installed.id, result.device_id)
         if row and self._auto_update_blocked(row, desired_release_id=release_id):
+            logger.info(
+                "Plugin acknowledgement ignored: user_id=%s device_id=%s installed_id=%s "
+                "reason=auto_update_blocked desired_release_id=%s actual_release_id=%s",
+                user_id,
+                result.device_id,
+                installed.id,
+                release_id,
+                row.actual_release_id,
+            )
             return
         state, error_message = self._device_install_state(result, item_result)
         if (
@@ -481,6 +490,16 @@ class PluginDeviceInstallationService:
             row.error_code = ""
         row.error_message = error_message or ""
         row.last_sync_at = datetime.now()
+        logger.info(
+            "Plugin acknowledgement staged: user_id=%s device_id=%s installed_id=%s "
+            "desired_release_id=%s actual_release_id=%s state=%s",
+            user_id,
+            result.device_id,
+            installed.id,
+            release_id,
+            row.actual_release_id,
+            row.state,
+        )
 
     def ensure_pending_for_device(
         self,
