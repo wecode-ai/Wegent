@@ -1,6 +1,33 @@
 import assert from 'node:assert/strict'
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { testId } from './plugin-regression-fixture.mjs'
+
+export async function refreshWithOccupiedPluginRuntime(control, fixture, timeoutMs) {
+  const refresh = testId('plugins-refresh-button')
+  const notice = `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
+  await control.command('waitFor', `${refresh}:not(:disabled)`, { timeoutMs })
+  const revision = await control.command('getAttribute', refresh, {
+    value: 'data-reconciliation-revision',
+  })
+  assert.match(revision, /^\d+$/, 'Plugin refresh must expose its reconciliation revision')
+  await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
+  await control.command('waitFor', testId('plugin-operation-notice'), {
+    visible: false,
+    timeoutMs,
+  })
+  await control.command('clickWhenEnabled', refresh, { timeoutMs })
+  await control.command('waitFor', notice, {
+    text: `Plugin reconciliation failed for ${fixture.slug}: PLUGIN_RUNTIME_METADATA_FAILED`,
+    timeoutMs,
+  })
+  await control.command('waitFor', `${refresh}:not(:disabled)`, { timeoutMs })
+  assert.equal(
+    await control.command('getAttribute', refresh, { value: 'data-reconciliation-revision' }),
+    revision,
+    'An occupied runtime must not be acknowledged as a successful reconciliation'
+  )
+}
 
 export function isolatedPath(root, path) {
   const suffix = relative(resolve(root), resolve(path))

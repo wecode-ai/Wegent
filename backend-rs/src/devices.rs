@@ -178,7 +178,8 @@ struct DeviceListResponse {
 ///
 /// The source model emits every known member, so `runtimeTaskCreate`,
 /// `interactiveSessions`, and `worktrees` are JSON null when the stored
-/// document omits them. `projectEditing` is omitted when unadvertised so verified
+/// document omits them. `pluginSync` is omitted unless a valid protocol is
+/// advertised. `projectEditing` is omitted when unadvertised so verified
 /// legacy runtimes retain their version contract. `extensions` carries the members a distribution
 /// registers through `register_runtime_feature_normalizer` (the source
 /// extension schema registers `desktop`); any other stored member is
@@ -192,6 +193,8 @@ pub struct RuntimeFeatures {
     pub worktrees: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_sync: Option<RuntimePluginSyncFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
 }
@@ -203,6 +206,12 @@ pub struct RuntimeProjectEditingFeatures {
     pub ai_settings: Option<bool>,
     pub default_project_space: Option<bool>,
     pub plugins: Option<bool>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimePluginSyncFeatures {
+    pub protocol_version: i64,
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -301,6 +310,8 @@ struct RuntimeFeatureInput {
         deserialize_with = "present_project_editing"
     )]
     project_editing: Option<OpaqueJson>,
+    #[serde(rename = "pluginSync")]
+    plugin_sync: Option<OpaqueJson>,
 }
 
 fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
@@ -689,6 +700,8 @@ pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
 ///   Optional defaults).
 /// - `projectEditing` is omitted when absent. Explicit malformed advertisements
 ///   retain a conservative object; only actual booleans authorize writes.
+/// - `pluginSync` preserves an explicit positive integer protocol version;
+///   absent or malformed advertisements never opt a legacy device in.
 /// - Any other stored key is dropped unless the distribution registers it as
 ///   an extension feature.
 fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> {
@@ -725,6 +738,18 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .project_editing
             .as_ref()
             .map(|value| project_editing_features(value, valid_header)),
+        plugin_sync: features
+            .plugin_sync
+            .as_ref()
+            .filter(|_| valid_header)
+            .and_then(|value| {
+                value
+                    .to_value()
+                    .get("protocolVersion")?
+                    .as_i64()
+                    .filter(|version| *version >= 1)
+                    .map(|protocol_version| RuntimePluginSyncFeatures { protocol_version })
+            }),
         extensions: serde_json::Map::new(),
     })
 }

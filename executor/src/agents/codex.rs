@@ -315,6 +315,16 @@ pub enum CodexIdleMutationError {
 }
 
 impl CodexAppServerClient {
+    #[cfg(test)]
+    pub(crate) fn isolated_for_test(binary: impl Into<String>, home: PathBuf) -> Self {
+        let binary = resolve_codex_binary(&binary.into());
+        Self {
+            state: codex_app_server_state(&binary, Some(home.clone())),
+            binary,
+            home: Some(home),
+        }
+    }
+
     pub fn new(binary: impl Into<String>) -> Self {
         let binary = resolve_codex_binary(&binary.into());
         Self {

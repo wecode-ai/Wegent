@@ -228,6 +228,49 @@ fn runtime_features_null_interactive_sessions_when_absent() {
 }
 
 #[test]
+fn runtime_features_preserves_explicit_plugin_sync_protocol() {
+    let info = json!({
+        "runtime_features": {
+            "schemaVersion": 4,
+            "pluginSync": {"protocolVersion": 2, "unknown": true},
+        },
+    });
+    let projected =
+        crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+    assert_eq!(projected["pluginSync"], json!({"protocolVersion": 2}));
+}
+
+#[test]
+fn runtime_features_omits_absent_and_malformed_plugin_sync_protocols() {
+    for advertisement in [
+        Value::Null,
+        json!("2"),
+        json!([]),
+        json!({}),
+        json!({"protocolVersion": "2"}),
+        json!({"protocolVersion": true}),
+        json!({"protocolVersion": 0}),
+    ] {
+        let info = json!({
+            "runtime_features": {
+                "schemaVersion": 4,
+                "pluginSync": advertisement,
+                "projectEditing": {"plugins": false},
+            },
+        });
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert!(projected.get("pluginSync").is_none());
+        assert_eq!(projected["projectEditing"]["plugins"], false);
+    }
+    let projected = crate::json_contract_tests::serialized(
+        runtime_features(&json!({"runtime_features": {"schemaVersion": 4}})).unwrap(),
+    )
+    .unwrap();
+    assert!(projected.get("pluginSync").is_none());
+}
+
+#[test]
 fn runtime_features_extensions_follow_the_known_members() {
     let features = RuntimeFeatures {
         schema_version: 4,
@@ -235,6 +278,7 @@ fn runtime_features_extensions_follow_the_known_members() {
         interactive_sessions: None,
         worktrees: None,
         project_editing: None,
+        plugin_sync: None,
         extensions: std::iter::once((
             "desktop".to_string(),
             json!({

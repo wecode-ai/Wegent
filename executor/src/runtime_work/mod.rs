@@ -8,6 +8,7 @@ mod codex_global_state;
 mod codex_notifications;
 pub(crate) use codex_notifications::CODEX_NOTIFICATION_SEQUENCE_FIELD;
 mod codex_rollout;
+mod codex_timeline;
 mod codex_transcript_page;
 mod codex_user_input;
 mod collaboration_projects;
@@ -45,6 +46,7 @@ pub(crate) fn runtime_features() -> serde_json::Value {
     let gateway_enabled = env_enabled("DEVICE_SESSION_GATEWAY_ENABLED", true);
     serde_json::json!({
         "schemaVersion": 4,
+        "pluginSync": { "protocolVersion": 2 },
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {
@@ -99,6 +101,7 @@ mod project_editing_feature_tests {
     #[test]
     fn advertises_independent_project_editing_capabilities() {
         let features = super::runtime_features();
+        assert_eq!(features["pluginSync"]["protocolVersion"], 2);
         assert_eq!(
             features["projectEditing"],
             serde_json::json!({

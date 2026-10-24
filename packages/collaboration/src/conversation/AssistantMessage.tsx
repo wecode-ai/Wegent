@@ -310,7 +310,8 @@ export function AssistantMessage({
         if (segment.kind === "content") {
           return (
             <div
-              key={`content:${segmentIndex}`}
+              key={`content:${segment.id}`}
+              data-runtime-item-id={segment.id}
               data-message-selectable-text
               data-testid="assistant-message-content"
             >
@@ -326,10 +327,10 @@ export function AssistantMessage({
 
         const segments = splitProcessingBlocks(segment.blocks);
         return (
-          <Fragment key={`processing:${segmentIndex}`}>
+          <Fragment key={`processing:${segment.id}`}>
             {segments.map((processingSegment, processingIndex) => (
               <ToolBlocksDisplay
-                key={`${processingSegment.kind}:${processingIndex}`}
+                key={`${processingSegment.kind}:${processingSegment.blocks[0]?.id}`}
                 blocks={processingSegment.blocks}
                 fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
                 isStreaming={isStreaming}
@@ -352,7 +353,7 @@ export function AssistantMessage({
                 }
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
-                stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                stateKey={`${processingStateKey}:ordered:${processingSegment.blocks[0]?.id}`}
                 detailStateScopeKey={processingStateKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
@@ -471,6 +472,11 @@ export function AssistantMessage({
           ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div
+              data-runtime-item-id={
+                message.runtimeDisplayItems
+                  ?.filter((item) => item.type === "assistant_text")
+                  .at(-1)?.id
+              }
               data-message-selectable-text
               data-testid="assistant-message-content"
             >

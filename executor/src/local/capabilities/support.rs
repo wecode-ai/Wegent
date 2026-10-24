@@ -540,6 +540,9 @@ pub(super) fn plugin_manifest_entry(
     if let Some(id) = spec.cloud_plugin_id {
         entry.insert("cloud_plugin_id".to_owned(), json!(id));
     }
+    if let Some(generation) = spec.sync_generation {
+        entry.insert("plugin_sync_generation".to_owned(), json!(generation));
+    }
     entry.insert("marketplace".to_owned(), json!(spec.marketplace));
     entry.insert("enabled".to_owned(), json!(spec.enabled));
     entry.insert("version".to_owned(), json!(spec.version));
