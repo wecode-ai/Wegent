@@ -1,6 +1,6 @@
 //! Project-addressed views over the personal stand-in; no project-owned settings.
 use super::personal_stand_in::{
-    empty_role, project_role, read_personal, validate_role, write_personal,
+    empty_role, project_role, read_personal, stand_in_identities, validate_role, write_personal,
 };
 use super::*;
 
@@ -12,9 +12,8 @@ impl LocalTaskStore {
         stand_in_id: &str,
     ) -> Result<Value, TaskRuntimeError> {
         let personal = self.personal_stand_in(user_id, "")?;
-        let role = personal["roles"]
-            .as_array()
-            .unwrap()
+        let identities = stand_in_identities(&personal);
+        let mut role = identities
             .iter()
             .find(|role| {
                 (role["id"] == stand_in_id || role["legacyStandInId"] == stand_in_id)
@@ -24,13 +23,7 @@ impl LocalTaskStore {
                             projects.iter().any(|project| project["id"] == project_id)
                         })
             })
-            .or_else(|| {
-                personal["roles"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|role| role["id"] == stand_in_id)
-            })
+            .or_else(|| identities.iter().find(|role| role["id"] == stand_in_id))
             .cloned()
             .unwrap_or_else(|| {
                 empty_role(
@@ -38,6 +31,13 @@ impl LocalTaskStore {
                     personal["executionDeviceId"].as_str().unwrap_or_default(),
                 )
             });
+        if let Some(fields) = role.as_object_mut() {
+            fields.remove("personalVersion");
+            fields.remove("sharedPreferences");
+            if stand_in_id == "@primary" {
+                fields.insert("version".into(), personal["version"].clone());
+            }
+        }
         let kind = role["collaboration"]["projects"]
             .as_array()
             .and_then(|projects| projects.iter().find(|project| project["id"] == project_id))

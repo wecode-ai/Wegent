@@ -5394,6 +5394,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         'implementation-plan'
                                       }
                                       payload={pendingRequestUserInput}
+                                      messages={paneMessages}
                                       onSubmit={response => {
                                         const isImplementationPlanRequest =
                                           isImplementationPlanRequestUserInput(

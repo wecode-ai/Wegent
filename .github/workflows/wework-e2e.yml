@@ -331,7 +331,10 @@ jobs:
     timeout-minutes: 60
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -347,6 +350,9 @@ jobs:
         with:
           filter: blob:none
           persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
@@ -873,7 +879,10 @@ jobs:
     timeout-minutes: 60
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -889,6 +898,9 @@ jobs:
         with:
           filter: blob:none
           persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v6
@@ -1016,7 +1028,10 @@ jobs:
     timeout-minutes: 25
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -1030,6 +1045,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           filter: blob:none
+          persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v6

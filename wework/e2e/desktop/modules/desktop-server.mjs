@@ -1,3 +1,4 @@
+import { nativeApprovalModelResponse } from './native-approval-model.mjs'
 import {
   installedMiniProgramPlugin,
   installedSitesPlugin,
@@ -1326,6 +1327,17 @@ class DesktopE2EServer {
     })
     if (await this.handleControlRoute(request, response, url)) return
     try {
+      if (
+        this.desktopScenario &&
+        request.method === 'POST' &&
+        ['/responses', '/v1/responses'].includes(url.pathname) &&
+        (await this.writeNativeApprovalReview(
+          response,
+          await readRequestBody(request),
+          'responses'
+        ))
+      )
+        return
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
       console.error(
@@ -2110,6 +2122,13 @@ class DesktopE2EServer {
     return false
   }
 
+  async writeNativeApprovalReview(response, body, protocol) {
+    const review = await nativeApprovalModelResponse(body, this.desktopScenario)
+    if (review === null) return false
+    this.writeLocalAssistantMessage(response, { protocol }, review)
+    return true
+  }
+
   async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
@@ -2123,6 +2142,8 @@ class DesktopE2EServer {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
     }
+
+    if (await this.writeNativeApprovalReview(response, body, protocol)) return
 
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))

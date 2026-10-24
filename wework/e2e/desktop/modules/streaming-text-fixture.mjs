@@ -1,3 +1,4 @@
+import { readRequestBody as readJson } from './response-protocol.mjs'
 import { selectE2EModel, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL } from './shared.mjs'
 import assert from 'node:assert/strict'
 
@@ -467,12 +468,6 @@ export async function writeSseEvents(response, events) {
     response.flush?.()
     await new Promise(resolve => setTimeout(resolve, 5))
   }
-}
-
-export async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 export function requestContainsPrompt(body) {
@@ -958,3 +953,5 @@ export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelRespon
     timeoutMs: uiTimeoutMs,
   })
 }
+
+export { readJson }

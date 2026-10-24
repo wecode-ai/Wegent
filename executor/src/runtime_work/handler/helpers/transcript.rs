@@ -691,7 +691,7 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         .get("source")
         .filter(|value| value.is_object())
         .cloned();
-    let presentation = json!({
+    let mut presentation = json!({
         "clientUserMessageId": client_user_message_id,
         "content": content,
         "attachments": attachments,
@@ -700,6 +700,9 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         "references": references,
         "source": source,
     });
+    if bool_field(payload, "restoreUserMessageContent") == Some(true) {
+        presentation["restoreContent"] = json!(true);
+    }
     Some(presentation)
 }
 
@@ -919,7 +922,8 @@ fn attach_user_message_presentations_for_page(
         let attachments = normalized_attachments(presentation.get("attachments"));
         // Provider input is an execution projection, not the user's presentation.
         // Restore native references even when the host routes a plugin to CLI text.
-        let restore_content = !attachments.is_empty()
+        let restore_content = bool_field(&presentation, "restoreContent") == Some(true)
+            || !attachments.is_empty()
             || local_presentation_reference_descriptors(&presentation_content)
                 .iter()
                 .any(|reference| {

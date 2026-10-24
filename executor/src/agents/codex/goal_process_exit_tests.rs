@@ -69,6 +69,7 @@ async fn goal_process_exit_never_replays_a_previous_completed_turn() {
                         active_turn_finished: None,
                         wait_for_goal_continuation: true,
                         auto_approve_mcp_tool_calls: false,
+                        stand_in_single_approval: false,
                     },
                 )
                 .await;

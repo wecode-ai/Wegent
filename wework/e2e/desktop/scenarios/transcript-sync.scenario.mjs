@@ -1,3 +1,4 @@
+import { readRequestBody as requestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -64,12 +65,6 @@ function completedResponse(id, text) {
       },
     },
   ]
-}
-
-async function requestBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 async function rawBody(request) {

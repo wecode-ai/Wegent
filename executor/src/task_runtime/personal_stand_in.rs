@@ -8,11 +8,11 @@ pub(super) fn empty_role(id: &str, device: &str) -> Value {
 }
 
 fn empty_personal(user: i64, device: &str) -> Value {
-    json!({"userId":user,"executionDeviceId":device,"version":0,"autoSelect":false,
+    json!({"userId":user,"executionDeviceId":device,"version":0,"autoSelect":true,
         "roles":[empty_role("default", device)]})
 }
 
-fn personal_key(user: i64) -> String {
+pub(super) fn personal_key(user: i64) -> String {
     format!("personal-stand-in:{user}")
 }
 
@@ -111,6 +111,7 @@ pub fn project_role(
     config["userId"] = json!(user);
     config["tags"] = role["collaboration"]["tags"].clone();
     config["autoSelect"] = json!(auto_select);
+    config["handlingPolicy"] = project_policy(role, project, store);
     config
 }
 
@@ -126,7 +127,6 @@ fn validate_projects(value: &Value) -> bool {
 }
 
 pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntimeError> {
-    let source = &role["collaboration"];
     let id = role["id"].as_str().unwrap_or_default();
     if id.is_empty()
         || id.len() > 64
@@ -137,14 +137,7 @@ pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntim
         || role["prompt"].as_str().is_none()
         || role["enabled"].as_bool().is_none()
         || role["executionDeviceId"] != device
-        || source["enabled"].as_bool().is_none()
-        || source["allProjects"].as_bool().is_none()
-        || !validate_projects(&source["projects"])
-        || !validate_projects(&source["excludedProjects"])
-        || !source["tags"].as_array().is_some_and(|tags| {
-            tags.iter()
-                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
-        })
+        || !valid_collaboration(&role["collaboration"])
         || role
             .get("agentId")
             .is_some_and(|id| !id.is_null() && !id.is_string())
@@ -160,7 +153,117 @@ pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntim
             "invalid personal stand-in role".into(),
         ));
     }
+    validate_connections(role)?;
     super::stand_in::validate_execution_settings(role)
+}
+
+fn validate_policy(policy: &Value) -> bool {
+    policy["automatic"].is_boolean() && policy["askBeforeAct"].is_boolean()
+}
+
+fn valid_collaboration(source: &Value) -> bool {
+    source["enabled"].is_boolean()
+        && source["allProjects"].is_boolean()
+        && validate_projects(&source["projects"])
+        && validate_projects(&source["excludedProjects"])
+        && source["tags"].as_array().is_some_and(|tags| {
+            tags.iter()
+                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
+        })
+}
+
+fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
+    if role["agentProject"].is_object()
+        && role["dingtalk"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Project-scoped agents can only receive work from their project".into(),
+        ));
+    }
+    let source = &role["collaboration"];
+    let valid = role.get("collaboration").map_or(true, valid_collaboration)
+        && source.get("policy").map_or(true, validate_policy)
+        && source.get("projectPolicies").map_or(true, |rows| {
+            rows.as_array().is_some_and(|rows| {
+                let mut ids = HashSet::new();
+                rows.len() <= 1000
+                    && rows.iter().all(|row| {
+                        validate_projects(&json!([row]))
+                            && validate_policy(&row["policy"])
+                            && ids.insert((row["store"].to_string(), row["id"].to_string()))
+                    })
+            })
+        })
+        && role.get("dingtalk").map_or(true, |rows| {
+            rows.as_array().is_some_and(|rows| {
+                let mut ids = HashSet::new();
+                rows.len() <= 1000
+                    && rows.iter().all(|row| {
+                        row["id"]
+                            .as_str()
+                            .is_some_and(|id| !id.trim().is_empty() && id.len() <= 512)
+                            && row["name"]
+                                .as_str()
+                                .is_some_and(|name| !name.trim().is_empty() && name.len() <= 512)
+                            && row["profile"].as_str().is_some_and(|profile| {
+                                !profile.trim().is_empty() && profile.len() <= 512
+                            })
+                            && matches!(row["kind"].as_str(), Some("group" | "direct"))
+                            && validate_policy(&row["policy"])
+                            && ids.insert((
+                                row["profile"].to_string(),
+                                row["kind"].to_string(),
+                                row["id"].to_string(),
+                            ))
+                    })
+            })
+        });
+    if !valid {
+        return Err(TaskRuntimeError::Invalid(
+            "invalid stand-in connections".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
+    let mut identities = settings["roles"].as_array().cloned().unwrap_or_default();
+    if settings["primary"].is_object() {
+        let mut primary = settings["primary"].clone();
+        primary["id"] = json!("@primary");
+        primary["name"] = json!("我的分身");
+        primary["version"] = settings["version"].clone();
+        identities.push(primary);
+    }
+    for identity in &mut identities {
+        identity["userId"] = settings["userId"].clone();
+        identity["executionDeviceId"] = settings["executionDeviceId"].clone();
+        identity["personalVersion"] = settings["version"].clone();
+        identity["sharedPreferences"] = settings["primary"]["preferences"].clone();
+    }
+    identities
+}
+
+pub fn dingtalk_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'a Value> {
+    identity["dingtalk"].as_array()?.iter().find(|row| {
+        row["id"] == source["id"]
+            && row["profile"] == source["profile"]
+            && row["kind"] == source["kind"]
+    })
+}
+
+pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
+    role["collaboration"]["projectPolicies"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["id"] == project && row["store"] == store)
+        })
+        .map(|row| row["policy"].clone())
+        .or_else(|| role["collaboration"].get("policy").cloned())
+        .unwrap_or_else(|| json!({"automatic":role["enabled"] == true,"askBeforeAct":false}))
 }
 
 impl LocalTaskStore {
@@ -194,6 +297,20 @@ impl LocalTaskStore {
         &self,
         user: i64,
         device: &str,
+        value: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let saved = self.save_personal_stand_in_on(&connection, user, device, value)?;
+        connection.commit()?;
+        Ok(saved)
+    }
+
+    pub(super) fn save_personal_stand_in_on(
+        &self,
+        connection: &Connection,
+        user: i64,
+        device: &str,
         mut value: Value,
     ) -> Result<Value, TaskRuntimeError> {
         if let Some(object) = value.as_object_mut() {
@@ -211,14 +328,25 @@ impl LocalTaskStore {
         }
         let roles = value["roles"]
             .as_array()
-            .filter(|roles| !roles.is_empty() && roles.len() <= 100)
+            .filter(|roles| roles.len() <= 100)
             .ok_or_else(|| {
-                TaskRuntimeError::Invalid("at least one personal role is required".into())
+                TaskRuntimeError::Invalid(
+                    "personal roles must be an array of at most 100 roles".into(),
+                )
             })?;
         if value["autoSelect"].as_bool().is_none() || value["executionDeviceId"] != device {
             return Err(TaskRuntimeError::Invalid(
                 "invalid personal stand-in settings".into(),
             ));
+        }
+        if let Some(primary) = value.get("primary") {
+            if !primary["enabled"].is_boolean()
+                || !primary["prompt"].is_string()
+                || !primary["preferences"].is_string()
+            {
+                return Err(TaskRuntimeError::Invalid("invalid primary stand-in".into()));
+            }
+            validate_connections(primary)?;
         }
         let mut ids = HashSet::new();
         for role in roles {
@@ -227,11 +355,13 @@ impl LocalTaskStore {
                 return Err(TaskRuntimeError::Invalid("duplicate personal role".into()));
             }
         }
-        let mut guard = self.connection()?;
-        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous = read_personal(&connection, user, device)?;
+        let previous = read_personal(connection, user, device)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if value["primary"].is_object() {
+            stamp_dingtalk_connections(&mut value["primary"], &previous["primary"]);
+            stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
             let before = previous["roles"]
@@ -242,21 +372,13 @@ impl LocalTaskStore {
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
+            stamp_dingtalk_connections(role, before.unwrap_or(&Value::Null));
             role["version"] = json!(version + 1);
-            role["enabledAfter"] = before
-                .filter(|before| {
-                    before["enabled"] == true
-                        && role["enabled"] == true
-                        && before["collaboration"]["enabled"] == true
-                        && role["collaboration"]["enabled"] == true
-                })
-                .map(|before| before["enabledAfter"].clone())
-                .unwrap_or_else(|| json!(now()));
+            stamp_project_enabled(role, before.unwrap_or(&Value::Null));
         }
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
-        write_personal(&connection, &value)?;
-        connection.commit()?;
+        write_personal(connection, &value)?;
         Ok(value)
     }
 
@@ -304,4 +426,40 @@ impl LocalTaskStore {
         connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_decision',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at", params![id,value.to_string(),now()])?;
         Ok(())
     }
+}
+
+fn stamp_dingtalk_connections(identity: &mut Value, previous: &Value) {
+    let preserve = identity["enabled"] == previous["enabled"];
+    for source in identity
+        .get_mut("dingtalk")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let before = previous["dingtalk"].as_array().and_then(|rows| {
+            rows.iter().find(|row| {
+                row["id"] == source["id"]
+                    && row["kind"] == source["kind"]
+                    && row["profile"] == source["profile"]
+            })
+        });
+        source["enabledAfter"] = before
+            .filter(|_| preserve)
+            .and_then(|source| source.get("enabledAfter"))
+            .cloned()
+            .unwrap_or_else(|| json!(now()));
+    }
+}
+
+fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
+    identity["enabledAfter"] = if identity["enabled"] == previous["enabled"]
+        && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"]
+    {
+        previous["enabledAfter"]
+            .as_str()
+            .map(|time| json!(time))
+            .unwrap_or_else(|| json!(now()))
+    } else {
+        json!(now())
+    };
 }

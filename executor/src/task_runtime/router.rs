@@ -28,6 +28,9 @@ pub struct TaskRuntime {
 }
 
 impl TaskRuntime {
+    pub(crate) fn stand_in_store(&self) -> &LocalTaskStore {
+        &self.local_store
+    }
     pub fn from_env() -> Result<Self, TaskRuntimeError> {
         Self::new(LocalTaskStore::from_env()?)
     }

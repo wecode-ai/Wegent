@@ -167,10 +167,9 @@ impl RuntimeWorkRpcHandler {
         let personal = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
-        let configs: Vec<Value> = personal["roles"]
-            .as_array()
-            .into_iter()
-            .flatten()
+        let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&personal);
+        let configs: Vec<Value> = identities
+            .iter()
             .enumerate()
             .filter(|(_, role)| {
                 crate::task_runtime::personal_stand_in::role_project_matches(
@@ -204,7 +203,12 @@ impl RuntimeWorkRpcHandler {
                 selected
             } else {
                 crate::task_runtime::personal_stand_in::project_role(
-                    &personal["roles"][0],
+                    identities.first().ok_or_else(|| {
+                        AppIpcError::new(
+                            "stand_in_identity_missing",
+                            "No stand-in identity is available",
+                        )
+                    })?,
                     user,
                     &project,
                     if local { "local" } else { "cloud" },
@@ -327,7 +331,10 @@ impl RuntimeWorkRpcHandler {
         let settings = self.local_stand_in_projects()?;
         let mut projects = std::collections::HashMap::<(String, String, i64), Vec<Value>>::new();
         for config in settings {
-            if config["executionDeviceId"] != self.device_id || config["enabled"] != true {
+            if config["executionDeviceId"] != self.device_id
+                || config["enabled"] != true
+                || config["handlingPolicy"]["automatic"] == false
+            {
                 continue;
             }
             projects
@@ -678,12 +685,20 @@ impl RuntimeWorkRpcHandler {
             issue["description"].as_str().unwrap_or_default(),
             config["prompt"].as_str().unwrap_or_default()
         );
-        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":if config["manual"] == true { "manual" } else { "assignment" },"standInId":config["id"],"roleName":config["name"],"selectionMode":config["selectionMode"],"selectionReason":config["selectionReason"],"projectStore":config["projectStore"],"cloudProjectId":project,"loopItemId":issue_id,"humanAssignmentId":human_id,"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
+        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":if config["manual"] == true { "manual" } else { "assignment" },"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"selectionMode":config["selectionMode"],"selectionReason":config["selectionReason"],"projectStore":config["projectStore"],"cloudProjectId":project,"loopItemId":issue_id,"humanAssignmentId":human_id,"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
         let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
         if config["goalMode"] == true {
             payload["initialGoal"] =
                 json!({"objective":prompt,"status":"active","tokenBudget":null});
         }
+        self.prepare_stand_in_execution(payload, config).await
+    }
+
+    pub(super) async fn prepare_stand_in_execution(
+        &self,
+        mut payload: Value,
+        config: &Value,
+    ) -> Result<Value, AppIpcError> {
         let agent = self.stand_in_agent(config).await?.or_else(|| {
             config["model"].is_object().then(|| json!({
                 "id":"stand-in", "name":"Stand-in", "runtime":config["model"]["runtime"],
@@ -708,7 +723,9 @@ impl RuntimeWorkRpcHandler {
                 new_session: true,
                 ..Default::default()
             };
-            request.extra.insert("origin".into(), origin);
+            request
+                .extra
+                .insert("origin".into(), payload["origin"].clone());
             payload["executionRequest"] = json!(request);
         }
         if let Some(options) = config["modelOptions"].as_object() {
@@ -719,9 +736,21 @@ impl RuntimeWorkRpcHandler {
                 .or_insert_with(|| json!({}));
             target.as_object_mut().unwrap().extend(options.clone());
         }
+        if payload["modelId"].is_string() {
+            payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
+        }
         // Project agents are direct Wework profiles, not backend Teams.
         payload["executionRequest"]["team_id"] = json!(0);
         payload["executionRequest"]["user_id"] = config["userId"].clone();
+        if config["handlingPolicy"]["askBeforeAct"] == true {
+            if payload["runtime"] == "claude_code" {
+                return Err(AppIpcError::new(
+                    "confirmation_runtime_unsupported",
+                    "Choose Codex for execution-before-confirmation controls",
+                ));
+            }
+            payload["executionRequest"]["runtime_permission_profile"] = json!(":read-only");
+        }
         if config
             .get("workspace")
             .is_some_and(|workspace| !workspace.is_null())
