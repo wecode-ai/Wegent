@@ -72,9 +72,18 @@ class ConnectorConnection:
         return "" if decrypted == encrypted else decrypted
 
     def refresh_token(self) -> str | None:
-        if not self.refresh_token_encrypted:
+        """Return the decrypted refresh token, or ``None`` when unreadable.
+
+        ``decrypt_sensitive_data`` echoes the ciphertext back when the
+        configured key cannot read it. Posting that to the token endpoint
+        presents a garbage grant, and a 4xx answer then wipes a refresh token
+        that a corrected key could still have used.
+        """
+        encrypted = self.refresh_token_encrypted
+        if not encrypted:
             return None
-        return decrypt_sensitive_data(self.refresh_token_encrypted) or None
+        decrypted = decrypt_sensitive_data(encrypted) or ""
+        return None if decrypted == encrypted else decrypted or None
 
 
 class ConnectorConnectionService:

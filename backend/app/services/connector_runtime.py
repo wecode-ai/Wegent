@@ -818,9 +818,18 @@ class ConnectorRuntimeService:
                 )
             access_token = connection.access_token()
             if not access_token:
-                # A stored token that the configured key cannot decrypt is
-                # unusable; mark it expired so the user is asked to authorize.
-                connector_connection_service.set_status(db, connection, "expired")
+                if connection.access_token_encrypted:
+                    # The grant exists but the configured key cannot read it.
+                    # Re-authorizing would only paper over an environment
+                    # fault, so report it instead of asking for a new grant.
+                    # A 5xx also lets the caller record `lastError`, which is
+                    # what surfaces the problem in the connection UI.
+                    raise HTTPException(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        f"Connector '{app.slug}' credential cannot be decrypted: "
+                        "GIT_TOKEN_AES_KEY/GIT_TOKEN_AES_IV must match the "
+                        "configuration that stored it",
+                    )
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
                     f"Connector '{app.slug}' requires authorization",

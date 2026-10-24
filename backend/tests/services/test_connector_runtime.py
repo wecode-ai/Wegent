@@ -946,12 +946,12 @@ async def test_call_tool_surfaces_upstream_auth_error_as_401(
 
 
 @pytest.mark.asyncio
-async def test_undecryptable_token_requires_authorization(
+async def test_undecryptable_token_reports_configuration_error(
     test_db: Session,
     test_admin_user: User,
     test_user: User,
 ) -> None:
-    """A token written under a different key must not be sent upstream."""
+    """A token written under a different key is an environment fault."""
     app = _app(slug="tickets", auth_type="oauth2")
     connection = connector_connection_service.save_oauth_connection(
         test_db,
@@ -975,12 +975,48 @@ async def test_undecryptable_token_requires_authorization(
     with pytest.raises(HTTPException) as exc_info:
         await ConnectorRuntimeService._server_config(test_db, app, test_user)
 
-    assert exc_info.value.status_code == 401
+    assert exc_info.value.status_code == 503
+    assert "cannot be decrypted" in exc_info.value.detail
+    # The stored grant is intact: the key configuration is what is wrong.
     refreshed = connector_connection_service.get(
         test_db, slug="tickets", user_id=test_user.id
     )
     assert refreshed is not None
-    assert refreshed.status == "expired"
+    assert refreshed.status == "connected"
+
+
+def test_undecryptable_refresh_token_is_treated_as_missing(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """Only a decryptable refresh token may reach the token endpoint."""
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="tickets",
+        user_id=test_user.id,
+        access_token="issued-here",
+        refresh_token="refresh-issued-here",
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    assert connection.refresh_token() == "refresh-issued-here"
+
+    stored = dict(connection.row.json)
+    stored["spec"] = {
+        **stored["spec"],
+        "refreshTokenEncrypted": "bm90LWEtcmVhbC1jaXBoZXJ0ZXh0LXBhZGRpbmc=",
+    }
+    connection.row.json = stored
+    test_db.commit()
+
+    refreshed = connector_connection_service.get(
+        test_db, slug="tickets", user_id=test_user.id
+    )
+    assert refreshed is not None
+    assert refreshed.access_token() == "issued-here"
+    assert refreshed.refresh_token() is None
 
 
 @pytest.mark.asyncio
