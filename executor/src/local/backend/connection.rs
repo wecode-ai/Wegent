@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use super::{client::reconcile_account_plugins, *};
 
 impl<T, R> LocalBackendRunner<T, R>
 where
@@ -92,7 +92,10 @@ where
             .register_device(self.client.config.registration_timeout)
             .await
         {
-            Ok(true) => {
+            Ok(Some(route_id)) => {
+                if let Ok(mut slot) = self.device_route_id.lock() {
+                    *slot = if route_id.is_empty() { None } else { Some(route_id) };
+                }
                 if let Err(error) = self.client.emit_liveness_heartbeat().await {
                     let _ = self.client.disconnect().await;
                     return Err(error);
@@ -110,7 +113,7 @@ where
                 self.trigger_runtime_work_poll();
                 Ok(())
             }
-            Ok(false) => {
+            Ok(None) => {
                 let _ = self.client.disconnect().await;
                 Err("device registration was rejected by backend".to_owned())
             }
@@ -136,6 +139,7 @@ where
             ConnectionStatus,
             Heartbeat,
             RuntimeWork,
+            PluginReconcile,
         }
 
         let mut consecutive_failures = 0_u32;
@@ -145,6 +149,8 @@ where
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
         let mut next_runtime_work_poll_at =
             Instant::now() + self.client.config.runtime_work_poll_interval;
+        let mut next_plugin_reconcile_at =
+            Instant::now() + plugin_reconcile_delay(&self.client.config.runtime_instance_id);
         let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
             handler
                 .lock()
@@ -158,6 +164,7 @@ where
                 _ = sleep_until(next_connection_status_poll_at) => RunnerTick::ConnectionStatus,
                 _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
                 _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
+                _ = sleep_until(next_plugin_reconcile_at) => RunnerTick::PluginReconcile,
                 result = &mut terminal_relay => {
                     let error = result.expect_err("terminal relay only stops on error");
                     write_executor_error_line(&format_executor_log(
@@ -181,6 +188,33 @@ where
                 self.trigger_runtime_work_poll();
                 next_runtime_work_poll_at =
                     Instant::now() + self.client.config.runtime_work_poll_interval;
+                continue;
+            }
+            if matches!(tick, RunnerTick::PluginReconcile) {
+                // Fire-and-forget: the backend answers over this same socket
+                // while it reconciles, so the heartbeat loop must not await it.
+                let backend_url = self.client.config.backend_url.clone();
+                let auth_token = self.client.config.auth_token.clone();
+                let device_id = self
+                    .device_route_id
+                    .lock()
+                    .ok()
+                    .and_then(|slot| slot.clone())
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| self.client.config.device_id.clone());
+                tokio::spawn(async move {
+                    if let Err(error) =
+                        reconcile_account_plugins(&backend_url, &auth_token, &device_id).await
+                    {
+                        write_executor_error_line(&format_executor_log(
+                            "plugin reconcile fallback failed",
+                            &[("error", error)],
+                        ));
+                    }
+                });
+                next_plugin_reconcile_at = Instant::now()
+                    + plugin_reconcile_delay(&self.client.config.runtime_instance_id);
                 continue;
             }
             if let Some(handler) = &self.session_handler {

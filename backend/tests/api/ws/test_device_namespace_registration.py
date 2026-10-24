@@ -92,7 +92,11 @@ async def test_new_app_identity_registers_with_independent_record_route(
     replacement = next(device for device in persisted if device.id != original.id)
     replacement_route = f"app-record-{replacement.id}"
 
-    assert result == {"success": True, "device_id": "app-route"}
+    assert result == {
+        "success": True,
+        "device_id": "app-route",
+        "device_route_id": replacement_route,
+    }
     assert len(persisted) == 2
     assert original.json["spec"]["runtimeInstanceId"] == "runtime-original"
     assert replacement.json["spec"]["runtimeInstanceId"] == "runtime-other"

@@ -29,6 +29,7 @@ export interface LocalExecutorStatus {
   running: boolean
   ready?: boolean
   deviceId?: string
+  deviceRouteId?: string
   runtimeInstanceId?: string
   codexInitializeElapsedMs?: number
   version?: string
@@ -379,9 +380,23 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
 }
 
 export function getKnownLocalExecutorDeviceId(): string | null {
+  // Prefer the backend-assigned record route id: it uniquely addresses the
+  // current Runtime registration even when historical Device records share
+  // this desktop's stable device id.
   return (
+    initializedLocalExecutorStatus?.deviceRouteId?.trim() ||
+    availableLocalExecutorStatus?.deviceRouteId?.trim() ||
     initializedLocalExecutorStatus?.deviceId?.trim() ||
     availableLocalExecutorStatus?.deviceId?.trim() ||
+    null
+  )
+}
+
+/** Backend-assigned record route id of the current Runtime, once registered. */
+export function getKnownLocalExecutorDeviceRouteId(): string | null {
+  return (
+    initializedLocalExecutorStatus?.deviceRouteId?.trim() ||
+    availableLocalExecutorStatus?.deviceRouteId?.trim() ||
     null
   )
 }
@@ -414,6 +429,7 @@ export function ensureLocalExecutorAvailable(
           running: true,
           ready: true,
           deviceId: description.device_id,
+          deviceRouteId: description.device_route_id?.trim() || undefined,
           runtimeInstanceId: description.runtime_instance_id,
           version: description.version,
         }

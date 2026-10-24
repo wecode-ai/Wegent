@@ -17,6 +17,7 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.api.endpoints import installed_plugins as installed_plugins_endpoint
 from app.api.endpoints.installed_plugins import (
     _sync_global_capabilities,
     install_marketplace_plugin,
@@ -2873,6 +2874,7 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
         marketplace_id=plugin.id,
         release_id=None,
         device_id="current-device",
+        background_tasks=BackgroundTasks(),
         db=test_db,
         current_user=test_user,
     )
@@ -2885,6 +2887,10 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
     assert installed.json["spec"]["pluginId"] == plugin.id
     assert installed.json["spec"]["releaseId"] == release.id
     assert response.plugin.spec.installState == "installed"
+    # The response carries the requesting device's merge result; other devices
+    # converge through the queued background sync instead of blocking install.
+    assert response.sync is not None
+    assert response.sync.mode == "merge"
     device_row = test_db.query(PluginDeviceInstallation).one()
     assert device_row.installed_kind_id == installed_id
     assert device_row.user_id == test_user.id
@@ -2960,17 +2966,21 @@ async def test_install_returns_plugin_when_device_sync_fails(
         ensure_pending,
     )
 
+    background = BackgroundTasks()
     response = await install_marketplace_plugin(
         marketplace_id=plugin.id,
         release_id=None,
         device_id="current-device",
+        background_tasks=background,
         db=test_db,
         current_user=test_user,
     )
     assert response.plugin is not None
     assert response.plugin.spec.pluginId == plugin.id
-    assert response.sync is not None
-    assert response.sync.failed == 1
+    # Device failure no longer surfaces a sync result: the account record stays
+    # authoritative and other devices converge through the background task.
+    assert response.sync is None
+    assert len(background.tasks) == 1
     assert (
         test_db.query(Kind)
         .filter(

@@ -25,6 +25,7 @@ struct RuntimeWorkPollTransport {
     disconnect_calls: Arc<AtomicUsize>,
     close_handler: Arc<TestMutex<Option<ConnectionClosedHandler>>>,
     close_during_registration: Arc<AtomicBool>,
+    register_ack: Arc<TestMutex<Option<Value>>>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -47,7 +48,12 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             match event {
-                "device:register" => Ok(json!({"success": true})),
+                "device:register" => Ok(self
+                    .register_ack
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| json!({"success": true}))),
                 "runtime.tasks.pull" => {
                     assert!(payload["runner_catalog"]["models"].is_array());
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
@@ -484,4 +490,41 @@ fn local_project_request_keeps_device_without_backend_context() {
     assert!(request.backend_url.is_none());
     assert!(request.auth_token.is_none());
     assert!(request.runtime_auth_token.is_none());
+}
+
+#[tokio::test]
+async fn registration_captures_backend_assigned_device_route_id() {
+    let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() =
+        Some(json!({"success": true, "device_route_id": "app-record-42"}));
+    let route_slot = Arc::new(std::sync::Mutex::new(None));
+    let runner =
+        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
+            .with_device_route_id_slot(Arc::clone(&route_slot));
+    runner.register_handlers();
+
+    runner
+        .connect_and_register()
+        .await
+        .expect("registration succeeds");
+
+    assert_eq!(
+        route_slot.lock().unwrap().as_deref(),
+        Some("app-record-42")
+    );
+}
+
+#[test]
+fn plugin_reconcile_delay_is_stable_and_bounded() {
+    let delay = plugin_reconcile_delay("runtime-instance-1");
+    assert_eq!(delay, plugin_reconcile_delay("runtime-instance-1"));
+    assert!(delay >= PLUGIN_RECONCILE_INTERVAL);
+    assert!(
+        delay < PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(PLUGIN_RECONCILE_JITTER_SECS)
+    );
+    // Distinct runtimes spread across the jitter window.
+    assert_ne!(
+        plugin_reconcile_delay("runtime-instance-1"),
+        plugin_reconcile_delay("runtime-instance-2")
+    );
 }

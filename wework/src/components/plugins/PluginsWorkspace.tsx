@@ -52,7 +52,12 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
-import { ensureLocalExecutorStarted, getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
+import {
+  ensureLocalExecutorAvailable,
+  ensureLocalExecutorStarted,
+  getKnownLocalExecutorDeviceId,
+  getKnownLocalExecutorDeviceRouteId,
+} from '@/desktop/localExecutor'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -1894,8 +1899,17 @@ export function PluginsWorkspace({
     const connected = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
     if (!connected) return { connected: false, deviceId: '' }
 
+    // The backend assigns the record route id during device registration,
+    // which can finish after the cached executor description. Refresh once so
+    // plugin operations address this exact Runtime registration.
+    if (!getKnownLocalExecutorDeviceRouteId()) {
+      await ensureLocalExecutorAvailable({ refresh: true }).catch(() => undefined)
+    }
     const knownDeviceId =
-      currentDeviceIdRef.current.trim() || getKnownLocalExecutorDeviceId()?.trim() || ''
+      getKnownLocalExecutorDeviceRouteId() ||
+      currentDeviceIdRef.current.trim() ||
+      getKnownLocalExecutorDeviceId()?.trim() ||
+      ''
     if (knownDeviceId) {
       return { connected: true, deviceId: rememberCurrentDeviceId(knownDeviceId) }
     }
@@ -1904,7 +1918,7 @@ export function PluginsWorkspace({
       const executor = await ensureLocalExecutorStarted()
       return {
         connected: true,
-        deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),
+        deviceId: rememberCurrentDeviceId(executor.deviceRouteId ?? executor.deviceId ?? ''),
       }
     } catch {
       return { connected: true, deviceId: '' }

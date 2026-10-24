@@ -202,7 +202,10 @@ async function describe(req, res, client) {
     return methodNotAllowed(res, 'GET, HEAD')
   }
   try {
-    const upstream = await client.describe()
+    // Fetch a fresh description: the backend-assigned device route id becomes
+    // available only after device registration, which can complete after the
+    // cached startup negotiation.
+    const upstream = await client.request('executor.protocol.describe', {})
     sendJson(
       res,
       200,

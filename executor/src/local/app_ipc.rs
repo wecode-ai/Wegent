@@ -374,6 +374,7 @@ where
 pub struct AppIpcServer {
     device_id: String,
     runtime_instance_id: Option<String>,
+    device_route_id: Option<Arc<std::sync::Mutex<Option<String>>>>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
@@ -389,6 +390,7 @@ impl Default for AppIpcServer {
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
+            device_route_id: None,
             runtime_work_handler: None,
             backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
@@ -418,6 +420,15 @@ impl AppIpcServer {
         self.runtime_instance_id = Some(runtime_instance_id.into())
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
+        self
+    }
+
+    /// Share the slot holding the backend-assigned device route id.
+    pub fn with_device_route_id_slot(
+        mut self,
+        slot: Arc<std::sync::Mutex<Option<String>>>,
+    ) -> Self {
+        self.device_route_id = Some(slot);
         self
     }
 
@@ -927,10 +938,15 @@ impl AppIpcServer {
     }
 
     fn protocol_description(&self) -> Value {
+        let device_route_id = self
+            .device_route_id
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|value| value.clone()));
         json!({
             "protocol_version": APP_IPC_PROTOCOL_VERSION,
             "device_id": self.device_id,
             "runtime_instance_id": self.runtime_instance_id,
+            "device_route_id": device_route_id,
             "capabilities": APP_IPC_CAPABILITIES,
             "renderer_methods": APP_IPC_RENDERER_METHODS,
             "transports": [

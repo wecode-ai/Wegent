@@ -555,6 +555,7 @@ def copy_marketplace_plugin(
 )
 async def install_marketplace_plugin(
     marketplace_id: int,
+    background_tasks: BackgroundTasks,
     release_id: int | None = None,
     device_id: str | None = None,
     db: Session = Depends(get_db),
@@ -565,6 +566,10 @@ async def install_marketplace_plugin(
     Account Kind creation is authoritative. Global device sync is best-effort:
     a full replace can fail because of an unrelated plugin while the new install
     is already desired; do not 502 and leave the marketplace UI stuck.
+
+    Only the requesting device is synchronized within this request; all other
+    online devices converge in a background task so they cannot delay or fail
+    the current installation.
     """
     plugin = plugin_marketplace_service.install(
         db,
@@ -580,20 +585,14 @@ async def install_marketplace_plugin(
             installed_kind_id=installed_id,
             desired_release_id=plugin.spec.releaseId,
         )
-    sync = await _sync_global_capabilities(
-        db,
-        current_user.id,
-        required_device_id=device_id,
-        required_installed_kind_id=installed_id,
-        expect_installed=True,
-        require_device_success=False,
-    )
     sync = await _ensure_installed_plugin_on_device(
         db,
         user_id=current_user.id,
         device_id=device_id,
         installed_id=installed_id,
-        previous=sync,
+    )
+    background_tasks.add_task(
+        sync_global_capabilities_after_plugin_change, current_user.id
     )
     enriched = plugin_marketplace_service.enrich_installed_list(
         db,
@@ -610,6 +609,7 @@ async def install_marketplace_plugin(
 async def ensure_builtin_plugin_installed(
     plugin_key: str,
     request: BuiltinPluginInstallRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
@@ -628,6 +628,7 @@ async def ensure_builtin_plugin_installed(
         return await _ensure_legacy_builtin_plugin_installed(
             plugin_key=plugin_key,
             request=request,
+            background_tasks=background_tasks,
             db=db,
             user_id=current_user.id,
         )
@@ -644,20 +645,14 @@ async def ensure_builtin_plugin_installed(
             installed_kind_id=installed_id,
             desired_release_id=plugin.spec.releaseId,
         )
-    sync = await _sync_global_capabilities(
-        db,
-        current_user.id,
-        required_device_id=request.device_id,
-        required_installed_kind_id=installed_id,
-        expect_installed=True,
-        require_device_success=False,
-    )
     sync = await _ensure_installed_plugin_on_device(
         db,
         user_id=current_user.id,
         device_id=request.device_id,
         installed_id=installed_id,
-        previous=sync,
+    )
+    background_tasks.add_task(
+        sync_global_capabilities_after_plugin_change, current_user.id
     )
     enriched = plugin_marketplace_service.enrich_installed_list(
         db,
@@ -671,6 +666,7 @@ async def _ensure_legacy_builtin_plugin_installed(
     *,
     plugin_key: str,
     request: BuiltinPluginInstallRequest,
+    background_tasks: BackgroundTasks,
     db: Session,
     user_id: int,
 ) -> PluginMarketplaceInstallResponse:
@@ -680,8 +676,8 @@ async def _ensure_legacy_builtin_plugin_installed(
         plugin_key=plugin_key,
     )
     if request.device_id is None:
-        sync = await _sync_global_capabilities(db, user_id)
-        return PluginMarketplaceInstallResponse(plugin=plugin, sync=sync)
+        background_tasks.add_task(sync_global_capabilities_after_plugin_change, user_id)
+        return PluginMarketplaceInstallResponse(plugin=plugin, sync=None)
 
     installed_id = int(plugin.metadata["labels"]["id"])
     try:
@@ -754,6 +750,7 @@ def download_installed_plugin(
 async def update_installed_plugin(
     installed_id: int,
     request: InstalledPluginUpdateRequest,
+    background_tasks: BackgroundTasks,
     device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -781,20 +778,15 @@ async def update_installed_plugin(
             desired_release_id=installed.spec.releaseId,
             reset_failures=request.releaseId is not None,
         )
-    await _sync_global_capabilities(
-        db,
-        current_user.id,
-        required_device_id=device_id,
-        required_installed_kind_id=installed_id,
-        expect_installed=True,
-        require_device_success=False,
-    )
     await _ensure_installed_plugin_on_device(
         db,
         user_id=current_user.id,
         device_id=device_id,
         installed_id=installed_id,
         manual_retry=request.releaseId is not None,
+    )
+    background_tasks.add_task(
+        sync_global_capabilities_after_plugin_change, current_user.id
     )
     return plugin_marketplace_service.enrich_installed_list(
         db,
@@ -966,6 +958,26 @@ async def _sync_global_capabilities(
             required_installed_kind_id,
         )
     return result
+
+
+async def sync_global_capabilities_after_plugin_change(user_id: int) -> None:
+    """Converge other online devices after an account plugin change.
+
+    Runs as a background task so the requesting device never waits for
+    unrelated online devices. Uses its own session because it executes after
+    the request session is closed.
+    """
+    try:
+        with get_db_session() as db:
+            await _sync_global_capabilities(
+                db,
+                user_id,
+                require_device_success=False,
+            )
+    except Exception:
+        logger.exception(
+            "Background global capability sync failed: user_id=%s", user_id
+        )
 
 
 @router.post(

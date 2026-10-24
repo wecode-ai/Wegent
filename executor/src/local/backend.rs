@@ -98,6 +98,22 @@ const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
 const RUNTIME_TASKS_AVAILABLE_EVENT: &str = "runtime.tasks.available";
 const RUNTIME_EVENT_CONNECTION_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Low-frequency plugin drift fallback. Registration sync and change
+/// notifications carry the common paths; this only covers missed signals.
+const PLUGIN_RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
+/// Extra per-runtime spread so fleets do not reconcile in lockstep.
+const PLUGIN_RECONCILE_JITTER_SECS: u64 = 120;
+
+/// Stable per-runtime offset for the plugin reconcile fallback.
+fn plugin_reconcile_delay(runtime_instance_id: &str) -> Duration {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in runtime_instance_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(hash % PLUGIN_RECONCILE_JITTER_SECS)
+}
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -163,6 +179,8 @@ pub struct LocalBackendRunner<
     connection_epoch: Arc<Mutex<u64>>,
     runtime_pull_lock: Arc<AsyncMutex<()>>,
     runtime_pull_pending: Arc<AtomicBool>,
+    /// Latest backend-assigned record route id for this Runtime registration.
+    device_route_id: Arc<Mutex<Option<String>>>,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -331,11 +349,18 @@ where
             connection_epoch: Arc::new(Mutex::new(0)),
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
             runtime_pull_pending: Arc::new(AtomicBool::new(false)),
+            device_route_id: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
         self.connection_status = connection_status;
+        self
+    }
+
+    /// Share the slot that receives the backend-assigned device route id.
+    pub fn with_device_route_id_slot(mut self, slot: Arc<Mutex<Option<String>>>) -> Self {
+        self.device_route_id = slot;
         self
     }
 
@@ -831,6 +856,7 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
     event_hub.ensure_started();
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
+    let device_route_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
         RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
             app_ipc_device_id.clone(),
@@ -845,10 +871,12 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
         event_hub.clone(),
         backend_connection_snapshot,
     )
-    .await;
+    .await
+    .with_device_route_id_slot(device_route_id.clone());
     let server = AppIpcServer::new()
         .with_device_id(app_ipc_device_id)
         .with_runtime_instance_id(runtime_instance_id)
+        .with_device_route_id_slot(device_route_id)
         .with_shared_runtime_work_handler(runtime_work_handler, runtime_event_tx, event_hub)
         .with_backend_connection_handler(backend_connection);
     Ok(server)

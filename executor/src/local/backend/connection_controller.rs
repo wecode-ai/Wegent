@@ -38,6 +38,7 @@ pub struct LocalBackendConnectionController {
     /// credentials without relying on the executor process environment.
     connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     connection_status: Arc<AtomicBool>,
+    device_route_id: Arc<StdMutex<Option<String>>>,
 }
 
 #[derive(Default)]
@@ -108,6 +109,7 @@ impl LocalBackendConnectionController {
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
+            device_route_id: Arc::new(StdMutex::new(None)),
         };
         controller.replace_connection(initial_profile).await;
         controller
@@ -115,6 +117,12 @@ impl LocalBackendConnectionController {
 
     pub fn connection_snapshot(&self) -> Arc<StdMutex<Option<ConnectionConfig>>> {
         Arc::clone(&self.connection_snapshot)
+    }
+
+    /// Share the slot that receives the backend-assigned device route id.
+    pub fn with_device_route_id_slot(mut self, slot: Arc<StdMutex<Option<String>>>) -> Self {
+        self.device_route_id = slot;
+        self
     }
 
     async fn replace_connection(&self, profile: Option<LocalBackendConnectionProfile>) -> bool {
@@ -160,6 +168,8 @@ impl LocalBackendConnectionController {
                 )
             }
             .with_connection_status(Arc::clone(&self.connection_status));
+            let runner =
+                runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
