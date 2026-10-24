@@ -3602,6 +3602,25 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
+  test('keeps the skill catalog source stable when refreshing tasks in the same workspace', async () => {
+    const services = createWorkbenchServices()
+    let latest: ReturnType<typeof useWorkbench> | undefined
+    function CatalogSourceProbe() {
+      const workbench = useWorkbench()
+      useEffect(() => {
+        latest = workbench
+      })
+      return <BootstrapProbe />
+    }
+    renderWorkbench(<CatalogSourceProbe />, services)
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    const source = latest!.projectChat.listLocalSkills
+    await act(async () => {
+      await latest!.refreshWorkLists()
+    })
+    expect(latest!.projectChat.listLocalSkills).toBe(source)
+  })
+
   test('loads task composer catalogs after runtime work bootstrap', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     const services = createWorkbenchServices({

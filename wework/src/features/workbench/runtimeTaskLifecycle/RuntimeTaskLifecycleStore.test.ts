@@ -144,6 +144,29 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
   })
 
+  test('rejects the first completion snapshot of a prior turn after an autonomous continuation starts', () => {
+    const store = new RuntimeTaskLifecycleStore('autonomous-first-completion')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: true, status: 'running', updatedAt: 13_000 }))
+    )
+    store.turnStarted(address, 'original-turn')
+    store.turnSettled(address, 'original-turn', 'succeeded')
+    store.turnStarted(address, 'supervisor-correction')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 13_963,
+          updatedAt: 13_963,
+          runtimeHandle: { lastTurnId: 'original-turn' },
+        })
+      )
+    )
+    expect(store.getTask(address)?.turn.id).toBe('supervisor-correction')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('preserves a live turn when an older completion snapshot arrives late', () => {
     const store = new RuntimeTaskLifecycleStore('late-completion-test')
     store.syncRuntimeWork(
