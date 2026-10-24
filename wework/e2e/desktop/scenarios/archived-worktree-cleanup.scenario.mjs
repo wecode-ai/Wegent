@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { access, readFile, writeFile } from 'node:fs/promises'
+import { access, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -13,6 +13,17 @@ import {
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
 const ANSWER = 'ARCHIVED_WORKTREE_CLEANUP_READY'
+
+export async function rewriteGitMarker(path, content) {
+  // Git hides .git on Windows, where opening an existing hidden file with 'w' fails.
+  const file = await open(path, 'r+')
+  try {
+    await file.truncate(0)
+    await file.writeFile(content)
+  } finally {
+    await file.close()
+  }
+}
 
 export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelResponseTimeoutMs }) {
   return {
@@ -69,9 +80,12 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.equal((await rpc('runtime.tasks.archive', task)).accepted, true)
       const markerPath = join(path, '.git')
       const marker = await readFile(markerPath, 'utf8')
-      // Damage only this isolated fixture's Git link to exercise a real cleanup failure.
-      await writeFile(markerPath, `gitdir: ${join(path, 'missing-git/worktrees/fixture')}\n`)
       try {
+        // Damage only this isolated fixture's Git link to exercise a real cleanup failure.
+        await rewriteGitMarker(
+          markerPath,
+          `gitdir: ${join(path, 'missing-git/worktrees/fixture')}\n`
+        )
         await control.command('navigate', 'body', { value: '/settings/archived-conversations' })
         const suffix = `${task.deviceId}-${task.taskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
         const button = `[data-testid="archived-delete-button-${suffix}"]`
@@ -96,7 +110,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         await control.command('waitFor', '[data-testid="worktree-error"]', { text: path })
         await control.command('navigate', 'body', { value: '/settings/archived-conversations' })
         await control.command('waitFor', '[data-testid="archived-operation-error"]', { text: path })
-        await writeFile(markerPath, marker)
+        await rewriteGitMarker(markerPath, marker)
         await remove()
         const deadline = Date.now() + uiTimeoutMs
         while (Date.now() < deadline) {
@@ -114,7 +128,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         )
       } finally {
         // Keep the fixture repairable if an assertion fails before retry.
-        if (existsSync(path)) await writeFile(markerPath, marker)
+        if (existsSync(path)) await rewriteGitMarker(markerPath, marker)
       }
     },
   }

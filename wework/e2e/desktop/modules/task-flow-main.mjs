@@ -132,7 +132,10 @@ import {
 } from './resilience-flows.mjs'
 
 import { matrixCaseId } from './response-protocol.mjs'
-import { collectWindowsNetworkDiagnostics } from './windows-network-diagnostics.mjs'
+import {
+  collectWindowsNetworkDiagnostics,
+  observeWindowsSocketExhaustion,
+} from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 
 import {
@@ -1464,6 +1467,25 @@ async function main() {
         appendProcessOutput(child.stdout, appLogPath),
         appendProcessOutput(child.stderr, appLogPath),
       ])
+      if (process.platform === 'win32') {
+        const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
+          void Promise.resolve()
+            .then(() => {
+              const snapshot = collectWindowsNetworkDiagnostics()
+              return writeFile(
+                join(resultDir, 'windows-network-exhaustion-at-error.json'),
+                JSON.stringify(snapshot, null, 2),
+                { flag: 'wx' }
+              )
+            })
+            .catch(error => {
+              if (error.code !== 'EEXIST') {
+                console.error('[desktop-e2e] Immediate network diagnostics failed:', error.code)
+              }
+            })
+        })
+        child.once('exit', stopObserving)
+      }
       return child
     }
     app = await startDesktopAppProcess()
