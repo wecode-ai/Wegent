@@ -183,7 +183,7 @@ import {
   marketplaceItemMarketplaceId,
   marketplacePluginDistribution,
 } from './pluginDistribution'
-import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
+import { pluginDetailPrimaryActionPending, pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 
 import {
   CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS,
@@ -4594,6 +4594,7 @@ export function PluginsWorkspace({
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.plugins_update', '更新')}
         confirmTestId="plugin-update-confirm-button"
+        pending={isReconcilingPlugins}
         onClose={() => setPendingPluginUpdate(null)}
         onConfirm={() => {
           const item = pendingPluginUpdate
@@ -5041,12 +5042,18 @@ export function PluginsWorkspace({
       marketplaceItemCanRetryPluginUpdate(selectedMarketplacePlugin) &&
       selectedMarketplacePlugin.installed &&
       selectedMarketplacePlugin.installedPluginId
+    const primaryActionPending = pluginDetailPrimaryActionPending({
+      operationPending: isActionPending,
+      reconciling: isReconcilingPlugins,
+      readyToTry: isInstalled,
+      updateAvailable: Boolean(canUpdate),
+    })
     const autoUpdatePaused = marketplaceItemHasPausedPluginAutoUpdate(selectedMarketplacePlugin)
     const showDetailActionMenu =
       isInstalled ||
       (selectedMarketplacePlugin.installedPluginId !== null &&
         selectedMarketplacePlugin.installedPluginId !== undefined)
-    const marketplacePrimaryIcon: 'try' | 'install' | 'none' = isActionPending
+    const marketplacePrimaryIcon: 'try' | 'install' | 'none' = primaryActionPending
       ? 'none'
       : isInstalled
         ? 'try'
@@ -5219,7 +5226,7 @@ export function PluginsWorkspace({
               : undefined
           }
           primaryActionLabel={
-            isActionPending
+            primaryActionPending
               ? isUninstalling
                 ? t('workbench.plugins_uninstalling', '正在卸载')
                 : isInstalling
@@ -5241,7 +5248,7 @@ export function PluginsWorkspace({
                       : t('workbench.plugins_install_plugin', '安装插件')
           }
           primaryActionIcon={marketplacePrimaryIcon}
-          primaryActionDisabled={isActionPending}
+          primaryActionDisabled={primaryActionPending}
           tertiaryActionLabel={
             selectedMarketplacePlugin.accessRole === 'recipient' &&
             selectedMarketplacePlugin.allowCopy

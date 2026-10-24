@@ -115,7 +115,8 @@ export async function createDesktopScenario({
       })
       await writeFile(join(workspacePath, 'commit-generation.txt'), `${MARKER}\n`)
       await openEnvironmentInfo(control)
-      await control.command('click', '[data-testid="environment-commit-button"]')
+      // The Git contribution loads after the environment popover shell mounts.
+      await control.command('clickWhenEnabled', '[data-testid="environment-commit-button"]')
       await control.command('fill', '[data-testid="environment-commit-message-input"]', {
         value: '',
       })
