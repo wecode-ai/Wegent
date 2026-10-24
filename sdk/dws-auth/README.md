@@ -62,6 +62,8 @@ uv run --project backend python sdk/dws-auth/package.py \
 
 ## CI 与官方分发
 
+Plugin Auth SDK 工作流在输入准备阶段下载并校验一次固定源码，将归档作为同一工作流的制品交给 Linux、macOS 和 Windows 原生任务。各平台通过 `--source-archive` 再次校验相同字节，继续执行全部原生构建与测试。输入制品缺失或哈希不符会失败；工作流重跑覆盖同名输入制品。测试任务不再各自访问源码下载域名。
+
 插件根目录的 `.wework-build.json` 声明构建入口与生成目录，构建依赖保存在
 `plugins/dingtalk/.wework-build/`。从 GitHub 提取插件目录并同步到内网 MR 时，
 这些输入会一起保留，无需另行同步仓库根目录或下载专用制品。

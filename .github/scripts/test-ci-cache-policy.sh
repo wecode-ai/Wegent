@@ -542,7 +542,28 @@ step = desktop[prepare]
 abort 'GitHub CLI preparation must be scoped to account auth checkpoints' unless step['if'] == "contains(matrix.segments, 'plugin-account-auth')"
 abort 'GitHub CLI preparation must install and verify the real binary' unless step['run'].include?('find_missing_apt_packages gh') && step['run'].include?('gh --version')
 
-native = YAML.load_file(ARGV[1])['jobs']['native']['steps']
+sdk_jobs = YAML.load_file(ARGV[1]).fetch('jobs')
+inputs = sdk_jobs.fetch('changes').fetch('steps')
+source = inputs.index { |item| item['name'] == 'Prepare pinned DWS source archive' }
+upload = inputs.index { |item| item['uses'].to_s.start_with?('actions/upload-artifact@') }
+abort 'DWS source must be prepared and verified once before platform builds' unless source && upload && source < upload
+abort 'DWS source preparation must reuse the pinned checksum validator' unless inputs[source]['run'].include?('prepare_source_archive(directory, None)')
+gate = "steps.classify.outputs.plugin_auth_sdk == 'true'"
+abort 'DWS source preparation must be scoped to SDK changes' unless [source, upload].all? { |index| inputs[index]['if'] == gate && !inputs[index]['continue-on-error'] }
+artifact = inputs[upload].fetch('with')
+abort 'DWS source uploads must be complete and safe to rerun' unless artifact['if-no-files-found'] == 'error' && artifact['overwrite'] == true
+dws = sdk_jobs.fetch('dws-native')
+abort 'DWS platform builds must depend on the verified input producer' unless dws['needs'] == 'changes'
+abort 'DWS native verification must keep all three platforms' unless dws.dig('strategy', 'matrix', 'os') == ['ubuntu-latest', 'macos-latest', 'windows-latest']
+steps = dws.fetch('steps')
+download = steps.index { |item| item['uses'].to_s.start_with?('actions/download-artifact@') }
+build = steps.index { |item| item['name'] == 'Build and test the pinned DWS native companion' }
+abort 'DWS platform builds must consume the shared source before building' unless download && build && download < build
+archive_directory = '${{ runner.temp }}/dws-auth-source'
+abort 'DWS platform builds must consume exactly the prepared source artifact' unless artifact['path'] == "#{archive_directory}/source.tar.gz" && steps[download].dig('with', 'name') == artifact['name'] && steps[download].dig('with', 'path') == archive_directory
+abort 'DWS builds must verify the shared source and run native tests' unless steps[build]['run'].include?(%Q{--source-archive "#{archive_directory}/source.tar.gz"}) && steps[build]['run'].include?('--test') && !steps[build]['continue-on-error'] && !steps[download]['continue-on-error']
+
+native = sdk_jobs.fetch('native').fetch('steps')
 prepare = native.index { |item| item['name'] == 'Resolve the native adapter Python interpreter' }
 run = native.index { |item| item['name'] == 'Test native transport, OAuth lifecycle, and process cleanup' }
 abort 'Native auth tests must pin the uv interpreter before invoking adapters' unless prepare && run && prepare < run && native[prepare]['run'].include?('uv python find') && native[prepare]['run'].include?('WEGENT_TEST_PYTHON=')

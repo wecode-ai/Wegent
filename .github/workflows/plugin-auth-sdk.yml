@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   changes:
-    name: Detect Plugin Auth SDK Changes
+    name: Prepare Plugin Auth SDK Inputs
     runs-on: ubuntu-latest
     outputs:
       plugin_auth_sdk: ${{ steps.classify.outputs.plugin_auth_sdk }}
@@ -37,6 +37,33 @@ jobs:
             git diff --name-only "$BASE_SHA...$HEAD_SHA" |
               .github/scripts/classify-plugin-auth-sdk.sh
           fi
+      - uses: astral-sh/setup-uv@v6
+        if: steps.classify.outputs.plugin_auth_sdk == 'true'
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned DWS source archive
+        if: steps.classify.outputs.plugin_auth_sdk == 'true'
+        run: |
+          uv run --no-project python - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "sdk/dws-auth")
+          from build import prepare_source_archive
+
+          directory = Path(os.environ["RUNNER_TEMP"]) / "dws-auth-source"
+          directory.mkdir(parents=True, exist_ok=True)
+          prepare_source_archive(directory, None)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: steps.classify.outputs.plugin_auth_sdk == 'true'
+        with:
+          name: dws-auth-source
+          path: ${{ runner.temp }}/dws-auth-source/source.tar.gz
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 
   dws-native:
     needs: changes
@@ -58,8 +85,12 @@ jobs:
       - name: Test shared Go credential transport
         working-directory: sdk/plugin-auth-go
         run: go test -race ./...
+      - uses: actions/download-artifact@v6
+        with:
+          name: dws-auth-source
+          path: ${{ runner.temp }}/dws-auth-source
       - name: Build and test the pinned DWS native companion
-        run: uv run --no-project python sdk/dws-auth/build.py --output executor/target/dws-auth/dws-account-auth --test
+        run: uv run --no-project python sdk/dws-auth/build.py --source-archive "${{ runner.temp }}/dws-auth-source/source.tar.gz" --output executor/target/dws-auth/dws-account-auth --test
       - name: Test declared plugin builds
         run: uv run --no-project python -m unittest discover -s shared/tests -p test_plugin_build.py -v
       - name: Test DWS package assembly and artifact checks
