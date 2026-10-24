@@ -62,6 +62,15 @@ function seedHistory(sqliteHome, threadId) {
           clientId: `${turnId}-user`,
           content: [{ type: 'text', text: `${PROMPT}_${index}`, text_elements: [] }],
         },
+        // Native timeline pages budget 500 items at page size five. The latest
+        // turn must exceed that budget so reopening initially loads only replies.
+        ...(index === 10
+          ? Array.from({ length: 600 }, (_, part) => ({
+              ...assistant,
+              id: `${turnId}-detail-${part}`,
+              text: `${PROMPT}_REPLY_${index}_DETAIL_${part}`,
+            }))
+          : []),
         { ...assistant, id: `${turnId}-assistant`, text: `${PROMPT}_REPLY_${index}` },
       ]
       items.forEach((item, offset) =>
@@ -91,6 +100,40 @@ async function waitForPane(control, predicate, description, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description}: ${JSON.stringify(snapshot?.pane?.messageSummary)}`)
+}
+
+async function verifyHistoryNavigation(control) {
+  const markers = `${WORKBENCH} [data-testid="message-turn-navigation-marker"]`
+  const previews = `${WORKBENCH} [data-testid="message-turn-navigation-preview"]`
+  await control.command('waitFor', `${markers}[data-turn-index="10"][data-active="true"]`, {
+    stableMs: 500,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', markers)),
+    11,
+    'Paginated navigation must retain each native turn exactly once in historical order'
+  )
+  for (const [index, prompt, reply] of [
+    [0, PROMPT, COMPLETION],
+    [10, `${PROMPT}_10`, LATEST],
+  ]) {
+    const marker = `${markers}[data-turn-index="${index}"]`
+    const preview = `${previews}[data-turn-index="${index}"]`
+    await control.command('hover', marker)
+    await control.command('waitFor', `${preview}.opacity-100`, { text: prompt })
+    assert.ok(
+      (await control.command('getText', preview)).includes(reply),
+      `Turn ${index} must preview its own response even when its messages are not loaded`
+    )
+  }
+  await control.command('click', `${markers}[data-turn-index="1"]`)
+  await control.command('waitFor', `${WORKBENCH} [data-testid="message-user"]`, {
+    text: `${PROMPT}_1`,
+    visible: true,
+  })
+  await control.command('waitFor', `${markers}[data-turn-index="1"][data-active="true"]`)
+  await control.command('click', `${markers}[data-turn-index="10"]`)
+  await control.command('waitFor', `${markers}[data-turn-index="10"][data-active="true"]`)
 }
 
 export function createDesktopScenario({
@@ -162,6 +205,32 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
         text: LATEST,
       })
+      const firstPage = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      assert.equal(firstPage.pane.transcript.hasMoreBefore, true, 'The fixture must paginate')
+      assert.ok(
+        !(await control.command('getText', `${WORKBENCH} [data-testid="message-user"]`)).includes(
+          `${PROMPT}_10`
+        ),
+        'The latest turn must reproduce navigation while its user message is not loaded'
+      )
+      await verifyHistoryNavigation(control)
+
+      const navigation = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        {
+          address,
+          navigationOnly: true,
+          refresh: true,
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        navigation.turnNavigation.find(turn => turn.turnId === 'latest-history-turn-10')
+          ?.userMessageId,
+        'latest-history-turn-10-user',
+        'Navigation must identify the original request independently of which user items are loaded'
+      )
 
       // Load the earlier failed turn into the same cache before reopening the latest page.
       for (let page = 0; page < 15; page += 1) {
@@ -210,6 +279,7 @@ export function createDesktopScenario({
         text: LATEST,
         visible: true,
       })
+      await verifyHistoryNavigation(control)
       await captureScreenshot(control, 'latest-conversation-history.png', WORKBENCH)
     },
   }

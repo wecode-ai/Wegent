@@ -4,7 +4,48 @@
 
 use serde_json::{json, Value};
 
-use super::util::{item_id, item_type, string_field};
+use super::util::{item_id, item_type, now_ms, string_field};
+
+/// Native timeline pages may omit an unanswered blocking tool call. Keep the
+/// actual server request identity so a refreshed card answers its live waiter.
+pub(super) fn request_item(message: &Value) -> Option<Value> {
+    if message["method"] != "item/tool/requestUserInput" {
+        return None;
+    }
+    let request_id = message.get("id")?;
+    let id = request_id
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| request_id.is_number().then(|| request_id.to_string()))?;
+    let mut payload = message.get("params")?.clone();
+    payload.get("questions")?.as_array()?;
+    payload["kind"] = json!("request_user_input");
+    payload["requestId"] = request_id.clone();
+    payload["interactionScope"] = payload.get("turnId")?.clone();
+    payload["interactionStatus"] = json!("pending");
+    Some(json!({
+        "id": format!("request-user-input-{id}"),
+        "type": "userInputRequest", "renderPayload": payload, "createdAt": now_ms(),
+    }))
+}
+
+pub(super) fn interaction_block(item: &Value, terminal: bool) -> Value {
+    let mut payload = item["renderPayload"].clone();
+    if payload["interactionStatus"] == "pending" {
+        let expired = payload["expiresAtUnixMs"]
+            .as_i64()
+            .is_some_and(|deadline| deadline <= now_ms());
+        if terminal || expired {
+            payload["interactionStatus"] = json!(if expired { "expired" } else { "cancelled" });
+            payload["settledAtUnixMs"] = json!(now_ms());
+        }
+    }
+    json!({
+        "id": item["id"], "type": "tool", "tool_name": "request_user_input",
+        "status": if payload["interactionStatus"] == "pending" { "pending" } else { "done" },
+        "timestamp": item["createdAt"], "render_payload": payload,
+    })
+}
 
 pub(crate) fn async_question_payload_from_item(params: &Value) -> Option<Value> {
     let item = params.get("item").unwrap_or(params);

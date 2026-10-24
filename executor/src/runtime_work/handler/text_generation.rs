@@ -59,7 +59,8 @@ impl RuntimeWorkRpcHandler {
             },
             None => None,
         };
-        let request = runtime_model_request(&source, &payload)?;
+        let mut request = runtime_model_request(&source, &payload)?;
+        self.apply_backend_connection(&mut request);
         let client = self
             .codex_app_server
             .for_request(&request)
@@ -97,7 +98,7 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = request.task_id.clone();
         let stream_request = request.clone();
         let (_guard, cancel_rx) = self.register_text_generation(local_task_id.clone())?;
-        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
+        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<CodexNotification>();
         let mut turn_future = Box::pin(self.codex_app_server.run_turn_with_cancel(
             request,
             CodexAppServerTurnOptions {
@@ -112,7 +113,7 @@ impl RuntimeWorkRpcHandler {
                 result = &mut turn_future => break result,
                 message = notification_rx.recv() => {
                     let Some(message) = message else { break turn_future.await; };
-                    mapper.map(&self.event_tx, &self.device_id, &local_task_id, &stream_request, message);
+                    mapper.map(&self.event_tx, &self.device_id, &local_task_id, &stream_request, message.into_value());
                 }
             }
         };
@@ -122,7 +123,7 @@ impl RuntimeWorkRpcHandler {
                 &self.device_id,
                 &local_task_id,
                 &stream_request,
-                message,
+                message.into_value(),
             );
         }
         match result

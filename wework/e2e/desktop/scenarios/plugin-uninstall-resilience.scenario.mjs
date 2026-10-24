@@ -5,6 +5,8 @@ import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
+import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
+import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -26,10 +28,30 @@ export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
   resultDir,
+  executorHome,
   workbenchReadyTimeoutMs,
 }) {
   const appEnvironment = {}
   const evidence = []
+  const objectStorage =
+    checkpoint === 'plugin-write-coordination'
+      ? await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
+      : null
+  let packageProxy
+  try {
+    if (objectStorage) {
+      // Preserve the signed Host while forwarding real S3 traffic to MinIO.
+      packageProxy = await new TransportFaultProxy(
+        objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT,
+        {
+          preserveHost: true,
+        }
+      ).start()
+    }
+  } catch (error) {
+    await objectStorage?.stop()
+    throw error
+  }
   let cloud
   let apiProxy
   let deviceProxy
@@ -270,10 +292,24 @@ export async function createDesktopScenario({
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
+    ...(objectStorage
+      ? {
+          backendEnv: {
+            ...objectStorage.backendEnv,
+            ATTACHMENT_S3_ENDPOINT: packageProxy.url,
+          },
+        }
+      : {}),
     async prepareCloud({ backendUrl }) {
       apiProxy = await new TransportFaultProxy(backendUrl).start()
       deviceProxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = apiProxy.url
+      if (checkpoint === 'plugin-write-coordination') {
+        // Keep the real connection on the fault proxy when cloud metadata
+        // advertises the backend's direct Socket.IO endpoint during startup.
+        appEnvironment.WEWORK_BACKEND_URL = apiProxy.url
+        appEnvironment.WEWORK_SOCKET_URL = apiProxy.url
+      }
     },
     setCloudEnvironment(value) {
       cloud = value
@@ -304,8 +340,18 @@ export async function createDesktopScenario({
           ],
           [
             'plugin-write-coordination',
-            control =>
-              verifyPluginWriteCoordination({
+            async control => {
+              await verifyPluginSyncDisconnect({
+                cloud,
+                control,
+                apiProxy,
+                packageProxy,
+                executorHome,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              })
+              await verifyPluginWriteCoordination({
                 cloud,
                 control,
                 apiProxy,
@@ -313,7 +359,8 @@ export async function createDesktopScenario({
                 localDeviceId: local.device_id,
                 evidence,
                 timeoutMs: workbenchReadyTimeoutMs,
-              }),
+              })
+            },
           ],
           ['plugin-uninstall-lost-response', lostResponse],
           ['plugin-uninstall-unknown-result', unknownResult],
@@ -326,17 +373,27 @@ export async function createDesktopScenario({
         await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
       } finally {
         apiProxy.rule = () => null
+        apiProxy.disconnectWebSockets(false)
         deviceProxy.pauseDeviceDelivery(false)
         deviceProxy.pauseDeviceAcknowledgements(false)
         await writeFile(
           join(resultDir, 'plugin-uninstall-evidence.json'),
-          JSON.stringify({ evidence, requests: apiProxy.requests }, null, 2)
+          JSON.stringify(
+            { evidence, requests: apiProxy.requests, packageRequests: packageProxy?.requests },
+            null,
+            2
+          )
         )
       }
     },
-    diagnostics: () => ({ evidence, requests: apiProxy?.requests }),
+    diagnostics: () => ({
+      evidence,
+      requests: apiProxy?.requests,
+      packageRequests: packageProxy?.requests,
+    }),
     async cleanup() {
-      await Promise.all([apiProxy?.stop(), deviceProxy?.stop()])
+      await Promise.all([apiProxy?.stop(), deviceProxy?.stop(), packageProxy?.stop()])
+      await objectStorage?.stop()
     },
   }
 }

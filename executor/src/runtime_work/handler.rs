@@ -26,7 +26,7 @@ use crate::{
         bind_codex_thread_model_route, codex_notification_requires_user_input,
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -150,6 +150,7 @@ mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_overlays;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -692,6 +693,8 @@ struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
     items: Vec<Value>,
+    // Keep settled request IDs until the turn ends so replay cannot reopen them.
+    user_input_requests: HashMap<String, bool>,
 }
 
 #[derive(Clone)]
@@ -719,7 +722,7 @@ struct RuntimeThreadEventRouting {
 
 struct PendingCodexNotification {
     thread_id: String,
-    message: Value,
+    message: CodexNotification,
 }
 
 struct PendingCodexNotificationReplay {

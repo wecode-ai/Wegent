@@ -30,14 +30,10 @@ export function buildUserTurnsForNavigation(
   messages: NavigationMessage[],
   navigation?: RuntimeTurnNavigationItem[],
 ): UserTurn[] {
-  const messageTurns = buildUserTurns(messages);
-  if (navigation === undefined) return messageTurns;
+  if (navigation === undefined) return buildUserTurns(messages);
   if (navigation.length === 0) return [];
 
-  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages);
-  return navigationTurns.length >= messageTurns.length
-    ? navigationTurns
-    : messageTurns;
+  return buildUserTurnsFromNavigation(navigation, messages);
 }
 
 export function getUserTurnsSignature(turns: UserTurn[]) {
@@ -64,6 +60,7 @@ function buildUserTurns(messages: NavigationMessage[]): UserTurn[] {
 
     turns.push({
       id: message.id,
+      runtimeGuidance: message.runtimeGuidance,
       turnId: message.turnId,
       turnIndex: turns.length,
       messageIndex:
@@ -90,26 +87,56 @@ function buildUserTurnsFromNavigation(
     loadedTurns.map((turn) => [turn.messageIndex, turn]),
   );
   const loadedTurnsById = new Map(loadedTurns.map((turn) => [turn.id, turn]));
-  const loadedTurnsByTurnId = new Map(
-    loadedTurns.flatMap((turn) =>
-      turn.turnId ? [[turn.turnId, turn] as const] : [],
-    ),
-  );
+  const loadedTurnsByTurnId = new Map<string, UserTurn[]>();
+  for (const turn of loadedTurns) {
+    if (!turn.turnId) continue;
+    const users = loadedTurnsByTurnId.get(turn.turnId) ?? [];
+    users.push(turn);
+    loadedTurnsByTurnId.set(turn.turnId, users);
+  }
   const uniqueNavigation = deduplicateNavigationItems(
     navigation,
     loadedTurnsByIndex,
   );
+  // Native navigation indexes turns; transcript indexes are local to a page.
+  // Keep guidance messages adjacent to their owning turn in navigation order.
+  const positionByLoadedId = new Map<string, number>();
+  for (const item of uniqueNavigation) {
+    if (!item.turnId) continue;
+    const users = loadedTurnsByTurnId.get(item.turnId) ?? [];
+    const originalLoaded = item.userMessageId
+      ? users.some((turn) => turn.id === item.userMessageId)
+      : users.some((turn) => !turn.runtimeGuidance);
+    const offset = originalLoaded ? 0 : 1;
+    users.forEach((turn, index) => {
+      positionByLoadedId.set(
+        turn.id,
+        item.messageIndex + (index + offset) / (users.length + offset),
+      );
+    });
+  }
 
   const navigationTurns = uniqueNavigation.map((item, index) => {
-    const loadedTurn =
-      (item.turnId ? loadedTurnsByTurnId.get(item.turnId) : undefined) ??
-      loadedTurnsByIndex.get(item.messageIndex) ??
-      loadedTurnsById.get(item.id);
+    const indexedTurn = loadedTurnsByIndex.get(item.messageIndex);
+    const loadedTurn = item.userMessageId
+      ? loadedTurnsById.get(item.userMessageId)
+      : item.turnId
+        ? (loadedTurnsByTurnId
+            .get(item.turnId)
+            ?.find((turn) => !turn.runtimeGuidance) ??
+          (indexedTurn?.turnId || indexedTurn?.runtimeGuidance
+            ? undefined
+            : indexedTurn))
+        : (loadedTurnsById.get(item.id) ??
+          loadedTurnsByIndex.get(item.messageIndex));
     return {
       id: loadedTurn?.id ?? item.id,
+      userMessageId: item.userMessageId,
       turnId: item.turnId ?? loadedTurn?.turnId,
       turnIndex: typeof item.turnIndex === "number" ? item.turnIndex : index,
-      messageIndex: loadedTurn?.messageIndex ?? item.messageIndex,
+      messageIndex: item.turnId
+        ? item.messageIndex
+        : (loadedTurn?.messageIndex ?? item.messageIndex),
       promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
       responsePreview:
         loadedTurn?.responsePreview || item.responsePreview || "",
@@ -121,7 +148,12 @@ function buildUserTurnsFromNavigation(
 
   return [
     ...navigationTurns,
-    ...loadedTurns.filter((turn) => !navigationMessageIds.has(turn.id)),
+    ...loadedTurns
+      .filter((turn) => !navigationMessageIds.has(turn.id))
+      .map((turn) => ({
+        ...turn,
+        messageIndex: positionByLoadedId.get(turn.id) ?? turn.messageIndex,
+      })),
   ]
     .sort((left, right) => left.messageIndex - right.messageIndex)
     .map((turn, turnIndex) => ({ ...turn, turnIndex }));
@@ -304,9 +336,24 @@ export function findLoadedNavigationMessageId(
   messages: NavigationMessage[],
   target: PendingScrollTarget,
 ): string | null {
+  const exact = messages.find(
+    (message) => message.role === "user" && message.id === target.navigationId,
+  );
+  if (exact) return exact.id;
+  if (target.userMessageId) {
+    return (
+      messages.find(
+        (message) =>
+          message.role === "user" && message.id === target.userMessageId,
+      )?.id ?? null
+    );
+  }
   if (target.turnId) {
     const turnMessage = messages.find(
-      (message) => message.role === "user" && message.turnId === target.turnId,
+      (message) =>
+        message.role === "user" &&
+        !message.runtimeGuidance &&
+        message.turnId === target.turnId,
     );
     if (turnMessage) return turnMessage.id;
   }
@@ -314,6 +361,8 @@ export function findLoadedNavigationMessageId(
   const indexedMessage = messages.find(
     (message) =>
       message.role === "user" &&
+      !message.runtimeGuidance &&
+      (!target.turnId || !message.turnId) &&
       message.runtimeMessageIndex === target.messageIndex,
   );
   if (indexedMessage) return indexedMessage.id;
@@ -382,11 +431,32 @@ export function getTurnVisibilityBounds(
 ): Map<string, TurnVisibilityBounds> {
   const boundsByTurnId = new Map<string, TurnVisibilityBounds>();
   const messagePositionById = buildMessageTimelinePositions(messages);
+  const messageById = new Map(messages.map((message) => [message.id, message]));
+  const turnById = new Map(turns.map((turn) => [turn.turnId, turn]));
+  const hasTurnIds = turns.some((turn) => turn.turnId);
+  const turnByMessageId = new Map(turns.map((turn) => [turn.id, turn]));
+  const ownerByMessageId = new Map<string, UserTurn>();
+  let owner: UserTurn | undefined;
+  for (const message of messages) {
+    if (message.role === "user") owner = turnByMessageId.get(message.id);
+    const messageOwner =
+      owner && (!message.turnId || owner.turnId === message.turnId)
+        ? owner
+        : message.turnId
+          ? turnById.get(message.turnId)
+          : undefined;
+    if (messageOwner) ownerByMessageId.set(message.id, messageOwner);
+  }
 
   anchorByMessageId.forEach((anchor, messageId) => {
     const messagePosition = messagePositionById.get(messageId);
     if (messagePosition === undefined) return;
-    const turn = findTurnForMessagePosition(turns, messagePosition);
+    const turnId = messageById.get(messageId)?.turnId;
+    const turn =
+      ownerByMessageId.get(messageId) ??
+      (turnId && hasTurnIds
+        ? turnById.get(turnId)
+        : findTurnForMessagePosition(turns, messagePosition));
     if (!turn) return;
 
     const anchorRect = anchor.getBoundingClientRect();

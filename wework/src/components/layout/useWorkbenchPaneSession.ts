@@ -312,8 +312,21 @@ export function useWorkbenchPaneSession({
   )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
   const setInputForScope = projectChat.setInputForScope
+  const [inputRevision, setInputRevision] = useState(0)
+  const inputRevisionRef = useRef(0)
+  const activeInputScopeRef = useRef(inputScopeKey)
+  useLayoutEffect(() => {
+    if (activeInputScopeRef.current === inputScopeKey) return
+    activeInputScopeRef.current = inputScopeKey
+    inputRevisionRef.current += 1
+    setInputRevision(inputRevisionRef.current)
+  }, [inputScopeKey])
   const scopedSetInput = useCallback(
-    (value: string) => setInputForScope(inputScopeKey, value),
+    (value: string) => {
+      inputRevisionRef.current += 1
+      setInputRevision(inputRevisionRef.current)
+      setInputForScope(inputScopeKey, value)
+    },
     [inputScopeKey, setInputForScope]
   )
   const [localError, setLocalError] = useState<string | null>(null)
@@ -341,14 +354,7 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, setErrorForScope]
   )
   const clearError = useCallback(() => setError(null), [setError])
-  const inputEditRevisionRef = useRef(0)
-  const setInput = useCallback(
-    (value: string) => {
-      inputEditRevisionRef.current += 1
-      scopedSetInput(value)
-    },
-    [scopedSetInput]
-  )
+  const setInput = scopedSetInput
   const restoreInputAfterFailure = useCallback(
     (value: string) => {
       scopedSetInput(value)
@@ -1654,17 +1660,18 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
-        let submittedInputRevision = inputEditRevisionRef.current
+        // Capture the rendered revision, before asynchronous submission preparation.
+        let submittedInputRevision = inputRevision
+        const ownsSubmittedInput = () =>
+          inputRevisionRef.current === submittedInputRevision &&
+          activeInputScopeRef.current === inputScopeKey
         const clearSubmittedInput = () => {
-          // A delayed send acknowledgment must not erase the next composer draft.
-          if (inputEditRevisionRef.current !== submittedInputRevision) return
+          if (!ownsSubmittedInput()) return
           setInput('')
-          submittedInputRevision = inputEditRevisionRef.current
+          submittedInputRevision = inputRevisionRef.current
         }
         const restoreSubmittedInput = (scopeKey: string, value: string) => {
-          if (inputEditRevisionRef.current === submittedInputRevision) {
-            setInputForScope(scopeKey, value)
-          }
+          if (ownsSubmittedInput()) setInputForScope(scopeKey, value)
         }
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
@@ -2165,6 +2172,7 @@ export function useWorkbenchPaneSession({
         goalDraftActive,
         getRuntimeModelFields,
         input,
+        inputRevision,
         inputScopeKey,
         interruptAndSendQueuedMessage,
         lifecycleStore,

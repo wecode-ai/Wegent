@@ -30,12 +30,16 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-function getSnapshot(): LocalExecutorCloudConnectionStatus {
+export function getLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConnectionStatus {
   return status
 }
 
 export function useLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConnectionStatus {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  return useSyncExternalStore(
+    subscribe,
+    getLocalExecutorCloudConnectionStatus,
+    getLocalExecutorCloudConnectionStatus
+  )
 }
 
 export async function refreshLocalExecutorCloudConnectionStatus(

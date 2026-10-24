@@ -43,13 +43,10 @@ export async function verifyCollaborationIssueHome(
   )
   assert.equal(
     Number(
-      await control.command(
-        'getElementCount',
-        `${projectRow} svg.stand-in-icon[data-state="disabled"]`
-      )
+      await control.command('getElementCount', `${projectRow} .collaboration-project-sidebar-badge`)
     ),
-    1,
-    'Inactive stand-ins must retain their shadow icon in project rows'
+    0,
+    'Projects without an enabled stand-in must not show a sidebar badge'
   )
   await control.command('hover', projectRow)
   assert.equal(

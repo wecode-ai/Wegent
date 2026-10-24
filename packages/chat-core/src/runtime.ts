@@ -76,6 +76,7 @@ export interface NormalizedRuntimeMessage {
 
 export interface RuntimeTurnNavigationItem {
   id: string;
+  userMessageId?: string | null;
   turnId?: string | null;
   turnIndex: number;
   messageIndex: number;
@@ -320,6 +321,8 @@ export interface RequestUserInputResponse {
   request_id?: number | string;
   itemId?: string;
   item_id?: string;
+  /** Identifies the turn that owns a reusable runtime request ID. */
+  interactionScope?: string;
   answers: Record<string, RequestUserInputResponseAnswer>;
 }
 
@@ -346,6 +349,10 @@ export interface RequestUserInputPayload {
   itemId?: string;
   interactionKind?: string;
   interaction_kind?: string;
+  interactionScope?: string;
+  interactionStatus?: "pending" | "answered" | "cancelled" | "expired";
+  expiresAtUnixMs?: number;
+  settledAtUnixMs?: number;
   mode?: "url" | "form";
   url?: string;
   elicitationId?: string;

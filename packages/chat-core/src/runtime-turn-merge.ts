@@ -22,6 +22,14 @@ export function mergeRuntimeConversationTurn(
   local: RuntimeConversationTurn,
   snapshot: RuntimeConversationTurn,
 ): RuntimeConversationTurn {
+  // A user-only read can finish after turn/start. It cannot retract the native
+  // identity or lifecycle already observed by the live stream.
+  if (snapshot.id === null && local.id !== null) {
+    return {
+      ...local,
+      items: mergeRuntimeConversationItems(snapshot.items, local.items),
+    };
+  }
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) &&
     isUnsettledTurnStatus(snapshot.status);
