@@ -52,6 +52,27 @@ pub(super) fn project_review_notification(mut message: Value) -> Value {
         "params":{"threadId":params["threadId"],"turnId":params["turnId"],"item":item}})
 }
 
+fn grant_runtime_files(filesystem: &mut Value, binary: &Path) {
+    if !binary.is_absolute() || !binary.is_file() {
+        return;
+    }
+    let host = binary.with_file_name(if cfg!(windows) {
+        "codex-code-mode-host.exe"
+    } else {
+        "codex-code-mode-host"
+    });
+    // Native Linux command execution re-enters Codex inside the filesystem sandbox.
+    // Grant executable files only, never the containing directory or CODEX_HOME.
+    for file in [binary, host.as_path()] {
+        if file.is_file() {
+            filesystem[file.to_string_lossy().as_ref()] = json!("read");
+            if let Ok(canonical) = fs::canonicalize(file) {
+                filesystem[canonical.to_string_lossy().as_ref()] = json!("read");
+            }
+        }
+    }
+}
+
 pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value> {
     let mut config = Map::new();
     if !applies(request) {
@@ -63,6 +84,9 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
         (SOURCE_PROJECT_PROFILE, "write"),
     ] {
         let mut filesystem = json!({":root":"deny",":minimal":"read",":project_roots":access});
+        let binary =
+            crate::agents::resolve_codex_binary_path(&crate::agents::resolve_codex_binary());
+        grant_runtime_files(&mut filesystem, Path::new(&binary));
         // Installed tool binaries and their shared libraries are runtime resources,
         // not user data. Keep custom shells usable without a sandbox retry.
         for prefix in if cfg!(unix) {
@@ -135,6 +159,30 @@ pub(super) fn configure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_bootstrap_reads_only_executables_not_their_private_siblings() {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("codex");
+        let host = root.path().join(if cfg!(windows) {
+            "codex-code-mode-host.exe"
+        } else {
+            "codex-code-mode-host"
+        });
+        let private = root.path().join("private.txt");
+        for file in [&binary, &host, &private] {
+            fs::write(file, "fixture").unwrap();
+        }
+        let mut filesystem = json!({":root":"deny"});
+        grant_runtime_files(&mut filesystem, &binary);
+        assert_eq!(filesystem[binary.to_string_lossy().as_ref()], "read");
+        assert_eq!(filesystem[host.to_string_lossy().as_ref()], "read");
+        assert!(filesystem
+            .get(root.path().to_string_lossy().as_ref())
+            .is_none());
+        assert!(filesystem.get(private.to_string_lossy().as_ref()).is_none());
+        assert_eq!(filesystem[":root"], "deny");
+    }
 
     fn request(ask: bool) -> ExecutionRequest {
         serde_json::from_value(json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":ask},"runtime_permission_profile":":danger-full-access"})).unwrap()
