@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -148,9 +149,7 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      if (!Buffer.concat(chunks).toString('utf8').includes(PROMPT)) return false
+      if (!(await readRawRequestBody(request)).includes(PROMPT)) return false
       const id = `latest-history-${Date.now()}`
       const events = [
         { type: 'response.created', response: { id } },

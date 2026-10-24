@@ -466,43 +466,38 @@ function matrixPatch(model) {
 }
 
 const requestBodies = new WeakMap()
+const rawRequestBodies = new WeakMap()
 
 function readRequestBody(request) {
   const cached = requestBodies.get(request)
   if (cached) return cached
-  const parsed = new Promise((resolvePromise, reject) => {
-    let body = ''
-    request.setEncoding('utf8')
+  const parsed = readRawRequestBody(request).then(body => (body ? JSON.parse(body) : {}))
+  requestBodies.set(request, parsed)
+  return parsed
+}
+
+function readRawRequestBody(request) {
+  const cached = rawRequestBodies.get(request)
+  if (cached) return cached
+  const raw = new Promise((resolvePromise, reject) => {
+    const chunks = []
     request.on('data', chunk => {
-      body += chunk
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
     request.once('end', () => {
       try {
-        resolvePromise(body ? JSON.parse(body) : {})
+        const body = Buffer.concat(chunks)
+        resolvePromise(
+          (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
+        )
       } catch (error) {
         reject(error)
       }
     })
     request.once('error', reject)
   })
-  requestBodies.set(request, parsed)
-  return parsed
-}
-
-function readRawRequestBody(request) {
-  return new Promise((resolvePromise, reject) => {
-    const chunks = []
-    request.on('data', chunk => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    })
-    request.once('end', () => {
-      const body = Buffer.concat(chunks)
-      resolvePromise(
-        (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
-      )
-    })
-    request.once('error', reject)
-  })
+  rawRequestBodies.set(request, raw)
+  return raw
 }
 
 function parseTelemetryPayload(rawBody) {

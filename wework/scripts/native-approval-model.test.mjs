@@ -1,7 +1,8 @@
 import { PassThrough } from 'node:stream'
+import { gzipSync } from 'node:zlib'
 import { expect, test, vi } from 'vitest'
 import { nativeApprovalModelResponse } from '../e2e/desktop/modules/native-approval-model.mjs'
-import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
+import { readRawRequestBody, readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 
 const review = {
   text: {
@@ -43,4 +44,26 @@ test('shares the parsed body between review routing and the scenario handler', a
   expect(await first).toEqual({ input: 'ordinary task' })
   expect(await concurrent).toBe(await first)
   expect(await readRequestBody(request)).toBe(await first)
+})
+
+test.each([false, true])(
+  'shares original wire text with JSON readers (gzip=%s)',
+  async compressed => {
+    const request = new PassThrough()
+    const text = '{ "input": "中文 ordinary task", "tools": [] }'
+    const parsed = readRequestBody(request)
+    const raw = readRawRequestBody(request)
+    request.end(compressed ? gzipSync(text) : Buffer.from(text))
+    expect(await raw).toBe(text)
+    expect(await parsed).toEqual(JSON.parse(text))
+    expect(await readRawRequestBody(request)).toBe(text)
+    expect(await readRequestBody(request)).toBe(await parsed)
+  }
+)
+
+test('propagates corrupt compressed requests instead of crashing the server', async () => {
+  const request = new PassThrough()
+  const parsed = readRequestBody(request)
+  request.end(Buffer.from([0x1f, 0x8b, 0x00]))
+  await expect(parsed).rejects.toThrow()
 })
