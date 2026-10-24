@@ -1649,6 +1649,45 @@ describe('RuntimeTaskLifecycleStore', () => {
     }
   )
 
+  test('keeps the executor turn identity when stale history arrives before reload recovery', () => {
+    const store = new RuntimeTaskLifecycleStore('goal-reload-stale-history')
+    store.syncRuntimeTask(
+      address,
+      task({
+        running: true,
+        status: 'running',
+        goalStatus: 'active',
+        runtimeHandle: { lastTurnId: 'native-goal-turn' },
+      })
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'stale-running-state-turn', status: 'streaming', items: [] }],
+      })
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'native-goal-turn', status: 'streaming', items: [] }],
+      })
+    )
+
+    expect(store.getTask(address)?.turn.id).toBe('native-goal-turn')
+    store.goalStatusReceived(address, 'complete')
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'native-goal-turn', status: 'completed', completedAt: 2000, items: [] }],
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.unread).toBe(true)
+  })
+
   test('retains the newer turn when idle history only contains its predecessor', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(

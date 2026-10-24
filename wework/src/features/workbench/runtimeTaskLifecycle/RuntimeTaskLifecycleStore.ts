@@ -348,15 +348,15 @@ export class RuntimeTaskLifecycleStore {
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
+    const knownTurnId = currentTurn?.id ?? currentTurn?.latestId
     if (hasStreamingTurn) {
       if (
         ignoreStaleRunningTranscript ||
-        (currentTurn?.active &&
+        (transcript.running === false &&
           streamingTurn?.id &&
-          (this.isPriorTurn(address, streamingTurn.id) ||
-            (transcript.running === false &&
-              currentTurn.id &&
-              streamingTurn.id !== currentTurn.id)))
+          knownTurnId &&
+          streamingTurn.id !== knownTurnId) ||
+        (currentTurn?.active && streamingTurn?.id && this.isPriorTurn(address, streamingTurn.id))
       )
         return
       this.executorStarted(address)
