@@ -61,6 +61,8 @@ sidebar_position: 4
 
 ## 后端测试
 
+平台 E2E 的第 1 分片运行 `backend/tests/integration/task_project_links_mysql.py`，使用独立临时 MySQL 数据库验证项目任务关联清理与任务创建的并发。回归在保持无关占位任务主键锁的情况下，要求空项目及已有任务的项目清理都能完成；另验证发现任务后发生的项目迁移不会被清理覆盖。Store 单测同时检查用户、客户端范围与事务回滚。
+
 ### 运行测试
 
 ```bash

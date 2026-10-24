@@ -4,6 +4,7 @@
 
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
@@ -57,6 +58,41 @@ def _task(
         created_at=now,
         updated_at=now,
     )
+
+
+@pytest.mark.parametrize(
+    ("client_origin", "cleared_ids"),
+    [(CLIENT_ORIGIN_FRONTEND, {1, 4, 5}), (None, {1, 2, 4, 5})],
+)
+def test_clear_project_preserves_owner_surface_scope_and_transaction(
+    test_db: Session, client_origin: str | None, cleared_ids: set[int]
+) -> None:
+    store = SqlAlchemyTaskStore()
+    tasks = [
+        _task(task_id=1, user_id=10),
+        _task(task_id=2, user_id=10, client_origin=CLIENT_ORIGIN_WEWORK),
+        _task(task_id=3, user_id=11),
+        _task(task_id=4, user_id=10, kind="Workspace"),
+        _task(task_id=5, user_id=10, is_active=TaskResource.STATE_ARCHIVED),
+        _task(task_id=6, user_id=10),
+    ]
+    for task in tasks:
+        task.project_id = 3 if task.id == 6 else 2
+    test_db.add_all(tasks)
+    test_db.commit()
+
+    assert store.clear_project_for_owned_tasks(
+        test_db, project_id=2, user_id=10, client_origin=client_origin
+    ) == len(cleared_ids)
+    assert dict(test_db.query(TaskResource.id, TaskResource.project_id).all()) == {
+        task.id: 0 if task.id in cleared_ids else (3 if task.id == 6 else 2)
+        for task in tasks
+    }
+
+    test_db.rollback()
+    assert dict(test_db.query(TaskResource.id, TaskResource.project_id).all()) == {
+        task.id: 3 if task.id == 6 else 2 for task in tasks
+    }
 
 
 def test_get_active_task_filters_kind_state_and_client_origin(

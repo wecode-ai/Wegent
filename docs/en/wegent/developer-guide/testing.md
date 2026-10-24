@@ -61,6 +61,8 @@ The project includes comprehensive unit testing support across all modules:
 
 ## Backend Tests
 
+Platform E2E shard 1 runs `backend/tests/integration/task_project_links_mysql.py` against an isolated temporary MySQL database. While an unrelated reserved task's primary key remains locked, cleanup must complete for both empty projects and projects with linked tasks. It also verifies that cleanup preserves a project move committed after task discovery. Store unit tests cover owner and client scope and transaction rollback.
+
 ### Running Tests
 
 ```bash

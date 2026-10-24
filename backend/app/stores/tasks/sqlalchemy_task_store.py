@@ -1447,7 +1447,16 @@ class SqlAlchemyTaskStore:
         )
         if client_origin:
             query = query.filter(TaskResource.client_origin == client_origin)
-        return query.update({TaskResource.project_id: 0}, synchronize_session=False)
+        # A secondary-index UPDATE can lock unrelated placeholders before their
+        # primary keys, reversing task creation's lock order. Read matches without
+        # locks, then update each primary key while rechecking the original scope.
+        task_ids = query.with_entities(TaskResource.id).order_by(TaskResource.id).all()
+        return sum(
+            query.filter(TaskResource.id == task_id).update(
+                {TaskResource.project_id: 0}, synchronize_session=False
+            )
+            for (task_id,) in task_ids
+        )
 
     def restore_stale_project_links_from_label(
         self,
