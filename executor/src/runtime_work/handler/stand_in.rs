@@ -219,11 +219,6 @@ impl RuntimeWorkRpcHandler {
             && issue["assignee_agent_id"].is_null()
             && issue["assignee_group_id"].is_null()
             && issue["assignee_team_id"].is_null()
-            && !issue["completed_at"].is_string()
-            && !matches!(
-                issue["status"].as_str(),
-                Some("completed" | "cancelled" | "in_review")
-            )
         {
             issue = if local {
                 serde_json::to_value(
@@ -243,17 +238,10 @@ impl RuntimeWorkRpcHandler {
                 self.stand_in_http(reqwest::Method::POST, &format!("/v1/cloud-projects/{project}/loop-items/{issue_id}/assign"), Some(&json!({"version":issue["version"],"assigneeType":"user","assigneeId":user.to_string(),"notifyAssignee":false}))).await?
             };
         }
-        if issue["cloud_project_id"] != project
-            || issue["assignee_user_id"] != user
-            || issue["completed_at"].is_string()
-            || matches!(
-                issue["status"].as_str(),
-                Some("completed" | "cancelled" | "in_review")
-            )
-        {
+        if issue["cloud_project_id"] != project || issue["assignee_user_id"] != user {
             return Err(AppIpcError::new(
                 "invalid_assignment",
-                "Choose an active Issue assigned to yourself in this project",
+                "Choose an Issue assigned to yourself in this project",
             ));
         }
         let human_id = if local {
@@ -374,13 +362,7 @@ impl RuntimeWorkRpcHandler {
         let project = configs[0]["projectId"].as_str().unwrap_or_default();
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         for issue in store.list_tasks(project).map_err(settings_error)? {
-            if issue.assignee_user_id != configs[0]["userId"].as_i64()
-                || issue.completed_at.is_some()
-                || matches!(
-                    issue.status.as_deref(),
-                    Some("completed" | "cancelled" | "in_review")
-                )
-            {
+            if issue.assignee_user_id != configs[0]["userId"].as_i64() {
                 continue;
             }
             let mut issue_value = serde_json::to_value(&issue).unwrap();
@@ -456,13 +438,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             Some(gate.lock().await)
         };
-        if issue["assignee_user_id"] != config["userId"]
-            || issue["completed_at"].is_string()
-            || matches!(
-                issue["status"].as_str(),
-                Some("completed" | "cancelled" | "in_review")
-            )
-        {
+        if issue["assignee_user_id"] != config["userId"] {
             return Ok(());
         }
         let Some(issue_id) = issue["id"].as_str() else {
