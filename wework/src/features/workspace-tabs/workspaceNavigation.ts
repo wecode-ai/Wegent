@@ -1,12 +1,21 @@
-import { parseRuntimeTaskRoute } from '@/lib/navigation'
+import { parseRuntimeTaskRoute, type RuntimeTaskRoute } from '@/lib/navigation'
 import type { WorkspaceTabsContextValue } from './workspaceTabsContextValue'
-import type { WorkspaceTabKind } from './workspaceTabs'
+import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 
 function comparableRoute(route: string): string {
   const [path, search] = route.split('?')
   const params = new URLSearchParams(search)
   params.delete('focusRequest')
   return `${path}${params.size ? `?${params}` : ''}`
+}
+
+export function findRuntimeTaskTab(tabs: readonly WorkspaceTab[], target: RuntimeTaskRoute) {
+  return tabs.find(tab => {
+    if (tab.kind !== 'task') return false
+    const [path, search] = tab.contentRoute.split('?')
+    const task = parseRuntimeTaskRoute(path, search)
+    return task?.deviceId === target.deviceId && task.taskId === target.taskId
+  })
 }
 
 export function navigateWorkspaceTab(
@@ -17,12 +26,9 @@ export function navigateWorkspaceTab(
   const [pathname, search] = contentRoute.split('?')
   const target = parseRuntimeTaskRoute(pathname, search)
   const candidates = tabs.tabs.filter(tab => tab.kind === kind)
-  const matching = candidates.find(tab => {
-    if (!target) return comparableRoute(tab.contentRoute) === comparableRoute(contentRoute)
-    const [tabPath, tabSearch] = tab.contentRoute.split('?')
-    const task = parseRuntimeTaskRoute(tabPath, tabSearch)
-    return task?.deviceId === target.deviceId && task.taskId === target.taskId
-  })
+  const matching = target
+    ? findRuntimeTaskTab(candidates, target)
+    : candidates.find(tab => comparableRoute(tab.contentRoute) === comparableRoute(contentRoute))
   const existing =
     matching ??
     candidates.find(tab => tab.id === tabs.activeTabId) ??
