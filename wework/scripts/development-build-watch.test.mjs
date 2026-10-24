@@ -22,26 +22,48 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       published = snapshot
       await writeFile(path.join(output, 'bundle.js'), snapshot)
     })
-    const watcher = await watchDevelopmentBuild({
-      directories: [root],
-      files: [],
-      ignored: [output],
-      build,
-      onError,
-      debounceMs: 20,
+    let change
+    const close = vi.fn()
+    const watch = vi.fn((_directory, _options, listener) => {
+      change = listener
+      return { on: vi.fn(), close }
     })
+    // Exercise debounce and filtering independently of native event delivery latency.
+    vi.useFakeTimers()
+    let watcher
     try {
+      watcher = await watchDevelopmentBuild({
+        directories: [root],
+        files: [],
+        ignored: [output],
+        build,
+        onError,
+        debounceMs: 20,
+        watch,
+      })
+      expect(watch).toHaveBeenCalledWith(root, { recursive: true }, expect.any(Function))
       expect(published).toBe('one')
       await writeFile(source, 'invalid')
-      await expect.poll(() => onError.mock.calls.length).toBe(1)
+      change('change', 'entry.js')
+      await vi.advanceTimersByTimeAsync(20)
+      await expect(build.mock.results.at(-1).value).rejects.toThrow('compile failed')
+      expect(onError).toHaveBeenCalledOnce()
       expect(published).toBe('one')
       await writeFile(source, 'two')
-      await expect.poll(() => published).toBe('two')
+      change('change', 'entry.js')
+      await vi.advanceTimersByTimeAsync(20)
+      await build.mock.results.at(-1).value
+      expect(published).toBe('two')
+      for (const filename of ['output/bundle.js', 'dist/bundle.js', '.git/index', 'node_modules/a'])
+        change('change', filename)
+      await vi.advanceTimersByTimeAsync(20)
       expect(build).toHaveBeenCalledTimes(3)
     } finally {
-      await watcher.close()
+      await watcher?.close()
+      vi.useRealTimers()
       await rm(temporary, { recursive: true, force: true })
     }
+    expect(close).toHaveBeenCalledOnce()
   }
 )
 
