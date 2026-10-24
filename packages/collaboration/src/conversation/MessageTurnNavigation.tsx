@@ -286,7 +286,9 @@ export function MessageTurnNavigation({
     const anchor = targetMessageId
       ? findMessageAnchor(contentRef, targetMessageId)
       : null;
-    if (!scroller || !targetMessageId || !anchor) return;
+    if (!scroller || !targetMessageId) return;
+    onNavigationScrollTargetChange?.(targetMessageId);
+    if (!anchor) return;
 
     scrollToMessageId(scroller, targetMessageId);
     setLoadingMarkerId((current) =>
@@ -296,8 +298,10 @@ export function MessageTurnNavigation({
     finishNavigationLoad(onNavigationLoadStateChange);
   }, [
     contentRef,
+    markers,
     messages,
     onNavigationLoadStateChange,
+    onNavigationScrollTargetChange,
     pendingScrollTarget,
     scrollRef,
     scrollToMessageId,

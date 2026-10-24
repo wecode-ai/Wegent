@@ -62,6 +62,15 @@ function seedHistory(sqliteHome, threadId) {
           clientId: `${turnId}-user`,
           content: [{ type: 'text', text: `${PROMPT}_${index}`, text_elements: [] }],
         },
+        // Native timeline pages budget 500 items at page size five. The latest
+        // turn must exceed that budget so reopening initially loads only replies.
+        ...(index === 10
+          ? Array.from({ length: 600 }, (_, part) => ({
+              ...assistant,
+              id: `${turnId}-detail-${part}`,
+              text: `${PROMPT}_REPLY_${index}_DETAIL_${part}`,
+            }))
+          : []),
         { ...assistant, id: `${turnId}-assistant`, text: `${PROMPT}_REPLY_${index}` },
       ]
       items.forEach((item, offset) =>
@@ -117,6 +126,14 @@ async function verifyHistoryNavigation(control) {
       `Turn ${index} must preview its own response even when its messages are not loaded`
     )
   }
+  await control.command('click', `${markers}[data-turn-index="1"]`)
+  await control.command('waitFor', `${WORKBENCH} [data-testid="message-user"]`, {
+    text: `${PROMPT}_1`,
+    visible: true,
+  })
+  await control.command('waitFor', `${markers}[data-turn-index="1"][data-active="true"]`)
+  await control.command('click', `${markers}[data-turn-index="10"]`)
+  await control.command('waitFor', `${markers}[data-turn-index="10"][data-active="true"]`)
 }
 
 export function createDesktopScenario({
@@ -188,6 +205,14 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
         text: LATEST,
       })
+      const firstPage = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      assert.equal(firstPage.pane.transcript.hasMoreBefore, true, 'The fixture must paginate')
+      assert.ok(
+        !(await control.command('getText', `${WORKBENCH} [data-testid="message-user"]`)).includes(
+          `${PROMPT}_10`
+        ),
+        'The latest turn must reproduce navigation while its user message is not loaded'
+      )
       await verifyHistoryNavigation(control)
 
       // Load the earlier failed turn into the same cache before reopening the latest page.
