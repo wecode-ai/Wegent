@@ -168,8 +168,7 @@ impl LocalBackendConnectionController {
                 )
             }
             .with_connection_status(Arc::clone(&self.connection_status));
-            let runner =
-                runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
+            let runner = runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {

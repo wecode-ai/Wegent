@@ -498,9 +498,8 @@ async fn registration_captures_backend_assigned_device_route_id() {
     *transport.register_ack.lock().unwrap() =
         Some(json!({"success": true, "device_route_id": "app-record-42"}));
     let route_slot = Arc::new(std::sync::Mutex::new(None));
-    let runner =
-        LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
-            .with_device_route_id_slot(Arc::clone(&route_slot));
+    let runner = LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
+        .with_device_route_id_slot(Arc::clone(&route_slot));
     runner.register_handlers();
 
     runner
@@ -508,10 +507,7 @@ async fn registration_captures_backend_assigned_device_route_id() {
         .await
         .expect("registration succeeds");
 
-    assert_eq!(
-        route_slot.lock().unwrap().as_deref(),
-        Some("app-record-42")
-    );
+    assert_eq!(route_slot.lock().unwrap().as_deref(), Some("app-record-42"));
 }
 
 #[test]
@@ -519,9 +515,7 @@ fn plugin_reconcile_delay_is_stable_and_bounded() {
     let delay = plugin_reconcile_delay("runtime-instance-1");
     assert_eq!(delay, plugin_reconcile_delay("runtime-instance-1"));
     assert!(delay >= PLUGIN_RECONCILE_INTERVAL);
-    assert!(
-        delay < PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(PLUGIN_RECONCILE_JITTER_SECS)
-    );
+    assert!(delay < PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(PLUGIN_RECONCILE_JITTER_SECS));
     // Distinct runtimes spread across the jitter window.
     assert_ne!(
         plugin_reconcile_delay("runtime-instance-1"),

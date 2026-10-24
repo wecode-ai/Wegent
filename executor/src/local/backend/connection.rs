@@ -94,7 +94,11 @@ where
         {
             Ok(Some(route_id)) => {
                 if let Ok(mut slot) = self.device_route_id.lock() {
-                    *slot = if route_id.is_empty() { None } else { Some(route_id) };
+                    *slot = if route_id.is_empty() {
+                        None
+                    } else {
+                        Some(route_id)
+                    };
                 }
                 if let Err(error) = self.client.emit_liveness_heartbeat().await {
                     let _ = self.client.disconnect().await;
