@@ -93,6 +93,32 @@ async function waitForPane(control, predicate, description, timeoutMs) {
   throw new Error(`${description}: ${JSON.stringify(snapshot?.pane?.messageSummary)}`)
 }
 
+async function verifyHistoryNavigation(control) {
+  const markers = `${WORKBENCH} [data-testid="message-turn-navigation-marker"]`
+  const previews = `${WORKBENCH} [data-testid="message-turn-navigation-preview"]`
+  await control.command('waitFor', `${markers}[data-turn-index="10"][data-active="true"]`, {
+    stableMs: 500,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', markers)),
+    11,
+    'Paginated navigation must retain each native turn exactly once in historical order'
+  )
+  for (const [index, prompt, reply] of [
+    [0, PROMPT, COMPLETION],
+    [10, `${PROMPT}_10`, LATEST],
+  ]) {
+    const marker = `${markers}[data-turn-index="${index}"]`
+    const preview = `${previews}[data-turn-index="${index}"]`
+    await control.command('hover', marker)
+    await control.command('waitFor', `${preview}.opacity-100`, { text: prompt })
+    assert.ok(
+      (await control.command('getText', preview)).includes(reply),
+      `Turn ${index} must preview its own response even when its messages are not loaded`
+    )
+  }
+}
+
 export function createDesktopScenario({
   codexSqliteHome,
   uiTimeoutMs,
@@ -162,6 +188,7 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
         text: LATEST,
       })
+      await verifyHistoryNavigation(control)
 
       // Load the earlier failed turn into the same cache before reopening the latest page.
       for (let page = 0; page < 15; page += 1) {
@@ -210,6 +237,7 @@ export function createDesktopScenario({
         text: LATEST,
         visible: true,
       })
+      await verifyHistoryNavigation(control)
       await captureScreenshot(control, 'latest-conversation-history.png', WORKBENCH)
     },
   }

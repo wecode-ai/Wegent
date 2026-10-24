@@ -402,6 +402,7 @@ export function MessageTurnNavigation({
 
       const loadedMessageId = findLoadedNavigationMessageId(messages, {
         navigationId: marker.id,
+        turnId: marker.turnId,
         messageIndex: marker.messageIndex,
       });
       if (loadedMessageId) {

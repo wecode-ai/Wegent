@@ -117,7 +117,7 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 本地设备代理属于这个共享 Codex app-server 的进程级配置，而不是单次任务配置。Wework 在本地 executor 启动完成后、插件列表、模型列表、限额读取或任务 RPC 可能首次启动 app-server 之前，通过 `runtime.codex.runtime_config.update` 同步当前代理。无论哪个 RPC 首先触发进程，executor 都必须使用同一份代理环境启动唯一的 app-server，后续任务继续复用该进程。用户修改或关闭代理后，Wework 会把新配置随 app-server 重启请求一起发送；executor 不能让没有任务上下文的辅助 RPC 用默认环境提前启动一个绕过代理的共享进程。
 
-分页页面之间只按稳定消息 ID 合并。provider 游标不编码全局 message offset，因此前端不能根据游标生成 `messageIndex`、缺失区间或完整会话导航。发言导航只覆盖当前已经加载的消息；加载更早页面后再从合并结果重建导航。
+分页页面之间只按稳定消息 ID 合并。provider 游标不编码全局 message offset，因此前端不能根据游标生成 `messageIndex` 或缺失区间。完整发言导航单独通过 `thread/turns/list(itemsView=summary)` 获取轮次 ID、顺序和请求/回复摘要，不加载历史工具输出。导航按轮次 ID 关联已加载消息；轮次序号和页面局部消息索引不能互相匹配。仅有助手回复的页面仍按回复的轮次 ID 高亮对应标记，同轮追问按消息顺序紧随原始请求。未加载消息的标记也保留摘要供悬停预览。
 
 继续 LocalTask 时，Wework 调用：
 

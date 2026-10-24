@@ -11,7 +11,8 @@ use tokio::time::{sleep, Duration};
 
 use crate::agents::CodexAppServerClient;
 
-use super::util::string_field;
+use super::transcript::normalized_user_request_content;
+use super::util::{extract_text, item_type, string_field};
 
 const CODEX_ITEM_PAGE_SIZE: usize = 100;
 const CODEX_NAVIGATION_CURSOR_PREFIX: &str = "wework-codex-navigation:";
@@ -53,6 +54,8 @@ pub(crate) struct CodexTranscriptPage {
 pub(crate) struct CodexTranscriptNavigationTurn {
     pub turn_id: String,
     pub cursor: Option<String>,
+    pub prompt_preview: String,
+    pub response_preview: String,
 }
 
 #[derive(Clone)]
@@ -226,10 +229,11 @@ pub(crate) async fn load_codex_transcript_navigation(
                     let turn_id = string_field(&turn, "id").ok_or_else(|| {
                         "canonical Codex rollout returned a turn without id".to_owned()
                     })?;
-                    navigation_turns.push(CodexTranscriptNavigationTurn {
+                    navigation_turns.push(navigation_turn(
+                        &turn,
                         turn_id,
-                        cursor: Some(rollout_cursor(index + 1)),
-                    });
+                        Some(rollout_cursor(index + 1)),
+                    ));
                 }
                 return Ok(CodexTranscriptNavigation {
                     turns: navigation_turns,
@@ -250,7 +254,7 @@ pub(crate) async fn load_codex_transcript_navigation(
                 "cursor": cursor,
                 "limit": CODEX_ITEM_PAGE_SIZE,
                 "sortDirection": "desc",
-                "itemsView": "notLoaded",
+                "itemsView": "summary",
             }),
         )
         .await?;
@@ -264,16 +268,14 @@ pub(crate) async fn load_codex_transcript_navigation(
             let turn_id = string_field(&turn, "id").ok_or_else(|| {
                 "thread/turns/list returned a navigation turn without id".to_owned()
             })?;
-            turns.push(CodexTranscriptNavigationTurn {
-                turn_id: turn_id.clone(),
-                cursor: if thread_uses_paginated_history(thread) {
-                    Some(super::codex_timeline::turn_cursor(&turn_id))
-                } else {
-                    page_backwards_cursor
-                        .as_ref()
-                        .map(|page_cursor| navigation_cursor(page_cursor, descending_offset))
-                },
-            });
+            let cursor = if thread_uses_paginated_history(thread) {
+                Some(super::codex_timeline::turn_cursor(&turn_id))
+            } else {
+                page_backwards_cursor
+                    .as_ref()
+                    .map(|page_cursor| navigation_cursor(page_cursor, descending_offset))
+            };
+            turns.push(navigation_turn(&turn, turn_id, cursor));
         }
         let Some(next_cursor) = string_field(&page, "nextCursor") else {
             turns.reverse();
@@ -291,6 +293,28 @@ pub(crate) async fn load_codex_transcript_navigation(
         turns: Vec::new(),
         complete: false,
     })
+}
+
+fn navigation_turn(
+    turn: &Value,
+    turn_id: String,
+    cursor: Option<String>,
+) -> CodexTranscriptNavigationTurn {
+    let items = turn.get("items").and_then(Value::as_array);
+    let preview = |kind: &str| {
+        items
+            .into_iter()
+            .flatten()
+            .find(|item| item_type(item) == kind)
+            .and_then(extract_text)
+            .unwrap_or_default()
+    };
+    CodexTranscriptNavigationTurn {
+        turn_id,
+        cursor,
+        prompt_preview: normalized_user_request_content(&preview("usermessage")),
+        response_preview: preview("agentmessage"),
+    }
 }
 
 fn navigation_cursor(page_backwards_cursor: &str, descending_offset: usize) -> String {
@@ -664,6 +688,20 @@ mod tests {
     fn requests_unloaded_items_for_paginated_history() {
         assert_eq!(turn_items_view(true), "notLoaded");
         assert_eq!(turn_items_view(false), "full");
+    }
+
+    #[test]
+    fn navigation_preserves_visible_summaries_without_tool_payloads() {
+        let turn = json!({"items": [
+            {"type": "UserMessage", "content": [{"type": "text", "text":
+                "## My request for Codex:\n<application_context>hidden</application_context>\nFix navigation"}]},
+            {"type": "CommandExecution", "aggregatedOutput": "private tool output"},
+            {"type": "AgentMessage", "text": "Navigation fixed"}
+        ]});
+        let entry = super::navigation_turn(&turn, "turn-1".into(), Some("cursor".into()));
+        assert_eq!(entry.prompt_preview, "Fix navigation");
+        assert_eq!(entry.response_preview, "Navigation fixed");
+        assert_eq!(entry.cursor.as_deref(), Some("cursor"));
     }
 
     #[test]
