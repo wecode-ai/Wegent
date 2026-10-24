@@ -67,3 +67,17 @@ test('propagates corrupt compressed requests instead of crashing the server', as
   request.end(Buffer.from([0x1f, 0x8b, 0x00]))
   await expect(parsed).rejects.toThrow()
 })
+
+test('rejects shared readers when the request closes without an error or end', async () => {
+  const request = new PassThrough()
+  const parsed = readRequestBody(request)
+  const raw = readRawRequestBody(request)
+  const checks = Promise.all([
+    expect(parsed).rejects.toThrow('Request body stream closed before end'),
+    expect(raw).rejects.toThrow('Request body stream closed before end'),
+  ])
+  request.write('{ "input":')
+  request.destroy()
+  await checks
+  await expect(readRequestBody(request)).rejects.toThrow('closed before end')
+})

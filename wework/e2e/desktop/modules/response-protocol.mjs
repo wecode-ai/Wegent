@@ -495,6 +495,9 @@ function readRawRequestBody(request) {
       }
     })
     request.once('error', reject)
+    request.once('close', () => {
+      if (!request.readableEnded) reject(new Error('Request body stream closed before end'))
+    })
   })
   rawRequestBodies.set(request, raw)
   return raw
