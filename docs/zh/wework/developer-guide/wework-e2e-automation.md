@@ -393,6 +393,7 @@ Windows 同时保留 `electron.log`，用于定位 renderer 连接之前的原�
 E2E 的 Electron 日志保留 loopback 请求的网络错误码和路径，不记录请求头或查询参数。
 Windows 失败产物中的 `windows-network-diagnostics.json` 只记录 TCP 状态与进程的连接数量，
 用于定位 Winsock 资源不足，不包含连接地址。
+回复预测重启恢复场景在真实 Codex shell 中使用 Node 文件系统 API 验证 Executor 可执行文件和任务工作目录。使用 `realpathSync` 比较实际目录，不能直接将 Windows 原生路径与 POSIX `$PWD` 字符串比较；保留成功标记断言，缺失二进制、目录冒充二进制或工作目录错误都必须失败。
 从 Issue 启动个人任务时，在绑定任务后的启动准备阶段等待 Issue 的“进行中”更新完成，再启动 Runtime。不能在 Runtime 已启动后的创建回调中更新状态：AI 创建并完成交付会推进 Issue 版本，使并发的状态更新返回 409。状态更新被拒绝时仍显示原有错误提示，个人任务保持独立执行；交付不得自动推进 Issue 状态。
 任务看板批量操作在每次输入前确认空会话已经激活，不能只等待编辑器节点存在。
 Goal 重启场景必须同时观察一个任务运行、另一个任务排队后，再释放占用单槽的模型响应。

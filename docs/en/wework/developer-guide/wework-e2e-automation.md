@@ -482,6 +482,7 @@ produce a fabricated failed-action result. E2E Electron logs retain loopback req
 network error codes without headers or query parameters. Windows failure artifacts include
 `windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
 to diagnose Winsock resource exhaustion.
+The reply-prediction restart scenario verifies the Executor executable and task workspace through Node filesystem APIs in the real Codex shell. Compare actual directories with `realpathSync` instead of comparing native Windows paths with POSIX `$PWD` strings. Retain the success-marker assertion; missing binaries, directories in place of binaries, and incorrect workspaces must fail.
 When starting a personal task from an Issue, await its in-progress update during task preparation after binding and before launching the Runtime. Updating status in the post-launch creation callback races with AI delivery creation and finalization, which advance the Issue version and can produce a 409 conflict. A rejected status update retains the existing error notice and independent personal task execution; deliveries must not advance the Issue status.
 Task-board bulk actions confirm that the blank conversation is active before each input;
 the editor node alone is insufficient. Goal restart fixtures observe one running task and
