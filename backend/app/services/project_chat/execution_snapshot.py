@@ -77,6 +77,7 @@ def can_restore_reconciled_completion(
     )
     return activity is not None and (
         str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
+        and "runtime_completed_at" in (activity.metadata_json or {})
         and activity.project_id == execution.cloud_project_id
         and activity.task_id == execution.loop_item_id
     )
@@ -196,7 +197,10 @@ def _persist_outcome(
     user_id: int,
     device_ids: list[str],
 ) -> bool:
-    from app.services.loop_item_executions.service import loop_item_execution_service
+    from app.services.loop_item_executions.service import (
+        CAPACITY_STATUSES,
+        loop_item_execution_service,
+    )
 
     status = TERMINAL_STATUSES[turn.status]
     metadata = dict(row.metadata_json or {})
@@ -239,6 +243,17 @@ def _persist_outcome(
         return False
     metadata = dict(row.metadata_json or {})
     if execution is not None:
+        if execution.status != status and execution.status not in CAPACITY_STATUSES:
+            return False
+        # Reconciliation commits the terminal root and activity. Persist their
+        # turn binding in that same commit so a final event can recover text
+        # even when it arrives before this outcome-only report returns.
+        row.metadata_json = {
+            **metadata,
+            "runtime_turn_id": turn.id,
+            "runtime_completed_at": turn.completed_at,
+        }
+        db.flush()
         # Managed runs have their own aggregate root. Never update a different
         # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(

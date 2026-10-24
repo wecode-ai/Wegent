@@ -217,8 +217,15 @@ export function runtimeConversationTurnClientUserMessageIds(
 export function runtimeConversationTurnAssistantItemIds(
   turn: RuntimeConversationTurn,
 ): string[] {
+  // Interaction request ids are scoped to a turn and may be reused by later turns.
+  // They cannot establish that two native/runtime turn identities are aliases.
   return turn.items.flatMap((item) =>
-    item.type === "user_message" ? [] : [item.id],
+    item.type === "user_message" ||
+    (item.type === "block" &&
+      item.block.type === "tool" &&
+      item.block.toolName === "request_user_input")
+      ? []
+      : [item.id],
   );
 }
 

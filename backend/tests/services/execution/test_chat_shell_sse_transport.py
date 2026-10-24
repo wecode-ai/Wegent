@@ -5,6 +5,7 @@
 """Exercise the SDK and SSE dispatcher together across failures and cancellation."""
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -21,6 +22,7 @@ from shared.models import EventType, ExecutionRequest
 
 _COMPLETED = b'data: {"type":"response.completed","response":{"output":[]}}\n\n'
 _DELTA = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+_TEST_TIMEOUT_SECONDS = 30
 
 
 @asynccontextmanager
@@ -225,7 +227,7 @@ class _UnfinishedTerminalStream(httpx.AsyncByteStream):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["timeout", "read_error", "cancel"])
-async def test_terminal_cleanup_preserves_completion(failure) -> None:
+async def test_terminal_cleanup_preserves_completion(failure, caplog) -> None:
     body = _UnfinishedTerminalStream(failure)
     requests = []
 
@@ -248,26 +250,46 @@ async def test_terminal_cleanup_preserves_completion(failure) -> None:
             task = asyncio.create_task(
                 dispatcher._dispatch_sse(request, target, emitter)
             )
+            cancel_task = None
             try:
                 if failure == "cancel":
-                    tail_started = asyncio.create_task(body.tail_started.wait())
-                    try:
-                        await asyncio.wait(
-                            {task, tail_started}, return_when=asyncio.FIRST_COMPLETED
-                        )
-                        if not body.tail_started.is_set():
-                            await task
-                            pytest.fail(
-                                "Dispatch ended before terminal cleanup started"
-                            )
-                    finally:
-                        tail_started.cancel()
-                        await asyncio.gather(tail_started, return_exceptions=True)
-                    task.cancel()
-                await asyncio.wait_for(task, timeout=2)
+
+                    async def cancel_when_cleanup_starts() -> None:
+                        await body.tail_started.wait()
+                        assert task.cancel()
+
+                    cancel_task = asyncio.create_task(cancel_when_cleanup_starts())
+                # Bound hangs without treating request setup/SDK parsing as
+                # cleanup latency. Shield keeps this watchdog's cancellation
+                # separate from the cancellation injected at the tail event.
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=_TEST_TIMEOUT_SECONDS
+                )
+                if cancel_task is not None:
+                    assert cancel_task.done()
+                    await cancel_task
             finally:
                 task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                tasks = [task]
+                if cancel_task is not None:
+                    cancel_task.cancel()
+                    tasks.append(cancel_task)
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        cleanup_errors = [
+            json.loads(record.getMessage().removeprefix("[ChatShellTransport] "))[
+                "exception_chain"
+            ][0]["exception_type"]
+            for record in caplog.records
+            if '"event": "stream_cleanup_interrupted"' in record.getMessage()
+        ]
+        assert cleanup_errors == [
+            {
+                "timeout": "TimeoutError",
+                "read_error": "ReadError",
+                "cancel": "CancelledError",
+            }[failure]
+        ]
 
         assert body.closed
         assert not client.is_closed()
@@ -280,7 +302,8 @@ async def test_terminal_cleanup_preserves_completion(failure) -> None:
         next_request = replace(request, subtask_id=request.subtask_id + 1)
         next_emitter = AsyncMock()
         await asyncio.wait_for(
-            dispatcher._dispatch_sse(next_request, target, next_emitter), timeout=30
+            dispatcher._dispatch_sse(next_request, target, next_emitter),
+            timeout=_TEST_TIMEOUT_SECONDS,
         )
 
         assert len(requests) == 2

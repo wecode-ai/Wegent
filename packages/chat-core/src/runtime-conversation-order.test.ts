@@ -27,6 +27,64 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it.each(["mcp_form", "mcp_url"])(
+    "does not alias a pending %s turn to an answered turn that reused its request id",
+    (interactionKind) => {
+      const interaction = (turnId: string, status: string) => ({
+        id: "request-user-input-2",
+        type: "block" as const,
+        block: {
+          id: "request-user-input-2",
+          type: "tool",
+          tool_name: "request_user_input",
+          status: status === "pending" ? "pending" : "done",
+          render_payload: {
+            kind: "request_user_input",
+            interactionKind,
+            interactionScope: turnId,
+            interactionStatus: status,
+            requestId: 2,
+          },
+        },
+      });
+      const page = projectRuntimePaneTranscript({
+        runtime: "codex",
+        workspacePath: "/repo",
+        messages: [],
+        turns: [
+          { id: "previous", status: "done", position: 1, items: [] },
+          {
+            id: "current",
+            status: "inProgress",
+            position: 10,
+            items: [interaction("current", "pending")],
+          },
+        ],
+        runtimeTurns: [
+          {
+            id: "previous",
+            status: "done",
+            items: [interaction("previous", "answered")],
+          },
+        ],
+      });
+      expect(page.turns.map((turn) => turn.id)).toEqual([
+        "previous",
+        "current",
+      ]);
+      expect(
+        page.messages.map((message) => [
+          message.turnId,
+          message.blocks?.[0]?.renderPayload?.interactionStatus,
+        ]),
+      ).toEqual([
+        ["previous", "answered"],
+        ["current", "pending"],
+      ]);
+      expect(page.messages[1].status).toBe("streaming");
+    },
+  );
+
   it("reconciles late block snapshots through the same output-preserving merge as history", () => {
     const block = {
       id: "command",
