@@ -22,6 +22,8 @@ Persisted items use native positions; unpositioned runtime items retain their ob
 
 Turn lifecycle is independent of unpersisted items. Native `turns/list` can synthesize interruption while its runtime observation is catching up. When the executor still owns that exact active turn and the timeline has no `turnCompleted` boundary, projection keeps it running even if the live buffer is empty or all observed items have been persisted. An actual terminal boundary wins; its marker survives pagination cursors and cannot be reopened by the active buffer.
 
+Turns and items share the same position and neighboring-identity ordering rules. Cached turns outside the newest history page that have no native position remain before their observed next native turn; appending all of them to the conversation tail would displace current Goal output and select an old reply as active. A new live turn without an observed native successor remains at the tail. Page merges must not invent adjacency for old cached turns from the merged array.
+
 ## Ownership and synchronization
 
 Native normalization produces turns/items and presentation messages in one pass. Native positions order items; explicit user boundaries group their presentation. The initial ordinary prompt owns the same reply as pre-prompt context compaction, while runtimeGuidance establishes another display segment. Guidance may split a turn into display segments, but turn-level artifacts aggregate across those segments rather than come only from the last segment. The native primary path does not reconstruct turns from rendered messages. Other runtimes and legacy history retain their explicit adapter boundaries.
