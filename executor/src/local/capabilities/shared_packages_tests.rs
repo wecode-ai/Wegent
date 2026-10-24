@@ -61,14 +61,17 @@ fn packages(version: &str) -> Packages {
 }
 
 fn store(root: &Path) -> GlobalCapabilityStore {
-    GlobalCapabilityStore::new(
+    let mut store = GlobalCapabilityStore::new(
         root.join("state/manifest-v2.json"),
         root.join("claude/skills"),
     )
     .with_plugins_dir(root.join("claude/plugins"))
     .with_codex_skills_dir(root.join("codex/skills"))
     .with_codex_plugins_dir(root.join("codex/plugins"))
-    .with_workbench_root(root.join("workbench"))
+    .with_workbench_root(root.join("workbench"));
+    // This fixture covers both products, regardless of the executor launch environment.
+    store.codex_only_plugins = false;
+    store
 }
 
 #[cfg(unix)]
