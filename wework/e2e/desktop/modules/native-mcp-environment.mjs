@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -15,6 +16,7 @@ const TIMEOUT_MS = 10_000
 
 function serveEnvironmentProbe(name, evidencePath, toolName) {
   assert.ok(SERVER_NAMES.includes(name))
+  const instanceId = randomUUID()
   createInterface({ input: process.stdin }).on('line', line => {
     const message = JSON.parse(line)
     if (message.id === undefined) return
@@ -26,6 +28,7 @@ function serveEnvironmentProbe(name, evidencePath, toolName) {
           JSON.stringify({
             name,
             pid: process.pid,
+            instanceId,
             token: process.env.TOKEN,
             apiKey: process.env.OPENAI_API_KEY,
             servicePath: process.env.PATH,
@@ -54,7 +57,11 @@ function serveEnvironmentProbe(name, evidencePath, toolName) {
       case 'tools/call':
         assert.equal(message.params.name, toolName)
         assert.ok(toolName)
-        result = { content: [{ type: 'text', text: `MCP_CONTEXT:${process.env.TOKEN}` }] }
+        result = {
+          content: [
+            { type: 'text', text: `MCP_CONTEXT:${process.env.TOKEN}\nMCP_INSTANCE:${instanceId}` },
+          ],
+        }
         break
       case 'resources/list':
         result = { resources: [] }
