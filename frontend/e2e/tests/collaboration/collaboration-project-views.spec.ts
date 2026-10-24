@@ -586,8 +586,14 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       const expected = canonical
         .filter(item => [first.id, second.id, outside.id].includes(item.id))
         .map(item => item.id)
+      const groupingSaved = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/cloud-projects/${projectId}`)
+      )
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+      expect((await groupingSaved).ok()).toBe(true)
       await assertOrder(expected)
       await page.reload()
       await assertOrder(expected)

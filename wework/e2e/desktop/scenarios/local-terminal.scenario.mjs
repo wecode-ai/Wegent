@@ -746,7 +746,8 @@ export async function createDesktopScenario({
       await waitForRequests(
         harnessModelRequests,
         requests => assertPromptRequest(requests, 'Inspect the current project', 'kimi-k3', 'chat'),
-        uiTimeoutMs
+        // The terminal mounts before OpenCode finishes its real CLI cold startup.
+        workbenchReadyTimeoutMs
       )
 
       await control.command('click', '[data-testid="new-chat-button"]')
