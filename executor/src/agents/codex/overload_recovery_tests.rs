@@ -770,6 +770,17 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
 #[cfg(unix)]
 #[tokio::test]
 async fn overload_recovery_drains_a_goal_completed_during_backoff() {
+    assert_goal_completion_during_backoff(true).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_settles_user_completion_without_a_new_turn() {
+    assert_goal_completion_during_backoff(false).await;
+}
+
+#[cfg(unix)]
+async fn assert_goal_completion_during_backoff(resumed: bool) {
     use super::super::{
         read_shared_turn_notifications, CodexAppServerClient, CodexAppServerProcess,
         CodexNotificationHub,
@@ -837,17 +848,21 @@ async fn overload_recovery_drains_a_goal_completed_during_backoff() {
         goal["status"] = json!("complete");
         let mut active_goal = goal.clone();
         active_goal["status"] = json!("active");
-        for message in [
-            json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":active_goal}}),
-            json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"interim-turn"}}}),
-            json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"interim-turn","delta":"Interim response"}}),
-            json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"interim-turn","status":"completed"}}}),
-            json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"resumed-turn"}}}),
-            json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"resumed-turn","delta":"Goal completed"}}),
-            json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":goal}}),
-            json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"resumed-turn","status":"completed"}}}),
-        ] {
-            sender.send(message.into()).unwrap();
+        if resumed {
+            for message in [
+                json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":active_goal}}),
+                json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"interim-turn"}}}),
+                json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"interim-turn","delta":"Interim response"}}),
+                json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"interim-turn","status":"completed"}}}),
+                json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"resumed-turn"}}}),
+                json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"resumed-turn","delta":"Goal completed"}}),
+                json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":goal}}),
+                json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"resumed-turn","status":"completed"}}}),
+            ] {
+                sender.send(message.into()).unwrap();
+            }
+        } else {
+            sender.send(json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":goal}}).into()).unwrap();
         }
         pending
             .lock()
@@ -857,23 +872,31 @@ async fn overload_recovery_drains_a_goal_completed_during_backoff() {
             .send(Ok(json!({"goal":goal})))
             .unwrap();
     };
-    let (outcome, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
         tokio::join!(read, complete)
     })
-    .await
-    .unwrap();
+    .await;
+    client.restart().await;
+    let (outcome, ()) = result.unwrap();
     assert_eq!(
         outcome.unwrap(),
-        ExecutionOutcome::Completed {
-            content: "Goal completed".to_owned()
+        if resumed {
+            ExecutionOutcome::Completed {
+                content: "Goal completed".to_owned(),
+            }
+        } else {
+            ExecutionOutcome::Cancelled {
+                message: "Goal changed during model overload recovery".to_owned(),
+            }
         }
     );
-    assert!(
-        std::iter::from_fn(|| notify_rx.try_recv().ok()).any(|message| message
-            .pointer("/params/turn/id")
-            .and_then(Value::as_str)
-            == Some("resumed-turn")
-            && message["method"] == "turn/completed")
-    );
-    client.restart().await;
+    if resumed {
+        assert!(
+            std::iter::from_fn(|| notify_rx.try_recv().ok()).any(|message| message
+                .pointer("/params/turn/id")
+                .and_then(Value::as_str)
+                == Some("resumed-turn")
+                && message["method"] == "turn/completed")
+        );
+    }
 }
