@@ -3,6 +3,83 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
+    let issue = Arc::new(Mutex::new(json!({})));
+    let current = issue.clone();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let assignment_reads = reads.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/loop-items/issue", get(move || {
+            let value = current.lock().unwrap().clone();
+            async move { Json(value) }
+        }))
+        .route("/api/v1/loop-items/issue/assignments", get(move || {
+            assignment_reads.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(|| async {
+            Json(json!([{"human_assignment_id":"human","device_id":"mac","task_id":"stand-in-human"}]))
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "stand-in-human".into(),
+        status: "running".into(),
+        ..RuntimeTaskLink::default()
+    });
+    let payload = json!({"projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud","standInId":"default"});
+    let config = json!({"projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z"});
+    let mut automatic = handler.clone();
+    automatic.store = RuntimeWorkStore::new(root.path().join("automatic-index.json"));
+    for status in [
+        "inbox",
+        "pending",
+        "in_progress",
+        "in_review",
+        "completed",
+        "cancelled",
+        "custom",
+    ] {
+        let value = json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"status":status,"completed_at":"2026-10-20T12:00:00Z","human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+        *issue.lock().unwrap() = value.clone();
+        let before = reads.load(Ordering::SeqCst);
+        let result = handler.run_stand_in(payload.clone()).await.unwrap();
+        assert_eq!(result["taskId"], "stand-in-human", "{status}");
+        assert_eq!(reads.load(Ordering::SeqCst), before + 1, "{status}");
+        // Automatic handling must also reach current assignment validation.
+        automatic
+            .start_cloud_stand_in(&config, &value)
+            .await
+            .unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), before + 2, "{status}");
+    }
+    for (field, value) in [
+        ("cloud_project_id", json!("other")),
+        ("assignee_user_id", json!(8)),
+    ] {
+        let original = issue.lock().unwrap().clone();
+        issue.lock().unwrap()[field] = value;
+        let before = reads.load(Ordering::SeqCst);
+        let error = handler.run_stand_in(payload.clone()).await.unwrap_err();
+        assert_eq!(error.code, "invalid_assignment");
+        assert_eq!(reads.load(Ordering::SeqCst), before);
+        *issue.lock().unwrap() = original;
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn cached_selection_failure_does_not_abort_local_polling() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");

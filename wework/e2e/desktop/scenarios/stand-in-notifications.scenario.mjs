@@ -1,4 +1,5 @@
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -229,6 +230,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
         '在通知内继续处理分身任务'
       )
+      await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+      await verifyLocalStandInStatuses(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
     },
   }
 }

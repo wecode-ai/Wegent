@@ -1,8 +1,10 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
 import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
-import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
-import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
+import {
+  resolveWorkspaceTabKind,
+  type WorkspaceTabKind,
+} from '@/features/workspace-tabs/workspaceTabs'
 
 export const WORKSPACE_NAVIGATION_EVENT = 'wework:workspace-navigation'
 export interface WorkspaceNavigationDetail {
@@ -25,7 +27,7 @@ export function toBrowserPath(path: string): string {
 
 export function navigateTo(path: string) {
   const [pathname, search] = path.split('?')
-  const kind = resolveDshRoute(pathname)?.workspaceTabKind
+  const kind = isSettingsRoute(pathname) ? null : resolveWorkspaceTabKind(pathname)
   if (kind && !new URLSearchParams(search).has('workspaceTab')) {
     const event = new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
       cancelable: true,

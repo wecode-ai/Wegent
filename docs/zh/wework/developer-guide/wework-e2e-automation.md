@@ -117,6 +117,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 `e2e:desktop:embedded-browser` 通过场景模块运行内置浏览器 Agent 操作回归。它使用真实 Electron renderer、Executor、Codex app-server 和 browser MCP server，打开本地 fixture 页面并通过Electron `WebContentsView` bridge 验证浏览器控制链路。场景覆盖 bridge identity 读取、认证 bridge 请求、打开页面、结构化 `inspect`、`fill`、`click`、`wait`、`scroll`、`screenshot`、`capabilities`、高风险动作确认，以及 MCP 组合工具 `open_and_inspect` 和 `wait_and_inspect`。它还会启动一个长时间 `waitFor`，再验证独立 `click` 不会被阻塞，用于防止 bridge 并发退化。新增本地文件能力时，该场景还会通过 bridge 打开 `file://` HTML fixture、Markdown/无扩展名文本 fixture 和本机目录 fixture，并验证无法预览的本地文件会弹出 toast 而不是进入下载列表。测试结果会写入 `embedded-browser-agent-result.json`。
 
+`conversation-state` 验证打开文件面板前后保持阅读段落可见。共享滚动锚点在恢复布局时，将已发生的用户滚动计入同一语义锚点的基准，避免从底部上划后把程序补偿误判为越界钳制、重复应用同一布局变化。`useReaderViewportAnchor.test.ts` 按 CI 的滚动坐标和 48px 高度变化覆盖连续恢复，现有 E2E 几何断言保持不变。
+
 `renderer-storage` checkpoint 使用真实打包 Electron 写入模型、草稿和布局三类
 `localStorage` 测试值，刷新持久化队列后重启 Core DSH。场景要求重启后的页面 origin
 与重启前不同，再逐项验证三个值均已恢复；这样回归覆盖的是跨 origin 的桌面持久化，

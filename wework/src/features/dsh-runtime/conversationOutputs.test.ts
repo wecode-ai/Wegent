@@ -3,6 +3,36 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { buildConversationOutputs } from './conversationOutputs'
 
 describe('buildConversationOutputs', () => {
+  test('collects file citations as sources or outputs across Office and document formats', () => {
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'citations',
+        role: 'assistant',
+        status: 'done',
+        createdAt: '2026-10-24T08:00:00Z',
+        content: [
+          ':codex-file-citation{path="/tmp/original.pptx" purpose=source}',
+          ':codex-file-citation{path="/tmp/result.pptx" purpose=output}',
+          '::codex-file-citation{path="/tmp/book%20final.xlsx" artifact_kind=workbook sheet=Summary range=A1:D8}',
+          ':codex-file-citation{path="/tmp/report.pdf" purpose=output}',
+          ':codex-file-citation{path="/tmp/result.pptx" purpose=output}',
+          '【F:src/main.ts†L4-L9】',
+          '`' + ':codex-file-citation{path="/tmp/example.pdf" purpose=output}' + '`',
+        ].join('\n\n'),
+      },
+    ]
+    const result = buildConversationOutputs(messages)
+    expect(result.outputs.map(item => item.resource)).toEqual([
+      { kind: 'file', path: '/tmp/report.pdf' },
+      { kind: 'file', path: '/tmp/book%20final.xlsx' },
+      { kind: 'file', path: '/tmp/result.pptx' },
+    ])
+    expect(result.sources.map(item => item.resource)).toEqual([
+      { kind: 'file', path: 'src/main.ts' },
+      { kind: 'file', path: '/tmp/original.pptx' },
+    ])
+  })
+
   test('builds canonical outputs and sources from the conversation', () => {
     const messages: WorkbenchMessage[] = [
       {
