@@ -1630,7 +1630,12 @@
       "provider_headers": "服务端固定请求头",
       "clear_provider_headers": "清除已保存的固定请求头",
       "tool_allowlist": "工具白名单",
-      "enabled": "向用户开放此应用"
+      "enabled": "向用户开放此应用",
+      "keywords": "匹配关键词",
+      "tool_loading_mode": "工具加载方式",
+      "oauth_scope": "OAuth Scope",
+      "authorize_app": "OAuth 授权",
+      "delete_app": "删除应用"
     },
     "hints": {
       "lines": "每行填写一个值。",
@@ -1638,26 +1643,58 @@
       "http_tools": "填写工具 JSON 数组。每个工具包含名称、描述、HTTP 方法、相对路径、input_schema，可选参数位置和超时时间。",
       "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"查询工单\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
       "headers_json": "可选 JSON 对象，值会加密保存。",
-      "headers_configured": "已配置请求头：{{names}}。留空会保留，填写 JSON 对象则整体替换；填写 {} 可清空。"
+      "headers_configured": "已配置请求头：{{names}}。留空会保留，填写 JSON 对象则整体替换；填写 {} 可清空。",
+      "keywords": "仅 Lazy loading 使用。每行一个关键词；用户消息命中任一关键词时，会把对应 App 的 scoped MCP 写入 mcp_servers，并预加载 Connector Skill 提示。含空格的词组要求所有词同时出现，例如“钉钉 表格”。",
+      "tool_loading_mode": "Static loading 会让所有已授权工具进入每个任务，适合少量高频应用；Lazy loading 只在技能被选中、关键词命中或 load_skill 加载时连接工具，适合应用多或工具重的场景。",
+      "slug": "只能使用小写字母、数字、下划线和连字符；保存时会自动转为小写。",
+      "keywords_placeholder": "钉钉表格\nspreadsheet\n工作表",
+      "oauth_scope": "可选。留空时使用授权服务器声明的全部 scope；填写多个 scope 时用空格分隔。"
     },
     "success": {
       "saved": "应用已保存",
       "disabled": "应用已停用",
       "discovered": "发现 {{count}} 个工具",
-      "tested": "工具测试完成"
+      "tested": "工具测试完成",
+      "enabled": "应用已启用",
+      "authorized": "应用授权成功",
+      "app_deleted": "应用已删除"
     },
     "errors": {
       "load_failed": "加载应用失败",
       "save_failed": "保存应用失败",
       "disable_failed": "停用应用失败",
       "discover_failed": "发现工具失败",
-      "test_failed": "测试工具失败",
-      "test_returned_error": "工具测试返回错误",
+      "test_failed": "测试工具 {{name}} 失败",
+      "test_returned_error": "工具 {{name}} 返回错误",
       "no_test_tool": "请先配置或开放至少一个工具再测试",
       "required": "名称、标识、端点地址和所选协议的必要配置不能为空",
       "provider_headers_invalid": "固定请求头必须是值均为字符串的 JSON 对象",
-      "http_tools_invalid": "HTTP 工具定义必须是 JSON 数组"
-    }
+      "http_tools_invalid": "HTTP 工具定义必须是 JSON 数组",
+      "enable_failed": "启用应用失败",
+      "delete_failed": "删除应用失败",
+      "authorization_failed": "应用授权失败",
+      "authorization_required": "请先完成应用授权",
+      "authorization_declined": "应用授权已取消",
+      "authorization_timeout": "应用授权超时",
+      "authorization_popup_blocked": "授权页面被浏览器拦截，请允许弹出窗口后重试",
+      "slug_invalid": "唯一标识只能使用小写字母、数字、下划线和连字符"
+    },
+    "tool_loading": {
+      "static": "Static loading（静态加载）",
+      "lazy": "Lazy loading（按需加载）"
+    },
+    "static_loading_confirm": "仍要使用静态加载",
+    "static_loading_warning_title": "静态加载会一次性暴露全部工具",
+    "static_loading_warning_body": "静态加载会把该应用的全部工具注入每个任务，工具较多时会显著增加 token 消耗和首轮延迟。推荐使用 Lazy loading（按需加载）。确定切换为静态加载吗？",
+    "delete_impact_title": "删除会影响所有用户",
+    "delete_impact_body": "“{{name}}” 是共享的 MCP 应用，当前有 {{count}} 个用户连接。删除会立即移除该应用和所有用户的授权，正在使用它的任务会失败，且无法恢复。",
+    "delete_impact_continue": "我已了解，继续",
+    "delete_forever": "永久删除",
+    "search_placeholder": "搜索应用名称、标识、描述或关键词",
+    "search_empty": "没有匹配的应用",
+    "enable": "启用应用",
+    "confirm_delete_app_title": "再次确认删除",
+    "confirm_delete_app": "将永久删除应用“{{name}}”，此操作不可撤销。确定继续吗？"
   },
   "templates": {
     "title": "模板管理",

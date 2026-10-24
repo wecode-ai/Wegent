@@ -111,6 +111,22 @@ pub(crate) fn decrypt_sensitive_data(encrypted: &str) -> Result<String, CryptoEr
     )
 }
 
+/// Install the fixed test key/IV in the process environment.
+///
+/// Tests that round-trip a credential need the same key on both sides. Every
+/// caller writes these two constants, so concurrent test threads read a stable
+/// pair regardless of order.
+#[cfg(test)]
+#[allow(unsafe_code)]
+pub(crate) fn use_test_key() {
+    // SAFETY: the values written here are constant for the whole test binary
+    // and every reader expects exactly this pair.
+    unsafe {
+        std::env::set_var("GIT_TOKEN_AES_KEY", DEFAULT_KEY);
+        std::env::set_var("GIT_TOKEN_AES_IV", "1234567890123456");
+    }
+}
+
 /// AES-CBC/PKCS7 decryption of `text` with an explicit key and IV; `None` is
 /// the source's generic `except` fallback.
 fn decrypt_with(key: &[u8], iv: &[u8], text: &str) -> Option<String> {

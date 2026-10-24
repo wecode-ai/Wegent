@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import builtins
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,9 +15,21 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.schemas.connector import ConnectorAppWrite
-from app.services.connector_apps import _encrypt_json, connector_app_service
+from app.services.connector_apps import (
+    CONNECTOR_CONNECT_RETRIES,
+    _encrypt_json,
+    connector_app_service,
+)
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_runtime import ConnectorRuntimeService
+
+
+def _exception_group(message: str, exception: BaseException) -> BaseException:
+    """Build a real exception group on Python 3.10 through 3.13."""
+    factory = getattr(builtins, "ExceptionGroup", None)
+    if factory is None:  # pragma: no cover - Python 3.10 backport
+        from exceptiongroup import ExceptionGroup as factory
+    return factory(message, [exception])
 
 
 def _app(**overrides):
@@ -30,6 +44,7 @@ def _app(**overrides):
         "auth_type": "none",
         "transport": "streamable-http",
         "mcp_url": "https://mcp.example.test/app",
+        "tool_loading_mode": "static",
         "provider_headers_encrypted": None,
         "forward_user_context_headers": False,
         "tool_allowlist": [],
@@ -50,6 +65,7 @@ def _create_app(
     http_tools: list[dict] | None = None,
     auth_type: str = "none",
     forward_user_context_headers: bool = False,
+    tool_loading_mode: str = "static",
 ):
     return connector_app_service.create_app(
         db,
@@ -62,6 +78,7 @@ def _create_app(
             http_tools=http_tools or [],
             auth_type=auth_type,
             forward_user_context_headers=forward_user_context_headers,
+            tool_loading_mode=tool_loading_mode,
         ),
         admin,
     )
@@ -76,6 +93,32 @@ def test_json_safe_serializes_model_values() -> None:
             return {"items": (1, "two")}
 
     assert ConnectorRuntimeService._json_safe(Result()) == {"items": [1, "two"]}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] self-signed certificate",
+            "Connector upstream TLS certificate verification failed",
+        ),
+        (
+            "ConnectTimeout: upstream did not respond",
+            "Connector upstream request timed out",
+        ),
+        (
+            "ConnectError: All connection attempts failed",
+            "Connector upstream connection failed",
+        ),
+        ("RuntimeError: boom", "Connector tool execution failed"),
+    ],
+)
+def test_tool_failure_detail_describes_upstream_failure(
+    message: str, expected: str
+) -> None:
+    assert (
+        ConnectorRuntimeService._tool_failure_detail(RuntimeError(message)) == expected
+    )
 
 
 @pytest.mark.asyncio
@@ -113,6 +156,509 @@ async def test_lists_only_allowlisted_tools_with_connector_namespace(
 
 
 @pytest.mark.asyncio
+async def test_list_tools_filters_to_scoped_app(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(test_db, test_admin_user, slug="crm", name="CRM")
+    _create_app(test_db, test_admin_user, slug="docs", name="Docs")
+
+    class Tool:
+        name = "search"
+        title = "Search"
+        description = "Search records"
+        inputSchema = {"type": "object", "properties": {}}
+        annotations = None
+
+    upstream_tools = AsyncMock(return_value=[Tool()])
+    monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream_tools)
+
+    tools = await ConnectorRuntimeService.list_tools(test_db, test_user, app_slug="crm")
+
+    assert [tool.name for tool in tools] == ["crm__search"]
+    assert upstream_tools.await_count == 1
+    assert upstream_tools.await_args.args[1].slug == "crm"
+
+
+@pytest.mark.asyncio
+async def test_lazy_apps_are_hidden_from_the_unscoped_surface(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="lazy",
+        name="Lazy",
+        tool_loading_mode="lazy",
+    )
+
+    class Tool:
+        name = "search"
+        title = "Search"
+        description = "Search records"
+        inputSchema = {"type": "object", "properties": {}}
+        annotations = None
+
+    upstream_tools = AsyncMock(return_value=[Tool()])
+    monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream_tools)
+
+    assert await ConnectorRuntimeService.list_tools(test_db, test_user) == []
+    scoped = await ConnectorRuntimeService.list_tools(
+        test_db, test_user, app_slug="lazy"
+    )
+    assert [tool.name for tool in scoped] == ["lazy__search"]
+
+
+@pytest.mark.asyncio
+async def test_expired_grant_stays_connected_while_it_can_be_refreshed(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+) -> None:
+    """A refreshable grant keeps its tools instead of asking to re-authorize."""
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="refreshable",
+        name="Refreshable",
+        auth_type="oauth2",
+    )
+    _create_app(test_db, test_admin_user, slug="dead", name="Dead", auth_type="oauth2")
+    expired = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="refreshable",
+        user_id=test_user.id,
+        access_token="stale",
+        refresh_token="refresh-me",
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=expired,
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="dead",
+        user_id=test_user.id,
+        access_token="stale",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=expired,
+    )
+
+    apps, connections = ConnectorRuntimeService._connected_apps(test_db, test_user)
+
+    assert [app.slug for app in apps] == ["refreshable"]
+    assert connector_connection_service.is_usable(connections["dead"]) is False
+
+
+@pytest.mark.asyncio
+async def test_tool_discovery_caches_last_known_tools_on_the_connection(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="expired-oauth",
+        name="Expired OAuth",
+        auth_type="oauth2",
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug=app.slug,
+        user_id=test_user.id,
+        access_token="access-token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+
+    class Tool:
+        name = "search"
+        title = "Search"
+        description = "Search records"
+        inputSchema = {"type": "object", "properties": {}}
+        annotations = None
+
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_connected_apps",
+        lambda _db, _user: ([app], {}),
+    )
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_upstream_tools",
+        AsyncMock(return_value=[Tool()]),
+    )
+
+    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    assert [tool.name for tool in tools] == ["expired-oauth__search"]
+    stored = connector_connection_service.get(
+        test_db, slug=app.slug, user_id=test_user.id
+    )
+    assert stored is not None
+    assert stored.tool_summaries == [
+        {
+            "name": "expired-oauth__search",
+            "title": "Search",
+            "description": "Search records",
+            "rawToolName": "search",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+    ]
+
+    connector_connection_service.disconnect(
+        test_db, slug=app.slug, user_id=test_user.id
+    )
+    disconnected = connector_connection_service.get(
+        test_db, slug=app.slug, user_id=test_user.id
+    )
+    assert disconnected is None
+
+
+@pytest.mark.asyncio
+async def test_fresh_tool_cache_skips_upstream_discovery(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _create_app(
+        test_db, test_admin_user, slug="cached", name="Cached", auth_type="oauth2"
+    )
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="cached",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    connector_connection_service.save_tool_summaries(
+        test_db,
+        connection,
+        [
+            {
+                "name": "cached__search",
+                "title": "Search",
+                "description": "Cached tool",
+                "rawToolName": "search",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                },
+            }
+        ],
+    )
+
+    async def unexpected(*_args, **_kwargs):
+        raise AssertionError("fresh cache must not hit the upstream")
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", unexpected)
+
+    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    assert [tool.name for tool in tools] == ["cached__search"]
+    assert tools[0].input_schema["properties"]["q"]["type"] == "string"
+    assert app.slug == "cached"
+
+
+@pytest.mark.asyncio
+async def test_stale_tool_cache_rediscovers(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(
+        test_db, test_admin_user, slug="stale", name="Stale", auth_type="oauth2"
+    )
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="stale",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    connector_connection_service.save_tool_summaries(
+        test_db, connection, [{"name": "stale__old", "rawToolName": "old"}]
+    )
+    payload = dict(connection.row.json)
+    payload["spec"] = {
+        **payload["spec"],
+        "toolsDiscoveredAt": "2020-01-01T00:00:00+00:00",
+    }
+    connection.row.json = payload
+    test_db.commit()
+
+    class Tool:
+        name = "fresh"
+        title = "Fresh"
+        description = ""
+        inputSchema = {"type": "object", "properties": {}}
+        annotations = None
+
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_upstream_tools",
+        AsyncMock(return_value=[Tool()]),
+    )
+
+    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    assert [tool.name for tool in tools] == ["stale__fresh"]
+
+
+@pytest.mark.asyncio
+async def test_tool_call_skips_listing_for_a_known_cached_tool(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(
+        test_db, test_admin_user, slug="known", name="Known", auth_type="oauth2"
+    )
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="known",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    connector_connection_service.save_tool_summaries(
+        test_db, connection, [{"name": "known__search", "rawToolName": "search"}]
+    )
+    session = SimpleNamespace(
+        list_tools=AsyncMock(side_effect=AssertionError("must not list tools")),
+        call_tool=AsyncMock(
+            return_value=SimpleNamespace(
+                content=[], structuredContent=None, isError=False
+            )
+        ),
+    )
+
+    @asynccontextmanager
+    async def fake_session(_: dict):
+        yield session
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", fake_session)
+
+    await ConnectorRuntimeService.call_tool(test_db, test_user, "known__search", {})
+
+    session.call_tool.assert_awaited_once_with("search", {})
+
+
+def test_coerces_scalar_arguments_to_declared_schema_types() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "size": {"type": "string"},
+            "cursor": {"type": "string"},
+            "limit": {"type": "integer"},
+            "score": {"type": "number"},
+            "active": {"type": "boolean"},
+            "tags": {"type": "array"},
+        },
+    }
+
+    assert ConnectorRuntimeService._coerce_arguments_to_schema(
+        schema,
+        {
+            "size": 20,
+            "cursor": 0,
+            "limit": "5",
+            "score": "1.5",
+            "active": "true",
+            "tags": [1],
+            "unknown": 7,
+        },
+    ) == {
+        "size": "20",
+        "cursor": "0",
+        "limit": 5,
+        "score": 1.5,
+        "active": True,
+        "tags": [1],
+        "unknown": 7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_tool_coerces_arguments_using_the_cached_schema(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(test_db, test_admin_user, slug="todo", name="Todo", auth_type="oauth2")
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="todo",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    connector_connection_service.save_tool_summaries(
+        test_db,
+        connection,
+        [
+            {
+                "name": "todo__get_user_todos_in_current_org",
+                "rawToolName": "get_user_todos_in_current_org",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "cursor": {"type": "string"},
+                        "size": {"type": "string"},
+                    },
+                },
+            }
+        ],
+    )
+    session = SimpleNamespace(
+        list_tools=AsyncMock(side_effect=AssertionError("must not list tools")),
+        call_tool=AsyncMock(
+            return_value=SimpleNamespace(
+                content=[], structuredContent=None, isError=False
+            )
+        ),
+    )
+
+    @asynccontextmanager
+    async def fake_session(_: dict):
+        yield session
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", fake_session)
+
+    await ConnectorRuntimeService.call_tool(
+        test_db,
+        test_user,
+        "todo__get_user_todos_in_current_org",
+        {"cursor": 0, "size": 20},
+    )
+
+    session.call_tool.assert_awaited_once_with(
+        "get_user_todos_in_current_org", {"cursor": "0", "size": "20"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_discovery_failure_records_a_retryable_upstream_error(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(
+        test_db, test_admin_user, slug="flaky", name="Flaky", auth_type="oauth2"
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="flaky",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_upstream_tools",
+        AsyncMock(side_effect=HTTPException(502, "upstream unavailable")),
+    )
+
+    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    assert tools == []
+    connection = connector_connection_service.get(
+        test_db, slug="flaky", user_id=test_user.id
+    )
+    assert connection is not None
+    # Authorization is intact: only the upstream failed.
+    assert connection.status == "connected"
+    assert connection.last_error and "502" in connection.last_error
+    response = connector_connection_service.response(connection)
+    assert response.status == "connected"
+    assert response.last_error
+
+
+@pytest.mark.asyncio
+async def test_successful_discovery_clears_the_previous_error(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(
+        test_db, test_admin_user, slug="recovered", name="Recovered", auth_type="oauth2"
+    )
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="recovered",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    connector_connection_service.record_tool_error(test_db, connection, "boom")
+
+    class Tool:
+        name = "search"
+        title = "Search"
+        description = ""
+        inputSchema = {"type": "object", "properties": {}}
+        annotations = None
+
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_upstream_tools",
+        AsyncMock(return_value=[Tool()]),
+    )
+
+    await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    refreshed = connector_connection_service.get(
+        test_db, slug="recovered", user_id=test_user.id
+    )
+    assert refreshed is not None
+    assert refreshed.last_error is None
+
+
+@pytest.mark.asyncio
 async def test_tool_discovery_isolates_an_unavailable_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -135,12 +681,17 @@ async def test_tool_discovery_isolates_an_unavailable_app(
     monkeypatch.setattr(
         ConnectorRuntimeService,
         "_connected_apps",
-        lambda _db, _user: [unavailable, healthy],
+        lambda _db, _user: ([unavailable, healthy], {}),
     )
     monkeypatch.setattr(
         ConnectorRuntimeService,
         "_upstream_tools",
         upstream_tools,
+    )
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_cache_tool_summaries",
+        AsyncMock(),
     )
 
     tools = await ConnectorRuntimeService.list_tools(object(), user)
@@ -226,12 +777,20 @@ async def test_mcp_session_initializes_streamable_http_transport(
     ):
         pass
 
-    assert observed["transport"] == {
+    transport_kwargs = dict(observed["transport"])
+    factory = transport_kwargs.pop("httpx_client_factory")
+    assert transport_kwargs == {
         "url": "https://mcp.example.test/tools",
         "headers": {"Authorization": "Bearer secret"},
         "timeout": 30,
         "sse_read_timeout": 180,
     }
+    client = factory()
+    assert isinstance(client, httpx.AsyncClient)
+    assert client.trust_env is False
+    assert isinstance(client._transport, httpx.AsyncHTTPTransport)
+    assert client._transport._pool._retries == CONNECTOR_CONNECT_RETRIES
+    await client.aclose()
     assert observed["session"] == ("read-stream", "write-stream", 180.0)
     assert observed["initialized"] is True
 
@@ -332,6 +891,186 @@ async def test_call_preserves_mcp_content_and_error_state(
     assert structured_content == {"ticket": {"id": "T-1"}}
     assert is_error is True
     session.call_tool.assert_awaited_once_with("search", {"query": "T-1"})
+
+
+@pytest.mark.asyncio
+async def test_call_tool_surfaces_upstream_auth_error_as_401(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="tickets",
+        name="Tickets",
+        auth_type="oauth2",
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="tickets",
+        user_id=test_user.id,
+        access_token="stale-token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    tool = SimpleNamespace(name="search")
+    session = SimpleNamespace(
+        list_tools=AsyncMock(
+            return_value=SimpleNamespace(tools=[tool], nextCursor=None)
+        ),
+        call_tool=AsyncMock(side_effect=RuntimeError("upstream returned 401")),
+    )
+
+    @asynccontextmanager
+    async def fake_session(_: dict):
+        yield session
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", fake_session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ConnectorRuntimeService.call_tool(
+            test_db, test_user, "tickets__search", {}
+        )
+
+    assert exc_info.value.status_code == 401
+    connection = connector_connection_service.get(
+        test_db, slug="tickets", user_id=test_user.id
+    )
+    assert connection is not None
+    assert connection.status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_undecryptable_token_reports_configuration_error(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+) -> None:
+    """A token written under a different key is an environment fault."""
+    app = _app(slug="tickets", auth_type="oauth2")
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="tickets",
+        user_id=test_user.id,
+        access_token="issued-elsewhere",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    stored = dict(connection.row.json)
+    stored["spec"] = {
+        **stored["spec"],
+        "accessTokenEncrypted": "bm90LWEtcmVhbC1jaXBoZXJ0ZXh0LXBhZGRpbmc=",
+    }
+    connection.row.json = stored
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ConnectorRuntimeService._server_config(test_db, app, test_user)
+
+    assert exc_info.value.status_code == 503
+    assert "cannot be decrypted" in exc_info.value.detail
+    # The stored grant is intact: the key configuration is what is wrong.
+    refreshed = connector_connection_service.get(
+        test_db, slug="tickets", user_id=test_user.id
+    )
+    assert refreshed is not None
+    assert refreshed.status == "connected"
+
+
+def test_undecryptable_refresh_token_is_treated_as_missing(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """Only a decryptable refresh token may reach the token endpoint."""
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="tickets",
+        user_id=test_user.id,
+        access_token="issued-here",
+        refresh_token="refresh-issued-here",
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    assert connection.refresh_token() == "refresh-issued-here"
+
+    stored = dict(connection.row.json)
+    stored["spec"] = {
+        **stored["spec"],
+        "refreshTokenEncrypted": "bm90LWEtcmVhbC1jaXBoZXJ0ZXh0LXBhZGRpbmc=",
+    }
+    connection.row.json = stored
+    test_db.commit()
+
+    refreshed = connector_connection_service.get(
+        test_db, slug="tickets", user_id=test_user.id
+    )
+    assert refreshed is not None
+    assert refreshed.access_token() == "issued-here"
+    assert refreshed.refresh_token() is None
+
+
+@pytest.mark.asyncio
+async def test_discovery_maps_transport_auth_error_to_401(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP raises through an ExceptionGroup, so the 401 hides one level down."""
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="tickets",
+        name="Tickets",
+        auth_type="oauth2",
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="tickets",
+        user_id=test_user.id,
+        access_token="stale-token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    request = httpx.Request("POST", "https://mcp.example.test/tickets")
+    upstream_error = httpx.HTTPStatusError(
+        "Client error '401 Unauthorized'",
+        request=request,
+        response=httpx.Response(401, request=request),
+    )
+    grouped = _exception_group(
+        "unhandled errors in a TaskGroup (1 sub-exception)", upstream_error
+    )
+
+    @asynccontextmanager
+    async def failing_session(_: dict):
+        raise grouped
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", failing_session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ConnectorRuntimeService._upstream_tools(test_db, app, test_user)
+
+    assert exc_info.value.status_code == 401
+    connection = connector_connection_service.get(
+        test_db, slug="tickets", user_id=test_user.id
+    )
+    assert connection is not None
+    assert connection.status == "expired"
 
 
 @pytest.mark.asyncio

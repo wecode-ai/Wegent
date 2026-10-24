@@ -84,7 +84,13 @@ async def test_connector_tool(
         else f"{app.slug}__{payload.name}"
     )
     content, structured_content, is_error = await connector_runtime_service.call_tool(
-        db, admin, tool_name, payload.arguments
+        db,
+        admin,
+        tool_name,
+        payload.arguments,
+        # Admins validate catalog apps, including ones restricted to roles they
+        # do not hold.
+        enforce_visibility=False,
     )
     return ConnectorToolCallResponse(
         content=content,
@@ -107,11 +113,11 @@ def update_connector_app(
 
 
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
-def disable_connector_app(
+def delete_connector_app(
     app_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ) -> Response:
     app = connector_app_service.get_app(db, app_id)
-    connector_app_service.disable_app(db, app)
+    connector_app_service.delete_app(db, app)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

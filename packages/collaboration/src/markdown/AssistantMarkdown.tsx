@@ -17,6 +17,7 @@ import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
   isHtmlFilePath,
+  toDingTalkClientUrl,
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -492,6 +493,9 @@ function AssistantMarkdownLink({
 }) {
   const { openExternalUrl, navigateTo, openHtmlFile } = useMarkdownServices()
   const target = classifyMarkdownLink(href)
+  // DingTalk mini-app pages only render inside the DingTalk client, so hand the
+  // original page URL to the client protocol instead of a browser tab.
+  const externalHref = href ? (toDingTalkClientUrl(href) ?? href) : href
   const icon =
     target.kind === 'file' ? (
       target.isDirectory ? (
@@ -575,7 +579,7 @@ function AssistantMarkdownLink({
 
   return (
     <a
-      href={href}
+      href={externalHref}
       target="_blank"
       rel="noopener noreferrer"
       className={ASSISTANT_MARKDOWN_LINK_CLASS}
@@ -583,8 +587,8 @@ function AssistantMarkdownLink({
       onClick={event => {
         event.preventDefault()
         event.stopPropagation()
-        if (!href) return
-        void Promise.resolve(openExternalUrl(href)).catch(error => {
+        if (!externalHref) return
+        void Promise.resolve(openExternalUrl(externalHref)).catch(error => {
           console.error('[Wework] Failed to open assistant link', {
             error: error instanceof Error ? error.name : typeof error,
           })

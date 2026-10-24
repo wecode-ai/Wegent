@@ -280,6 +280,10 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
     CONNECTOR_OAUTH_STATE_SECRET: str = ""
     CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
+    CONNECTOR_OAUTH_REDIRECT_URI: str = (
+        "http://localhost:8000/api/connector-apps/oauth/callback"
+    )
+
     # User-level MCP OAuth for provider servers such as DingTalk. These servers
     # expose RFC 9728 protected-resource metadata and an RFC 8414 authorization
     # server, so the platform authorizes and refreshes tokens on the user's behalf.
@@ -599,6 +603,9 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
     BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
+    # Create the built-in DingTalk connector apps on startup when missing.
+    # Deleting a built-in app removes its row, so the next bootstrap recreates it.
+    CONNECTOR_BUILTIN_APPS_ENABLED: bool = True
 
     # Default headers forwarded to the model backend on every LLM call.
     # Keys are sent verbatim as HTTP headers (resolved by model_resolver against

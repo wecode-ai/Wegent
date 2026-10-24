@@ -352,6 +352,29 @@ async def _application_lifespan(app: FastAPI):
             finally:
                 db.close()
 
+            # Step 4: Backfill built-in connector apps with vendor-fixed URLs.
+            if settings.CONNECTOR_BUILTIN_APPS_ENABLED:
+                logger.info("Starting built-in connector app initialization...")
+                db = SessionLocal()
+                try:
+                    from app.services.connector_builtin_apps import (
+                        ensure_builtin_connector_apps,
+                    )
+
+                    created_apps = ensure_builtin_connector_apps(db)
+                    logger.info(
+                        "✓ Built-in connector app initialization completed: created=%s",
+                        created_apps,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "✗ Failed to initialize built-in connector apps: %s",
+                        e,
+                        exc_info=True,
+                    )
+                finally:
+                    db.close()
+
         except Exception as e:
             logger.error(f"✗ Startup initialization failed: {e}")
             # Re-raise the exception to terminate startup

@@ -12,7 +12,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 
 import json
 import logging
-from typing import Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -64,6 +64,9 @@ from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
 from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
+
+if TYPE_CHECKING:  # The connector services import this module's dependencies.
+    from app.services.connector_apps import ConnectorApp
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
@@ -444,6 +447,37 @@ class TaskRequestBuilder:
         # Generate task-scoped identities before finalizing MCP capabilities.
         auth_token = self._generate_auth_token(task, subtask, user)
         skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
+        (
+            connector_skills,
+            connector_preload_skills,
+            matched_lazy_connector_slugs,
+        ) = self._connector_skill_configs(
+            bot=bot,
+            user=user,
+            auth_token=auth_token,
+            message=message,
+        )
+        if connector_skills:
+            resolved_skills = [*resolved_skills, *connector_skills]
+            for skill_name in connector_preload_skills:
+                if skill_name not in resolved_preload_skills:
+                    resolved_preload_skills.append(skill_name)
+                if skill_name not in resolved_user_selected:
+                    resolved_user_selected.append(skill_name)
+            logger.info(
+                "[TaskRequestBuilder] Added %d lazy connector skill(s): %s; preloaded=%s",
+                len(connector_skills),
+                [skill["name"] for skill in connector_skills],
+                connector_preload_skills,
+            )
+
+        # Coding shells read MCP servers from the Bot config, so authorized
+        # connector apps are attached there unless a device executor already
+        # exposes its local ``wegent_apps`` proxy.
+        has_local_device = bool(
+            self._extract_task_device_id(task)
+            or (workspace.get("project") or {}).get("device_id")
+        )
 
         managed_mcp_config: dict[str, dict] = {}
         if include_wework_space_mcp:
@@ -480,6 +514,13 @@ class TaskRequestBuilder:
                     self._merge_coordinate_capabilities_into_leader(bot_config)
                     self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
                 self._prepare_mcp_for_coding_executor(bot_config[0], resolved_skills)
+                if not has_local_device:
+                    self._attach_connector_mcp_for_coding_shell(
+                        bot_config[0],
+                        user=user,
+                        auth_token=auth_token,
+                        message=message,
+                    )
 
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
@@ -488,6 +529,7 @@ class TaskRequestBuilder:
             user=user,
             is_subscription=is_subscription,
             auth_token=auth_token,
+            matched_lazy_connector_slugs=matched_lazy_connector_slugs,
         )
         if managed_mcp_config:
             managed_servers = []
@@ -541,7 +583,6 @@ class TaskRequestBuilder:
                 workspace_source=project_workspace.get("workspace_source"),
                 workspace_path=project_workspace.get("project_workspace_path"),
             )
-
         request_project_id = _first_present_project_id(
             project_workspace.get("project_id"), task.project_id
         )
@@ -2011,7 +2052,45 @@ class TaskRequestBuilder:
         )
         if runtime_service:
             provider, service = runtime_service
-            if provider["configuration_mode"] == "user":
+            if service.get("connector_slug"):
+                # Connector-managed services normally run through the
+                # `wegent-connectors` bridge, but historical users may still
+                # hold a personal Streamable HTTP URL (API key mode). Keep that
+                # configuration working instead of forcing a re-authorization.
+                configured_server = None
+                connector_connected = False
+                if user:
+                    configured_server = user_mcp_service.get_enabled_mcp_server(
+                        getattr(user, "preferences", None),
+                        provider["provider_id"],
+                        service["service_id"],
+                    )
+                user_id = getattr(user, "id", None)
+                if user_id is not None:
+                    from app.services.connector_connections import (
+                        connector_connection_service,
+                    )
+
+                    connection = connector_connection_service.get(
+                        self.db,
+                        slug=str(service["connector_slug"]),
+                        user_id=user_id,
+                    )
+                    connector_connected = connector_connection_service.is_usable(
+                        connection
+                    )
+                # Once the connector app is authorized it owns the tool surface;
+                # keeping both paths would expose every tool twice.
+                if not configured_server or connector_connected:
+                    skill_data.pop("mcpServers", None)
+                elif user:
+                    self._apply_user_mcp_oauth_header(
+                        skill_data,
+                        user=user,
+                        provider_id=provider["provider_id"],
+                        service=service,
+                    )
+            elif provider["configuration_mode"] == "user":
                 configured_server = None
                 if user:
                     configured_server = user_mcp_service.get_enabled_mcp_server(
@@ -2415,6 +2494,7 @@ class TaskRequestBuilder:
         user: User,
         is_subscription: bool = False,
         auth_token: str = "",
+        matched_lazy_connector_slugs: list[str] | None = None,
     ) -> list[dict]:
         """Build MCP servers configuration.
 
@@ -2437,6 +2517,7 @@ class TaskRequestBuilder:
             team: Team Kind object
             is_subscription: Whether this is a subscription task
             auth_token: Authentication token for MCP server
+            matched_lazy_connector_slugs: Lazy apps matched by message keywords
 
         Returns:
             List of MCP server configuration dictionaries
@@ -2511,16 +2592,280 @@ class TaskRequestBuilder:
 
         merged_servers = list(servers_by_name.values())
 
+        connector_servers = self._connector_mcp_servers(
+            bot=bot,
+            user=user,
+            auth_token=auth_token,
+            matched_lazy_connector_slugs=matched_lazy_connector_slugs,
+        )
+        if connector_servers:
+            merged_servers.extend(connector_servers)
+
         if merged_servers:
             logger.info(
-                "[TaskRequestBuilder] Built %d MCP servers (system=%d, bot=%d): %s",
+                "[TaskRequestBuilder] Built %d MCP servers (system=%d, bot=%d, connector=%d): %s",
                 len(merged_servers),
                 len(system_mcp_servers),
                 len(bot_mcp_servers),
+                len(connector_servers),
                 [s["name"] for s in merged_servers],
             )
 
         return merged_servers
+
+    def _connector_mcp_servers(
+        self,
+        *,
+        bot: Kind,
+        user: User,
+        auth_token: str,
+        matched_lazy_connector_slugs: list[str] | None = None,
+    ) -> list[dict]:
+        """Expose authorized connector apps through the backend MCP endpoint.
+
+        Only the Chat shell uses this bridge. Coding shells read their MCP
+        servers from the per-Bot config, where HTTP headers survive the
+        executor normalization.
+        """
+        if not auth_token or not self._bot_uses_chat_shell(bot):
+            return []
+        from app.mcp_server.server import get_mcp_connectors_config
+
+        backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+        result: list[dict] = []
+        if self._user_has_callable_connectors(user):
+            config = get_mcp_connectors_config(backend_url, auth_token)
+            for server_name, server_config in config.items():
+                entry = {
+                    "name": server_name,
+                    "url": server_config.get("url", ""),
+                    "type": server_config.get("type", "streamable-http"),
+                }
+                if "headers" in server_config:
+                    entry["auth"] = server_config["headers"]
+                result.append(entry)
+
+        for slug in dict.fromkeys(matched_lazy_connector_slugs or []):
+            result.append(
+                {
+                    "name": f"wegent-connector-{slug}",
+                    "url": f"{backend_url}/mcp/connectors/sse",
+                    "type": "streamable-http",
+                    "auth": {
+                        "Authorization": f"Bearer {auth_token}",
+                        "X-Connector-App": slug,
+                    },
+                    "timeout": 180,
+                }
+            )
+        if result:
+            logger.info(
+                "[TaskRequestBuilder] Injected connector MCP servers for user %s: %s",
+                user.id,
+                [server["name"] for server in result],
+            )
+        return result
+
+    @staticmethod
+    def _bot_uses_chat_shell(bot: Kind) -> bool:
+        payload = getattr(bot, "json", None)
+        if not isinstance(payload, dict):
+            return False
+        try:
+            bot_crd = Bot.model_validate(payload)
+        except Exception:
+            return False
+        shell_ref = bot_crd.spec.shellRef if bot_crd.spec else None
+        return (getattr(shell_ref, "name", "") or "") == "Chat"
+
+    def _user_has_callable_connectors(self, user: User) -> bool:
+        """Whether the user has at least one static connector app."""
+        try:
+            from app.services.connector_apps import connector_app_service
+
+            available, _ = connector_app_service.split_by_availability(self.db, user)
+            static_apps, _ = connector_app_service.split_by_loading_mode(available)
+            return bool(static_apps)
+        except Exception:
+            logger.exception(
+                "[TaskRequestBuilder] Failed to resolve connector apps for user %s",
+                user.id,
+            )
+            return False
+
+    def _connector_skill_configs(
+        self,
+        *,
+        bot: Kind,
+        user: User,
+        auth_token: str,
+        message: Union[str, list] = "",
+    ) -> tuple[list[dict], list[str], list[str]]:
+        """Build lazy Skill configs for connector apps using skill loading.
+
+        Chat Shell already knows how to defer an inactive Skill's MCP server
+        until ``load_skill`` is called. Reusing that path keeps the static
+        ``wegent-connectors`` MCP limited to static apps while exposing lazy
+        apps through the normal Skill catalog. Lazy apps whose admin keywords
+        match the user message are preloaded so their MCP is ready immediately.
+        """
+        if not auth_token or not self._bot_uses_chat_shell(bot):
+            return [], [], []
+        from app.services.execution.connector_guidance import (
+            connector_authorization_link,
+        )
+
+        skill_apps = self._authorized_lazy_connector_apps(user)
+        if not skill_apps:
+            return [], [], []
+
+        backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+        prompt_text = self._extract_prompt_text(message).casefold()
+        configs: list[dict] = []
+        preload: list[str] = []
+        matched_slugs: list[str] = []
+        for app in skill_apps:
+            skill_name = f"wegent-connector-{app.slug}"
+            description = f"Use the administrator-managed {app.name} connector app."
+            if app.description:
+                description = f"{description} {app.description}"
+            authorization_link = connector_authorization_link(app.slug)
+            matched = self._connector_keywords_match(prompt_text, app.keywords)
+            config = {
+                "name": skill_name,
+                "displayName": app.name,
+                "description": description,
+                "prompt": (
+                    f"# Connector app: {app.name}\n\n"
+                    f"Use this connector only when the task needs {app.name}. "
+                    f"Its tools are the ones exposed for `{app.slug}`; use the "
+                    f"tool list instead of assuming an exact name. Pass every "
+                    "argument with the JSON type declared in the tool's input "
+                    "schema; never send a number for a string field.\n\n"
+                    "Authentication is managed by Wegent. Never request or expose "
+                    "credentials. If a tool reports `connector_auth_required`, "
+                    "tell the user to re-authorize with "
+                    f"[打开 {app.name} 授权]({authorization_link}). "
+                    "This also applies when the tool list is empty or a tool is "
+                    "missing: always give that link and never describe the "
+                    "failure as a temporary connection or session problem."
+                ),
+            }
+            if not matched:
+                config["mcpServers"] = {
+                    skill_name: {
+                        "type": "streamable-http",
+                        "url": f"{backend_url}/mcp/connectors/sse",
+                        "headers": {
+                            "Authorization": f"Bearer {auth_token}",
+                            "X-Connector-App": app.slug,
+                        },
+                        "timeout": 180,
+                    }
+                }
+            configs.append(config)
+            if matched:
+                preload.append(skill_name)
+                matched_slugs.append(app.slug)
+        return configs, preload, matched_slugs
+
+    def _authorized_lazy_connector_apps(self, user: User) -> List["ConnectorApp"]:
+        """Return the caller's authorized apps that load their tools on demand."""
+        try:
+            from app.services.connector_apps import connector_app_service
+
+            available, _ = connector_app_service.split_by_availability(self.db, user)
+            _, skill_apps = connector_app_service.split_by_loading_mode(available)
+            return skill_apps
+        except Exception:
+            logger.exception(
+                "[TaskRequestBuilder] Failed to resolve lazy connector apps for user %s",
+                user.id,
+            )
+            return []
+
+    def _attach_connector_mcp_for_coding_shell(
+        self,
+        bot_config: dict,
+        *,
+        user: User,
+        auth_token: str,
+        message: Union[str, list],
+    ) -> None:
+        """Give cloud coding shells the connector MCP servers they can reach.
+
+        Coding executors read MCP servers from the Bot config and keep their
+        HTTP ``headers``; the top-level ``mcp_servers`` contract carries
+        ``auth``, which executor normalization drops.
+        """
+        if not auth_token:
+            return
+        servers = self._coding_shell_connector_servers(
+            user=user, auth_token=auth_token, message=message
+        )
+        if not servers:
+            return
+        existing = bot_config.get("mcp_servers") or []
+        existing_names = {
+            server.get("name") for server in existing if isinstance(server, dict)
+        }
+        bot_config["mcp_servers"] = [
+            *existing,
+            *(server for server in servers if server["name"] not in existing_names),
+        ]
+        # Reuse the coding-shell normalization so Claude Code sees "http".
+        self._prepare_mcp_for_coding_executor(bot_config, [])
+        logger.info(
+            "[TaskRequestBuilder] Attached %d connector MCP server(s) for coding "
+            "shell: %s",
+            len(servers),
+            [server["name"] for server in servers],
+        )
+
+    def _coding_shell_connector_servers(
+        self, *, user: User, auth_token: str, message: Union[str, list]
+    ) -> list[dict]:
+        """Scoped connector MCP entries for coding shells without a local proxy.
+
+        Placeholders match the runtime Skill pattern, so the executor resolves
+        the backend URL and task token for its own network position.
+        """
+        headers = {"Authorization": "Bearer ${{task_token}}"}
+        connector_url = "${{backend_url}}/mcp/connectors/sse"
+        servers: list[dict] = []
+        if self._user_has_callable_connectors(user):
+            servers.append(
+                {
+                    "name": "wegent-connectors",
+                    "type": "streamable-http",
+                    "url": connector_url,
+                    "headers": dict(headers),
+                    "timeout": 180,
+                }
+            )
+        prompt_text = self._extract_prompt_text(message).casefold()
+        for app in self._authorized_lazy_connector_apps(user):
+            if not self._connector_keywords_match(prompt_text, app.keywords):
+                continue
+            servers.append(
+                {
+                    "name": f"wegent-connector-{app.slug}",
+                    "type": "streamable-http",
+                    "url": connector_url,
+                    "headers": {**headers, "X-Connector-App": app.slug},
+                    "timeout": 180,
+                }
+            )
+        return servers
+
+    @staticmethod
+    def _connector_keywords_match(text: str, keywords: list[str]) -> bool:
+        """Match one keyword phrase; spaces require every term to be present."""
+        for keyword in keywords or []:
+            terms = [term for term in keyword.casefold().split() if term]
+            if terms and all(term in text for term in terms):
+                return True
+        return False
 
     @staticmethod
     def _extract_prompt_text(message: Union[str, list]) -> str:

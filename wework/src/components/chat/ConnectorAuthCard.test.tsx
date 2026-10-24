@@ -22,7 +22,22 @@ vi.mock('@/api/local/localConnectorAuth', async importOriginal => {
   }
 })
 
-import { ConnectorAuthCard } from './ConnectorAuthCard'
+const cloudMocks = vi.hoisted(() => ({ authorize: vi.fn(), open: vi.fn() }))
+
+vi.mock('@/api/cloud/connectorApps', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/cloud/connectorApps')>()
+  return {
+    ...actual,
+    authorizeWegentConnector: cloudMocks.authorize,
+    notifyConnectorAuthorizationChanged: vi.fn(),
+  }
+})
+
+vi.mock('@/lib/cloud-authorization-window', () => ({
+  openCloudAuthorizationWindow: cloudMocks.open,
+}))
+
+import { CloudConnectorAuthCard, ConnectorAuthCard } from './ConnectorAuthCard'
 import { GITHUB_CLI_TARGET } from '@/api/local/githubCli'
 import type { LocalConnectorAuthResult } from '@/api/local/localConnectorAuth'
 
@@ -212,6 +227,57 @@ describe('ConnectorAuthCard browser oauth', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/gh/))
     fireEvent.click(screen.getByTestId('connector-auth-retry'))
     await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+})
+
+describe('CloudConnectorAuthCard', () => {
+  beforeEach(() => {
+    authMocks.start.mockReset()
+    cloudMocks.authorize.mockReset()
+    cloudMocks.open.mockReset()
+  })
+
+  test('authorizes the connector app and reports success', async () => {
+    cloudMocks.authorize.mockResolvedValue({ status: 'connected' })
+    const onSuccess = vi.fn()
+
+    render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl="https://wegent.test/api"
+        token="cloud-token"
+        onSuccess={onSuccess}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1))
+    expect(cloudMocks.authorize).toHaveBeenCalledWith(
+      'https://wegent.test/api',
+      'cloud-token',
+      'dingtalk_log',
+      cloudMocks.open
+    )
+  })
+
+  test('explains that the Wegent account must be connected first', async () => {
+    const onSuccess = vi.fn()
+
+    render(
+      <CloudConnectorAuthCard
+        slug="dingtalk_log"
+        apiBaseUrl={null}
+        token={null}
+        onSuccess={onSuccess}
+      />
+    )
+    fireEvent.click(screen.getByTestId('cloud-connector-auth-authorize'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connector-auth-error')).toBeInTheDocument()
+    )
+    expect(cloudMocks.authorize).not.toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
   })
 })

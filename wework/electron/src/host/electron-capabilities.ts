@@ -1006,7 +1006,9 @@ export function createElectronCapabilityRouter(
       desktopServices.openScheme(url.toString())
       return
     }
-    if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) {
+    // DingTalk mini-app links must reach the installed DingTalk client; the
+    // embedded browser renders those pages blank without its JSAPI bridge.
+    if (!['https:', 'http:', 'mailto:', 'dingtalk:'].includes(url.protocol)) {
       throw new HostCapabilityError(
         'invalid_external_url',
         `External URL protocol is not allowed: ${url.protocol}`

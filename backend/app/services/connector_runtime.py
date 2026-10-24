@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from asyncio import gather
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -25,6 +27,7 @@ from app.services.connector_apps import (
     ConnectorApp,
     ConnectorAppService,
     _decrypt_json,
+    create_connector_http_client,
 )
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_oauth import connector_oauth_service
@@ -32,6 +35,26 @@ from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 MAX_HTTP_RESPONSE_BYTES = 1_000_000
+# Tool surfaces rarely change; serving a cached copy keeps a chat turn from
+# paying one upstream MCP handshake per authorized app.
+TOOL_CACHE_TTL_SECONDS = 600
+
+
+def _exception_texts(error: BaseException, depth: int = 0) -> list[str]:
+    """Flatten one exception, its groups, and its causes into readable text."""
+    if depth > 8:
+        return []
+    texts = [f"{type(error).__name__}: {error}"]
+    # ``ExceptionGroup`` is built in only from Python 3.11; Python 3.10 may
+    # provide the backported type, so duck-type the nested exceptions instead.
+    children = getattr(error, "exceptions", None)
+    if isinstance(children, (list, tuple)):
+        for item in children:
+            texts.extend(_exception_texts(item, depth + 1))
+    cause = error.__cause__ or error.__context__
+    if cause is not None and cause is not error:
+        texts.extend(_exception_texts(cause, depth + 1))
+    return texts
 
 
 class ConnectorRuntimeService:
@@ -43,30 +66,261 @@ class ConnectorRuntimeService:
         "backend.connector",
         extract_attributes=lambda db, user: {"user.id": str(user.id)},
     )
-    async def list_tools(db: Session, user: User) -> list[ConnectorTool]:
+    async def list_tools(
+        db: Session,
+        user: User,
+        *,
+        app_slug: str | None = None,
+    ) -> list[ConnectorTool]:
+        if app_slug:
+            apps, connections = ConnectorRuntimeService._connected_apps(
+                db, user, app_slug=app_slug
+            )
+        else:
+            apps, connections = ConnectorRuntimeService._connected_apps(db, user)
+        if not apps:
+            return []
+
         tools: list[ConnectorTool] = []
-        for app in ConnectorRuntimeService._connected_apps(db, user):
+        pending: list[tuple[ConnectorApp, list[Any]]] = []
+        cached_count = 0
+        for app in apps:
             if app.transport == "http":
                 tools.extend(ConnectorRuntimeService._http_tools(app))
                 continue
-            try:
-                upstream_tools = await ConnectorRuntimeService._upstream_tools(
-                    db, app, user
-                )
-            except HTTPException as exc:
-                logger.warning(
-                    "Skipping unavailable connector '%s' during tool discovery: %s",
-                    app.slug,
-                    exc.detail,
-                )
-                continue
-            allowlist = set(app.tool_allowlist or [])
-            for tool in upstream_tools:
-                upstream_name = tool.name
-                if allowlist and upstream_name not in allowlist:
+            cached = ConnectorRuntimeService._cached_tools(
+                app, connections.get(app.slug)
+            )
+            if cached is None:
+                pending.append((app, []))
+            else:
+                cached_count += 1
+                tools.extend(cached)
+
+        if pending:
+            started_at = time.monotonic()
+            outcomes = await gather(
+                *(
+                    ConnectorRuntimeService._discover_tools(db, app, user)
+                    for app, _ in pending
+                ),
+                return_exceptions=True,
+            )
+            for (app, _), outcome in zip(pending, outcomes, strict=True):
+                if isinstance(outcome, BaseException):
+                    logger.warning(
+                        "Skipping unavailable connector '%s' during tool discovery "
+                        "(failure=%s): %s",
+                        app.slug,
+                        type(outcome).__name__,
+                        outcome,
+                    )
+                    if not ConnectorRuntimeService._is_auth_failure(outcome):
+                        connection = connections.get(app.slug)
+                        if connection is not None:
+                            connector_connection_service.record_tool_error(
+                                db,
+                                connection,
+                                " ".join(_exception_texts(outcome))[:500],
+                            )
                     continue
-                tools.append(ConnectorRuntimeService._tool_from_upstream(app, tool))
+                discovered = ConnectorRuntimeService._visible_tools(app, outcome)
+                tools.extend(discovered)
+                await ConnectorRuntimeService._cache_tool_summaries(
+                    db, app, user, discovered
+                )
+            logger.info(
+                "[ConnectorRuntime] user_id=%s apps=%d cached=%d discovered=%d "
+                "failed=%d duration_ms=%.1f",
+                user.id,
+                len(apps),
+                cached_count,
+                len(pending)
+                - sum(1 for item in outcomes if isinstance(item, BaseException)),
+                sum(1 for item in outcomes if isinstance(item, BaseException)),
+                (time.monotonic() - started_at) * 1000,
+            )
         return tools
+
+    @staticmethod
+    async def _discover_tools(db: Session, app: ConnectorApp, user: User) -> list[Any]:
+        return await ConnectorRuntimeService._upstream_tools(db, app, user)
+
+    @staticmethod
+    def _is_auth_failure(error: BaseException) -> bool:
+        return isinstance(error, HTTPException) and error.status_code in {401, 403}
+
+    @staticmethod
+    def _visible_tools(
+        app: ConnectorApp, upstream_tools: list[Any]
+    ) -> list[ConnectorTool]:
+        allowlist = set(app.tool_allowlist or [])
+        return [
+            ConnectorRuntimeService._tool_from_upstream(app, tool)
+            for tool in upstream_tools
+            if not allowlist or tool.name in allowlist
+        ]
+
+    @staticmethod
+    def _known_tool_names(db: Session, app: ConnectorApp, user: User) -> set[str]:
+        """Upstream tool names the cached surface already contains."""
+        connection = connector_connection_service.get(
+            db, slug=app.slug, user_id=user.id
+        )
+        if not connection:
+            return set()
+        return {
+            str(summary.get("rawToolName"))
+            for summary in connection.tool_summaries
+            if summary.get("rawToolName")
+        }
+
+    @staticmethod
+    def _cached_input_schema(
+        db: Session, app: ConnectorApp, user: User, raw_name: str
+    ) -> dict[str, Any] | None:
+        """Return the cached input schema for one upstream tool, if known."""
+        connection = connector_connection_service.get(
+            db, slug=app.slug, user_id=user.id
+        )
+        if connection is None:
+            return None
+        for summary in connection.tool_summaries:
+            if summary.get("rawToolName") == raw_name:
+                schema = summary.get("inputSchema")
+                return schema if isinstance(schema, dict) else None
+        return None
+
+    @staticmethod
+    def _coerce_arguments_to_schema(
+        schema: dict[str, Any] | None,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Align scalar arguments with the upstream JSON Schema types.
+
+        Models occasionally send ``20`` for a field the upstream declares as a
+        string, which the MCP server rejects before the tool runs.
+        """
+        if not isinstance(schema, dict) or not arguments:
+            return arguments
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            return arguments
+        coerced = dict(arguments)
+        for key, value in arguments.items():
+            prop = properties.get(key)
+            if not isinstance(prop, dict):
+                continue
+            expected = prop.get("type")
+            if isinstance(expected, list):
+                expected = next((item for item in expected if item != "null"), None)
+            if expected == "string" and isinstance(value, (int, float, bool)):
+                if value is True:
+                    coerced[key] = "true"
+                elif value is False:
+                    coerced[key] = "false"
+                else:
+                    coerced[key] = str(value)
+            elif expected == "integer" and isinstance(value, str):
+                try:
+                    coerced[key] = int(value.strip())
+                except ValueError:
+                    continue
+            elif expected == "number" and isinstance(value, str):
+                try:
+                    coerced[key] = float(value.strip())
+                except ValueError:
+                    continue
+            elif expected == "boolean" and isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {"true", "false"}:
+                    coerced[key] = lowered == "true"
+        return coerced
+
+    @staticmethod
+    def _cached_tools(app: ConnectorApp, connection: Any) -> list[ConnectorTool] | None:
+        """Return cached tools when they are still fresh, else ``None``."""
+        if connection is None or not connection.tool_summaries:
+            return None
+        discovered_at = connection.tools_discovered_at
+        if discovered_at is None:
+            return None
+        age = datetime.now(timezone.utc).replace(tzinfo=None) - discovered_at
+        if age > timedelta(seconds=TOOL_CACHE_TTL_SECONDS):
+            return None
+        allowlist = set(app.tool_allowlist or [])
+        tools: list[ConnectorTool] = []
+        for summary in connection.tool_summaries:
+            raw_name = str(summary.get("rawToolName") or "")
+            if not raw_name or (allowlist and raw_name not in allowlist):
+                continue
+            tools.append(
+                ConnectorTool(
+                    name=str(summary.get("name") or f"{app.slug}__{raw_name}"),
+                    title=summary.get("title"),
+                    description=str(summary.get("description") or ""),
+                    input_schema=summary.get("inputSchema")
+                    or {"type": "object", "properties": {}},
+                    connector_id=app.slug,
+                    connector_slug=app.slug,
+                    connector_name=app.name,
+                    raw_tool_name=raw_name,
+                    source_transport=app.transport or "streamable-http",
+                    app_id=app.id,
+                    app_slug=app.slug,
+                    app_name=app.name,
+                )
+            )
+        return tools
+
+    @staticmethod
+    async def refresh_tool_summary_cache(
+        db: Session,
+        app: ConnectorApp,
+        user: User,
+    ) -> None:
+        """Cache the current tool surface for later expired-connection views."""
+        if app.transport == "http":
+            app_tools = ConnectorRuntimeService._http_tools(app)
+        else:
+            config = await ConnectorRuntimeService._server_config(db, app, user)
+            async with ConnectorRuntimeService._mcp_session(config) as session:
+                upstream_tools = await ConnectorRuntimeService._list_all_tools(session)
+            allowlist = set(app.tool_allowlist or [])
+            app_tools = [
+                ConnectorRuntimeService._tool_from_upstream(app, tool)
+                for tool in upstream_tools
+                if not allowlist or tool.name in allowlist
+            ]
+        await ConnectorRuntimeService._cache_tool_summaries(db, app, user, app_tools)
+
+    @staticmethod
+    async def _cache_tool_summaries(
+        db: Session,
+        app: ConnectorApp,
+        user: User,
+        tools: list[ConnectorTool],
+    ) -> None:
+        connection = connector_connection_service.get(
+            db,
+            slug=app.slug,
+            user_id=user.id,
+        )
+        if not connection:
+            return
+        summaries = [
+            {
+                "name": tool.name,
+                "title": tool.title,
+                "description": tool.description,
+                "rawToolName": tool.raw_tool_name,
+                # Keep the schema so a cached surface can still drive tool calls.
+                "inputSchema": tool.input_schema,
+            }
+            for tool in tools
+        ]
+        if connection.tool_summaries != summaries:
+            connector_connection_service.save_tool_summaries(db, connection, summaries)
 
     @staticmethod
     @trace_async(
@@ -78,7 +332,12 @@ class ConnectorRuntimeService:
         },
     )
     async def call_tool(
-        db: Session, user: User, name: str, arguments: dict[str, Any]
+        db: Session,
+        user: User,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        enforce_visibility: bool = True,
     ) -> tuple[Any, dict[str, Any] | None, bool]:
         app_slug, separator, upstream_name = name.partition("__")
         if not separator or not app_slug or not upstream_name:
@@ -86,11 +345,19 @@ class ConnectorRuntimeService:
                 status.HTTP_400_BAD_REQUEST, "Invalid connector tool name"
             )
         app = ConnectorAppService.get_app_by_slug(db, app_slug)
-        visible_ids = {
-            item.id for item in ConnectorAppService.list_visible_apps(db, user)
-        }
-        if not app or app.id not in visible_ids:
+        if not app:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        # Administrators testing a catalog app are not necessarily inside its
+        # visibility rules, so the admin endpoint opts out of this gate. Every
+        # user-facing call keeps it.
+        if enforce_visibility:
+            visible_ids = {
+                item.id for item in ConnectorAppService.list_visible_apps(db, user)
+            }
+            if app.id not in visible_ids:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Connector app not found"
+                )
         allowlist = set(app.tool_allowlist or [])
         if allowlist and upstream_name not in allowlist:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")
@@ -103,13 +370,34 @@ class ConnectorRuntimeService:
                 config, definition, arguments
             )
         try:
+            schema = ConnectorRuntimeService._cached_input_schema(
+                db, app, user, upstream_name
+            )
             async with ConnectorRuntimeService._mcp_session(config) as session:
-                tool = await ConnectorRuntimeService._find_tool(session, upstream_name)
-                if not tool:
-                    raise HTTPException(
-                        status.HTTP_404_NOT_FOUND, "Connector tool not found"
+                # The cached surface already proved this tool exists, so skip a
+                # full tools/list round trip; only resolve unknown names.
+                tool_name = upstream_name
+                if upstream_name not in ConnectorRuntimeService._known_tool_names(
+                    db, app, user
+                ):
+                    tool = await ConnectorRuntimeService._find_tool(
+                        session, upstream_name
                     )
-                result = await session.call_tool(tool.name, arguments)
+                    if not tool:
+                        raise HTTPException(
+                            status.HTTP_404_NOT_FOUND, "Connector tool not found"
+                        )
+                    tool_name = tool.name
+                    schema = (
+                        ConnectorRuntimeService._model_dump(
+                            getattr(tool, "inputSchema", None)
+                        )
+                        or schema
+                    )
+                arguments = ConnectorRuntimeService._coerce_arguments_to_schema(
+                    schema, arguments
+                )
+                result = await session.call_tool(tool_name, arguments)
                 return (
                     ConnectorRuntimeService._json_safe(result.content),
                     ConnectorRuntimeService._json_safe(result.structuredContent),
@@ -118,11 +406,33 @@ class ConnectorRuntimeService:
         except HTTPException:
             raise
         except Exception as exc:
-            ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc)
+            logger.exception(
+                "Connector tool call failed for app '%s' tool '%s': %s",
+                app.slug,
+                upstream_name,
+                exc,
+            )
+            if ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' requires authorization",
+                ) from exc
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                "Connector tool execution failed",
+                ConnectorRuntimeService._tool_failure_detail(exc),
             ) from exc
+
+    @staticmethod
+    def _tool_failure_detail(error: Exception) -> str:
+        """Return a safe, actionable summary for an upstream tool failure."""
+        text = " ".join(_exception_texts(error)).casefold()
+        if "certificate_verify_failed" in text or "self-signed certificate" in text:
+            return "Connector upstream TLS certificate verification failed"
+        if "timeout" in text or "timed out" in text:
+            return "Connector upstream request timed out"
+        if "connecterror" in text or "all connection attempts failed" in text:
+            return "Connector upstream connection failed"
+        return "Connector tool execution failed"
 
     @staticmethod
     def _mark_expired_on_auth_error(
@@ -130,14 +440,20 @@ class ConnectorRuntimeService:
         app: ConnectorApp,
         user: User,
         error: Exception,
-    ) -> None:
+    ) -> bool:
+        """Mark the user's connection expired when the upstream rejected it.
+
+        MCP transports raise through an ``ExceptionGroup``, whose own message
+        carries no status code, so the whole exception tree has to be inspected
+        before deciding the failure is an authorization problem.
+        """
         if app.auth_type == "none":
-            return
-        message = str(error).lower()
+            return False
+        message = " ".join(_exception_texts(error)).lower()
         if not any(
             marker in message for marker in ("401", "403", "unauthorized", "forbidden")
         ):
-            return
+            return False
         connection = connector_connection_service.get(
             db,
             slug=app.slug,
@@ -145,22 +461,35 @@ class ConnectorRuntimeService:
         )
         if connection:
             connector_connection_service.set_status(db, connection, "expired")
+        return True
 
     @staticmethod
-    def _connected_apps(db: Session, user: User) -> list[ConnectorApp]:
+    def _connected_apps(
+        db: Session,
+        user: User,
+        *,
+        app_slug: str | None = None,
+    ) -> tuple[list[ConnectorApp], dict[str, Any]]:
+        """Return connected apps plus every stored connection in one read."""
+        connections = connector_connection_service.list_for_user(db, user_id=user.id)
         connected: list[ConnectorApp] = []
         for app in ConnectorAppService.list_visible_apps(db, user):
+            if app_slug:
+                if app.slug != app_slug:
+                    continue
+            elif app.tool_loading_mode != "static":
+                # The unscoped surface is the eager `wegent-connectors` MCP.
+                # Skill-loaded apps are only reachable through their scoped
+                # server after `load_skill` activates the app.
+                continue
             if app.auth_type == "none":
                 connected.append(app)
                 continue
-            connection = connector_connection_service.get(
-                db,
-                slug=app.slug,
-                user_id=user.id,
-            )
-            if connector_connection_service.response(connection).status == "connected":
+            connection = connections.get(app.slug)
+            if connector_connection_service.is_usable(connection):
+                # `_server_config` refreshes an expired grant before use.
                 connected.append(app)
-        return connected
+        return connected, connections
 
     @staticmethod
     def _http_tools(app: ConnectorApp) -> list[ConnectorTool]:
@@ -253,10 +582,23 @@ class ConnectorRuntimeService:
             config = await ConnectorRuntimeService._server_config(db, app, user)
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 return await ConnectorRuntimeService._list_all_tools(session)
+        except HTTPException:
+            raise
         except Exception as exc:
+            logger.exception(
+                "Failed to list tools for connector '%s': %s",
+                app.slug,
+                exc,
+            )
+            if ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' requires authorization",
+                ) from exc
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                f"Failed to list tools for connector '{app.slug}'",
+                f"Failed to list tools for connector '{app.slug}': "
+                f"{ConnectorRuntimeService._tool_failure_detail(exc)}",
             ) from exc
 
     @staticmethod
@@ -271,8 +613,8 @@ class ConnectorRuntimeService:
             config["url"], definition, arguments
         )
         try:
-            async with httpx.AsyncClient(
-                timeout=definition.timeout_seconds,
+            async with create_connector_http_client(
+                timeout=httpx.Timeout(definition.timeout_seconds),
                 follow_redirects=False,
             ) as client:
                 request = client.build_request(
@@ -404,13 +746,15 @@ class ConnectorRuntimeService:
         from mcp.client.streamable_http import streamablehttp_client
 
         transport = config["type"]
+        client_kwargs: dict[str, Any] = {
+            "url": config["url"],
+            "headers": config.get("headers") or None,
+            "timeout": 30,
+            "sse_read_timeout": 180,
+            "httpx_client_factory": create_connector_http_client,
+        }
         client = sse_client if transport == "sse" else streamablehttp_client
-        async with client(
-            url=config["url"],
-            headers=config.get("headers") or None,
-            timeout=30,
-            sse_read_timeout=180,
-        ) as streams:
+        async with client(**client_kwargs) as streams:
             read_stream, write_stream = streams[:2]
             async with ClientSession(
                 read_stream,
@@ -474,9 +818,21 @@ class ConnectorRuntimeService:
                 )
             access_token = connection.access_token()
             if not access_token:
+                if connection.access_token_encrypted:
+                    # The grant exists but the configured key cannot read it.
+                    # Re-authorizing would only paper over an environment
+                    # fault, so report it instead of asking for a new grant.
+                    # A 5xx also lets the caller record `lastError`, which is
+                    # what surfaces the problem in the connection UI.
+                    raise HTTPException(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        f"Connector '{app.slug}' credential cannot be decrypted: "
+                        "GIT_TOKEN_AES_KEY/GIT_TOKEN_AES_IV must match the "
+                        "configuration that stored it",
+                    )
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
-                    f"Connector '{app.slug}' authorization is unavailable",
+                    f"Connector '{app.slug}' requires authorization",
                 )
             headers["Authorization"] = f"Bearer {access_token}"
         if user:

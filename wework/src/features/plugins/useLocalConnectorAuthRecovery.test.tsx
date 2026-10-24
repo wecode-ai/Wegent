@@ -39,7 +39,12 @@ function deferred<T>() {
 function renderRecovery(messages = [authMessage], onResumeSend = vi.fn()) {
   return renderHook(
     ({ currentMessages, active }: { currentMessages: WorkbenchMessage[]; active: boolean }) =>
-      useLocalConnectorAuthRecovery({ messages: currentMessages, active, onResumeSend }),
+      useLocalConnectorAuthRecovery({
+        messages: currentMessages,
+        active,
+        onResumeSend,
+        cloudConnection: { apiBaseUrl: 'https://wegent.test/api', token: 'cloud-token' },
+      }),
     { initialProps: { currentMessages: messages, active: true } }
   )
 }
@@ -91,7 +96,6 @@ describe('authorization after plugin use', () => {
 
   test.each([
     '请登录后重试。',
-    'connector_auth_required\nconnectorSlug=weibo-wiki',
     'connector_auth_required\npluginKey=weibo-api-wiki',
     '插件无法连接\npluginKey=weibo-api-wiki\nconnectorSlug=weibo-wiki',
   ])('does not guess an authorization target from %s', content => {
@@ -99,6 +103,23 @@ describe('authorization after plugin use', () => {
 
     expect(mocks.health).not.toHaveBeenCalled()
     expect(result.current.pending).toBeNull()
+  })
+
+  test('opens the cloud authorization card for a slug-only connector request', async () => {
+    const { result } = renderRecovery([
+      {
+        ...authMessage,
+        content: 'connector_auth_required\nconnectorSlug=dingtalk_log',
+        error: JSON.stringify({
+          error: 'connector_auth_required',
+          connectorSlug: 'dingtalk_log',
+        }),
+      },
+    ])
+
+    await waitFor(() => expect(result.current.pending?.cloud).toEqual({ slug: 'dingtalk_log' }))
+    // Cloud apps are authorized by Wegent, so no local health probe runs.
+    expect(mocks.health).not.toHaveBeenCalled()
   })
 
   test.each(['pending', 'streaming'] as const)(
@@ -156,6 +177,24 @@ describe('authorization after plugin use', () => {
       expect(mocks.health).toHaveBeenCalledTimes(1)
     }
   )
+
+  test('asks to install the plugin when it is missing from this app', async () => {
+    const missing = new Error("Installed plugin 'weibo-api-wiki' was not found on this device")
+    Object.assign(missing, { code: 'plugin_not_installed' })
+    mocks.health.mockRejectedValue(missing)
+    const onError = vi.fn()
+    const { result } = renderHook(() =>
+      useLocalConnectorAuthRecovery({ messages: [authMessage], onResumeSend: vi.fn(), onError })
+    )
+
+    await waitFor(() => expect(onError).toHaveBeenCalledOnce())
+    expect(onError).toHaveBeenCalledWith(
+      i18n.t('common:workbench.plugins_local_auth_plugin_missing', {
+        plugin: target.pluginKey,
+      })
+    )
+    expect(result.current.pending).toBeNull()
+  })
 
   test('only the active pane probes an unhandled failure', async () => {
     const { result, rerender } = renderHook(

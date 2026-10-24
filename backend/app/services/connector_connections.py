@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,29 @@ from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 CONNECTOR_CONNECTION_KIND = "ConnectorConnection"
 CONNECTOR_CONNECTION_NAMESPACE = "system"
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    """Parse a stored ISO-8601 timestamp into a naive UTC datetime."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
+
+
+def _parse_last_error(value: Any) -> str | None:
+    """Extract a readable message from the stored failure record."""
+    if isinstance(value, dict):
+        message = value.get("message")
+        return message if isinstance(message, str) and message else None
+    if isinstance(value, str):
+        return value or None
+    return None
 
 
 @dataclass
@@ -28,15 +52,38 @@ class ConnectorConnection:
     access_token_encrypted: str
     refresh_token_encrypted: str | None
     token_type: str
+    tool_summaries: list[dict[str, Any]]
+    tools_discovered_at: datetime | None
+    last_error: str | None
     row: Kind
 
     def access_token(self) -> str:
-        return decrypt_sensitive_data(self.access_token_encrypted) or ""
+        """Return the decrypted token, or ``""`` when it cannot be decrypted.
+
+        ``decrypt_sensitive_data`` echoes the ciphertext back when the
+        configured key cannot read it. Sending that as a bearer token only
+        produces an upstream 401, so treat it as a missing credential and let
+        the caller ask for authorization again.
+        """
+        encrypted = self.access_token_encrypted or ""
+        if not encrypted:
+            return ""
+        decrypted = decrypt_sensitive_data(encrypted) or ""
+        return "" if decrypted == encrypted else decrypted
 
     def refresh_token(self) -> str | None:
-        if not self.refresh_token_encrypted:
+        """Return the decrypted refresh token, or ``None`` when unreadable.
+
+        ``decrypt_sensitive_data`` echoes the ciphertext back when the
+        configured key cannot read it. Posting that to the token endpoint
+        presents a garbage grant, and a 4xx answer then wipes a refresh token
+        that a corrected key could still have used.
+        """
+        encrypted = self.refresh_token_encrypted
+        if not encrypted:
             return None
-        return decrypt_sensitive_data(self.refresh_token_encrypted) or None
+        decrypted = decrypt_sensitive_data(encrypted) or ""
+        return None if decrypted == encrypted else decrypted or None
 
 
 class ConnectorConnectionService:
@@ -61,6 +108,23 @@ class ConnectorConnectionService:
             .first()
         )
         return ConnectorConnectionService._row_to_connection(row) if row else None
+
+    @staticmethod
+    def list_for_user(db: Session, *, user_id: int) -> dict[str, ConnectorConnection]:
+        """Return every active connection of one user keyed by connector slug."""
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.user_id == user_id,
+                Kind.is_active,
+            )
+            .all()
+        )
+        return {
+            row.name: ConnectorConnectionService._row_to_connection(row) for row in rows
+        }
 
     @staticmethod
     def save_oauth_connection(
@@ -138,6 +202,74 @@ class ConnectorConnectionService:
         return ConnectorConnectionService._row_to_connection(connection.row)
 
     @staticmethod
+    def clear_refresh_token(
+        db: Session,
+        connection: ConnectorConnection,
+    ) -> ConnectorConnection:
+        """Stop offering a grant the token endpoint already rejected."""
+        payload = dict(connection.row.json or {})
+        spec = dict(payload.get("spec") or {})
+        spec["refreshTokenEncrypted"] = None
+        payload["spec"] = spec
+        connection.row.json = payload
+        db.commit()
+        db.refresh(connection.row)
+        return ConnectorConnectionService._row_to_connection(connection.row)
+
+    @staticmethod
+    def is_usable(connection: ConnectorConnection | None) -> bool:
+        """Whether the caller can use this connection right now.
+
+        An expired grant still works while a refresh token can renew it: the
+        runtime refreshes it on the next upstream call. A rejected grant loses
+        its refresh token, so it stops looking usable and guidance asks for
+        authorization again.
+        """
+        if connection is None:
+            return False
+        status = ConnectorConnectionService.response(connection).status
+        if status == "connected":
+            return True
+        return status == "expired" and bool(connection.refresh_token())
+
+    @staticmethod
+    def save_tool_summaries(
+        db: Session,
+        connection: ConnectorConnection,
+        summaries: list[dict[str, Any]],
+    ) -> ConnectorConnection:
+        payload = dict(connection.row.json or {})
+        spec = dict(payload.get("spec") or {})
+        spec["toolSummaries"] = summaries
+        spec["toolsDiscoveredAt"] = datetime.now(timezone.utc).isoformat()
+        # A successful discovery clears the previous upstream failure.
+        spec["lastError"] = None
+        payload["spec"] = spec
+        connection.row.json = payload
+        db.commit()
+        db.refresh(connection.row)
+        return ConnectorConnectionService._row_to_connection(connection.row)
+
+    @staticmethod
+    def record_tool_error(
+        db: Session,
+        connection: ConnectorConnection,
+        message: str,
+    ) -> ConnectorConnection:
+        """Remember a discovery failure without changing the authorization."""
+        payload = dict(connection.row.json or {})
+        spec = dict(payload.get("spec") or {})
+        spec["lastError"] = {
+            "message": message[:500],
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        payload["spec"] = spec
+        connection.row.json = payload
+        db.commit()
+        db.refresh(connection.row)
+        return ConnectorConnectionService._row_to_connection(connection.row)
+
+    @staticmethod
     def disconnect(db: Session, *, slug: str, user_id: int) -> bool:
         connection = ConnectorConnectionService.get(db, slug=slug, user_id=user_id)
         if not connection:
@@ -150,6 +282,7 @@ class ConnectorConnectionService:
                 "status": "disconnected",
                 "accessTokenEncrypted": None,
                 "refreshTokenEncrypted": None,
+                "toolSummaries": [],
             }
         )
         payload["spec"] = spec
@@ -175,6 +308,9 @@ class ConnectorConnectionService:
             external_account_name=connection.external_account_name,
             granted_scopes=connection.granted_scopes,
             expires_at=connection.expires_at,
+            last_error=connection.last_error,
+            last_discovered_at=connection.tools_discovered_at,
+            tool_count=len(connection.tool_summaries),
         )
 
     @staticmethod
@@ -196,6 +332,13 @@ class ConnectorConnectionService:
             access_token_encrypted=str(spec.get("accessTokenEncrypted") or ""),
             refresh_token_encrypted=spec.get("refreshTokenEncrypted"),
             token_type=str(spec.get("tokenType") or "bearer"),
+            tool_summaries=[
+                item
+                for item in (spec.get("toolSummaries") or [])
+                if isinstance(item, dict)
+            ],
+            tools_discovered_at=_parse_timestamp(spec.get("toolsDiscoveredAt")),
+            last_error=_parse_last_error(spec.get("lastError")),
             row=row,
         )
 

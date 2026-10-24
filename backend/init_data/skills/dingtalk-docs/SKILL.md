@@ -1,17 +1,13 @@
 ---
 description: "Access DingTalk documents and knowledge spaces through the DingTalk document MCP. Use this skill whenever the user selects a DingTalk knowledge space, folder, or document."
 displayName: "钉钉文档"
-version: "1.0.1"
+version: "1.2.0"
 author: "Wegent Team"
 tags: ["knowledge", "dingtalk", "document"]
 bindShells:
   - Chat
   - Agno
   - ClaudeCode
-config:
-  unconfiguredGuide:
-    modalLink: "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs"
-    modalText: "打开钉钉文档 MCP 配置弹窗"
 mcpServers:
   dingtalk_docs:
     type: streamable-http
@@ -20,9 +16,9 @@ mcpServers:
 
 # DingTalk Documents
 
-If this session has no configured DingTalk document MCP, ask the user to [打开钉钉文档 MCP 配置弹窗](wegent://modal/mcp-provider-config?provider=dingtalk&service=docs). Do not try to access DingTalk documents until configuration is complete.
+DingTalk documents are reachable through either a personal Streamable HTTP MCP the user already configured (`dingtalk_docs` server) or the shared `wegent-connectors` MCP server. Use whichever tools this session exposes and never request credentials. If a tool reports that the connector requires authorization, tell the user briefly and end the turn with `connector_auth_required` and `connectorSlug=dingtalk_docs`.
 
-When configured, use the DingTalk document MCP directly. Resource IDs in `<selected_knowledge_sources>` are DingTalk-native IDs.
+Resource IDs in `<selected_knowledge_sources>` are DingTalk-native IDs.
 
 - For a knowledge space, call `list_nodes` with its workspace ID and traverse the returned hierarchy.
 - For a folder, call `list_nodes` with the selected folder ID and continue through descendants when needed.

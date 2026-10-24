@@ -28,7 +28,7 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from inspect import isawaitable, iscoroutinefunction
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Protocol
 
 from fastapi import FastAPI, Request
 from mcp.server.fastmcp import FastMCP
@@ -46,6 +46,11 @@ from app.mcp_server.auth import (
     authenticate_mcp_token,
     extract_token_from_header,
     verify_task_token,
+)
+from app.mcp_server.connectors_app import (
+    ConnectorMcpApp,
+    build_connector_mcp_server,
+    connector_mcp_token_info,
 )
 from app.mcp_server.context import (
     MCPRequestContext,
@@ -78,6 +83,8 @@ VIDEO_MCP_MOUNT_PATH = "/mcp/video"
 VIDEO_MCP_TRANSPORT_PATH = "/sse"
 WEWORK_SPACE_MCP_MOUNT_PATH = "/mcp/wework-space"
 WEWORK_SPACE_MCP_TRANSPORT_PATH = "/sse"
+CONNECTORS_MCP_MOUNT_PATH = "/mcp/connectors"
+CONNECTORS_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -86,12 +93,21 @@ class McpAppSpec:
     service_name: str
     mount_path: str
     transport_path: str
-    server: FastMCP
+    server: "StreamableMcpServer"
     token_context: contextvars.ContextVar[Optional[TaskTokenInfo]]
     log_prefix: str
     include_root_metadata: bool = True
     allow_user_token: bool = False
     transport_methods: tuple[str, ...] = tuple(MCP_TRANSPORT_METHODS)
+
+
+class StreamableMcpServer(Protocol):
+    """Anything exposing a streamable-HTTP app plus its session manager."""
+
+    @property
+    def session_manager(self) -> Any: ...
+
+    def streamable_http_app(self) -> Starlette: ...
 
 
 @dataclass(frozen=True)
@@ -179,6 +195,11 @@ def _build_transport_security_settings() -> TransportSecuritySettings:
         allowed_hosts=allowed_hosts,
         allowed_origins=settings.MCP_ALLOWED_ORIGINS,
     )
+
+
+connectors_mcp_app = ConnectorMcpApp(
+    build_connector_mcp_server(), _build_transport_security_settings()
+)
 
 
 system_mcp_server = FastMCP(
@@ -758,6 +779,16 @@ _WEWORK_SPACE_MCP_SPEC = McpAppSpec(
     allow_user_token=True,
 )
 
+_CONNECTORS_MCP_SPEC = McpAppSpec(
+    name="connectors",
+    service_name="wegent-connectors-mcp",
+    mount_path=CONNECTORS_MCP_MOUNT_PATH,
+    transport_path=CONNECTORS_MCP_TRANSPORT_PATH,
+    server=connectors_mcp_app,
+    token_context=connector_mcp_token_info,
+    log_prefix="Connectors",
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
@@ -768,6 +799,7 @@ MCP_APP_SPECS = (
     _CARDS_MCP_SPEC,
     _VIDEO_MCP_SPEC,
     _WEWORK_SPACE_MCP_SPEC,
+    _CONNECTORS_MCP_SPEC,
 )
 
 MCP_CONTEXT_SERVER_NAMES = frozenset(
@@ -784,7 +816,7 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
 )
 
 
-def get_mcp_lifespan_servers() -> tuple[tuple[str, FastMCP], ...]:
+def get_mcp_lifespan_servers() -> tuple[tuple[str, StreamableMcpServer], ...]:
     """Return every MCP server whose transport is mounted by the backend.
 
     Mounted Starlette applications do not receive lifespan events from their
@@ -1181,4 +1213,18 @@ def get_mcp_wework_space_config(backend_url: str, auth_token: str) -> Dict[str, 
         ),
         auth_token=auth_token,
         timeout=60,
+    )
+
+
+def get_mcp_connectors_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Build the authenticated connector-app MCP configuration."""
+
+    return _build_streamable_http_config(
+        name="wegent-connectors",
+        url=(
+            f"{backend_url}{CONNECTORS_MCP_MOUNT_PATH}"
+            f"{CONNECTORS_MCP_TRANSPORT_PATH}"
+        ),
+        auth_token=auth_token,
+        timeout=180,
     )

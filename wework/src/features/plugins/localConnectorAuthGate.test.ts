@@ -4,6 +4,7 @@ import {
   extractConnectorAuthConnectorSlug,
   latestConnectorAuthMessage,
   messageRequiresConnectorAuth,
+  resolveConnectorAuthHint,
   resolveLocalConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -53,6 +54,20 @@ describe('local connector authorization recovery messages', () => {
       connectorSlug: 'wework-github-cli',
       displayName: 'github',
     })
+  })
+
+  test('resolves a slug-only request as a cloud connector app', () => {
+    expect(resolveConnectorAuthHint('connector_auth_required\nconnectorSlug=dingtalk_log')).toEqual(
+      {
+        pluginKey: null,
+        connectorSlug: 'dingtalk_log',
+        displayName: 'dingtalk_log',
+      }
+    )
+    // Local plugin resolution stays strict and still requires both identities.
+    expect(
+      resolveLocalConnectorAuthHint('connector_auth_required\nconnectorSlug=dingtalk_log')
+    ).toBeNull()
   })
 
   test('does not treat generic connector query failures as auth resume', () => {

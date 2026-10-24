@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   issueWegentConnectorToken,
+  listWegentConnectorApps,
   listWegentInstalledConnectorApps,
 } from '@/api/cloud/connectorApps'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
@@ -179,16 +180,38 @@ export function LocalExecutorCloudBridge({
         })
         if (cancelled) return
         const installed = await listWegentInstalledConnectorApps(apiBaseUrl, authToken)
+        // Guidance for unauthorized apps is additive: a catalog failure must not
+        // stop the authorized apps from syncing.
+        const catalog = await listWegentConnectorApps(apiBaseUrl, authToken).catch(() => [])
         if (cancelled) return
+        const callable = installed.apps
+          .filter(app => app.enabled && app.callable && app.connection.status === 'connected')
+          .map(app => ({
+            slug: app.slug,
+            name: app.runtime_name ?? app.slug,
+            description: app.description ?? '',
+            tools: app.tool_summaries ?? [],
+            authorizationRequired: false,
+          }))
+        // Unauthorized apps still get a Skill so the agent knows the capability
+        // exists and asks the user to authorize instead of denying it.
+        const callableSlugs = new Set(callable.map(app => app.slug))
+        const awaitingAuthorization = catalog
+          .filter(
+            app =>
+              app.auth_type === 'oauth2' &&
+              app.connection.status !== 'connected' &&
+              !callableSlugs.has(app.slug)
+          )
+          .map(app => ({
+            slug: app.slug,
+            name: app.name,
+            description: app.description ?? '',
+            tools: [],
+            authorizationRequired: true,
+          }))
         await requestLocalExecutor('runtime.connectors.apps.sync', {
-          apps: installed.apps
-            .filter(app => app.enabled && app.callable)
-            .map(app => ({
-              slug: app.slug,
-              name: app.runtime_name ?? app.slug,
-              description: app.description ?? '',
-              tools: app.tool_summaries ?? [],
-            })),
+          apps: [...callable, ...awaitingAuthorization],
         })
         notifyLocalPluginSkillsChanged()
         scheduleConnectorSync(connectorRefreshDelayMs(connectorToken.expires_in))

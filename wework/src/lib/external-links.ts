@@ -25,6 +25,12 @@ function logExternalLink(
   })
 }
 
+const DINGTALK_URL_PATTERN = /^dingtalk:\/\//i
+
+export function isDingTalkUrl(value: string | null | undefined): value is string {
+  return typeof value === 'string' && DINGTALK_URL_PATTERN.test(value.trim())
+}
+
 export function isLocalHttpUrl(value: string | null | undefined): value is string {
   if (!isHttpUrl(value)) return false
 
@@ -54,34 +60,41 @@ export async function openExternalUrl(
   value: string,
   options: OpenExternalUrlOptions = {}
 ): Promise<boolean> {
+  const trimmed = value.trim()
   const source = options.source ?? 'unknown'
-  if (!isHttpUrl(value)) {
+  if (!isHttpUrl(trimmed) && !isDingTalkUrl(trimmed)) {
     logExternalLink('rejected', value, source, { reason: 'unsupported-protocol' })
     return false
   }
 
   try {
     if (isElectronRuntime()) {
-      const target = options.target ?? (await preferredLinkTarget(value))
-      logExternalLink('resolved', value, source, { target })
-      if (target === 'wework') {
-        const handedOff = requestEmbeddedBrowserOpen(value)
-        logExternalLink('browser-request', value, source, { handedOff })
-        if (handedOff) return true
-        logExternalLink('browser-fallback', value, source, { target: 'system' })
+      // DingTalk links are handed to the client registered for the protocol.
+      if (isDingTalkUrl(trimmed)) {
+        await openWithSystemBrowser(trimmed)
+        logExternalLink('opened', trimmed, source, { target: 'system' })
+        return true
       }
-      await openWithSystemBrowser(value)
-      logExternalLink('opened', value, source, { target: 'system' })
+      const target = options.target ?? (await preferredLinkTarget(trimmed))
+      logExternalLink('resolved', trimmed, source, { target })
+      if (target === 'wework') {
+        const handedOff = requestEmbeddedBrowserOpen(trimmed)
+        logExternalLink('browser-request', trimmed, source, { handedOff })
+        if (handedOff) return true
+        logExternalLink('browser-fallback', trimmed, source, { target: 'system' })
+      }
+      await openWithSystemBrowser(trimmed)
+      logExternalLink('opened', trimmed, source, { target: 'system' })
       return true
     }
 
-    window.open(value, '_blank', 'noopener,noreferrer')
-    logExternalLink('opened', value, source, {
+    window.open(trimmed, '_blank', 'noopener,noreferrer')
+    logExternalLink('opened', trimmed, source, {
       target: 'browser',
     })
     return true
   } catch (error) {
-    logExternalLink('failed', value, source, {
+    logExternalLink('failed', trimmed, source, {
       error: error instanceof Error ? error.name : typeof error,
     })
     throw error
@@ -98,7 +111,7 @@ export function installExternalLinkHandler() {
     if (event.defaultPrevented || event.button !== 0) return
 
     const anchor = findClickedAnchor(event.target)
-    if (!anchor || !isHttpUrl(anchor.href)) return
+    if (!anchor || (!isHttpUrl(anchor.href) && !isDingTalkUrl(anchor.href))) return
 
     event.preventDefault()
     void openExternalUrl(anchor.href, { source: 'document' }).catch(error => {
