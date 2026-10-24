@@ -519,7 +519,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn run_notification_router(
         &self,
-        mut notification_rx: broadcast::Receiver<Value>,
+        mut notification_rx: broadcast::Receiver<CodexNotification>,
     ) {
         loop {
             let message = match notification_rx.recv().await {
@@ -546,11 +546,15 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn route_codex_notification(&self, message: Value) {
-        self.route_codex_notification_inner(message, None);
+    pub(super) fn route_codex_notification(&self, message: impl Into<CodexNotification>) {
+        self.route_codex_notification_inner(message.into(), None);
     }
 
-    fn route_codex_notification_inner(&self, message: Value, replaying_route: Option<(&str, u64)>) {
+    fn route_codex_notification_inner(
+        &self,
+        message: CodexNotification,
+        replaying_route: Option<(&str, u64)>,
+    ) {
         let thread_id =
             codex_notification_thread_id(&message).or_else(|| self.unscoped_route_thread_id());
         let Some(thread_id) = thread_id else {
@@ -725,7 +729,7 @@ impl RuntimeWorkRpcHandler {
         }
         drop(routing);
 
-        if !skip_active_notification {
+        if !skip_active_notification && message.claim_runtime_delivery() {
             if !route_nested {
                 self.record_background_terminal_notification(&local_task_id, &message);
             }
@@ -750,7 +754,7 @@ impl RuntimeWorkRpcHandler {
                     &self.device_id,
                     &local_task_id,
                     &event_request,
-                    message,
+                    message.into_value(),
                 );
         }
         self.replay_codex_notifications(pending_replays);

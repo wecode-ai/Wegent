@@ -167,7 +167,10 @@ use plugin_skills::PluginSkillResolver;
 mod github_cli;
 mod local_connector_auth;
 
-pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
+mod notification;
+pub use notification::CodexNotification;
+
+pub type CodexNotificationSender = mpsc::UnboundedSender<CodexNotification>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
 pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
@@ -761,14 +764,14 @@ impl CodexAppServerClient {
 
     pub(crate) async fn subscribe_notifications(
         &self,
-    ) -> Result<broadcast::Receiver<Value>, String> {
+    ) -> Result<broadcast::Receiver<CodexNotification>, String> {
         Ok(self.ensure_process().await?.notifications.subscribe_all())
     }
 
     pub(crate) async fn subscribe_thread_notifications(
         &self,
         thread_id: &str,
-    ) -> Result<broadcast::Receiver<Value>, String> {
+    ) -> Result<broadcast::Receiver<CodexNotification>, String> {
         Ok(self
             .ensure_process()
             .await?
@@ -780,7 +783,7 @@ impl CodexAppServerClient {
         &self,
         launch_config: &CodexLaunchConfig,
         thread_id: &str,
-    ) -> Result<broadcast::Receiver<Value>, String> {
+    ) -> Result<broadcast::Receiver<CodexNotification>, String> {
         Ok(self
             .ensure_process_for_launch_config(launch_config)
             .await?
@@ -1290,8 +1293,8 @@ type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
 #[derive(Clone)]
 struct CodexNotificationHub {
-    all: broadcast::Sender<Value>,
-    threads: Arc<StdMutex<HashMap<String, broadcast::Sender<Value>>>>,
+    all: broadcast::Sender<CodexNotification>,
+    threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
 }
 
 impl CodexNotificationHub {
@@ -1303,11 +1306,11 @@ impl CodexNotificationHub {
         }
     }
 
-    fn subscribe_all(&self) -> broadcast::Receiver<Value> {
+    fn subscribe_all(&self) -> broadcast::Receiver<CodexNotification> {
         self.all.subscribe()
     }
 
-    fn subscribe_thread(&self, thread_id: &str) -> broadcast::Receiver<Value> {
+    fn subscribe_thread(&self, thread_id: &str) -> broadcast::Receiver<CodexNotification> {
         let mut threads = self
             .threads
             .lock()
@@ -1322,6 +1325,7 @@ impl CodexNotificationHub {
     }
 
     fn send(&self, message: Value) {
+        let message = CodexNotification::from(message);
         let _ = self.all.send(message.clone());
         let thread_id =
             stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
@@ -1800,14 +1804,17 @@ fn thread_id_from_response(
 
 fn notify_thread_started(notifications: Option<&CodexNotificationSender>, thread_id: &str) {
     if let Some(sender) = notifications {
-        let _ = sender.send(json!({
-            "method": "thread/started",
-            "params": {
-                "thread": {
-                    "id": thread_id
+        let _ = sender.send(
+            json!({
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": thread_id
+                    }
                 }
-            }
-        }));
+            })
+            .into(),
+        );
     }
 }
 
@@ -2425,7 +2432,7 @@ struct SharedTurnNotificationOptions {
 
 async fn read_shared_turn_notifications(
     client: &CodexAppServerClient,
-    notification_rx: &mut broadcast::Receiver<Value>,
+    notification_rx: &mut broadcast::Receiver<CodexNotification>,
     thread_id: &str,
     state: &mut CodexRunState,
     startup_timeout_seconds: u64,
@@ -2655,7 +2662,7 @@ async fn read_shared_turn_notifications(
                     }
                     options.active_turn_id = None;
                     if let Some(sender) = &options.notifications {
-                        let _ = sender.send(notification);
+                        let _ = sender.send(notification.into());
                     }
                     overload_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
@@ -2970,13 +2977,13 @@ fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunStat
 }
 
 enum SharedNotification {
-    Message(Value),
+    Message(CodexNotification),
     Lagged(u64),
     Completed(ExecutionOutcome),
 }
 
 fn shared_notification_result(
-    result: Result<Value, broadcast::error::RecvError>,
+    result: Result<CodexNotification, broadcast::error::RecvError>,
     last_outcome: Option<ExecutionOutcome>,
     executor_shutdown_requested: bool,
 ) -> Result<SharedNotification, String> {
@@ -3250,7 +3257,7 @@ fn spawn_shared_mcp_server_elicitation_response(
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
     auto_approve_mcp_tool_calls: bool,
-    notifications: Option<mpsc::WeakUnboundedSender<Value>>,
+    notifications: Option<mpsc::WeakUnboundedSender<CodexNotification>>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
@@ -3272,11 +3279,10 @@ fn spawn_shared_mcp_server_elicitation_response(
             .await?
             {
                 if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade()) {
-                    let _ = sender.send(elicitation::settled(
-                        &message,
-                        result.status,
-                        result.response.as_ref(),
-                    ));
+                    let _ = sender.send(
+                        elicitation::settled(&message, result.status, result.response.as_ref())
+                            .into(),
+                    );
                 }
                 client.send_response(request_id, result.result).await?;
             }

@@ -448,8 +448,14 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
 
     hub.send(message.clone());
 
-    assert_eq!(all.recv().await.unwrap(), message);
-    assert_eq!(thread_a.recv().await.unwrap(), message);
+    let global = all.recv().await.unwrap();
+    let scoped = thread_a.recv().await.unwrap();
+    assert_eq!(*global, message);
+    assert_eq!(*scoped, message);
+    assert!(global.claim_runtime_delivery());
+    assert!(!scoped.claim_runtime_delivery());
+    hub.send(message.clone());
+    assert!(thread_a.recv().await.unwrap().claim_runtime_delivery());
     assert!(thread_b.try_recv().is_err());
 }
 

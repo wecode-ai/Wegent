@@ -218,7 +218,7 @@ impl JsonRpcConnection {
                     }
                     let _ = state.handle_message(&message);
                     if let Some(sender) = &notifications {
-                        let _ = sender.send(notification);
+                        let _ = sender.send(notification.into());
                     }
                     tokio::time::sleep(delay).await;
                     startup_deadline =
@@ -276,7 +276,7 @@ impl JsonRpcConnection {
                 auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
             if !auto_approve_mcp_tool_call {
                 if let Some(sender) = &notifications {
-                    let _ = sender.send(message.clone());
+                    let _ = sender.send(message.clone().into());
                 }
             }
             if defer_interactive_forms
@@ -446,11 +446,10 @@ impl JsonRpcConnection {
         )
         .await?;
         if let Some(sender) = notifications {
-            let _ = sender.send(super::elicitation::settled(
-                message,
-                result.status,
-                result.response.as_ref(),
-            ));
+            let _ = sender.send(
+                super::elicitation::settled(message, result.status, result.response.as_ref())
+                    .into(),
+            );
         }
         self.write_message(json!({
             "id": request_id,

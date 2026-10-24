@@ -147,7 +147,7 @@ impl CodexAppServerClient {
         &self,
         thread_id: &str,
         source_thread_id: &str,
-        notifications: &mut broadcast::Receiver<Value>,
+        notifications: &mut broadcast::Receiver<CodexNotification>,
         mut cancellation: oneshot::Receiver<()>,
     ) -> Result<Value, String> {
         let response = self
