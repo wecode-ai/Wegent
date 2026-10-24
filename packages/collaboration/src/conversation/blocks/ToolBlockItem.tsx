@@ -55,7 +55,12 @@ export function ToolBlockItem({
 }: ToolBlockItemProps) {
   const { t } = useConversationTranslation()
   const interactions = useToolInteractionServices()
-  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
+    stateKey ??
+      (block.type === 'tool' && block.toolName === 'auto_approval_review'
+        ? `approval-review:${block.id}`
+        : undefined)
+  )
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const reconnectingBlockId =
     block.type === 'tool' && block.toolName === 'runtime_reconnecting' && isRunning
@@ -114,10 +119,15 @@ export function ToolBlockItem({
         className="min-w-0 py-1 text-sm text-text-muted"
         data-testid="auto-approval-review"
         data-processing-block-id={block.id}
+        open={forceExpanded || userExpanded}
+        onToggle={event => {
+          if (event.currentTarget.open !== userExpanded) setUserExpanded(event.currentTarget.open)
+        }}
       >
         <summary
           className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2"
           data-testid="auto-approval-review-details"
+          aria-expanded={forceExpanded || userExpanded}
         >
           {label}
         </summary>

@@ -139,4 +139,30 @@ describe('shared tool output without a desktop host', () => {
     expect(ignore).not.toBeNull()
     expect(ignore?.disabled).toBe(true)
   })
+  it('keeps an opened native approval rationale when the conversation remounts', () => {
+    const review: ToolBlock = {
+      ...block('review-retained-details'),
+      toolName: 'auto_approval_review',
+      status: 'error',
+      toolOutput: { rationale: 'Private data is outside the task' },
+    }
+    const show = () =>
+      render(<ToolBlocksDisplay blocks={[review]} isStreaming={false} forceExpanded />)
+    show()
+    const details = container.querySelector<HTMLDetailsElement>(
+      '[data-testid="auto-approval-review"]'
+    )!
+    act(() => {
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    render(<div>Other conversation</div>)
+    show()
+    expect(
+      container.querySelector<HTMLDetailsElement>('[data-testid="auto-approval-review"]')?.open
+    ).toBe(true)
+    expect(
+      container.querySelector('[data-testid="auto-approval-review-evidence"]')?.textContent
+    ).toContain('Private data is outside the task')
+  })
 })
