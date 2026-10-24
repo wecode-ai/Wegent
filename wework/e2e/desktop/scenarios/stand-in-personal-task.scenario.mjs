@@ -2,6 +2,7 @@ import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
 import {
   expandCollaborationWorkspace,
   selectCollaborationDomain,
@@ -145,8 +146,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', scoped('collaboration-tab-board'))
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${manualIssue.id}`))
       await control.command('clickWhenEnabled', scoped('cloud-todo-personal-task-start'))
-      const composer = `${scoped('work-item-new-task-chat-panel')} [data-testid="chat-message-input"]`
+      const taskPanel = scoped('work-item-new-task-chat-panel')
+      const composer = `${taskPanel} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer)
+      await selectE2EModel(control, undefined, undefined, taskPanel)
+      await control.command(
+        'waitFor',
+        `${taskPanel} [data-testid="send-message-button"]:not([disabled])`
+      )
       await control.command('press', composer, { key: 'Enter' })
       await control.command(
         'waitFor',
