@@ -52,6 +52,7 @@ impl CodexAppServerClient {
         self.predict_reply_with_launch_config(
             source_thread_id,
             expected_turn_id,
+            request,
             cancellation,
             Some(&launch_config),
         )
@@ -62,6 +63,7 @@ impl CodexAppServerClient {
         &self,
         source_thread_id: &str,
         expected_turn_id: Option<&str>,
+        request: &ExecutionRequest,
         mut cancellation: oneshot::Receiver<()>,
         launch_config: Option<&CodexLaunchConfig>,
     ) -> Result<Value, String> {
@@ -70,7 +72,13 @@ impl CodexAppServerClient {
         let parent = self
             .request(
                 "thread/resume",
-                json!({"threadId": source_thread_id, "excludeTurns": true}),
+                // Prediction may cold-load the parent before a regular turn or history read.
+                // Restore task shell identity without overriding the parent's model/settings.
+                json!({
+                    "threadId": source_thread_id,
+                    "excludeTurns": true,
+                    "config": task_identity_thread_config(request),
+                }),
             )
             .await?;
         if parent
@@ -357,7 +365,19 @@ done
             cancellation: oneshot::Receiver<()>,
         ) -> Result<Value, String> {
             self.client
-                .predict_reply_with_launch_config("source", expected, cancellation, None)
+                .predict_reply_with_launch_config(
+                    "source",
+                    expected,
+                    &ExecutionRequest {
+                        task_id: "prediction-parent".to_owned(),
+                        project_workspace_path: Some("/workspace/prediction-parent".to_owned()),
+                        auth_token: Some("parent-auth".to_owned()),
+                        runtime_auth_token: Some("parent-runtime-auth".to_owned()),
+                        ..ExecutionRequest::default()
+                    },
+                    cancellation,
+                    None,
+                )
                 .await
         }
     }
@@ -370,6 +390,37 @@ done
         let result = fixture.predict(Some("latest"), receiver).await.unwrap();
         assert_eq!(result, json!({"suggestion": "请继续"}));
         let calls = fixture.calls();
+        let resume = calls
+            .iter()
+            .find(|call| call["method"] == "thread/resume")
+            .unwrap();
+        assert_eq!(
+            resume["params"]["config"]["shell_environment_policy.set.WEGENT_EXECUTOR_BINARY"],
+            std::env::current_exe().unwrap().to_string_lossy().as_ref(),
+            "A prediction can be the first reader to load a parent after restart"
+        );
+        let config = &resume["params"]["config"];
+        assert_eq!(
+            config["shell_environment_policy.set.WEGENT_TASK_ID"],
+            "prediction-parent"
+        );
+        assert_eq!(
+            config["shell_environment_policy.set.WEGENT_TASK_WORKSPACE"],
+            "/workspace/prediction-parent"
+        );
+        assert_eq!(
+            config["shell_environment_policy.set.AUTH_TOKEN"],
+            "parent-auth"
+        );
+        assert_eq!(
+            config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+            "parent-runtime-auth"
+        );
+        assert!(config
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| key.starts_with("shell_environment_policy.set.")));
         let fork = calls
             .iter()
             .find(|call| call["method"] == "thread/fork")

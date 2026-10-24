@@ -59,7 +59,8 @@ impl RuntimeWorkRpcHandler {
             },
             None => None,
         };
-        let request = runtime_model_request(&source, &payload)?;
+        let mut request = runtime_model_request(&source, &payload)?;
+        self.apply_backend_connection(&mut request);
         let client = self
             .codex_app_server
             .for_request(&request)
