@@ -127,6 +127,7 @@ export function mergeRuntimeConversationTurns(
     ),
   );
   const emittedLocalIndexes = new Set<number>();
+  const canonicalLocalTurnIds = new Map<number, string | null>();
   const snapshotUserMessageIds = new Set(
     snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds),
   );
@@ -142,6 +143,7 @@ export function mergeRuntimeConversationTurns(
         .find((index): index is number => index !== undefined);
     if (localIndex === undefined) return snapshotTurn;
     emittedLocalIndexes.add(localIndex);
+    canonicalLocalTurnIds.set(localIndex, snapshotTurn.id);
     return mergeRuntimeConversationTurn(localTurns[localIndex], snapshotTurn);
   });
 
@@ -158,6 +160,7 @@ export function mergeRuntimeConversationTurns(
     if (aliasSnapshotIndexes.size === 1) {
       const snapshotIndex = aliasSnapshotIndexes.values().next().value;
       if (snapshotIndex !== undefined) {
+        canonicalLocalTurnIds.set(index, merged[snapshotIndex].id);
         merged[snapshotIndex] = mergeRuntimeConversationTurn(
           turn,
           merged[snapshotIndex],
@@ -179,7 +182,11 @@ export function mergeRuntimeConversationTurns(
       merged.push(turn);
     }
   });
-  return orderRuntimeConversationTurns(merged);
+  const localOrder = localTurns.map((turn, index) => {
+    const id = canonicalLocalTurnIds.get(index);
+    return id === undefined ? turn : { ...turn, id };
+  });
+  return orderRuntimeConversationTurns(merged, [localOrder, snapshotTurns]);
 }
 
 export function uniqueSnapshotIndexByAssistantItemId(

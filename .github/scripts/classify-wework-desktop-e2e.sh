@@ -728,6 +728,7 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
+    wework/e2e/desktop/scenarios/goal-stream-order.scenario.mjs | \
       wework/e2e/desktop/scenarios/goal-output-identity.scenario.mjs | \
       wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
       select_target "core:goal-state-sync"
