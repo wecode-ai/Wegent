@@ -51,9 +51,9 @@ export function defaultContentRoute(kind: WorkspaceTabKind): string {
   }
 }
 
-export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
-  const declaredKind = resolveDshRoute(pathname)?.workspaceTabKind
-  if (declaredKind) return declaredKind
+export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | null {
+  const route = resolveDshRoute(pathname)
+  if (route?.workspaceTabKind) return route.workspaceTabKind
   if (pathname === '/todo') return 'board'
   if (pathname === '/app/wegent') return 'agent'
   if (
@@ -64,7 +64,11 @@ export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
   ) {
     return 'task'
   }
-  return 'auxiliary'
+  return route ? 'auxiliary' : null
+}
+
+export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
+  return resolveWorkspaceTabKind(pathname) ?? 'auxiliary'
 }
 
 export function workspaceTabTitle(

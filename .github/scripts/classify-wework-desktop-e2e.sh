@@ -6,6 +6,7 @@ core_segments=(
   voice-input
   remote-device-onboarding
   workspace-tabs
+  notification-tab-navigation
   collaboration-shared-core
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
@@ -202,7 +203,7 @@ cloud_shards=(
 # workspace-tabs uses its successful 116-second baseline from run 39920301020.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login
+  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
   window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
@@ -731,12 +732,18 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/notification-tab-navigation.scenario.mjs)
+      select_target "core:notification-tab-navigation"
+      return
+      ;;
+
     wework/src/features/notifications/* | \
       wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
       select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
+      select_target "core:notification-tab-navigation"
       return
       ;;
 

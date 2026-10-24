@@ -203,6 +203,65 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
   })
 
+  test.each([
+    '/',
+    '/runtime-tasks?deviceId=device&taskId=completed',
+    '/todo?projectId=two',
+    '/app/wegent',
+  ])(
+    'routes built-in navigation to its own tab without replacing another kind: %s',
+    contentRoute => {
+      window.history.replaceState({}, '', '/sites')
+      let current!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          onContextValue={value => {
+            current = value
+          }}
+        />
+      )
+      const source = { ...current.activeTab }
+      const count = current.tabs.length
+
+      act(() => navigateTo(contentRoute))
+
+      expect(current.activeTabId).not.toBe(source.id)
+      expect(current.activeTab.contentRoute).toBe(contentRoute)
+      expect(current.tabs.find(tab => tab.id === source.id)).toEqual(source)
+      expect(current.tabs).toHaveLength(count)
+      const destinationId = current.activeTabId
+      act(() => current.selectTab(source.id))
+      act(() => navigateTo(contentRoute))
+      expect(current.activeTabId).toBe(destinationId)
+      expect(current.tabs).toHaveLength(count)
+    }
+  )
+
+  test('direct task navigation selects the matching conversation before other task tabs', () => {
+    window.history.replaceState({}, '', '/todo?projectId=one')
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    const board = { ...current.activeTab }
+    let matchingId = ''
+    act(() => {
+      matchingId = current.openTab('task', {
+        contentRoute: '/runtime-tasks?taskId=completed&deviceId=device',
+      }).id
+    })
+    act(() => current.selectTab(board.id))
+
+    act(() => navigateTo('/runtime-tasks?deviceId=device&taskId=completed'))
+
+    expect(current.activeTabId).toBe(matchingId)
+    expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+  })
+
   test.each([true, false])(
     'opens plugin routes in a task tab and preserves collaboration (task exists: %s)',
     async hasTask => {
