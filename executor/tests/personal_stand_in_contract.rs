@@ -97,7 +97,7 @@ fn reorder_and_unrelated_edits_preserve_enable_time_and_failures_are_atomic() {
         first["roles"][1]["enabledAfter"]
     );
     for invalid in [
-        json!([]),
+        Value::Null,
         json!([role("duplicate"), role("duplicate")]),
         json!([{"id":"missing-fields"}]),
     ] {
@@ -109,6 +109,29 @@ fn reorder_and_unrelated_edits_preserve_enable_time_and_failures_are_atomic() {
     assert!(store
         .save_personal_stand_in(7, "other-device", second.clone())
         .is_err());
+}
+
+#[test]
+fn deleting_the_last_scene_role_preserves_the_primary_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut value = store.personal_stand_in(7, "mac").unwrap();
+    value["roles"] = json!([role("review")]);
+    value["primary"] = json!({"enabled":true,"prompt":"","preferences":"Use concise Chinese replies",
+        "collaboration":{"enabled":true,"allProjects":true,"projects":[],"excludedProjects":[],"tags":[]}});
+    let saved = store.save_personal_stand_in(7, "mac", value).unwrap();
+    let mut deletion = saved.clone();
+    deletion["roles"] = json!([]);
+    let deleted = store.save_personal_stand_in(7, "mac", deletion).unwrap();
+    assert!(deleted["roles"].as_array().unwrap().is_empty());
+    assert_eq!(deleted["primary"], saved["primary"]);
+    assert_eq!(
+        deleted["version"].as_i64(),
+        saved["version"].as_i64().map(|version| version + 1)
+    );
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), deleted);
+    assert!(store.save_personal_stand_in(7, "mac", saved).is_err());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), deleted);
 }
 
 #[test]

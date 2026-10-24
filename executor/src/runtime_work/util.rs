@@ -252,6 +252,22 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
 }
 
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if runtime_handle["origin"]["initiatedBy"] == "stand_in"
+        || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
+        || runtime_handle["origin"]["type"] == "issue_dispatch"
+        || runtime_handle["origin"]["type"] == "dingtalk_work"
+    {
+        let mut origin = runtime_handle["origin"].clone();
+        if request
+            .extra
+            .get("origin")
+            .is_some_and(|value| value["askBeforeAct"] == true)
+        {
+            origin["askBeforeAct"] = json!(true);
+        }
+        request.extra.insert("origin".into(), origin);
+        return;
+    }
     if request.extra.contains_key("origin") {
         return;
     }
@@ -262,6 +278,32 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
     {
         request.extra.insert("origin".to_owned(), origin);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExternalWorkKind {
+    Message,
+    Project,
+}
+
+pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
+    let origin = request.extra.get("origin")?;
+    if origin["type"] == "dingtalk_work" {
+        Some(ExternalWorkKind::Message)
+    } else if origin["type"] == "issue_dispatch" {
+        Some(ExternalWorkKind::Project)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
+    request.extra.get("origin").is_some_and(|origin| {
+        matches!(
+            origin["initiatedBy"].as_str(),
+            Some("stand_in" | "stand_in_identity")
+        ) && origin["askBeforeAct"] == true
+    })
 }
 
 pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
@@ -483,6 +525,7 @@ pub(crate) fn is_codex_tool_item_type(item_type: &str) -> bool {
     matches!(
         item_type,
         "commandexecution"
+            | "autoapprovalreview"
             | "shellcall"
             | "localshellcall"
             | "functioncall"
@@ -1044,6 +1087,23 @@ mod tests {
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
         );
+    }
+
+    #[test]
+    fn stand_in_confirmation_cannot_be_removed_or_rebound_by_a_follow_up() {
+        let persisted = json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","userId":7,"standInId":"review","askBeforeAct":true}});
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({"initiatedBy":"user","userId":8,"askBeforeAct":false}),
+        );
+        restore_origin(&mut request, &persisted);
+        assert!(stand_in_requires_confirmation(&request));
+        assert_eq!(request.extra["origin"]["userId"], 7);
+        let mut old = persisted.clone();
+        old["origin"]["askBeforeAct"] = json!(false);
+        restore_origin(&mut request, &old);
+        assert!(stand_in_requires_confirmation(&request));
     }
 
     #[test]

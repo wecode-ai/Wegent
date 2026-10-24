@@ -465,38 +465,42 @@ function matrixPatch(model) {
   ].join('\n')
 }
 
+const requestBodies = new WeakMap()
+const rawRequestBodies = new WeakMap()
+
 function readRequestBody(request) {
-  return new Promise((resolvePromise, reject) => {
-    let body = ''
-    request.setEncoding('utf8')
-    request.on('data', chunk => {
-      body += chunk
-    })
-    request.once('end', () => {
-      try {
-        resolvePromise(body ? JSON.parse(body) : {})
-      } catch (error) {
-        reject(error)
-      }
-    })
-    request.once('error', reject)
-  })
+  const cached = requestBodies.get(request)
+  if (cached) return cached
+  const parsed = readRawRequestBody(request).then(body => (body ? JSON.parse(body) : {}))
+  requestBodies.set(request, parsed)
+  return parsed
 }
 
 function readRawRequestBody(request) {
-  return new Promise((resolvePromise, reject) => {
+  const cached = rawRequestBodies.get(request)
+  if (cached) return cached
+  const raw = new Promise((resolvePromise, reject) => {
     const chunks = []
     request.on('data', chunk => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
     request.once('end', () => {
-      const body = Buffer.concat(chunks)
-      resolvePromise(
-        (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
-      )
+      try {
+        const body = Buffer.concat(chunks)
+        resolvePromise(
+          (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
+        )
+      } catch (error) {
+        reject(error)
+      }
     })
     request.once('error', reject)
+    request.once('close', () => {
+      if (!request.readableEnded) reject(new Error('Request body stream closed before end'))
+    })
   })
+  rawRequestBodies.set(request, raw)
+  return raw
 }
 
 function parseTelemetryPayload(rawBody) {

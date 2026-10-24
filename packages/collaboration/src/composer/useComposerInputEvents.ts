@@ -10,8 +10,8 @@ import {
   type ComposerFollowUpBehavior,
   type ComposerSubmitOptions,
 } from "./composerInputTypes";
-import { textMetrics } from "./composerInputDiagnostics";
 import { recordComposerDiagnostic } from "./composerDiagnostics";
+import { textMetrics } from "./composerInputDiagnostics";
 
 export interface ComposerAutocompleteEvents {
   isOpen: () => boolean;
@@ -130,15 +130,20 @@ export function useComposerInputEvents({
       return true;
     }
     if (event.key === "Enter") {
-      recordComposerDiagnostic("keyboard-policy", {
-        canSend,
-        stateIsComposing: isComposing,
-        eventIsComposing: event.isComposing,
-        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-        keyCode: event.keyCode,
-        sendKey,
-        valueLength: snapshot.value.length,
-      });
+      const recordDecision = (reason: string) =>
+        recordComposerDiagnostic("keyboard-policy", {
+          reason,
+          keyCode: event.keyCode,
+          canSend,
+          sendKey,
+          stateIsComposing: isComposing,
+          eventIsComposing: event.isComposing,
+          suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+          shiftKey: event.shiftKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          valueLength: snapshot.value.length,
+        });
       debug?.("keydown-enter", {
         shiftKey: event.shiftKey,
         canSend,
@@ -149,14 +154,17 @@ export function useComposerInputEvents({
         domValue: textMetrics(snapshot.value),
       });
       if (isComposing || isImeEnterEvent(event) || isImeComposingEvent(event)) {
+        recordDecision("composition");
         suppressEnterUntilKeyUpRef.current = true;
         return false;
       }
       if (suppressEnterUntilKeyUpRef.current) {
+        recordDecision("composition-keyup-pending");
         event.preventDefault();
         return true;
       }
       if (autocomplete?.confirm()) {
+        recordDecision("autocomplete");
         suppressEnterUntilKeyUpRef.current = true;
         event.preventDefault();
         event.stopPropagation();
@@ -165,13 +173,18 @@ export function useComposerInputEvents({
       const modifierPressed = event.metaKey || event.ctrlKey;
       if (sendKey === "cmd_enter") {
         if (!modifierPressed) {
+          recordDecision("line-break");
           event.preventDefault();
           return editorRef.current?.insertLineBreak() ?? false;
         }
       } else if (event.shiftKey && !modifierPressed) {
+        recordDecision("shift-line-break");
         return false;
       }
       event.preventDefault();
+      recordDecision(
+        snapshot.value.trim().length > 0 || canSend ? "submit" : "empty",
+      );
       if (snapshot.value.trim().length > 0 || canSend) {
         onSubmit(
           snapshot.value,

@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
@@ -346,9 +347,7 @@ export function createDesktopScenario({
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = Buffer.concat(chunks).toString('utf8')
+      const body = await readRawRequestBody(request)
       const responseId = `wework-running-history-${Date.now()}`
       response.writeHead(200, {
         'Cache-Control': 'no-cache',

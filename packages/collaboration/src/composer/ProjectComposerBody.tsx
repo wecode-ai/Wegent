@@ -175,16 +175,17 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       !planModeActive &&
       !goalDraftActive
     const submitValue = (current: string, options?: ComposerSubmitOptions) => {
-      recordComposerDiagnostic('submit-policy', {
-        valueLength: current.length,
-        isModelSelectionReady,
-        disabled,
-        submitDisabled,
-      })
       const hasContent =
         allowEmptySubmit ||
         current.trim() ||
         (!requireText && (attachments.length || codeCommentCount))
+      recordComposerDiagnostic('submit-policy', {
+        hasContent: Boolean(hasContent),
+        isModelSelectionReady,
+        disabled,
+        submitDisabled: Boolean(submitDisabled),
+        valueLength: current.length,
+      })
       if (hasContent && isModelSelectionReady && !disabled && !submitDisabled)
         onSubmit(current, options)
     }

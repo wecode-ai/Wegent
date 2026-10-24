@@ -115,10 +115,14 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         message: &mut Value,
     ) -> bool {
-        if message["method"] != "mcpServer/elicitation/request" {
+        if message["method"] == super::super::codex_user_input::APPROVAL_SETTLED_METHOD
+            || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
+        {
             return true;
         }
-        let Some(item) = super::super::mcp_elicitation::item(message) else {
+        let Some(item) = super::super::mcp_elicitation::item(message)
+            .or_else(|| super::super::codex_user_input::request_item(message))
+        else {
             return true;
         };
         let cached = self
@@ -309,6 +313,19 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) {
         let notification = codex_notification(message);
+        if notification.method == super::super::codex_user_input::APPROVAL_SETTLED_METHOD {
+            if let (Some(key), Ok(mut items)) = (
+                message.get("id").and_then(user_input_request_key),
+                self.active_codex_transcript_items.lock(),
+            ) {
+                if let Some(active) = items
+                    .get_mut(local_task_id)
+                    .filter(|active| active.turn_id == turn_id)
+                {
+                    active.user_input_requests.insert(key, false);
+                }
+            }
+        }
         if notification.method != "mcpServer/elicitation/request"
             && codex_notification_requires_user_input(message)
         {
@@ -324,7 +341,7 @@ impl RuntimeWorkRpcHandler {
             {
                 active.user_input_requests.entry(request_id).or_insert(true);
             }
-            if notification.method != "item/tool/requestUserInput" {
+            if super::super::codex_user_input::request_item(message).is_none() {
                 return;
             }
         }
@@ -606,7 +623,11 @@ impl RuntimeWorkRpcHandler {
             .replaying_route_generations
             .get(&thread_id)
             .is_some_and(|generation| Some(*generation) != replay_generation);
-        let Some(route) = routing.routes.get(&thread_id).filter(|_| !route_replaying) else {
+        let Some(route) = routing
+            .routes
+            .get_mut(&thread_id)
+            .filter(|_| !route_replaying)
+        else {
             debug_unrouted_codex_notification(
                 &message,
                 if route_replaying {
@@ -637,6 +658,10 @@ impl RuntimeWorkRpcHandler {
             }
             return;
         };
+        if codex_notification(&message).method == "turn/completed" {
+            route.native_completed_turn_id = notification_turn_id.clone();
+        }
+        let native_completed_turn_id = route.native_completed_turn_id.clone();
         let local_task_id = route.local_task_id.clone();
         let route_request = route.request.clone();
         let event_mapper = route.event_mapper.clone();
@@ -676,6 +701,7 @@ impl RuntimeWorkRpcHandler {
                         active: route_active,
                         nested: true,
                         generation,
+                        native_completed_turn_id: None,
                     },
                 );
             }
@@ -686,11 +712,17 @@ impl RuntimeWorkRpcHandler {
         let command_notification = notification.method.starts_with("item/commandExecution/")
             || item_type(&notification_item(notification.params)) == "commandexecution";
         let active_turn = self.active_codex_turn(&local_task_id);
-        // The turn callback finishes before its execution task settles. Completed
-        // commands belong to the global router during that handoff window.
-        let completed_command_turn = active_turn.is_none()
-            && command_notification
+        // These receivers advance independently: native completion can reach this
+        // router before the execution callback clears its active turn. Ownership
+        // must follow this ordered stream rather than that callback's scheduling.
+        let completed_command_turn = command_notification
             && notification_turn_id.as_deref().is_some_and(|turn_id| {
+                if native_completed_turn_id.as_deref() == Some(turn_id) {
+                    return true;
+                }
+                if active_turn.is_some() {
+                    return false;
+                }
                 let streamed =
                     self.active_codex_transcript_items
                         .lock()
@@ -746,33 +778,43 @@ impl RuntimeWorkRpcHandler {
         }
         drop(routing);
 
-        if !skip_active_notification && message.claim_runtime_delivery() {
-            if !route_nested {
-                self.record_background_terminal_notification(&local_task_id, &message);
-            }
-            let mut event_request = route_request;
-            // A background command keeps its native turn even after a compaction route replaces it.
-            if !route_nested
-                && (!is_context_compaction_request(&event_request) || command_notification)
-            {
-                if let Some(turn_id) = notification_turn_id {
-                    if event_request.subtask_id != turn_id {
-                        event_request.subtask_id = turn_id;
-                        event_request.extra.remove("client_user_message_id");
-                        event_request.extra.remove("clientUserMessageId");
+        {
+            // Claim, persist, and publish under one lock shared with the execution receiver.
+            let _delivery = self
+                .codex_notification_delivery
+                .lock()
+                .unwrap_or_else(|poisoned| {
+                    log_executor_event("Codex notification delivery recovered after panic", &[]);
+                    poisoned.into_inner()
+                });
+            if !skip_active_notification && message.claim_runtime_delivery() {
+                if !route_nested {
+                    self.record_background_terminal_notification(&local_task_id, &message);
+                }
+                let mut event_request = route_request;
+                // A background command keeps its native turn even after a compaction route replaces it.
+                if !route_nested
+                    && (!is_context_compaction_request(&event_request) || command_notification)
+                {
+                    if let Some(turn_id) = notification_turn_id {
+                        if event_request.subtask_id != turn_id {
+                            event_request.subtask_id = turn_id;
+                            event_request.extra.remove("client_user_message_id");
+                            event_request.extra.remove("clientUserMessageId");
+                        }
                     }
                 }
+                event_mapper
+                    .lock()
+                    .expect("thread event mapper lock should not be poisoned")
+                    .map(
+                        &self.event_tx,
+                        &self.device_id,
+                        &local_task_id,
+                        &event_request,
+                        message.into_value(),
+                    );
             }
-            event_mapper
-                .lock()
-                .expect("thread event mapper lock should not be poisoned")
-                .map(
-                    &self.event_tx,
-                    &self.device_id,
-                    &local_task_id,
-                    &event_request,
-                    message.into_value(),
-                );
         }
         self.replay_codex_notifications(pending_replays);
     }
@@ -807,6 +849,7 @@ impl RuntimeWorkRpcHandler {
             RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active, generation)
         });
         if route.local_task_id != local_task_id {
+            route.native_completed_turn_id = None;
             route.generation = next_thread_event_route_generation(&mut routing);
             routing.replaying_route_generations.remove(thread_id);
             routing

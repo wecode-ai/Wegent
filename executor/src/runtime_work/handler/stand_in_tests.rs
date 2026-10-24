@@ -548,7 +548,9 @@ async fn enabled_settings_save_offline_without_agent_model_or_workspace_preparat
 
 #[tokio::test]
 async fn default_personal_task_needs_no_project_environment() {
-    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let payload = handler
         .prepare_stand_in_task(
             &json!({"projectStore":"local","projectId":"not-configured","userId":7}),
@@ -562,6 +564,35 @@ async fn default_personal_task_needs_no_project_environment() {
     assert!(payload.get("workspacePath").is_none());
     let request = execution_request(&payload).unwrap();
     assert!(is_standalone_chat_workspace(&request));
+}
+
+#[tokio::test]
+async fn project_work_does_not_copy_private_preferences_into_the_source_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    for preference in ["Always use concise replies", ""] {
+        let mut personal = store.personal_stand_in(7, "mac").unwrap();
+        personal["primary"] =
+            json!({"enabled":true,"prompt":"Coordinate","preferences":preference});
+        store.save_personal_stand_in(7, "mac", personal).unwrap();
+        let payload = handler
+            .prepare_stand_in_task(
+                &json!({"projectStore":"local","projectId":"project","userId":7,"sharedPreferences":"Stale preference"}),
+                &json!({"id":"issue","title":"Task"}),
+                &json!({"humanAssignmentId":"human"}),
+            )
+            .await
+            .unwrap();
+        let prompt = payload["message"].as_str().unwrap();
+        assert!(!prompt.contains("Shared personal preferences"));
+        assert!(!prompt.contains("Always use concise replies"));
+        assert!(!prompt.contains("Stale preference"));
+        if preference.is_empty() {
+            assert!(!prompt.contains("Always use concise replies"));
+        }
+    }
 }
 
 #[test]

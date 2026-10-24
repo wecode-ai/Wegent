@@ -32,6 +32,13 @@ const createProps = (): IssueHomeTaskComposerProps => ({
 })
 
 describe('Wework Issue home task composer', () => {
+  test('keeps assignment controls in the issue composer without a separate stand-in entry', () => {
+    const props = createProps()
+    render(<WeworkIssueHomeComposer {...props} ownerControl={<button>Choose owner</button>} />)
+    expect(screen.getByRole('button', { name: 'Choose owner' })).toBeInTheDocument()
+    expect(screen.queryByTestId('issue-stand-in-control')).not.toBeInTheDocument()
+    expect(screen.queryByText('交给我的分身')).not.toBeInTheDocument()
+  })
   test('renders the shared execution environment notice above the editor', () => {
     const props = createProps()
     props.environmentNotice = <div data-testid="environment-notice">环境提示</div>
