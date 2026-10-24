@@ -98,23 +98,37 @@ function writeEvents(response, responseId, events) {
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
+const GATEWAY_RESTART_TIMEOUT_MS = 15_000
+
 async function requestJson(baseUrl, token, pathname, options = {}) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
-    },
-  })
-  const text = await response.text()
-  const body = text ? JSON.parse(text) : null
-  assert.equal(
-    response.ok,
-    true,
-    `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
-  )
-  return body
+  const deadline = Date.now() + GATEWAY_RESTART_TIMEOUT_MS
+  for (;;) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
+      },
+    })
+    const text = await response.text()
+    // The Rust gateway answers this plain-text 502 for the few seconds its
+    // Python upstream needs to restart; it never reached a handler.
+    if (
+      response.status === 502 &&
+      text.includes('fallback upstream unavailable') &&
+      Date.now() < deadline
+    ) {
+      await new Promise(resolve => setTimeout(resolve, 200))
+      continue
+    }
+    assert.equal(
+      response.ok,
+      true,
+      `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
+    )
+    return text ? JSON.parse(text) : null
+  }
 }
 
 async function waitForValue(load, predicate, message, timeoutMs) {
