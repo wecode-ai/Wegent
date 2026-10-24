@@ -2520,11 +2520,7 @@ async fn read_shared_turn_notifications(
         let executor_shutdown_requested =
             matches!(received, Err(broadcast::error::RecvError::Closed))
                 && client.state.lock().await.executor_shutdown_requested;
-        let notification = shared_notification_result(
-            received,
-            last_outcome.clone(),
-            executor_shutdown_requested,
-        )?;
+        let notification = shared_notification_result(received, executor_shutdown_requested)?;
         let message = match notification {
             SharedNotification::Message(message) => message,
             SharedNotification::Lagged(skipped) => {
@@ -2537,16 +2533,10 @@ async fn read_shared_turn_notifications(
                 );
                 continue;
             }
-            SharedNotification::Completed(outcome) => {
-                if cancellation_requested {
-                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
-                }
-                return Ok(outcome);
-            }
         };
         if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
-            if let Some(outcome) = last_outcome {
-                return Ok(outcome);
+            if client.state.lock().await.executor_shutdown_requested {
+                return Err(CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned());
             }
             return Err(message
                 .get("params")
@@ -2957,12 +2947,10 @@ fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunStat
 enum SharedNotification {
     Message(Value),
     Lagged(u64),
-    Completed(ExecutionOutcome),
 }
 
 fn shared_notification_result(
     result: Result<Value, broadcast::error::RecvError>,
-    last_outcome: Option<ExecutionOutcome>,
     executor_shutdown_requested: bool,
 ) -> Result<SharedNotification, String> {
     match result {
@@ -2970,16 +2958,11 @@ fn shared_notification_result(
         Err(broadcast::error::RecvError::Lagged(skipped)) => {
             Ok(SharedNotification::Lagged(skipped))
         }
-        Err(broadcast::error::RecvError::Closed) => last_outcome
-            .map(SharedNotification::Completed)
-            .ok_or_else(|| {
-                if executor_shutdown_requested {
-                    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
-                } else {
-                    "codex app-server notification stream closed before completing the turn"
-                        .to_owned()
-                }
-            }),
+        Err(broadcast::error::RecvError::Closed) => Err(if executor_shutdown_requested {
+            CODEX_APP_SERVER_EXECUTOR_SHUTDOWN.to_owned()
+        } else {
+            "codex app-server notification stream closed before completing the turn".to_owned()
+        }),
     }
 }
 
@@ -6924,6 +6907,9 @@ fn extract_text(item: &Value) -> Option<String> {
         Some(text)
     }
 }
+
+#[cfg(test)]
+mod goal_process_exit_tests;
 
 #[cfg(test)]
 #[path = "codex/tests.rs"]

@@ -477,6 +477,7 @@ to diagnose Winsock resource exhaustion.
 Task-board bulk actions confirm that the blank conversation is active before each input;
 the editor node alone is insufficient. Goal restart fixtures observe one running task and
 one queued task before releasing the model response occupying the single execution slot.
+On Windows, normal Goal restart fixtures use the native quit menu and wait for process exit instead of simulating a normal shutdown with `taskkill /T /F`. Killing the process tree can terminate Codex first, which the surviving executor observes as an unexpected exit. Forced-exit scenarios continue to verify process cleanup separately.
 Work-list refreshes preserve the device owning an opened workspace so an earlier response
 cannot replace a newly selected cloud workspace.
 Workbench and conversation diagnostics share a 100ms publication scheduler. Continuous state updates must not cancel a pending publication, and each publication reads the latest state. Disabling diagnostics or unmounting cancels pending work so an inactive pane cannot overwrite the current snapshot. A failed conversation-title isolation assertion retains its assistant-count baseline and the title, lifecycle, and message summary from each poll.

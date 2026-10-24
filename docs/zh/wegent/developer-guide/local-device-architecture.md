@@ -138,6 +138,8 @@ Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup
 
 为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
 
+Codex 进程退出或通知流关闭时，不得把 Goal 上一轮的完成结果用于结束当前执行。executor 正常关闭应保留中断标记和待恢复记录；非预期的 Codex 退出应报告错误，不能投影为成功或删除尚未完成的 Goal。
+
 恢复后的 Goal turn 使用新的原生 turn 身份，不得复用已持久化请求中的 `clientUserMessageId`、用户消息展示绑定或生成用户消息标记。原用户消息与原 turn 的映射保持不变；该规则同样适用于需要用户操作后的原生 Goal 恢复。
 
 executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `item/plan/delta`，按原生 item ID 更新条目。历史加载必须能读取尚未收到 `item/completed` 的部分文本；用户停止执行时，这些文本以中断状态持久化，后续追问或重新打开任务不能将其丢弃。最终 item 快照替换已累计文本，避免重复拼接。

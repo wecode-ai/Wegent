@@ -528,7 +528,7 @@ class RealCloudEnvironment {
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         BREEZE_LOG_DIR: rustLogDirectory,
-        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug`,
+        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug,hyper_util::client::legacy::client=debug`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
