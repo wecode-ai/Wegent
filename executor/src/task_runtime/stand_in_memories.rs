@@ -65,7 +65,7 @@ impl LocalTaskStore {
             id.to_owned()
         };
         let previous = get_item_from(&connection, &key, "stand_in_memory")?.map(|row| row.metadata);
-        if !id.is_empty() && previous.as_ref().is_none_or(|row| row["userId"] != user) {
+        if !id.is_empty() && previous.as_ref().map_or(true, |row| row["userId"] != user) {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         let version = previous

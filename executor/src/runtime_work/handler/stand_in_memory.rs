@@ -44,10 +44,10 @@ impl RuntimeWorkRpcHandler {
         let Some(origin) = request.extra.get("origin") else {
             return Ok(());
         };
-        if !matches!(
+        if !(matches!(
             origin["type"].as_str(),
             Some("stand_in_identity" | "dingtalk_work")
-        ) && !(origin["type"] == "issue_dispatch" && origin["initiatedBy"] == "stand_in")
+        ) || (origin["type"] == "issue_dispatch" && origin["initiatedBy"] == "stand_in"))
         {
             return Ok(());
         }

@@ -761,33 +761,40 @@ impl RuntimeWorkRpcHandler {
         }
         drop(routing);
 
-        if !skip_active_notification && message.claim_runtime_delivery() {
-            if !route_nested {
-                self.record_background_terminal_notification(&local_task_id, &message);
-            }
-            let mut event_request = route_request;
-            // A background command keeps its native turn even after a compaction route replaces it.
-            if !route_nested
-                && (!is_context_compaction_request(&event_request) || command_notification)
-            {
-                if let Some(turn_id) = notification_turn_id {
-                    if event_request.subtask_id != turn_id {
-                        event_request.subtask_id = turn_id;
-                        event_request.extra.remove("client_user_message_id");
-                        event_request.extra.remove("clientUserMessageId");
+        {
+            // Claim, persist, and publish under one lock shared with the execution receiver.
+            let _delivery = self
+                .codex_notification_delivery
+                .lock()
+                .expect("Codex notification delivery lock should not be poisoned");
+            if !skip_active_notification && message.claim_runtime_delivery() {
+                if !route_nested {
+                    self.record_background_terminal_notification(&local_task_id, &message);
+                }
+                let mut event_request = route_request;
+                // A background command keeps its native turn even after a compaction route replaces it.
+                if !route_nested
+                    && (!is_context_compaction_request(&event_request) || command_notification)
+                {
+                    if let Some(turn_id) = notification_turn_id {
+                        if event_request.subtask_id != turn_id {
+                            event_request.subtask_id = turn_id;
+                            event_request.extra.remove("client_user_message_id");
+                            event_request.extra.remove("clientUserMessageId");
+                        }
                     }
                 }
+                event_mapper
+                    .lock()
+                    .expect("thread event mapper lock should not be poisoned")
+                    .map(
+                        &self.event_tx,
+                        &self.device_id,
+                        &local_task_id,
+                        &event_request,
+                        message.into_value(),
+                    );
             }
-            event_mapper
-                .lock()
-                .expect("thread event mapper lock should not be poisoned")
-                .map(
-                    &self.event_tx,
-                    &self.device_id,
-                    &local_task_id,
-                    &event_request,
-                    message.into_value(),
-                );
         }
         self.replay_codex_notifications(pending_replays);
     }

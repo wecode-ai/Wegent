@@ -110,7 +110,7 @@ pub(super) async fn call(
         return call_tool_with_runtime_context(runtime, "list_spaces", json!({}), context).await;
     }
     let result = match name {
-        "search_memories" | "remember" | "forget_memory" => memory_call(&store, identity, name, arguments),
+        "search_memories" | "remember" | "forget_memory" => memory_call(store, identity, name, arguments),
         "get_profile" => store
             .personal_stand_in(identity.user, &identity.device)
             .map_err(|e| e.to_string()),
@@ -235,6 +235,50 @@ fn memory_call(
         .map_err(|error| error.to_string())
 }
 
+async fn reply_to_work(
+    runtime: &TaskRuntime,
+    identity: &StandInMcpIdentity,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let store = runtime.stand_in_store();
+    let work = identity.work.as_deref().ok_or("No work is bound")?;
+    let record = store
+        .stand_in_work(identity.user, work)
+        .map_err(|e| e.to_string())?;
+    if record["roleId"].as_str() != identity.role.as_deref() {
+        return Err("Work is owned by a different role".into());
+    }
+    let messages = store
+        .stand_in_messages(identity.user, work)
+        .map_err(|e| e.to_string())?;
+    let message = messages
+        .iter()
+        .find(|message| message["id"] == arguments["messageId"])
+        .ok_or("Source message no longer belongs to this work")?;
+    let settings = store
+        .personal_stand_in(identity.user, &identity.device)
+        .map_err(|e| e.to_string())?;
+    let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
+    let role = identities
+        .iter()
+        .find(|role| role["id"] == record["roleId"])
+        .ok_or("Role no longer exists")?;
+    let source =
+        crate::task_runtime::personal_stand_in::dingtalk_connection(role, &message["source"])
+            .ok_or("Source connection was removed; reply was not sent")?;
+    if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
+        return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
+    }
+    crate::runtime_work::dingtalk::reply(
+        source,
+        message,
+        work,
+        arguments["text"].as_str().unwrap_or_default(),
+    )
+    .await
+    .map_err(|e| format!("{}: {}", e.code, e.message))
+}
+
 #[cfg(test)]
 mod memory_tests {
     use super::*;
@@ -313,48 +357,4 @@ mod memory_tests {
         )
         .is_err());
     }
-}
-
-async fn reply_to_work(
-    runtime: &TaskRuntime,
-    identity: &StandInMcpIdentity,
-    arguments: &Value,
-) -> Result<Value, String> {
-    let store = runtime.stand_in_store();
-    let work = identity.work.as_deref().ok_or("No work is bound")?;
-    let record = store
-        .stand_in_work(identity.user, work)
-        .map_err(|e| e.to_string())?;
-    if record["roleId"].as_str() != identity.role.as_deref() {
-        return Err("Work is owned by a different role".into());
-    }
-    let messages = store
-        .stand_in_messages(identity.user, work)
-        .map_err(|e| e.to_string())?;
-    let message = messages
-        .iter()
-        .find(|message| message["id"] == arguments["messageId"])
-        .ok_or("Source message no longer belongs to this work")?;
-    let settings = store
-        .personal_stand_in(identity.user, &identity.device)
-        .map_err(|e| e.to_string())?;
-    let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
-    let role = identities
-        .iter()
-        .find(|role| role["id"] == record["roleId"])
-        .ok_or("Role no longer exists")?;
-    let source =
-        crate::task_runtime::personal_stand_in::dingtalk_connection(role, &message["source"])
-            .ok_or("Source connection was removed; reply was not sent")?;
-    if source["policy"]["askBeforeAct"] == true && !identity.ask_before_act {
-        return Err("The source now requires confirmation. Start a new confirmed execution before replying.".into());
-    }
-    crate::runtime_work::dingtalk::reply(
-        source,
-        message,
-        work,
-        arguments["text"].as_str().unwrap_or_default(),
-    )
-    .await
-    .map_err(|e| format!("{}: {}", e.code, e.message))
 }

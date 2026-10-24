@@ -9,80 +9,6 @@ pub(crate) fn stand_in_record_key(prefix: &str, value: &Value) -> String {
     )
 }
 
-#[cfg(test)]
-mod organization_tests {
-    use super::*;
-
-    #[test]
-    fn batch_merge_and_undo_are_atomic_preserve_effects_and_isolate_owners() {
-        let root = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
-        let source = json!({"id":"group","profile":"owner","kind":"group"});
-        let work = store
-            .ingest_stand_in_message(
-                7,
-                "review",
-                &source,
-                &json!({"id":"one","text":"First"}),
-                None,
-            )
-            .unwrap();
-        let id = work["id"].as_str().unwrap();
-        store
-            .ingest_stand_in_message(
-                7,
-                "review",
-                &source,
-                &json!({"id":"two","text":"Second"}),
-                Some(id),
-            )
-            .unwrap();
-        let target = store
-            .ingest_stand_in_message(
-                7,
-                "review",
-                &source,
-                &json!({"id":"three","text":"Target"}),
-                None,
-            )
-            .unwrap();
-        let target_id = target["id"].as_str().unwrap();
-        let ids: Vec<String> = store
-            .stand_in_messages(7, id)
-            .unwrap()
-            .iter()
-            .map(|message| message["recordId"].as_str().unwrap().to_owned())
-            .collect();
-        store
-            .update_stand_in_dispatch(7, id, &ids, "sent", None)
-            .unwrap();
-        let mut invalid = ids.clone();
-        invalid.push("missing".into());
-        assert!(store
-            .organize_stand_in_messages(7, id, &invalid, Some(target_id))
-            .is_err());
-        assert_eq!(store.stand_in_messages(7, id).unwrap().len(), 2);
-        assert!(store
-            .organize_stand_in_messages(8, id, &ids, Some(target_id))
-            .is_err());
-        let merged = store
-            .organize_stand_in_messages(7, id, &ids, Some(target_id))
-            .unwrap();
-        assert_eq!(merged["messageCount"], 3);
-        assert_eq!(store.stand_in_messages(7, id).unwrap().len(), 0);
-        store
-            .organize_stand_in_messages(7, target_id, &ids, Some(id))
-            .unwrap();
-        let restored = store.stand_in_messages(7, id).unwrap();
-        assert_eq!(restored.len(), 2);
-        assert!(restored
-            .iter()
-            .all(|message| message["dispatchStatus"] == "sent" && message["originalWorkId"] == id));
-        assert_eq!(store.stand_in_messages(7, target_id).unwrap().len(), 1);
-        assert_eq!(store.list_stand_in_work(7, None).unwrap().len(), 2);
-    }
-}
-
 fn read_record(
     connection: &Connection,
     id: &str,
@@ -360,5 +286,79 @@ impl LocalTaskStore {
         refresh_work(&connection, &mut destination)?;
         connection.commit()?;
         Ok(destination)
+    }
+}
+
+#[cfg(test)]
+mod organization_tests {
+    use super::*;
+
+    #[test]
+    fn batch_merge_and_undo_are_atomic_preserve_effects_and_isolate_owners() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"id":"group","profile":"owner","kind":"group"});
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "review",
+                &source,
+                &json!({"id":"one","text":"First"}),
+                None,
+            )
+            .unwrap();
+        let id = work["id"].as_str().unwrap();
+        store
+            .ingest_stand_in_message(
+                7,
+                "review",
+                &source,
+                &json!({"id":"two","text":"Second"}),
+                Some(id),
+            )
+            .unwrap();
+        let target = store
+            .ingest_stand_in_message(
+                7,
+                "review",
+                &source,
+                &json!({"id":"three","text":"Target"}),
+                None,
+            )
+            .unwrap();
+        let target_id = target["id"].as_str().unwrap();
+        let ids: Vec<String> = store
+            .stand_in_messages(7, id)
+            .unwrap()
+            .iter()
+            .map(|message| message["recordId"].as_str().unwrap().to_owned())
+            .collect();
+        store
+            .update_stand_in_dispatch(7, id, &ids, "sent", None)
+            .unwrap();
+        let mut invalid = ids.clone();
+        invalid.push("missing".into());
+        assert!(store
+            .organize_stand_in_messages(7, id, &invalid, Some(target_id))
+            .is_err());
+        assert_eq!(store.stand_in_messages(7, id).unwrap().len(), 2);
+        assert!(store
+            .organize_stand_in_messages(8, id, &ids, Some(target_id))
+            .is_err());
+        let merged = store
+            .organize_stand_in_messages(7, id, &ids, Some(target_id))
+            .unwrap();
+        assert_eq!(merged["messageCount"], 3);
+        assert_eq!(store.stand_in_messages(7, id).unwrap().len(), 0);
+        store
+            .organize_stand_in_messages(7, target_id, &ids, Some(id))
+            .unwrap();
+        let restored = store.stand_in_messages(7, id).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert!(restored
+            .iter()
+            .all(|message| message["dispatchStatus"] == "sent" && message["originalWorkId"] == id));
+        assert_eq!(store.stand_in_messages(7, target_id).unwrap().len(), 1);
+        assert_eq!(store.list_stand_in_work(7, None).unwrap().len(), 2);
     }
 }
