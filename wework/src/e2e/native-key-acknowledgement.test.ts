@@ -44,6 +44,31 @@ test('ignores synthetic events and native events for another target', async () =
   expect(vi.getTimerCount()).toBe(0)
 })
 
+test('waits for native release before sampling the result of a keydown handler', async () => {
+  vi.useFakeTimers()
+  const target = document.createElement('textarea')
+  const listeners = new Map<string, (event: KeyboardEvent) => void>()
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+    listeners.set(type, callback as (event: KeyboardEvent) => void)
+  })
+  let viewport = 9
+  const sampled = vi.fn(() => viewport)
+  const result = sendNativeKeyAndWait(
+    target,
+    'press',
+    async () => listeners.get('keydown')?.({ isTrusted: true, target } as unknown as KeyboardEvent),
+    { waitForRelease: true }
+  ).then(sampled)
+  for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+  expect(sampled).not.toHaveBeenCalled()
+
+  viewport = 1
+  listeners.get('keyup')?.({ isTrusted: true, target } as unknown as KeyboardEvent)
+  await result
+  expect(sampled).toHaveReturnedWith(1)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
 test('rejects missing native input at the existing step deadline and removes its listener', async () => {
   vi.useFakeTimers()
   const remove = vi.spyOn(window, 'removeEventListener')

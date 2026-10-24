@@ -8,6 +8,7 @@ import {
   createLocalCodexPluginApi,
 } from '@/api/local/codexPlugins'
 import * as codexPlugins from '@/api/local/codexPlugins'
+import { commitPluginInventoryInstallation } from '@/features/plugins/pluginInventory'
 import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
 import {
   clearPluginDeviceAutoSyncAttempts,
@@ -24,7 +25,11 @@ import {
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
-import type { PluginMarketplaceItem, PluginPublicationRequestItem } from '@/types/api'
+import type {
+  InstalledPlugin,
+  PluginMarketplaceItem,
+  PluginPublicationRequestItem,
+} from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
@@ -3015,6 +3020,104 @@ describe('PluginsWorkspace', () => {
       getPluginMarketplaceCache(pluginMarketplaceCacheKey('/api', 'cloud-token'))?.mutationRevision
     ).toBeGreaterThan(before?.mutationRevision ?? 0)
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
+  })
+
+  test('refreshes a device acknowledgement after a mutation commits during package sync', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let finishSync!: () => void
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceUpdatePolicy: 'manual',
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate: new Promise<void>(resolve => {
+        finishSync = resolve
+      }),
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+    const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const before = getPluginMarketplaceCache(key)!
+    const pending: InstalledPlugin = {
+      ...before.installedPlugins[0],
+      spec: { ...before.installedPlugins[0].spec, releaseId: 1002, version: '1.1.0' },
+      status: {
+        ...before.installedPlugins[0].status,
+        devices: [
+          {
+            deviceId: 'current-device',
+            desiredReleaseId: 1002,
+            actualReleaseId: 1001,
+            state: 'pending',
+            attemptCount: 0,
+            updatedAt: '2026-07-25T12:00:00',
+          },
+        ],
+      },
+    }
+    const device = {
+      deviceId: 'current-device',
+      desiredReleaseId: 1002,
+      actualReleaseId: 1002,
+      state: 'installed',
+      attemptCount: 0,
+      updatedAt: '2026-07-25T12:00:01',
+    }
+    const fetchBeforeUpgrade = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (...args) => {
+      const response = await fetchBeforeUpgrade(...args)
+      const path = new URL(String(args[0]), 'http://localhost').pathname
+      if (args[1]?.method !== 'GET') return response
+      if (path === '/api/plugins/installed') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            items: [
+              {
+                ...pending,
+                status: { state: 'Available', devices: [device] },
+              },
+            ],
+          }),
+        } as Response
+      }
+      if (path === '/api/plugins/marketplace') {
+        const payload = await response.json()
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ...payload,
+            items: payload.items.map((item: PluginMarketplaceItem) =>
+              item.id === 101
+                ? {
+                    ...item,
+                    version: '1.1.0',
+                    latestReleaseId: 1002,
+                    installed: true,
+                    currentDeviceInstallation: device,
+                    updateAvailable: false,
+                  }
+                : item
+            ),
+          }),
+        } as Response
+      }
+      return response
+    })
+    act(() => commitPluginInventoryInstallation(key, 'current-device', pending))
+    act(() => finishSync())
+
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(key)?.marketplaceItems.find(item => item.id === 101)
+          ?.currentDeviceInstallation?.actualReleaseId
+      ).toBe(1002)
+    )
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0]?.spec.releaseId).toBe(1002)
+    expect(marketplace.getSyncDeviceCalls()).toBe(1)
   })
 
   test('uses the current installation identity when membership arrives after catalog detail', async () => {

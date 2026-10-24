@@ -1131,8 +1131,11 @@ async function pressNativeDesktopControlKey(
   }
   window.addEventListener(eventType, recordKey, true)
   try {
-    await sendNativeKeyAndWait(element, phase, () =>
-      invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
+    await sendNativeKeyAndWait(
+      element,
+      phase,
+      () => invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false }),
+      { waitForRelease: observation !== null }
     )
   } finally {
     window.removeEventListener(eventType, recordKey, true)
