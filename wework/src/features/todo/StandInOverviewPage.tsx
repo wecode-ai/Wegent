@@ -265,9 +265,19 @@ export function StandInOverviewPage({
         ) : (
           <>
             {(state.error || proposalError || inbox.error) && (
-              <p role="alert" className="px-5 py-2 text-sm text-error">
-                {state.error || proposalError || inbox.error}
-              </p>
+              <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
+                <span className="flex-1">{state.error || proposalError || inbox.error}</span>
+                {state.error && (
+                  <button
+                    type="button"
+                    data-testid="stand-in-overview-inline-retry"
+                    onClick={reload}
+                    className="min-h-11 min-w-11 underline"
+                  >
+                    {t('standIn.reload')}
+                  </button>
+                )}
+              </div>
             )}
             {inbox.sourceErrors.map(value => (
               <div

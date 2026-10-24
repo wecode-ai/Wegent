@@ -68,9 +68,12 @@ pub(super) async fn shared_response(
                 }));
             }
         };
-    let Some(response) = response else {
+    let Some(mut response) = response else {
         return Ok(None);
     };
+    if params["standInSingleApproval"] == true {
+        super::restrict_stand_in_mcp_answer(&mut response, super::MCP_ELICITATION_DECLINE);
+    }
     mcp_server_elicitation_response(message, Some(&response))
         .map(|result| ElicitationResult::from_response(result, response))
         .map(Some)
@@ -128,6 +131,61 @@ mod tests {
                 "action": {"type": "string", "enum": ["production", "preview"]}
             }}
         }})
+    }
+
+    #[tokio::test]
+    async fn stand_in_routed_answers_cannot_grant_persistent_mcp_approval() {
+        for dedicated in [false, true] {
+            for (answer, action) in [
+                ("Allow", "accept"),
+                ("Allow for this session", "decline"),
+                ("Allow and don't ask me again", "decline"),
+                ("Decline", "decline"),
+            ] {
+                let mut message = json!({"id": 0, "method": "mcpServer/elicitation/request", "params": {
+                    "mode": "form", "serverName": "wework_stand_in",
+                    "requestedSchema": {"type": "object", "properties": {}},
+                    "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": ["session", "always"]}
+                }});
+                super::super::restrict_stand_in_approval(&mut message);
+                let (sender, mut receiver) = mpsc::channel(1);
+                sender
+                    .send(json!({"requestId": 0, "answers": {
+                        "__mcp_approval": {"answers": [answer]}
+                    }}))
+                    .await
+                    .unwrap();
+                let outcome = if dedicated {
+                    super::super::receive_mcp_server_elicitation_response(
+                        &message,
+                        Some(&mut receiver),
+                        false,
+                    )
+                    .await
+                    .unwrap()
+                } else {
+                    shared_response(
+                        &message,
+                        Some(InteractionAnswerRouter::new(receiver)),
+                        "0".to_owned(),
+                        false,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                };
+                assert_eq!(outcome.result["action"], action);
+                assert!(outcome.result["_meta"]["persist"].is_null());
+                assert_eq!(
+                    outcome.response.unwrap()["answers"]["__mcp_approval"]["answers"],
+                    json!([if answer == "Allow" {
+                        "Allow"
+                    } else {
+                        "Decline"
+                    }]),
+                );
+            }
+        }
     }
 
     #[tokio::test(start_paused = true)]

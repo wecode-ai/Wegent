@@ -218,4 +218,7 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   act(() => publishPersonalStandIn(settings))
   expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
