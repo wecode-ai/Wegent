@@ -162,6 +162,7 @@ export function earliestRuntimeMessageIndex(
 
 export function orderRuntimeConversationTurns(
   turns: RuntimeConversationTurn[],
+  sources: RuntimeConversationTurn[][] = [turns],
 ): RuntimeConversationTurn[] {
   const pendingOptimisticTurns = turns.filter((turn) => turn.id === null);
   const indexedTurns = turns
@@ -173,13 +174,10 @@ export function orderRuntimeConversationTurns(
     }));
   let orderedTurns: RuntimeConversationTurn[];
   if (indexedTurns.some(({ turn }) => turn.position !== undefined)) {
-    orderedTurns = indexedTurns
-      .sort(
-        (left, right) =>
-          (left.turn.position ?? Infinity) -
-            (right.turn.position ?? Infinity) || left.index - right.index,
-      )
-      .map(({ turn }) => turn);
+    orderedTurns = orderNativePositionEntries(
+      indexedTurns.map(({ turn }) => turn),
+      observedNativePositionAnchors(turns, sources),
+    );
   } else if (
     indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)
   ) {
@@ -273,25 +271,37 @@ export function mergeRuntimeConversationItems(
     mergedLocalItems,
     mergedSnapshotItems,
   );
+  const anchors = observedNativePositionAnchors(items, [
+    canonicalLocalItems,
+    snapshotItems,
+  ]);
+  return orderRuntimeConversationItems(items, anchors);
+}
+
+function observedNativePositionAnchors<
+  T extends { id: string | null; position?: number },
+>(entries: T[], sources: T[][]): Map<string, number> {
   const positions = new Map(
-    items.flatMap((item) =>
-      item.position === undefined ? [] : [[item.id, item.position] as const],
+    entries.flatMap((entry) =>
+      entry.id === null || entry.position === undefined
+        ? []
+        : [[entry.id, entry.position] as const],
     ),
   );
   const anchors = new Map<string, number>();
-  // Only original source sequences witness adjacency. Inserting a newly discovered native
-  // item into the union must not retroactively make it a neighbor observed by a live item.
-  for (const source of [canonicalLocalItems, snapshotItems]) {
+  // Only original source sequences witness adjacency, never the merged union.
+  for (const source of sources) {
     let nextPosition = Infinity;
     for (let index = source.length - 1; index >= 0; index--) {
-      const item = source[index];
-      const position = positions.get(item.id);
+      const id = source[index].id;
+      if (id === null) continue;
+      const position = positions.get(id);
       if (position !== undefined) nextPosition = position;
-      else if (nextPosition !== Infinity || !anchors.has(item.id))
-        anchors.set(item.id, nextPosition);
+      else if (nextPosition !== Infinity || !anchors.has(id))
+        anchors.set(id, nextPosition);
     }
   }
-  return orderRuntimeConversationItems(items, anchors);
+  return anchors;
 }
 
 /** Persisted positions are authoritative; items still in flight remain provisional. */
@@ -300,35 +310,46 @@ export function orderRuntimeConversationItems(
   observedAnchors?: ReadonlyMap<string, number>,
 ): RuntimeConversationItem[] {
   if (!items.some((item) => item.position !== undefined)) return items;
+  const anchors = new Map(
+    observedAnchors ?? observedNativePositionAnchors(items, [items]),
+  );
+  for (const item of items) {
+    if (
+      item.type === "user_message" &&
+      !item.message.runtimeGuidance &&
+      item.position === undefined
+    )
+      anchors.set(item.id, -Infinity);
+  }
+  return orderNativePositionEntries(items, anchors);
+}
+
+function orderNativePositionEntries<
+  T extends { id: string | null; position?: number },
+>(entries: T[], anchors: ReadonlyMap<string, number>): T[] {
   let nextPosition = Infinity;
-  const ordered = items.map((item, index) => ({
-    item,
+  const ordered = entries.map((entry, index) => ({
+    entry,
     index,
     anchor: Infinity,
   }));
   for (let index = ordered.length - 1; index >= 0; index -= 1) {
-    const entry = ordered[index];
-    if (entry.item.position !== undefined) nextPosition = entry.item.position;
-    // Unpersisted runtime items stay before their observed next native identity. Absence from
-    // durable history is not deletion: background commands and pending prompts may never be rows.
-    entry.anchor =
-      entry.item.type === "user_message" &&
-      !entry.item.message.runtimeGuidance &&
-      entry.item.position === undefined
-        ? -Infinity
-        : (entry.item.position ??
-          observedAnchors?.get(entry.item.id) ??
-          nextPosition);
+    const item = ordered[index];
+    if (item.entry.position !== undefined) nextPosition = item.entry.position;
+    item.anchor =
+      item.entry.position ??
+      (item.entry.id === null ? undefined : anchors.get(item.entry.id)) ??
+      nextPosition;
   }
   return ordered
     .sort(
       (left, right) =>
         left.anchor - right.anchor ||
-        Number(left.item.position !== undefined) -
-          Number(right.item.position !== undefined) ||
+        Number(left.entry.position !== undefined) -
+          Number(right.entry.position !== undefined) ||
         left.index - right.index,
     )
-    .map(({ item }) => item);
+    .map(({ entry }) => entry);
 }
 
 export function removeEquivalentAssistantTextItems(
