@@ -285,6 +285,34 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(new URLSearchParams(window.location.search).has('workspaceTab')).toBe(false)
   })
 
+  test('selects an already open task without replacing the active conversation', () => {
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    let targetId = ''
+    act(() => {
+      targetId = current.openTab('task', {
+        contentRoute: '/runtime-tasks?taskId=second&deviceId=device',
+      }).id
+    })
+    act(() =>
+      current.openTab('task', {
+        contentRoute: '/runtime-tasks?deviceId=device&taskId=first',
+      })
+    )
+    const source = { ...current.activeTab }
+    const count = current.tabs.length
+    act(() => navigateTo('/runtime-tasks?deviceId=device&taskId=second'))
+    expect(current.activeTabId).toBe(targetId)
+    expect(current.tabs.find(tab => tab.id === source.id)).toEqual(source)
+    expect(current.tabs).toHaveLength(count)
+  })
+
   test('registered auxiliary pages replace the task surface in place', async () => {
     await installDshUiTestContributions(
       {

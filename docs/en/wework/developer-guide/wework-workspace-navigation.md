@@ -18,6 +18,8 @@ Ordinary navigation within the same surface keeps the existing location update
 without synchronously reselecting the tab. Tasks and auxiliary pages share the
 workbench surface, so opening an app or returning to a new conversation preserves
 the tab and pending conversation state updates.
+When another tab already contains the destination task, navigation first selects
+that tab by device and task identity, preserving the current conversation tab.
 Settings temporarily replace the surface and retain the return location.
 Routes containing `workspaceTab` explicitly address a tab and bypass navigation
 events. Non-workspace routes such as login retain page navigation.
