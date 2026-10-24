@@ -5555,3 +5555,67 @@ async fn named_home_action_protects_only_its_request_scoped_process() {
         .await;
     assert_eq!(scoped.restart_if_idle().await, Ok(()));
 }
+
+#[test]
+fn stand_in_mcp_confirmation_waits_for_one_time_input() {
+    let mut message = json!({"id":75,"method":"item/tool/requestUserInput","params":{
+        "questions":[{"id":"mcp_tool_call_approval_reply","options":[
+            {"label":"Allow"},{"label":"Allow for this session"},{"label":"Cancel"}
+        ]}]
+    }});
+    assert!(!codex_notification_requires_user_input(&message));
+    restrict_stand_in_approval(&mut message);
+    assert!(codex_notification_requires_user_input(&message));
+    assert_eq!(
+        message["params"]["questions"][0]["options"],
+        json!([{"label":"Allow"},{"label":"Cancel"}])
+    );
+    for answer in ["Allow", "Allow for this session", "Cancel"] {
+        let mut response = json!({"answers":{"mcp_tool_call_approval_reply":{"answers":[answer]}}});
+        restrict_stand_in_mcp_answer(&mut response, "Cancel");
+        assert_eq!(
+            response["answers"]["mcp_tool_call_approval_reply"]["answers"],
+            json!([if answer == "Allow" { "Allow" } else { "Cancel" }])
+        );
+    }
+}
+
+#[test]
+fn stand_in_mcp_elicitation_confirmation_removes_persistent_approval() {
+    let mut message = json!({"method":"mcpServer/elicitation/request","params":{
+        "mode":"form","serverName":"wework_stand_in","message":"Allow reply?",
+        "requestedSchema":{"type":"object","properties":{}},
+        "_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"]}
+    }});
+    restrict_stand_in_approval(&mut message);
+    assert!(codex_notification_requires_user_input(&message));
+    let payload = mcp_server_elicitation_request_user_input_params(&message["params"]).unwrap();
+    assert_eq!(
+        payload["questions"][0]["options"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({"initiatedBy":"stand_in","askBeforeAct":true}),
+    );
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread-1", &request, &launch),
+        thread_fork_params("thread-1", None, &request, &launch),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("Do not ask the user to type yes"));
+        assert!(instructions.contains("A chat reply never grants execution permission"));
+    }
+    assert_eq!(
+        codex_runtime_permission_profile(&request),
+        CODEX_READ_ONLY_PERMISSION_PROFILE
+    );
+    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+}

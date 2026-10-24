@@ -12,12 +12,14 @@ export function StandInConversation({
   deviceId,
   roleId,
   onOpenTask,
+  active = true,
 }: {
   api: StandInExecutorApi
   userId: number
   deviceId: string
   roleId?: string
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
+  active?: boolean
 }) {
   const { t } = useTranslation('common')
   const [address, setAddress] = useState<RuntimeTaskAddress | null>()
@@ -72,6 +74,7 @@ export function StandInConversation({
       initialAddress={address}
       sendEphemeral={false}
       expanded
+      active={active}
       placeholder={t(roleId ? 'standIn.workspace.role_prompt' : 'standIn.workspace.primary_prompt')}
       emptyStateText={t(
         roleId ? 'standIn.workspace.role_empty' : 'standIn.workspace.primary_empty'

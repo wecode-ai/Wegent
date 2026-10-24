@@ -22,7 +22,11 @@ import {
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import {
+  RequestUserInputCard,
+  type RequestUserInputPayload,
+} from '@/components/chat/RequestUserInputCard'
+import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import {
   applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
@@ -116,6 +120,7 @@ interface TemporaryChatPanelProps {
   wideComposer?: boolean
   collapseComposerWhenIdle?: boolean
   readOnly?: boolean
+  active?: boolean
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBarMiddleContext?: ReactNode
@@ -153,6 +158,7 @@ export function TemporaryChatPanel({
   initialScrollPosition = 'restore',
   scrollOrigin = 'bottom',
   onOpenRuntimeTask,
+  active = true,
 }: TemporaryChatPanelProps) {
   const { t, i18n } = useTranslation('common')
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
@@ -833,6 +839,7 @@ export function TemporaryChatPanel({
     [address, cancelRuntimePaneTask]
   )
 
+  const pendingRequest = pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
@@ -846,7 +853,15 @@ export function TemporaryChatPanel({
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
-        readOnly ? null : (
+        readOnly || !active ? null : pendingRequest ? (
+          <RequestUserInputCard
+            key={requestUserInputPayloadKey(pendingRequest)}
+            payload={pendingRequest}
+            messages={messages}
+            onSubmit={submitRequestUserInput}
+            onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
+          />
+        ) : (
           <ComposerCatalogContext.Provider value={composerCatalog}>
             <BufferedChatInput
               predictionAddress={address}
@@ -925,6 +940,7 @@ export function TemporaryChatPanel({
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+        hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
         initialScrollPosition={initialScrollPosition}
         scrollOrigin={scrollOrigin}
       />

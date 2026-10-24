@@ -5407,7 +5407,7 @@
       "no_matching_work": "当前筛选下没有工作。",
       "work_preview": "工作预览",
       "preview_no_summary": "暂时没有处理摘要，可进入工作查看完整上下文。",
-      "preview_help": "在具体工作中查看完整上下文并处理确认。",
+      "preview_help": "可在此确认操作；需要更多上下文时再打开会话。",
       "open_work": "进入工作处理",
       "receive_new": "接收新工作",
       "pause_help": "开启并保存后接收新工作。暂停后不再接手新工作，已有工作继续。",
@@ -5454,7 +5454,10 @@
       "unavailable_project": "不可用的项目",
       "excluded_project": "排除：{{name}}",
       "ai_ownership": "由 AI 判断工作归属",
-      "load_more": "加载更多"
+      "load_more": "加载更多",
+      "confirm_reply": "确认发送回复",
+      "send_reply": "确认发送",
+      "decline_reply": "暂不发送"
     }
   },
   "workbench_error": {

@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
+  'stand-in-list-confirmation',
   'stand-in-identities',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',

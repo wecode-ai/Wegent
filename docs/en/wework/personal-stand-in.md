@@ -6,7 +6,7 @@ sidebar_position: 12
 
 Open **My stand-in** in the collaboration sidebar to delegate work, ask follow-up questions, or draft a scenario role with AI. The primary identity conversation and individual work executions are stored separately. Returning from a role restores the primary conversation.
 
-A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for an inline preview, then open the full conversation to review context, continue discussion, or answer an operation approval. Each role also has its own persistent identity conversation.
+A **scenario role** continuously handles a particular information flow. Its default page is a work list. Select work for an inline preview and answer pending approvals there. Open the full conversation when you need more context or discussion. Each role also has its own persistent identity conversation.
 
 ## Manual and conversational configuration
 
@@ -28,6 +28,6 @@ Collaboration sources retain project membership permissions. Project-scoped agen
 
 Follow-up messages concerning the same concrete matter can join existing work. Uncertain associations wait for review. Expand related messages in the preview to split a message into separate work or move it to another item within the same role. Moving a completed message does not execute it again.
 
-Answer operation approvals inside the specific work conversation. Approval-before-operations uses runtime enforcement for file writes, commands requiring elevated permissions, and MCP tools with write annotations. Approval applies to the individual operation, without persistent allow rules. This policy currently requires the Codex runtime.
+Answer operation approvals directly in the work-list preview. The same approval appears in the conversation input area with clickable actions; no typed “yes” is required. DingTalk reply approvals show the outgoing text bound to the original tool call. Approval-before-operations uses runtime enforcement for file writes, commands requiring elevated permissions, and MCP tools with write annotations. Approval applies to the individual operation, without persistent allow rules. This policy currently requires the Codex runtime.
 
 Disable **Receive new work** and save to pause new intake while retaining existing work. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.

@@ -10,6 +10,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { runtimeItem } from '@/features/notifications/standInNotifications.fixtures'
 import '@/i18n'
 import { StandInOverviewPage } from './StandInOverviewPage'
+vi.mock('./StandInWorkConfirmation', () => ({ StandInWorkConfirmation: () => null }))
 
 vi.mock('./StandInConversation', () => ({
   StandInConversation: ({ roleId }: { roleId?: string }) => (

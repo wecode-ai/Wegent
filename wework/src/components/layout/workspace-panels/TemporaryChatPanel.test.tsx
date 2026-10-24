@@ -20,6 +20,7 @@ import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRe
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import type { WorkbenchMessage } from '@/types/workbench'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
@@ -64,6 +65,7 @@ const mocks = vi.hoisted(() => ({
     content: string
     status: 'done' | 'failed'
     createdAt: string
+    blocks?: WorkbenchMessage['blocks']
   }>,
   lifecycleSnapshot: null as {
     turn?: { id: string | null }
@@ -1012,6 +1014,82 @@ describe('TemporaryChatPanel', () => {
         modelId: 'moonshot-kimi-k2.7-code-highspeed',
       }),
       expect.any(Object)
+    )
+  })
+
+  it('replaces the composer with pending confirmation and submits its native response', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'assistant-approval',
+        role: 'assistant',
+        content: '准备发送回复。',
+        status: 'done',
+        createdAt: '2026-10-24T00:00:00Z',
+        blocks: [
+          {
+            id: 'approval',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'pending',
+            renderPayload: {
+              kind: 'request_user_input',
+              requestId: 'approval-9',
+              questions: [
+                {
+                  id: 'mcp_tool_call_approval_reply',
+                  question: '发送这条回复？',
+                  options: [{ label: 'Allow' }, { label: 'Cancel' }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]
+    const view = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="composer-approval"
+      />
+    )
+    expect(screen.queryByTestId('mock-composer')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-chat-composer-shell')).toContainElement(
+      screen.getByTestId('request-user-input-card')
+    )
+    view.rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="composer-approval"
+        active={false}
+      />
+    )
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-composer')).not.toBeInTheDocument()
+    view.rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="composer-approval"
+        active
+      />
+    )
+    await userEvent.click(
+      screen.getByTestId('request-user-input-option-mcp_tool_call_approval_reply-0')
+    )
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        requestUserInputResponse: {
+          requestId: 'approval-9',
+          itemId: undefined,
+          answers: { mcp_tool_call_approval_reply: { answers: ['Allow'] } },
+        },
+      })
     )
   })
 

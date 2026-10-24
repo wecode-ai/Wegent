@@ -1565,6 +1565,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               />
             ) : (
               <StandInOverviewPage
+                active={props.workspaceActive ?? true}
                 initialPrimaryProfile={personalSettingsTarget?.roleId === '@primary'}
                 initialDeviceId={personalSettingsTarget?.deviceId}
                 api={platformApi}

@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { RequestUserInputCard } from './RequestUserInputCard'
 import { openExternalUrl } from '@/lib/external-links'
+import type { WorkbenchMessage } from '@/types/workbench'
 
 vi.mock('@/lib/external-links', () => ({ openExternalUrl: vi.fn().mockResolvedValue(true) }))
 
@@ -586,5 +587,59 @@ describe('compact inline questions', () => {
     await user.click(screen.getByTestId('request-user-input-submit-button'))
     expect(onSubmit).toHaveBeenCalledOnce()
     expect(onSubmit.mock.calls[0][0].answers).toEqual({ details: { answers: ['保留历史会话'] } })
+  })
+})
+
+test('shows the exact bound reply and localized actions while preserving native approval values', async () => {
+  const onSubmit = vi.fn(async () => true)
+  const messages = [
+    {
+      id: 'assistant',
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      blocks: [
+        {
+          id: 'call-reply',
+          type: 'tool',
+          toolName: 'wework_stand_in.reply',
+          status: 'pending',
+          toolInput: { text: '现在是北京时间13:25。' },
+        },
+        {
+          id: 'unrelated',
+          type: 'tool',
+          toolName: 'wework_stand_in.reply',
+          status: 'pending',
+          toolInput: { text: '另一个审批的内容' },
+        },
+      ],
+    },
+  ] as WorkbenchMessage[]
+  render(
+    <RequestUserInputCard
+      messages={messages}
+      onSubmit={onSubmit}
+      payload={{
+        kind: 'request_user_input',
+        requestId: 'approval-1',
+        itemId: 'call-reply',
+        questions: [
+          {
+            id: 'mcp_tool_call_approval_call-reply',
+            question: 'Allow the tool?',
+            options: [{ label: 'Allow' }, { label: 'Cancel' }],
+          },
+        ],
+      }}
+    />
+  )
+  expect(screen.getByText('现在是北京时间13:25。')).toBeVisible()
+  expect(screen.queryByText('另一个审批的内容')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: /确认发送/ }))
+  expect(onSubmit).toHaveBeenCalledWith({
+    requestId: 'approval-1',
+    itemId: 'call-reply',
+    answers: { 'mcp_tool_call_approval_call-reply': { answers: ['Allow'] } },
   })
 })

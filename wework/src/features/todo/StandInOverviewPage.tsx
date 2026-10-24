@@ -26,10 +26,12 @@ type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
+  active = true,
   ...props
 }: SettingsProps & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
+  active?: boolean
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -322,6 +324,7 @@ export function StandInOverviewPage({
             )}
             {conversation && api && deviceId ? (
               <StandInConversation
+                active={active && conversation}
                 key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
                 api={api}
                 userId={props.userId}
@@ -331,6 +334,7 @@ export function StandInOverviewPage({
               />
             ) : (
               <StandInWorkList
+                active={active && !conversation}
                 key={roleId ? `role:${roleId}` : 'primary'}
                 items={roleItems}
                 inbox={visibleInbox.filter(work => work.roleId === (roleId ?? '@primary'))}

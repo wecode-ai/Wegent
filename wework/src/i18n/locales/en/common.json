@@ -5410,7 +5410,7 @@
       "no_matching_work": "No work matches this filter.",
       "work_preview": "Work preview",
       "preview_no_summary": "No summary yet. Open the work to see its full context.",
-      "preview_help": "Review the full context and approvals in this work item.",
+      "preview_help": "Confirm operations here, or open the conversation for more context.",
       "open_work": "Open work",
       "receive_new": "Receive new work",
       "pause_help": "Enable and save to receive new work. Pausing stops new intake; existing work continues.",
@@ -5457,7 +5457,10 @@
       "unavailable_project": "Unavailable project",
       "excluded_project": "Excluded: {{name}}",
       "ai_ownership": "Let AI choose the role",
-      "load_more": "Load more"
+      "load_more": "Load more",
+      "confirm_reply": "Confirm reply",
+      "send_reply": "Send reply",
+      "decline_reply": "Do not send"
     }
   },
   "workbench_error": {

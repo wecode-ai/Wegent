@@ -6,6 +6,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 import { StandInWorkMessages } from './StandInWorkMessages'
+import { StandInWorkConfirmation } from './StandInWorkConfirmation'
 
 type WorkFilter = 'all' | 'waiting' | 'running' | 'completed'
 
@@ -17,6 +18,7 @@ export function StandInWorkList({
   userId,
   deviceId,
   onRefresh,
+  active = true,
 }: {
   items: RuntimeTaskReminderItem[]
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -25,6 +27,7 @@ export function StandInWorkList({
   userId?: number
   deviceId?: string
   onRefresh?(): void
+  active?: boolean
 }) {
   const { t } = useTranslation('common')
   const [filter, setFilter] = useState<WorkFilter>('all')
@@ -110,7 +113,7 @@ export function StandInWorkList({
         <aside
           aria-label={t('standIn.workspace.work_preview')}
           data-testid="stand-in-work-preview"
-          className="absolute inset-0 z-10 flex flex-col border-l border-border bg-background p-5 md:relative md:inset-auto md:w-80 md:shrink-0"
+          className="absolute inset-0 z-10 flex flex-col overflow-y-auto border-l border-border bg-background p-5 md:relative md:inset-auto md:w-96 md:shrink-0"
         >
           <header className="flex items-start gap-3">
             <h2 className="min-w-0 flex-1 font-medium">{selected.task.title}</h2>
@@ -131,6 +134,9 @@ export function StandInWorkList({
               t('standIn.workspace.preview_no_summary')}
           </p>
           <p className="mt-4 text-sm text-text-secondary">{statusLabel(selected)}</p>
+          {active && (!selectedWork || selectedWork.task) && (
+            <StandInWorkConfirmation key={selected.key} address={selected.address} />
+          )}
           {selectedWork && api && userId !== undefined && deviceId && (
             <StandInWorkMessages
               key={selectedWork.id}
