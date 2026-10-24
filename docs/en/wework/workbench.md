@@ -189,6 +189,8 @@ A conversation opens at its latest message the first time. Conversations that we
 
 Message, scroll-position, and measured-height caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
 
+After restoring a conversation, you can answer an existing MCP form or another runtime request that expects a direct response even while the model catalog is loading or the configured model is unavailable. Sending a new chat message still requires an available model.
+
 ## Use selected response text
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
