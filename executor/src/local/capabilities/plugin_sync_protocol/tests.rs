@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
 
+#[path = "scope_tests.rs"]
+mod scope_tests;
+
 #[derive(Default)]
 struct Provider {
     calls: AtomicUsize,

@@ -178,7 +178,8 @@ impl ConnectionBinding {
         // Tokens are never persisted or logged. Changing the connection creates
         // a fresh ordering namespace while package caches remain reusable.
         manifest["plugin_sync_binding"] = json!(self.identity);
-        manifest["plugin_sync"] = json!({"version": 2, "complete_generation": 0, "entries": {}});
+        manifest["plugin_sync"] =
+            json!({"version": 2, "complete_generation": 0, "full_generation": 0, "entries": {}});
         for plugin in ensure_object_field(manifest, "plugins").values_mut() {
             if let Some(plugin) = plugin.as_object_mut() {
                 plugin.remove("plugin_sync_generation");
@@ -332,6 +333,8 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _publication_lock = self.store.lock_shared_manifest()?;
         let mut manifest;
         let mut results = Vec::new();
+        let plugins_superseded;
+        let full_superseded;
         {
             let _binding = self.plugin_sync_binding.lock_active()?;
             manifest = self.store.manifest.load()?;
@@ -340,7 +343,11 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     .manifest
                     .save_with_revision_bump(manifest.clone())?;
             }
-            if request.complete && request.generation < complete_generation(&manifest) {
+            plugins_superseded =
+                request.complete && request.generation < complete_generation(&manifest);
+            full_superseded =
+                !request.plugins_only && request.generation < full_generation(&manifest);
+            if plugins_superseded && request.plugins_only {
                 let mut results = request
                     .plugins
                     .iter()
@@ -356,6 +363,14 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 "skills": [], "plugins": results,
                 "plugin_sync": {"version": 2, "generation": request.generation, "complete": true}}),
                 );
+            }
+            let advances_full =
+                !request.plugins_only && request.generation > full_generation(&manifest);
+            if advances_full {
+                // Plugin-only refreshes cannot supersede Skills/MCP work. Fence
+                // full-all intent before side effects, allowing equal-generation retry.
+                protocol_state(&mut manifest)
+                    .insert("full_generation".to_owned(), json!(request.generation));
             }
             if request.complete && request.generation > complete_generation(&manifest) {
                 // Acceptance fences delayed deltas even when materialization fails.
@@ -379,6 +394,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 self.store
                     .manifest
                     .save_with_revision_bump(manifest.clone())?;
+            } else if advances_full {
+                self.store
+                    .manifest
+                    .save_with_revision_bump(manifest.clone())?;
             }
             for spec in &request.removals {
                 results.push(self.remove_ordered_plugin(
@@ -387,7 +406,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     &mut manifest,
                 )?);
             }
-            if request.complete {
+            if request.complete && !plugins_superseded {
                 let desired = request
                     .plugins
                     .iter()
@@ -441,7 +460,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             results.push(result);
         }
         let mut skill_results = Vec::new();
-        if !request.plugins_only {
+        if !request.plugins_only && !full_superseded {
             let desired = request
                 .skills
                 .iter()
@@ -462,7 +481,8 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             .chain(&skill_results)
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
         let _binding = self.plugin_sync_binding.lock_active()?;
-        if request.complete
+        if (request.complete && !plugins_superseded)
+            || (!request.plugins_only && !full_superseded)
             || results
                 .iter()
                 .any(|result| result.get("status").and_then(Value::as_str) != Some("superseded"))
@@ -569,6 +589,14 @@ fn complete_generation(manifest: &Value) -> u64 {
     manifest
         .get("plugin_sync")
         .and_then(|state| state.get("complete_generation"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn full_generation(manifest: &Value) -> u64 {
+    manifest
+        .get("plugin_sync")
+        .and_then(|state| state.get("full_generation"))
         .and_then(Value::as_u64)
         .unwrap_or(0)
 }

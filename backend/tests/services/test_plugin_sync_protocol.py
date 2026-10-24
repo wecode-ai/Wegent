@@ -611,3 +611,131 @@ async def test_new_payload_is_not_sent_after_runtime_loses_advertised_capability
     assert result.acknowledged is False
     assert "capability changed" in result.error
     call.assert_not_awaited()
+
+
+@pytest.mark.parametrize("refresh_arrives_first", [False, True])
+@pytest.mark.asyncio
+async def test_plugin_refresh_does_not_resend_completed_empty_plugin_full_sync(
+    snapshot_sessions, monkeypatch, refresh_arrives_first
+):
+    import asyncio
+
+    from app.services.device import plugin_reconciliation
+    from tests.services.test_device_capability_sync_service import (
+        _create_installed_mcp,
+        _create_installed_skill,
+        _create_skill,
+    )
+
+    with snapshot_sessions() as db:
+        skill = _create_skill(db, 1)
+        _create_installed_skill(db, 1, skill)
+        _create_installed_mcp(db, 1)
+
+    service = DeviceCapabilitySyncService(snapshot_sessions)
+    monkeypatch.setattr(
+        plugin_reconciliation, "device_capability_sync_service", service
+    )
+    monkeypatch.setattr(plugin_reconciliation, "get_db_session", snapshot_sessions)
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        AsyncMock(return_value=_wire_route(versioned=True)),
+    )
+    full_sent = asyncio.Event()
+    release_full = asyncio.Event()
+    requests = []
+    acknowledgements = []
+
+    async def call(_event, payload, **_kwargs):
+        requests.append(deepcopy(payload))
+        scope = payload.get("scope", "all")
+        response = _wire_ack(payload)
+        if scope == "all":
+            full_sent.set()
+            if refresh_arrives_first:
+                await release_full.wait()
+            # Executor owns independent materialization; its completed skill ACK
+            # must remain sufficient even after a newer plugin-only refresh.
+            response["skills"] = [
+                {"id": item["id"], "status": "synced"} for item in payload["skills"]
+            ]
+        acknowledgements.append(scope)
+        return response
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: SimpleNamespace(call=call),
+    )
+    full = asyncio.create_task(
+        service.sync_current_device_capabilities(user_id=1, device_id="device")
+    )
+    try:
+        await asyncio.wait_for(full_sent.wait(), timeout=5)
+        if not refresh_arrives_first:
+            await asyncio.wait_for(full, timeout=5)
+        refreshed = await asyncio.wait_for(
+            plugin_reconciliation.reconcile_device_plugins(1, "device"), timeout=5
+        )
+    finally:
+        release_full.set()
+        result = await asyncio.wait_for(full, timeout=5)
+
+    assert refreshed.reconciled is True
+    assert result.success is True and result.acknowledged is True
+    assert len(result.skills) == 1 and result.skills[0].status == "synced"
+    assert result.errors == []
+    assert len(requests) == 2, "A completed full sync must not need a corrective RPC"
+    complete, plugins_only = requests
+    assert complete["mode"] == "replace"
+    assert complete["plugins"] == []
+    assert len(complete["skills"]) == len(complete["mcps"]) == 1
+    assert plugins_only["scope"] == "plugins"
+    assert plugins_only["mode"] == "merge"
+    assert plugins_only["plugins"] == []
+    assert "skills" not in plugins_only and "mcps" not in plugins_only
+    assert complete["plugin_sync"]["complete"] is True
+    assert plugins_only["plugin_sync"]["complete"] is True
+    assert (
+        complete["plugin_sync"]["generation"]
+        < plugins_only["plugin_sync"]["generation"]
+    )
+    assert acknowledgements == (
+        ["plugins", "all"] if refresh_arrives_first else ["all", "plugins"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_superseded_plugin_item_still_resends_unchanged_desired_state(
+    snapshot_sessions, monkeypatch
+):
+    with snapshot_sessions() as db:
+        target = _wire_plugin(db, "target")
+    requests = []
+
+    async def call(_event, payload, **_kwargs):
+        requests.append(deepcopy(payload))
+        response = _wire_ack(payload)
+        if len(requests) == 1:
+            response["plugins"][0]["status"] = "superseded"
+        return response
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        AsyncMock(return_value=_wire_route(versioned=True)),
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: SimpleNamespace(call=call),
+    )
+
+    result = await DeviceCapabilitySyncService(snapshot_sessions).sync_plugin_change(
+        user_id=1, device_id="device", installed_plugin_ids=[target]
+    )
+
+    assert result.success is True and result.plugins[0].status == "synced"
+    assert len(requests) == 2
+    assert requests[0]["plugins"] == requests[1]["plugins"]
+    assert (
+        requests[0]["plugin_sync"]["generation"]
+        < requests[1]["plugin_sync"]["generation"]
+    )
