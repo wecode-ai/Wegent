@@ -835,7 +835,13 @@ async fn overload_recovery_drains_a_goal_completed_during_backoff() {
         assert_eq!(request["method"], "thread/goal/get");
         let mut goal = blocked_goal(Value::Null)["params"]["goal"].clone();
         goal["status"] = json!("complete");
+        let mut active_goal = goal.clone();
+        active_goal["status"] = json!("active");
         for message in [
+            json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":active_goal}}),
+            json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"interim-turn"}}}),
+            json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"interim-turn","delta":"Interim response"}}),
+            json!({"method":"turn/completed","params":{"threadId":"root-thread","turn":{"id":"interim-turn","status":"completed"}}}),
             json!({"method":"turn/started","params":{"threadId":"root-thread","turn":{"id":"resumed-turn"}}}),
             json!({"method":"item/agentMessage/delta","params":{"threadId":"root-thread","turnId":"resumed-turn","delta":"Goal completed"}}),
             json!({"method":"thread/goal/updated","params":{"threadId":"root-thread","goal":goal}}),

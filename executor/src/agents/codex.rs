@@ -2700,10 +2700,9 @@ async fn read_shared_turn_notifications(
                             thread_id,
                             &response,
                         );
-                        if !restarted
-                            && !state.goal_is_active()
-                            && state.goal_status_snapshot().1.as_deref() != Some("complete")
-                        {
+                        let goal_completed =
+                            state.goal_status_snapshot().1.as_deref() == Some("complete");
+                        if !restarted && !state.goal_is_active() && !goal_completed {
                             return Ok(ExecutionOutcome::Cancelled {
                                 message: "Goal changed during model overload recovery".to_owned(),
                             });
@@ -2712,7 +2711,8 @@ async fn read_shared_turn_notifications(
                         // notifications are still queued and own the final outcome.
                         // Activating an idle Goal starts its native continuation.
                         // Do not race it with a second turn/start request.
-                        options.wait_for_goal_continuation = state.goal_is_active();
+                        options.wait_for_goal_continuation =
+                            state.goal_is_active() || goal_completed;
                     } else {
                         options.active_turn_id = turn_start_response_id(&response);
                     }
