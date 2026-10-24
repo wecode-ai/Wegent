@@ -54,6 +54,15 @@ struct ConnectionSpec {
         deserialize_with = "brz_json::adapters::null_as_default"
     )]
     access_token_encrypted: String,
+    /// `spec.get("refreshTokenEncrypted")`: `None` when null or absent.
+    #[serde(rename = "refreshTokenEncrypted")]
+    refresh_token_encrypted: Option<String>,
+    /// `spec.get("tokenType") or "bearer"`.
+    #[serde(
+        rename = "tokenType",
+        deserialize_with = "brz_json::adapters::null_as_default"
+    )]
+    token_type: String,
     /// `spec.get("toolSummaries")`: the last successful tool discovery cache.
     #[serde(rename = "toolSummaries", default)]
     tool_summaries: Vec<CachedToolSummary>,
@@ -82,6 +91,10 @@ pub(crate) struct ConnectorConnection {
     /// Recorded expiry parsed from the ISO-8601 `expiresAt` member.
     pub expires_at: Option<NaiveDateTime>,
     pub access_token_encrypted: String,
+    /// `ConnectorConnection.refresh_token_encrypted`.
+    pub refresh_token_encrypted: Option<String>,
+    /// `ConnectorConnection.token_type`.
+    pub token_type: String,
     /// Cached tool summaries from the last successful discovery.
     pub tool_summaries: Vec<ToolSummary>,
     /// `ConnectorConnection.tools_discovered_at`.
@@ -109,6 +122,14 @@ impl ConnectorConnection {
             granted_scopes: spec.granted_scopes,
             expires_at: spec.expires_at.as_deref().and_then(parse_expires_at),
             access_token_encrypted: spec.access_token_encrypted,
+            refresh_token_encrypted: spec
+                .refresh_token_encrypted
+                .filter(|value| !value.is_empty()),
+            token_type: if spec.token_type.is_empty() {
+                "bearer".to_string()
+            } else {
+                spec.token_type
+            },
             tool_summaries: spec
                 .tool_summaries
                 .into_iter()
@@ -128,12 +149,44 @@ impl ConnectorConnection {
     }
 
     /// `ConnectorConnection.access_token`: decrypt the stored credential.
-    /// Every value the source's `decrypt_sensitive_data` cannot decrypt is
-    /// returned unchanged; only missing crypto configuration is an error.
+    ///
+    /// `decrypt_sensitive_data` echoes the ciphertext back when the configured
+    /// key cannot read it; sending that as a bearer token only produces an
+    /// upstream 401, so it answers `""` and the caller reports a configuration
+    /// fault rather than a missing grant.
     pub(crate) fn access_token(
         &self,
     ) -> Result<String, crate::subscriptions_item::crypto::CryptoError> {
-        crate::subscriptions_item::crypto::decrypt_sensitive_data(&self.access_token_encrypted)
+        let decrypted = crate::subscriptions_item::crypto::decrypt_sensitive_data(
+            &self.access_token_encrypted,
+        )?;
+        Ok(if decrypted == self.access_token_encrypted {
+            String::new()
+        } else {
+            decrypted
+        })
+    }
+
+    /// `ConnectorConnection.refresh_token`: the decrypted refresh token, or
+    /// `None` when the configured key cannot read the stored ciphertext.
+    pub(crate) fn refresh_token(&self) -> Option<String> {
+        let encrypted = self.refresh_token_encrypted.as_deref()?;
+        let decrypted =
+            crate::subscriptions_item::crypto::decrypt_sensitive_data(encrypted).ok()?;
+        (!decrypted.is_empty() && decrypted != encrypted).then_some(decrypted)
+    }
+}
+
+/// `ConnectorConnectionService.is_usable`: a connected grant, or an expired one
+/// whose stored refresh token can still renew it.
+pub(crate) fn is_usable(connection: Option<&ConnectorConnection>) -> bool {
+    let Some(connection) = connection else {
+        return false;
+    };
+    match response(Some(connection)).status.as_str() {
+        "connected" => true,
+        "expired" => connection.refresh_token().is_some(),
+        _ => false,
     }
 }
 
@@ -168,7 +221,7 @@ fn parse_expires_at(raw: &str) -> Option<NaiveDateTime> {
 }
 
 /// Pydantic's naive-datetime wire form (`2026-10-16T09:01:23.898264`).
-fn render_datetime(value: NaiveDateTime) -> String {
+pub(crate) fn render_datetime(value: NaiveDateTime) -> String {
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
 }
 
@@ -212,6 +265,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::subscriptions_item::crypto::encrypt_sensitive_data;
 
     fn row(spec: Value) -> KindRow {
         KindRow {
@@ -259,7 +313,10 @@ mod tests {
             connection.expires_at.map(iso).as_deref(),
             Some("2026-10-16T09:01:23.898264")
         );
-        assert_eq!(connection.access_token().unwrap(), "***");
+        assert_eq!(connection.token_type, "Bearer");
+        // `decrypt_sensitive_data` passes "***" through unchanged, so the
+        // source's `access_token()` reads it as no credential either.
+        assert_eq!(connection.access_token().unwrap(), "");
     }
 
     #[test]
@@ -351,5 +408,40 @@ mod tests {
             "lastError": {"message": ""},
         })));
         assert_eq!(shape.last_error, None);
+    }
+
+    /// An expired grant stays usable while a refresh token can renew it, and
+    /// stops being usable once that token is gone.
+    #[test]
+    fn is_usable_keeps_an_expired_grant_with_a_refresh_token() {
+        crate::subscriptions_item::crypto::use_test_key();
+        let expired: ConnectorConnection = ConnectorConnection::from_row(&row(serde_json::json!({
+            "status": "connected",
+            "expiresAt": "2020-01-01T00:00:00",
+            "accessTokenEncrypted": encrypt_sensitive_data("access").unwrap(),
+            "refreshTokenEncrypted": encrypt_sensitive_data("refresh").unwrap(),
+        })));
+        assert_eq!(response(Some(&expired)).status, "expired");
+        assert!(is_usable(Some(&expired)));
+
+        let without_refresh = ConnectorConnection::from_row(&row(serde_json::json!({
+            "status": "connected",
+            "expiresAt": "2020-01-01T00:00:00",
+            "accessTokenEncrypted": encrypt_sensitive_data("access").unwrap(),
+        })));
+        assert!(!is_usable(Some(&without_refresh)));
+        assert!(!is_usable(None));
+    }
+
+    /// A ciphertext the key cannot read is missing, not a credential to send.
+    #[test]
+    fn undecryptable_credentials_read_as_empty() {
+        let stored = ConnectorConnection::from_row(&row(serde_json::json!({
+            "status": "connected",
+            "accessTokenEncrypted": "bm90LWEtcmVhbC1jaXBoZXJ0ZXh0",
+            "refreshTokenEncrypted": "bm90LWEtcmVhbC1jaXBoZXJ0ZXh0",
+        })));
+        assert_eq!(stored.access_token().unwrap(), "");
+        assert_eq!(stored.refresh_token(), None);
     }
 }

@@ -42,6 +42,10 @@ pub struct ConnectorApp {
     pub tool_allowlist: Vec<String>,
     /// `spec["providerHeadersEncrypted"]`; the administrator view decrypts it.
     pub provider_headers_encrypted: Option<String>,
+    /// `spec["oauthClientEncrypted"]`: the dynamically registered OAuth client
+    /// (`token_endpoint`, `client_id`, `resource`) an expired grant refreshes
+    /// against.
+    pub oauth_client_encrypted: Option<String>,
     pub forward_user_context_headers: bool,
     /// `list(spec.get("httpTools") or [])`; the administrator view echoes it.
     pub http_tools: Vec<OpaqueJson>,
@@ -98,6 +102,10 @@ struct AppSpec {
     #[serde(rename = "providerHeadersEncrypted")]
     #[json(presence, lenient)]
     provider_headers_encrypted: String,
+    /// `spec.get("oauthClientEncrypted")`: only a string is kept.
+    #[serde(rename = "oauthClientEncrypted")]
+    #[json(presence, lenient)]
+    oauth_client_encrypted: String,
     /// `bool(spec.get("forwardUserContextHeaders", False))`: only a JSON
     /// boolean is truthy here.
     #[serde(rename = "forwardUserContextHeaders")]
@@ -182,6 +190,7 @@ pub fn row_to_app(row: &KindRow) -> ConnectorApp {
         },
         tool_allowlist: spec.tool_allowlist,
         provider_headers_encrypted: spec.provider_headers_encrypted.into_value(),
+        oauth_client_encrypted: spec.oauth_client_encrypted.into_value(),
         forward_user_context_headers: spec
             .forward_user_context_headers
             .into_value()
@@ -223,7 +232,9 @@ where
     }
     let row = db::find_connector_connection(mysql, &app.slug, user_id).await?;
     let connection = row.as_ref().map(ConnectorConnection::from_row);
-    Ok(connection::response(connection.as_ref()).status == "connected")
+    // `is_usable` keeps an expired grant visible while its refresh token can
+    // still renew it; discovery refreshes it before the upstream call.
+    Ok(connection::is_usable(connection.as_ref()))
 }
 
 /// `_connected_apps`: the visible apps whose connection view is `connected`.
@@ -270,6 +281,19 @@ impl std::fmt::Display for SessionError {
     }
 }
 
+impl SessionError {
+    /// Map one OAuth refresh failure onto the discovery contract: only a
+    /// database or crypto fault keeps its own kind, every provider answer
+    /// means the caller needs a new grant.
+    pub(crate) fn from_refresh(error: super::refresh::RefreshError) -> Self {
+        match error {
+            super::refresh::RefreshError::Database(error) => Self::Database(error),
+            super::refresh::RefreshError::Crypto(_) => Self::Crypto,
+            _ => Self::AuthorizationRequired,
+        }
+    }
+}
+
 /// `_server_config` session headers for the authenticated caller.
 ///
 /// The source starts from `_decrypt_json(app.provider_headers_encrypted)`,
@@ -289,20 +313,39 @@ where
         let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
             .await
             .map_err(SessionError::Database)?;
-        let connection = row.as_ref().map(ConnectorConnection::from_row);
-        // `_server_config` refreshes an expired connection before this check;
-        // refresh lives in the OAuth service and is not reachable from the
-        // recorded streamable-HTTP tool discovery.
-        if connection::response(connection.as_ref()).status != "connected" {
+        let mut connection = row.as_ref().map(ConnectorConnection::from_row);
+        // `_server_config` renews an expired grant before the upstream call.
+        if connection
+            .as_ref()
+            .is_some_and(|stored| connection::response(Some(stored)).status == "expired")
+        {
+            match super::refresh::refresh(mysql, app, user.users_id).await {
+                Ok(refreshed) => connection = Some(refreshed),
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "connector grant refresh failed"
+                    );
+                    return Err(SessionError::from_refresh(error));
+                }
+            }
+        }
+        let connection = connection.ok_or(SessionError::AuthorizationRequired)?;
+        if connection::response(Some(&connection)).status != "connected" {
             return Err(SessionError::AuthorizationRequired);
         }
         let access_token = connection
-            .as_ref()
-            .ok_or(SessionError::AuthorizationRequired)?
             .access_token()
             .map_err(|_| SessionError::Crypto)?;
         if access_token.is_empty() {
-            return Err(SessionError::AuthorizationRequired);
+            // A stored ciphertext the configured key cannot read is an
+            // environment fault, not a missing grant.
+            return Err(if connection.access_token_encrypted.is_empty() {
+                SessionError::AuthorizationRequired
+            } else {
+                SessionError::Crypto
+            });
         }
         insert_header(
             &mut headers,
@@ -668,6 +711,8 @@ mod tests {
             // A past expiry turns the stored "connected" view into "expired".
             expires_at: Some(chrono::NaiveDateTime::default()),
             access_token_encrypted: String::new(),
+            refresh_token_encrypted: None,
+            token_type: "bearer".to_string(),
             tool_summaries: vec![ToolSummary {
                 name: "dingtalk__list_bases".to_string(),
                 title: None,
@@ -704,6 +749,8 @@ mod tests {
             granted_scopes: Vec::new(),
             expires_at: None,
             access_token_encrypted: String::new(),
+            refresh_token_encrypted: None,
+            token_type: "bearer".to_string(),
             tool_summaries: vec![ToolSummary {
                 name: "dingtalk__cached".to_string(),
                 title: None,
