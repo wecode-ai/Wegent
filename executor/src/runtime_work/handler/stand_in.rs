@@ -376,6 +376,16 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
+            let eligible: Vec<Value> = configs
+                .iter()
+                .filter(|config| {
+                    assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
+                })
+                .cloned()
+                .collect();
+            if eligible.is_empty() {
+                continue;
+            }
             let binding =
                 json!({"humanAssignmentId":format!("{}-{}", issue.id, history.unwrap().len())});
             let task_id = format!(
@@ -391,13 +401,6 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
-            let eligible: Vec<Value> = configs
-                .iter()
-                .filter(|config| {
-                    assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
-                })
-                .cloned()
-                .collect();
             let Some(config) = self
                 .select_polled_personal_role(&eligible, &issue_value)
                 .await
