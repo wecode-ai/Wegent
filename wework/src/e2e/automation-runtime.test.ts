@@ -250,8 +250,16 @@ describe('Electron desktop E2E automation', () => {
       expect(results[0].ok).toBe(true)
       expect(console.error).toHaveBeenCalledWith(
         '[Wework] Desktop E2E result acknowledgement failed:',
-        expect.objectContaining({ action: 'click', actionSucceeded: true })
+        expect.any(String)
       )
+      const diagnostic = vi
+        .mocked(console.error)
+        .mock.calls.find(call => call[0] === '[Wework] Desktop E2E result acknowledgement failed:')
+      expect(JSON.parse(String(diagnostic?.[1]))).toMatchObject({
+        action: 'click',
+        actionSucceeded: true,
+        error: 'Failed to fetch',
+      })
     } finally {
       button.remove()
     }

@@ -420,7 +420,11 @@ impl RuntimeWorkRpcHandler {
             .replaying_route_generations
             .get(&thread_id)
             .is_some_and(|generation| Some(*generation) != replay_generation);
-        let Some(route) = routing.routes.get(&thread_id).filter(|_| !route_replaying) else {
+        let Some(route) = routing
+            .routes
+            .get_mut(&thread_id)
+            .filter(|_| !route_replaying)
+        else {
             debug_unrouted_codex_notification(
                 &message,
                 if route_replaying {
@@ -451,11 +455,18 @@ impl RuntimeWorkRpcHandler {
             }
             return;
         };
+        if codex_notification(&message).method == "turn/completed" {
+            route.native_completed_turn_id = notification_turn_id.clone();
+        }
+        let native_completed_turn_id = route.native_completed_turn_id.clone();
         let local_task_id = route.local_task_id.clone();
         let route_request = route.request.clone();
         let event_mapper = route.event_mapper.clone();
         let route_active = route.active;
         let route_nested = route.nested;
+        let notification_sequence = message
+            .get(crate::runtime_work::CODEX_NOTIFICATION_SEQUENCE_FIELD)
+            .and_then(Value::as_u64);
         if route_nested && codex_stream_debug_enabled() {
             let notification = codex_notification(&message);
             log_executor_event(
@@ -490,6 +501,7 @@ impl RuntimeWorkRpcHandler {
                         active: route_active,
                         nested: true,
                         generation,
+                        native_completed_turn_id: None,
                     },
                 );
             }
@@ -500,11 +512,17 @@ impl RuntimeWorkRpcHandler {
         let command_notification = notification.method.starts_with("item/commandExecution/")
             || item_type(&notification_item(notification.params)) == "commandexecution";
         let active_turn = self.active_codex_turn(&local_task_id);
-        // The turn callback finishes before its execution task settles. Completed
-        // commands belong to the global router during that handoff window.
-        let completed_command_turn = active_turn.is_none()
-            && command_notification
+        // These receivers advance independently: native completion can reach this
+        // router before the execution callback clears its active turn. Ownership
+        // must follow this ordered stream rather than that callback's scheduling.
+        let completed_command_turn = command_notification
             && notification_turn_id.as_deref().is_some_and(|turn_id| {
+                if native_completed_turn_id.as_deref() == Some(turn_id) {
+                    return true;
+                }
+                if active_turn.is_some() {
+                    return false;
+                }
                 let streamed =
                     self.active_codex_transcript_items
                         .lock()
@@ -560,7 +578,12 @@ impl RuntimeWorkRpcHandler {
         }
         drop(routing);
 
-        if !skip_active_notification {
+        let mut command_delivery = if !skip_active_notification && command_notification {
+            self.claim_codex_command_notification(&local_task_id, &message, true)
+        } else {
+            None
+        };
+        if !skip_active_notification && (!command_notification || command_delivery.is_some()) {
             if !route_nested {
                 self.record_background_terminal_notification(&local_task_id, &message);
             }
@@ -588,6 +611,29 @@ impl RuntimeWorkRpcHandler {
                     message,
                 );
         }
+        if let Some(sequence) = notification_sequence {
+            let active = self.is_active_local_task(&local_task_id);
+            if let Some(routing) = command_delivery.as_mut() {
+                Self::record_codex_global_notification_progress(
+                    routing,
+                    &local_task_id,
+                    sequence,
+                    active,
+                );
+            } else {
+                let mut routing = self
+                    .thread_event_routing
+                    .lock()
+                    .expect("thread event routing lock should not be poisoned");
+                Self::record_codex_global_notification_progress(
+                    &mut routing,
+                    &local_task_id,
+                    sequence,
+                    active,
+                );
+            }
+        }
+        drop(command_delivery);
         self.replay_codex_notifications(pending_replays);
     }
 
@@ -621,6 +667,7 @@ impl RuntimeWorkRpcHandler {
             RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active, generation)
         });
         if route.local_task_id != local_task_id {
+            route.native_completed_turn_id = None;
             route.generation = next_thread_event_route_generation(&mut routing);
             routing.replaying_route_generations.remove(thread_id);
             routing
@@ -805,44 +852,6 @@ impl RuntimeWorkRpcHandler {
             None
         } else {
             Some(thread_id)
-        }
-    }
-
-    pub(super) fn mark_thread_event_route_idle(&self, thread_id: &str) {
-        if let Some(route) = self
-            .thread_event_routing
-            .lock()
-            .expect("thread event routing lock should not be poisoned")
-            .routes
-            .get_mut(thread_id)
-        {
-            route.active = false;
-        }
-    }
-
-    pub(super) fn remove_thread_event_route(&self, thread_id: &str) {
-        let mut routing = self
-            .thread_event_routing
-            .lock()
-            .expect("thread event routing lock should not be poisoned");
-        routing.routes.remove(thread_id);
-        routing.replaying_route_generations.remove(thread_id);
-        routing
-            .pending_notifications
-            .retain(|notification| notification.thread_id != thread_id);
-    }
-
-    pub(super) fn mark_thread_event_routes_idle_for_local_task(&self, local_task_id: &str) {
-        for route in self
-            .thread_event_routing
-            .lock()
-            .expect("thread event routing lock should not be poisoned")
-            .routes
-            .values_mut()
-        {
-            if route.local_task_id == local_task_id {
-                route.active = false;
-            }
         }
     }
 

@@ -1111,9 +1111,16 @@ async function pressNativeDesktopControlKey(
   measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  const startedAt = Date.now()
+  const trace = (stage: string) =>
+    console.info(
+      `[desktop-e2e-key] ${JSON.stringify({ stage, key, phase, windowLabel, elapsedMs: Date.now() - startedAt })}`
+    )
+  trace('focus-start')
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
+  trace('focus-complete')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
@@ -1131,9 +1138,11 @@ async function pressNativeDesktopControlKey(
   }
   window.addEventListener(eventType, recordKey, true)
   try {
+    trace('key-start')
     await sendNativeKeyAndWait(element, phase, () =>
       invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
     )
+    trace('key-observed')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
@@ -3397,12 +3406,16 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         await postDesktopControlResult(url, result)
         logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
-        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
-          commandId: command.id,
-          action: command.action,
-          actionSucceeded: result.ok,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        console.error(
+          '[Wework] Desktop E2E result acknowledgement failed:',
+          JSON.stringify({
+            commandId: command.id,
+            action: command.action,
+            actionSucceeded: result.ok,
+            actionError: result.error,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
         throw error
       }
       if (result.ok) {

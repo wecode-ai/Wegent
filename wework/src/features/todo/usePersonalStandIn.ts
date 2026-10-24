@@ -126,9 +126,9 @@ export function usePersonalStandIn(
       setLoading(true)
       setDeviceId(value)
     },
-    reload: () => {
+    reload: useCallback(() => {
       setLoading(true)
       setReload(value => value + 1)
-    },
+    }, []),
   }
 }

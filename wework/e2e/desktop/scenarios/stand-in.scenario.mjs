@@ -472,6 +472,20 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
           )
         )
       }
+      // AI selection is enabled by default; this section exercises explicit role order.
+      const orderedSettings = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      assert.equal(orderedSettings.autoSelect, true)
+      await requestExecutor(
+        control,
+        'runtime.stand_in.personal.save',
+        { userId: USER_ID, settings: { ...orderedSettings, autoSelect: false } },
+        uiTimeoutMs
+      )
       const taggedIssues = []
       for (const tag of ['review', 'docs']) {
         taggedIssues.push(
@@ -778,6 +792,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('click', '[data-testid="stand-in-overview-role-default"]')
       await control.command('waitFor', '[data-testid="stand-in-activity"]', { text: PROJECT })
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
       await control.command('click', '[data-testid="stand-in-settings-open"]')

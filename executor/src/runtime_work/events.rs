@@ -2140,6 +2140,9 @@ fn emit_codex_approval_request(
 }
 
 fn codex_approval_options(approval_kind: &str, params: &Value) -> Value {
+    if params["standInSingleApproval"] == true {
+        return json!([{"label":"allow_once","description":""},{"label":"cancel","description":""}]);
+    }
     if approval_kind == "permissions" {
         return Value::Array(
             [

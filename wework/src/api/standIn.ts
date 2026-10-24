@@ -5,11 +5,48 @@ import type {
   RunnerModel,
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
+
+export interface StandInInboxMessage {
+  id: string
+  recordId: string
+  text: string
+  senderId: string
+  at: string
+  source: StandInDingTalkConnection
+}
+
+export interface StandInInboxWork {
+  id: string
+  taskId: string
+  roleId: string
+  title: string
+  source: StandInDingTalkConnection
+  status: 'pending' | 'needs_grouping' | 'sending' | 'sent' | 'failed'
+  updatedAt: string
+  messageCount: number
+  latestMessage: StandInInboxMessage | null
+  task?: RuntimeTaskSummary | null
+  error?: string | null
+}
+
+export interface StandInSourceError {
+  source: StandInDingTalkConnection
+  error: { code: string; message: string }
+}
 import {
   publishPersonalStandIn,
   type PersonalStandInAgent,
   type PersonalStandInSettings,
+  type StandInDingTalkConnection,
 } from './personalStandIn'
+
+export interface StandInProposal {
+  id: string
+  summary: string
+  roleId?: string | null
+  settings: PersonalStandInSettings
+  status: 'pending' | 'accepted' | 'rejected'
+}
 
 type Request = <T>(method: string, payload: Record<string, unknown>, deviceId: string) => Promise<T>
 type ProjectStore = 'local' | 'cloud'
@@ -19,6 +56,48 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   userId: number
 }
 export interface StandInExecutorApi {
+  inbox(
+    userId: number,
+    deviceId: string
+  ): Promise<{ items: StandInInboxWork[]; sourceErrors: StandInSourceError[] }>
+  workMessages(
+    userId: number,
+    deviceId: string,
+    workId: string
+  ): Promise<{ messages: StandInInboxMessage[] }>
+  runWork(userId: number, deviceId: string, workId: string): Promise<WorkspaceRuntimeTaskAddress>
+  adjustMessage(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    messageId: string,
+    targetWorkId?: string
+  ): Promise<StandInInboxWork>
+  retrySource(userId: number, deviceId: string, source: StandInDingTalkConnection): Promise<void>
+  searchDingTalk(
+    deviceId: string,
+    kind: 'group' | 'direct',
+    query: string,
+    cursor?: string
+  ): Promise<{
+    items: Pick<StandInDingTalkConnection, 'id' | 'name' | 'kind' | 'profile'>[]
+    hasMore?: boolean
+    nextCursor?: string
+  }>
+  conversation(
+    userId: number,
+    deviceId: string,
+    message: string,
+    roleId?: string,
+    options?: Record<string, unknown>
+  ): Promise<WorkspaceRuntimeTaskAddress>
+  proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
+  resolveProposal(
+    userId: number,
+    deviceId: string,
+    proposalId: string,
+    accept: boolean
+  ): Promise<PersonalStandInSettings>
   notifyAssignment(
     projectId: string,
     issueId: string,
@@ -69,6 +148,34 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
+    workMessages: (userId, deviceId, workId) =>
+      request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
+    runWork: (userId, deviceId, workId) =>
+      request('runtime.stand_in.work.run', { userId, workId }, deviceId),
+    adjustMessage: (userId, deviceId, workId, messageId, targetWorkId) =>
+      request(
+        'runtime.stand_in.work.adjust',
+        { userId, workId, messageId, targetWorkId },
+        deviceId
+      ),
+    retrySource: (userId, deviceId, source) =>
+      request('runtime.stand_in.source.retry', { userId, source }, deviceId),
+    searchDingTalk: (deviceId, kind, query, cursor) =>
+      request('runtime.stand_in.dingtalk.search', { kind, query, cursor }, deviceId),
+    conversation: (userId, deviceId, message, roleId, options) =>
+      request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
+    proposal: (userId, deviceId, roleId) =>
+      request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
+    resolveProposal: async (userId, deviceId, proposalId, accept) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.proposal.resolve',
+        { userId, proposalId, accept },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
     notifyAssignment: async (projectId, itemId, assignmentId, recipientUserId, deviceId) => {
       await request(
         'runtime.stand_in.assignment',

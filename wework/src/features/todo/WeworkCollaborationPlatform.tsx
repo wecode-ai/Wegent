@@ -1551,7 +1551,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         onReady={handleReady}
         host={{
           renderStandInPage: ({ projects, onClose }) =>
-            personalSettingsTarget ? (
+            personalSettingsTarget && personalSettingsTarget.roleId !== '@primary' ? (
               <StandInSettingsPage
                 api={platformApi}
                 projects={projects}
@@ -1565,12 +1565,15 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               />
             ) : (
               <StandInOverviewPage
+                active={props.workspaceActive ?? true}
+                initialPrimaryProfile={personalSettingsTarget?.roleId === '@primary'}
+                initialDeviceId={personalSettingsTarget?.deviceId}
                 api={platformApi}
                 projects={projects}
                 services={props.services}
                 devices={props.devices ?? []}
                 userId={Number(props.user.id)}
-                onCancel={onClose}
+                onCancel={personalSettingsTarget ? returnFromPersonalSettings : onClose}
                 onOpenTask={props.onOpenRuntimeTask}
               />
             ),

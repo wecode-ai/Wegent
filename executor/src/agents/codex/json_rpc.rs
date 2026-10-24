@@ -35,6 +35,7 @@ pub(super) struct TurnReadOptions {
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub auto_approve_mcp_tool_calls: bool,
     pub defer_interactive_forms: bool,
+    pub stand_in_single_approval: bool,
 }
 
 impl JsonRpcConnection {
@@ -124,6 +125,7 @@ impl JsonRpcConnection {
             mut request_user_input_answers,
             auto_approve_mcp_tool_calls,
             defer_interactive_forms,
+            stand_in_single_approval,
         } = options;
         let mut saw_turn_response = false;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
@@ -233,6 +235,10 @@ impl JsonRpcConnection {
                     saw_turn_response = false;
                     continue;
                 }
+            }
+            let mut message = message;
+            if stand_in_single_approval {
+                super::restrict_stand_in_approval(&mut message);
             }
             let auto_approve_mcp_tool_call =
                 auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);

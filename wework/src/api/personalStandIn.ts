@@ -5,17 +5,45 @@ export interface StandInProjectRef {
   store: 'local' | 'cloud'
 }
 
+export interface StandInHandlingPolicy {
+  automatic: boolean
+  askBeforeAct: boolean
+}
+
+export interface StandInDingTalkConnection {
+  id: string
+  profile: string
+  name: string
+  kind: 'group' | 'direct'
+  policy: StandInHandlingPolicy
+}
+
+export interface StandInProjectPolicy extends StandInProjectRef {
+  policy: StandInHandlingPolicy
+}
+
+export interface StandInIdentity {
+  enabled: boolean
+  prompt: string
+  preferences: string
+  dingtalk?: StandInDingTalkConnection[]
+  collaboration?: StandInRole['collaboration']
+}
+
 export interface StandInRole extends WorkspaceStandInSettings {
   id: string
   name: string
   agentResourceId?: number | null
   agentProject?: StandInProjectRef
+  dingtalk?: StandInDingTalkConnection[]
   collaboration: {
     enabled: boolean
     allProjects: boolean
     projects: StandInProjectRef[]
     excludedProjects: StandInProjectRef[]
     tags: string[]
+    policy?: StandInHandlingPolicy
+    projectPolicies?: StandInProjectPolicy[]
   }
 }
 
@@ -25,7 +53,24 @@ export interface PersonalStandInSettings {
   version: number
   selectionErrors?: { issueId: string; title: string; error: string }[]
   autoSelect: boolean
+  primary?: StandInIdentity
   roles: StandInRole[]
+}
+
+export function standInPolicy(
+  role: StandInRole,
+  project?: StandInProjectRef
+): StandInHandlingPolicy {
+  return (
+    role.collaboration.projectPolicies?.find(
+      row => row.id === project?.id && row.store === project.store
+    )?.policy ??
+    role.collaboration.policy ?? { automatic: role.enabled, askBeforeAct: false }
+  )
+}
+
+export function standInConversationTaskId(userId: number, roleId?: string): string {
+  return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}`
 }
 
 export interface PersonalStandInAgent {
@@ -33,7 +78,7 @@ export interface PersonalStandInAgent {
   name: string
 }
 
-export function newStandInRole(deviceId: string, id = crypto.randomUUID()): StandInRole {
+export function newStandInRole(deviceId: string, id: string = crypto.randomUUID()): StandInRole {
   return {
     id,
     name: '',
@@ -47,6 +92,7 @@ export function newStandInRole(deviceId: string, id = crypto.randomUUID()): Stan
       projects: [],
       excludedProjects: [],
       tags: [],
+      policy: { automatic: true, askBeforeAct: true },
     },
   }
 }
@@ -102,7 +148,9 @@ const listeners = new Set<SettingsListener>()
 
 export function subscribePersonalStandIn(listener: SettingsListener) {
   listeners.add(listener)
-  return () => listeners.delete(listener)
+  return () => {
+    listeners.delete(listener)
+  }
 }
 
 export function publishPersonalStandIn(settings: PersonalStandInSettings) {
