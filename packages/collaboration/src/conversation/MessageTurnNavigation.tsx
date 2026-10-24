@@ -406,12 +406,14 @@ export function MessageTurnNavigation({
 
       const loadedMessageId = findLoadedNavigationMessageId(messages, {
         navigationId: marker.id,
+        userMessageId: marker.userMessageId,
         turnId: marker.turnId,
         messageIndex: marker.messageIndex,
       });
       if (loadedMessageId) {
         setPendingScrollTarget({
           navigationId: marker.id,
+          userMessageId: marker.userMessageId,
           turnId: marker.turnId,
           messageIndex: marker.messageIndex,
         });
@@ -426,6 +428,7 @@ export function MessageTurnNavigation({
       }
       setPendingScrollTarget({
         navigationId: marker.id,
+        userMessageId: marker.userMessageId,
         turnId: marker.turnId,
         messageIndex: marker.messageIndex,
       });

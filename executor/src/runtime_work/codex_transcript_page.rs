@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 
 use crate::agents::CodexAppServerClient;
+use crate::codex_phase::{codex_phase_is_final, codex_phase_name};
 
 use super::transcript::normalized_user_request_content;
 use super::util::{extract_text, item_type, string_field};
@@ -54,6 +55,7 @@ pub(crate) struct CodexTranscriptPage {
 pub(crate) struct CodexTranscriptNavigationTurn {
     pub turn_id: String,
     pub cursor: Option<String>,
+    pub user_message_id: Option<String>,
     pub prompt_preview: String,
     pub response_preview: String,
 }
@@ -309,11 +311,30 @@ fn navigation_turn(
             .and_then(extract_text)
             .unwrap_or_default()
     };
+    let user_message_id = items
+        .into_iter()
+        .flatten()
+        .find(|item| item_type(item) == "usermessage")
+        .and_then(|item| {
+            string_field(item, "clientId")
+                .or_else(|| string_field(item, "client_id"))
+                .or_else(|| string_field(item, "id"))
+        });
+    let response = items
+        .into_iter()
+        .flatten()
+        .find(|item| {
+            item_type(item) == "agentmessage"
+                && codex_phase_is_final(codex_phase_name(item).as_deref())
+        })
+        .and_then(extract_text)
+        .unwrap_or_else(|| preview("agentmessage"));
     CodexTranscriptNavigationTurn {
         turn_id,
         cursor,
+        user_message_id,
         prompt_preview: normalized_user_request_content(&preview("usermessage")),
-        response_preview: preview("agentmessage"),
+        response_preview: response,
     }
 }
 
@@ -696,12 +717,28 @@ mod tests {
             {"type": "UserMessage", "content": [{"type": "text", "text":
                 "## My request for Codex:\n<application_context>hidden</application_context>\nFix navigation"}]},
             {"type": "CommandExecution", "aggregatedOutput": "private tool output"},
-            {"type": "AgentMessage", "text": "Navigation fixed"}
+            {"type": "AgentMessage", "text": "Navigation fixed"},
+            {"type": "AgentMessage", "text": "Later legacy response"}
         ]});
         let entry = super::navigation_turn(&turn, "turn-1".into(), Some("cursor".into()));
         assert_eq!(entry.prompt_preview, "Fix navigation");
         assert_eq!(entry.response_preview, "Navigation fixed");
         assert_eq!(entry.cursor.as_deref(), Some("cursor"));
+    }
+
+    #[test]
+    fn navigation_prefers_final_response_and_preserves_original_user_identity() {
+        let turn = json!({"items": [
+            {"id":"user-native", "clientId":"user-client", "type":"userMessage", "text":"Original request"},
+            {"type":"agentMessage", "phase":"commentary", "text":"Working"},
+            {"type":"userMessage", "id":"guidance", "text":"Continue"},
+            {"type":"agentMessage", "phase":"final_answer", "text":"Finished"},
+            {"type":"agentMessage", "phase":"commentary", "text":"Later commentary"}
+        ]});
+        let entry = super::navigation_turn(&turn, "turn-1".into(), None);
+        assert_eq!(entry.user_message_id.as_deref(), Some("user-client"));
+        assert_eq!(entry.prompt_preview, "Original request");
+        assert_eq!(entry.response_preview, "Finished");
     }
 
     #[test]

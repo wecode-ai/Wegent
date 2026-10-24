@@ -81,4 +81,55 @@ describe('paginated turn navigation identity', () => {
     )
     expect([...bounds.keys()]).toEqual(['turn-24'])
   })
+
+  it('keeps the original summary and a separate marker when only guidance is loaded', () => {
+    const guidance = {
+      id: 'guidance-24',
+      turnId: 'turn-24',
+      role: 'user',
+      content: 'Continue',
+      runtimeGuidance: true,
+    }
+    const turns = buildUserTurnsForNavigation([guidance, messages[1]], navigation)
+    expect(turns).toHaveLength(26)
+    expect(turns[24]).toMatchObject({ id: 'turn-24', promptPreview: 'Request 24', loaded: false })
+    expect(turns[25]).toMatchObject({ id: 'guidance-24', promptPreview: 'Continue', loaded: true })
+    expect(
+      findLoadedNavigationMessageId([guidance], {
+        navigationId: 'turn-24',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBeNull()
+    expect(
+      findLoadedNavigationMessageId([guidance], {
+        navigationId: 'guidance-24',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBe('guidance-24')
+  })
+
+  it('uses the original user identity when a page begins at an unclassified guidance message', () => {
+    const guidance = { id: 'guidance-24', turnId: 'turn-24', role: 'user', content: 'Continue' }
+    const indexedNavigation = navigation.map(item => ({
+      ...item,
+      userMessageId: `user-${item.turnIndex}`,
+    }))
+    const turns = buildUserTurnsForNavigation([guidance, messages[1]], indexedNavigation)
+    expect(turns.slice(-2).map(turn => turn.id)).toEqual(['turn-24', 'guidance-24'])
+    expect(
+      findLoadedNavigationMessageId([guidance], {
+        navigationId: 'turn-24',
+        userMessageId: 'user-24',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBeNull()
+    const complete = buildUserTurnsForNavigation(
+      [messages[0], messages[1], guidance],
+      indexedNavigation
+    )
+    expect(complete.slice(-2).map(turn => turn.id)).toEqual(['user-24', 'guidance-24'])
+  })
 })

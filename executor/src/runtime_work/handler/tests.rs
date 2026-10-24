@@ -4234,12 +4234,14 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             CodexTranscriptNavigationTurn {
                 turn_id: "turn-old".to_owned(),
                 cursor: Some("opaque-old".to_owned()),
+                user_message_id: Some("user-old".to_owned()),
                 prompt_preview: "Old request".to_owned(),
                 response_preview: "Old response".to_owned(),
             },
             CodexTranscriptNavigationTurn {
                 turn_id: "turn-new".to_owned(),
                 cursor: Some("opaque-new".to_owned()),
+                user_message_id: Some("user-new".to_owned()),
                 prompt_preview: "New request".to_owned(),
                 response_preview: "New response".to_owned(),
             },
@@ -4253,6 +4255,7 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             {
                 "id": "turn-old",
                 "turnId": "turn-old",
+                "userMessageId": "user-old",
                 "turnIndex": 0,
                 "messageIndex": 0,
                 "promptPreview": "Old request",
@@ -4262,6 +4265,7 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             {
                 "id": "turn-new",
                 "turnId": "turn-new",
+                "userMessageId": "user-new",
                 "turnIndex": 1,
                 "messageIndex": 1,
                 "promptPreview": "New request",
@@ -4278,6 +4282,7 @@ fn incomplete_codex_transcript_navigation_is_hidden() {
         turns: vec![CodexTranscriptNavigationTurn {
             turn_id: "turn-1".to_owned(),
             cursor: Some("opaque".to_owned()),
+            user_message_id: None,
             prompt_preview: String::new(),
             response_preview: String::new(),
         }],

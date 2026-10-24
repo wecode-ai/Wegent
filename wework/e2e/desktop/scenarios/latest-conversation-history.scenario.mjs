@@ -215,6 +215,23 @@ export function createDesktopScenario({
       )
       await verifyHistoryNavigation(control)
 
+      const navigation = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        {
+          address,
+          navigationOnly: true,
+          refresh: true,
+        },
+        uiTimeoutMs
+      )
+      assert.equal(
+        navigation.turnNavigation.find(turn => turn.turnId === 'latest-history-turn-10')
+          ?.userMessageId,
+        'latest-history-turn-10-user',
+        'Navigation must identify the original request independently of which user items are loaded'
+      )
+
       // Load the earlier failed turn into the same cache before reopening the latest page.
       for (let page = 0; page < 15; page += 1) {
         const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
