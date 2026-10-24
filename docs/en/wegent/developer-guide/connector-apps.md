@@ -56,7 +56,9 @@ Connector currently supports these app authentication modes:
 
 Administrators can configure encrypted fixed headers, such as an internal API key or service token, without requiring every user to connect separately. Fixed provider headers are never returned by the administrator API. It only reports whether headers exist and the configured header names. OAuth 2.0 authorization uses `/api/connector-apps/{slug}/oauth/sessions` and `/api/connector-apps/oauth/callback`; user credentials are encrypted only in `ConnectorConnection` and never returned by any API.
 
-An expired grant that still holds a refresh token counts as usable: the runtime renews it before the next upstream call and the conversation guidance does not claim authorization is missing. The refresh token is dropped only when the token endpoint rejects it, which returns the app to "needs authorization" with a fresh link.
+An expired grant that still holds a refresh token counts as usable: the runtime renews it before the next upstream call and the conversation guidance does not claim authorization is missing. The refresh token is dropped only when the token endpoint rejects it, which returns the app to "needs authorization" with a fresh link. Python tool discovery and the Rust `/api/connector-runtime/tools` both apply this rule and perform the renewal.
+
+A stored credential that the current `GIT_TOKEN_AES_KEY`/`GIT_TOKEN_AES_IV` cannot decrypt is a configuration fault, not a missing grant: the runtime answers 503 and records the reason in the connection's `lastError` instead of asking the user to authorize again or sending the ciphertext upstream. When several local worktrees share one MySQL instance, they must use the same key pair; otherwise the instance that wrote a credential can read it and the others cannot.
 
 ## Deployment configuration
 

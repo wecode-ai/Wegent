@@ -56,7 +56,9 @@ Connector 当前支持以下 App 认证方式：
 
 管理员可配置加密固定请求头，例如内部 API Key 或服务令牌，而无需每个用户单独连接。固定请求头不会通过管理 API 回显；管理 API 只返回是否已配置以及请求头名称。OAuth 2.0 授权使用 `/api/connector-apps/{slug}/oauth/sessions` 和 `/api/connector-apps/oauth/callback`；用户凭据只加密存储在 `ConnectorConnection`，不会通过任何 API 返回。
 
-过期但仍有 refresh token 的授权仍视为可用：运行时在下次访问上游前自动续期，对话引导不会误报"需要授权"；只有当 token 端点明确拒绝该 refresh token 时才会清除它，此时连接回到"需要授权"并由对话给出授权链接。
+过期但仍有 refresh token 的授权仍视为可用：运行时在下次访问上游前自动续期，对话引导不会误报"需要授权"；只有当 token 端点明确拒绝该 refresh token 时才会清除它，此时连接回到"需要授权"并由对话给出授权链接。Python 工具发现与 Rust 的 `/api/connector-runtime/tools` 都执行这套判定与续期。
+
+凭据存在但当前 `GIT_TOKEN_AES_KEY`/`GIT_TOKEN_AES_IV` 解不开时，属于环境配置故障而不是缺少授权：运行时返回 503 并写入连接的 `lastError`，不会引导用户重复授权，也不会把密文当作令牌发给上游。本地多个 worktree 共用同一个 MySQL 时，各 worktree 的 `GIT_TOKEN_AES_*` 必须指向同一对值，否则后写入的实例能正常使用、先写入的实例会解不开存量凭据。
 
 ## 部署配置
 
