@@ -27,6 +27,13 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const otherProject = projects.find(row => row.name === OTHER_PROJECT)
       assert.ok(project)
       assert.ok(otherProject)
+      const projectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+      const otherProjectRow = `${CONTENT} [data-testid="collaboration-workspace-project-${otherProject.id}"]`
+      const badge = '.collaboration-project-sidebar-badge'
+      await control.command('waitFor', projectRow)
+      await control.command('waitFor', otherProjectRow)
+      await control.command('waitFor', `${projectRow} ${badge}`, { visible: false })
+      await control.command('waitFor', `${otherProjectRow} ${badge}`, { visible: false })
       const otherRef = { id: otherProject.id, store: 'local' }
       const settings = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       const role = {
@@ -60,6 +67,14 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-dialog"]', { visible: false })
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-enabled"]`)
+      await control.command(
+        'waitFor',
+        `${projectRow} [data-testid="stand-in-project-${project.id}"]`
+      )
+      await control.command(
+        'waitFor',
+        `${otherProjectRow} [data-testid="stand-in-project-${otherProject.id}"]`
+      )
       const saved = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       assert.equal(saved.roles[0].enabled, true)
       assert.equal(saved.roles[0].collaboration.enabled, true)
@@ -78,6 +93,12 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-enabled"]`, {
         visible: false,
       })
+      await control.command('waitFor', projectRow)
+      await control.command('waitFor', `${projectRow} ${badge}`, { visible: false })
+      await control.command(
+        'waitFor',
+        `${otherProjectRow} [data-testid="stand-in-project-${otherProject.id}"]`
+      )
       const disconnected = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       assert.equal(disconnected.roles[0].enabled, true)
       assert.equal(disconnected.roles[0].collaboration.enabled, true)
