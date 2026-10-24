@@ -576,11 +576,24 @@ assert_desktop_case "long plugin list selects its independent cloud checkpoint" 
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-composer-long-list"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-composer-long-list"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs" \
-  "wework/e2e/desktop/modules/plugin-inventory-state.mjs"
+  "wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs"
+
+for inventory_path in \
+  "wework/e2e/desktop/modules/plugin-inventory-state.mjs" \
+  "wework/scripts/plugin-inventory-state.test.mjs"; do
+  assert_desktop_case "plugin inventory refresh selects both consumers: $inventory_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-runtime-path-recovery"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"plugin-toggle-persistence"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$inventory_path"
+done
 
 assert_desktop_case "shared plugin regression fixture selects both checkpoints" \
   'wework_desktop_e2e=true

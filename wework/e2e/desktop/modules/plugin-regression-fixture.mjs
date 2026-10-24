@@ -14,11 +14,12 @@ export async function until(read, accept, message, timeoutMs = 10_000) {
   throw new Error(message)
 }
 
-export async function pluginApi(cloud, path, method = 'GET') {
+export async function pluginApi(cloud, path, method = 'GET', { signal } = {}) {
+  const timeout = AbortSignal.timeout(method === 'POST' ? 180_000 : 10_000)
   const response = await fetch(`${cloud.backendUrl}/api${path}`, {
     method,
     headers: { Authorization: `Bearer ${cloud.authToken}` },
-    signal: AbortSignal.timeout(method === 'POST' ? 180_000 : 10_000),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
   assert.ok(response.ok, `${method} ${path.split('?')[0]}: HTTP ${response.status}`)
   return response.status === 204 ? null : response.json()

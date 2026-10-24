@@ -15,6 +15,7 @@ from app.services.device.capability_sync_service import (
     capability_snapshot,
 )
 from app.services.device.runtime_route import RuntimeRoute
+from app.services.plugin_write_errors import PluginWriteError
 
 
 class FakeSio:
@@ -267,6 +268,8 @@ async def test_deferred_plugin_sync_reloads_skills_and_mcps_during_dispatch(
     _create_installed_skill(test_db, test_user.id, skill)
     _create_installed_mcp(test_db, test_user.id)
     service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
+    supports_delta = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "supports_plugin_delta", supports_delta)
     load_plugins = Mock(side_effect=AssertionError("must not resolve plugins"))
     monkeypatch.setattr(service, "_load_installed_plugins", load_plugins)
     payloads = []
@@ -293,8 +296,11 @@ async def test_deferred_plugin_sync_reloads_skills_and_mcps_during_dispatch(
     assert [len(payload["skills"]) for payload in payloads] == [1, 2]
     assert all(payload["mode"] == "merge" for payload in payloads)
     assert all("plugins" not in payload for payload in payloads)
+    assert all("plugin_sync" not in payload for payload in payloads)
+    assert all("removed_plugins" not in payload for payload in payloads)
     assert all(len(payload["mcps"]) == 1 for payload in payloads)
     load_plugins.assert_not_called()
+    supports_delta.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -469,6 +475,29 @@ async def test_sync_latest_device_capabilities_does_not_retry_transport_failure(
 
     assert result.acknowledged is False
     assert result.success is False
+    assert dispatch.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_sync_latest_device_capabilities_keeps_ack_when_reload_is_contended():
+    service = DeviceCapabilitySyncService()
+    payload = {"mode": "replace", "skills": [], "plugins": [], "mcps": []}
+    load_payload = Mock(side_effect=[payload, PluginWriteError("plugin_write_busy")])
+    acknowledged = DeviceCapabilitySyncResult(
+        device_id="device-1",
+        success=True,
+        acknowledged=True,
+    )
+    dispatch = AsyncMock(return_value=acknowledged)
+    service.sync_device_payload = dispatch
+
+    result = await service.sync_latest_device_capabilities(
+        user_id=7,
+        device_id="device-1",
+        load_payload=load_payload,
+    )
+
+    assert result is acknowledged
     assert dispatch.await_count == 1
 
 
