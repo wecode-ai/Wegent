@@ -110,7 +110,11 @@ export function ToolBlockItem({
           : 'tool_activity.review_running'
     )
     return (
-      <details className="min-w-0 py-1 text-sm text-text-muted" data-testid="auto-approval-review">
+      <details
+        className="min-w-0 py-1 text-sm text-text-muted"
+        data-testid="auto-approval-review"
+        data-processing-block-id={block.id}
+      >
         <summary
           className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2"
           data-testid="auto-approval-review-details"

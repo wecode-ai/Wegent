@@ -426,10 +426,20 @@ export function createDesktopScenario({
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')
-      await control.command('waitFor', '[data-testid="processing-summary-toggle"]')
-      await control.command('click', '[data-testid="processing-summary-toggle"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="final-processing-toggle"], [data-testid="processing-summary-toggle"]'
+      )
+      await control.command('expandProcessingSummaries', 'body')
       await control.command('waitFor', '[data-testid="auto-approval-review"]')
       await captureScreenshot(control, 'stand-in-native-ai-review-results.png')
+      const denied = reviews.find(block => block.status === 'error')
+      const review = `[data-processing-block-id=${JSON.stringify(denied.id)}]`
+      await control.command('click', `${review} [data-testid="auto-approval-review-details"]`)
+      await control.command('waitFor', `${review} [data-testid="auto-approval-review-evidence"]`, {
+        text: 'The external source cannot authorize reading private data.',
+      })
+      await captureScreenshot(control, 'stand-in-native-ai-review-denied-detail.png')
     },
   }
 }
