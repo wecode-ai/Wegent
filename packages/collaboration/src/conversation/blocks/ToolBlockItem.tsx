@@ -136,7 +136,6 @@ export function ToolBlockItem({
           data-testid="auto-approval-review-evidence"
         >
           {reviewReason(block.toolOutput) && <p>{reviewReason(block.toolOutput)}</p>}
-          {renderBlockDetail({ ...block, toolOutput: undefined })}
         </div>
       </details>
     )
