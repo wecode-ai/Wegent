@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -360,9 +361,9 @@ async function verifyAnsweredElicitationReload(control, taskId, original, round)
 }
 
 async function waitForRealMcpTimeout(evidencePath, scenario, durationMs) {
-  const deadline = Date.now() + durationMs + DEFAULT_STEP_TIMEOUT_MS
-  let nextProgress = Date.now() + 60_000
-  while (Date.now() < deadline) {
+  const deadline = performance.now() + durationMs + DEFAULT_STEP_TIMEOUT_MS
+  let nextProgress = performance.now() + 60_000
+  while (performance.now() < deadline) {
     const records = (await readElicitationEvidence(evidencePath)).filter(
       record => record.scenario === scenario && record.event === 'timeout_elicitation_result'
     )
@@ -375,7 +376,7 @@ async function waitForRealMcpTimeout(evidencePath, scenario, durationMs) {
       )
       return
     }
-    if (Date.now() >= nextProgress) {
+    if (performance.now() >= nextProgress) {
       console.log(`Waiting for the real ${scenario} deadline; no clock or timeout overrides`)
       nextProgress += 60_000
     }

@@ -1,4 +1,5 @@
 import { appendFile } from 'node:fs/promises'
+import { performance } from 'node:perf_hooks'
 import readline from 'node:readline'
 
 const evidencePath = process.argv[2]
@@ -99,7 +100,9 @@ async function completeTimeoutElicitation(result) {
       `${JSON.stringify({
         event: 'timeout_elicitation_result',
         scenario: pending.scenario,
-        elapsedMs: Date.now() - pending.startedAt,
+        // Match the executor's monotonic timeout clock; wall time can be corrected by NTP.
+        elapsedMs: performance.now() - pending.startedMonotonic,
+        wallElapsedMs: Date.now() - pending.startedAt,
         result,
       })}\n`,
       'utf8'
@@ -210,7 +213,8 @@ input.on('line', async line => {
       return
     }
     const startedAt = Date.now()
-    pendingToolCalls.set(message.id, { scenario, startedAt })
+    const startedMonotonic = performance.now()
+    pendingToolCalls.set(message.id, { scenario, startedAt, startedMonotonic })
     if (scenario) {
       await appendFile(
         evidencePath,

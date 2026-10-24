@@ -7,6 +7,60 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
+for (const scenario of ['url_timeout', 'form_timeout']) {
+  test(
+    `MCP timeout evidence uses elapsed time across wall-clock corrections: ${scenario}`,
+    {
+      timeout: 10_000,
+    },
+    async t => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-mcp-clock-'))
+      const evidencePath = join(directory, 'evidence.jsonl')
+      // Only this protocol unit test changes the wall clock; desktop E2E uses real clocks.
+      const clock = 'let calls = 0; Date.now = () => 1700000000000 - (calls++ ? 60000 : 0)'
+      const server = spawn(
+        process.execPath,
+        [
+          '--import',
+          `data:text/javascript,${encodeURIComponent(clock)}`,
+          fileURLToPath(new URL('../e2e/utils/mcp-elicitation-server.mjs', import.meta.url)),
+          evidencePath,
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      const lines = createInterface({ input: server.stdout })[Symbol.asyncIterator]()
+      t.after(async () => {
+        server.kill()
+        await rm(directory, { recursive: true, force: true })
+      })
+      const send = message =>
+        server.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+      const receive = async () => {
+        const next = await lines.next()
+        assert.equal(next.done, false)
+        return JSON.parse(next.value)
+      }
+      send({
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'confirm_inner_site_access',
+          arguments: { scenario },
+        },
+      })
+      const request = await receive()
+      assert.equal(request.method, 'elicitation/create')
+      send({ id: request.id, result: { action: 'cancel' } })
+      assert.equal((await receive()).id, 1)
+      const records = (await readFile(evidencePath, 'utf8')).trim().split('\n').map(JSON.parse)
+      const result = records.find(record => record.event === 'timeout_elicitation_result')
+      assert.ok(result.elapsedMs >= 0, 'Elapsed time must not go backwards with the wall clock')
+      assert.equal(result.wallElapsedMs, -60000)
+      assert.deepEqual(result.result, { action: 'cancel' })
+    }
+  )
+}
+
 for (const verifyAccept of [false, true]) {
   test(
     'real MCP fixture requires URL consent: ' + (verifyAccept ? 'cancel then accept' : 'cancel'),
