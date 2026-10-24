@@ -5,6 +5,7 @@ import {
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
+import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
 
 import {
   assistantMessage,
@@ -52,6 +53,7 @@ import {
   selectToolSearch,
   serializedOutputReportsSuccess,
   toolSearchResponseEvents,
+  toolOutputText,
   selectViewImageTool,
   streamingMarkdownReport,
   streamingTextEvents,
@@ -356,34 +358,6 @@ function requestContainsSkillLocator(body, skillPath, skillName) {
   return false
 }
 
-function toolOutputText(request, callId) {
-  const findOutput = value => {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const output = findOutput(item)
-        if (output != null) return output
-      }
-      return null
-    }
-    if (!value || typeof value !== 'object') return null
-    if (
-      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
-      value.call_id === callId
-    ) {
-      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
-    }
-    if (value.type === 'tool_search_output' && value.call_id === callId) {
-      return JSON.stringify(value.tools ?? [])
-    }
-    for (const item of Object.values(value)) {
-      const output = findOutput(item)
-      if (output != null) return output
-    }
-    return null
-  }
-  return findOutput(request.input ?? [])
-}
-
 /** Text of the user-authored turns codex forwarded to the model, in order. */
 function inputUserMessageTexts(request) {
   const texts = []
@@ -451,6 +425,7 @@ function readyPluginWorkspaceResult(body) {
 }
 
 const HELD_RESPONSE_SCENARIOS = new Set([
+  CONCURRENT_SCENARIO,
   'worktree_queue_hold',
   'worktree_restart_hold',
   'worktree_status_hold',
@@ -4016,6 +3991,11 @@ class DesktopE2EServer {
         ...functionCall(callId, tool.name, tool.arguments),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === CONCURRENT_SCENARIO) {
+      await respondToConcurrentMcpInput(this, body, response, responseId, modelRequest)
       return
     }
 

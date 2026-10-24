@@ -1,11 +1,79 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+
+for (const action of ['accept', 'cancel']) {
+  test(
+    `concurrent MCP keeps tools/call open until gated elicitation receives ${action}`,
+    {
+      timeout: 10_000,
+    },
+    async t => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-mcp-concurrent-'))
+      const evidencePath = join(directory, 'evidence.jsonl')
+      const scenario = `concurrent_${action}`
+      const server = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL('../e2e/utils/mcp-elicitation-server.mjs', import.meta.url)),
+          evidencePath,
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      t.after(async () => {
+        server.kill()
+        await rm(directory, { recursive: true, force: true })
+      })
+      const lines = createInterface({ input: server.stdout })[Symbol.asyncIterator]()
+      const send = message =>
+        server.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+      const receive = async () => {
+        const next = await lines.next()
+        assert.equal(next.done, false)
+        return JSON.parse(next.value)
+      }
+      send({
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'confirm_inner_site_access',
+          arguments: { scenario },
+        },
+      })
+      // An unrelated request is serviced while the original tools/call is held.
+      send({ id: 2, method: 'tools/list' })
+      assert.equal((await receive()).id, 2)
+      await assert.rejects(stat(`${evidencePath}.concurrent`), { code: 'ENOENT' })
+      await writeFile(`${evidencePath}.concurrent.${scenario}.ready`, 'ready')
+      const elicitation = await receive()
+      assert.equal(elicitation.method, 'elicitation/create')
+      assert.equal(elicitation.params.mode, 'form')
+      const result = action === 'accept' ? { action, content: { audience: 'owner' } } : { action }
+      send({ id: elicitation.id, result })
+      const completed = await receive()
+      assert.equal(completed.id, 1)
+      assert.equal(
+        completed.result.structuredContent.marker,
+        `E2E_MCP_ELICITATION_CONCURRENT:${scenario}:${action}`
+      )
+      const records = (await readFile(`${evidencePath}.concurrent`, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(JSON.parse)
+      assert.deepEqual(
+        records.map(record => record.event),
+        ['concurrent_elicitation_request', 'concurrent_elicitation_result']
+      )
+      assert.deepEqual(records[1].result, result)
+      await assert.rejects(stat(evidencePath), { code: 'ENOENT' })
+    }
+  )
+}
 
 for (const scenario of ['url_timeout', 'form_timeout']) {
   test(

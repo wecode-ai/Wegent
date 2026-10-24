@@ -3,7 +3,7 @@
 
 use super::*;
 
-// Codex owns historical text/order; Executor owns live commands and MCP answers.
+// Codex owns historical text/order; Executor owns live commands and user-input answers.
 pub(super) fn runtime_transcript_overlay_turns(
     link: &RuntimeTaskLink,
     native_turns: &[Value],
@@ -37,7 +37,7 @@ fn runtime_transcript_overlay_messages(
             let source = message["runtimeItems"].as_array()?;
             let turn_id = message["turnId"].as_str().unwrap_or_default();
             let is_page_interaction = |item: &Value| {
-                page_turns.contains(turn_id) && is_runtime_mcp_interaction(item, turn_id)
+                page_turns.contains(turn_id) && is_runtime_user_interaction(item, turn_id)
             };
             if message["role"] != "assistant"
                 || !source
@@ -96,13 +96,10 @@ fn is_running_runtime_command(item: &Value) -> bool {
         )
 }
 
-fn is_runtime_mcp_interaction(item: &Value, turn_id: &str) -> bool {
+fn is_runtime_user_interaction(item: &Value, turn_id: &str) -> bool {
     let payload = &item["block"]["render_payload"];
     item["type"] == "block"
         && payload["kind"] == "request_user_input"
-        && matches!(
-            payload["interactionKind"].as_str(),
-            Some("mcp_form" | "mcp_url")
-        )
+        && payload.get("interactionStatus").is_some()
         && payload["interactionScope"] == turn_id
 }

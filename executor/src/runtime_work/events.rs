@@ -459,13 +459,13 @@ impl CodexNotificationEventMapper {
                         "response.block.created",
                         local_task_id,
                         request,
-                        json!({"block": super::mcp_elicitation::block(&item, false)}),
+                        json!({"block": super::codex_user_input::interaction_block(&item, false)}),
                     );
                 }
             }
             super::mcp_elicitation::SETTLED_METHOD => {
                 if let Some(item) = super::mcp_elicitation::item(&message) {
-                    let block = super::mcp_elicitation::block(&item, false);
+                    let block = super::codex_user_input::interaction_block(&item, false);
                     emit_response_event(
                         event_tx,
                         device_id,

@@ -280,10 +280,14 @@ impl<'a> TurnTranscriptProjector<'a> {
             | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
                 self.push_workbench_block(item)
             }
-            "mcpelicitation" => self.assistant.blocks.push(super::mcp_elicitation::block(
-                item,
-                self.assistant_status != "streaming",
-            )),
+            "mcpelicitation" | "userinputrequest" => {
+                self.assistant
+                    .blocks
+                    .push(super::codex_user_input::interaction_block(
+                        item,
+                        self.assistant_status != "streaming",
+                    ))
+            }
             "collabagenttoolcall" => self.project_collab_agent_tool_call(item),
             "subagentactivity" => self.project_subagent_activity(item),
             "functioncalloutput"

@@ -1,4 +1,10 @@
-import { performance } from 'node:perf_hooks'
+import {
+  readElicitationEvidence,
+  readPendingElicitation,
+  readMatchingElicitation,
+  waitForRealMcpTimeout,
+} from './mcp-elicitation-evidence.mjs'
+import { verifyConcurrentMcpUserInput } from './mcp-concurrent-input-flow.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -25,6 +31,7 @@ import {
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 
 async function verifyMcpElicitationInFullAccess(control) {
+  await verifyConcurrentMcpUserInput(control)
   const evidencePath = join(resultDir, 'mcp-elicitation-result.jsonl')
   assert.equal(
     await pathExists(evidencePath),
@@ -103,8 +110,8 @@ async function verifyMcpElicitationInFullAccess(control) {
       snapshot.pane?.status?.isBusy === false,
     'The MCP elicitation task did not settle after the accepted form response'
   )
-  await control.command('click', '[data-testid="final-processing-toggle"]')
-  await control.command('waitFor', '[data-testid="request-user-input-summary"]', {
+  const firstSummary = await revealElicitationSummary(control, 1)
+  await control.command('waitFor', `${firstSummary} [data-testid="request-user-input-summary"]`, {
     text: '仅自己',
     visible: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -137,13 +144,6 @@ async function verifyMcpElicitationInFullAccess(control) {
   await verifyFollowUpElicitationRecovery(control, taskId, evidencePath)
   await verifyElicitationTimeout(control, taskId, evidencePath, 'url_timeout', 3, 600_000)
   await verifyElicitationTimeout(control, taskId, evidencePath, 'form_timeout', 4, 300_000)
-}
-
-async function readElicitationEvidence(evidencePath) {
-  return (await readFile(evidencePath, 'utf8'))
-    .split('\n')
-    .filter(Boolean)
-    .map(line => JSON.parse(line))
 }
 
 async function expandLauncherWithPendingForm(control, formSelector) {
@@ -263,47 +263,6 @@ async function verifyFollowUpElicitationRecovery(control, taskId, evidencePath) 
   await verifyAnsweredElicitationReload(control, taskId, secondForm, 2)
 }
 
-async function readMcpInteractions(control, taskId) {
-  const transcript = JSON.parse(
-    await control.command('getLocalRuntimeTranscript', 'body', {
-      value: JSON.stringify({ taskId }),
-    })
-  )
-  assert.equal(transcript.success, true, 'The real executor could not read the task transcript')
-  assert.ok(Array.isArray(transcript.turns), 'The executor transcript omitted its native turns')
-  assert.ok(Array.isArray(transcript.runtimeTurns), 'The executor omitted its runtime overlays')
-  // Match the renderer: runtime-owned state overlays native history by turn/item identity.
-  const items = new Map()
-  for (const turn of [...transcript.turns, ...transcript.runtimeTurns]) {
-    for (const item of turn.items) {
-      items.set(JSON.stringify([turn.id, item.id]), item)
-    }
-  }
-  return [...items.values()]
-    .filter(item => item.type === 'block')
-    .map(item => item.block.render_payload)
-    .filter(payload => payload?.kind === 'request_user_input' && payload.interactionScope)
-}
-
-async function readPendingElicitation(control, taskId) {
-  const pending = (await readMcpInteractions(control, taskId)).filter(
-    payload => payload.interactionStatus === 'pending'
-  )
-  assert.equal(pending.length, 1, 'The executor must expose exactly one pending MCP interaction')
-  assert.ok(pending[0].requestId !== undefined, 'The interaction lost its real request ID')
-  return pending[0]
-}
-
-async function readMatchingElicitation(control, taskId, original) {
-  const matching = (await readMcpInteractions(control, taskId)).filter(
-    payload =>
-      String(payload.requestId) === String(original.requestId) &&
-      payload.interactionScope === original.interactionScope
-  )
-  assert.equal(matching.length, 1, 'The transcript lost or duplicated the exact turn/request')
-  return matching[0]
-}
-
 async function revealElicitationSummary(control, round) {
   const text = `${MCP_ELICITATION_COMPLETION_TEXT}:${round}`
   await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -358,31 +317,6 @@ async function verifyAnsweredElicitationReload(control, taskId, original, round)
     0
   )
   await captureVerificationScreenshot(control, `permission-mcp-answered-${round}-reloaded.png`)
-}
-
-async function waitForRealMcpTimeout(evidencePath, scenario, durationMs) {
-  const deadline = performance.now() + durationMs + DEFAULT_STEP_TIMEOUT_MS
-  let nextProgress = performance.now() + 60_000
-  while (performance.now() < deadline) {
-    const records = (await readElicitationEvidence(evidencePath)).filter(
-      record => record.scenario === scenario && record.event === 'timeout_elicitation_result'
-    )
-    if (records.length) {
-      assert.equal(records.length, 1, 'The real MCP server received duplicate timeout results')
-      assert.deepEqual(records[0].result, { action: 'cancel' })
-      assert.ok(
-        records[0].elapsedMs >= durationMs,
-        `The ${scenario} was cancelled before its production ${durationMs}ms deadline`
-      )
-      return
-    }
-    if (performance.now() >= nextProgress) {
-      console.log(`Waiting for the real ${scenario} deadline; no clock or timeout overrides`)
-      nextProgress += 60_000
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000))
-  }
-  throw new Error(`The real MCP server did not receive cancel after ${scenario}`)
 }
 
 async function assertExpiredElicitation(control, taskId, original, round) {

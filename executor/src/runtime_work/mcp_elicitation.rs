@@ -37,24 +37,6 @@ pub(super) fn item(message: &Value) -> Option<Value> {
     }))
 }
 
-pub(super) fn block(item: &Value, terminal: bool) -> Value {
-    let mut payload = item["renderPayload"].clone();
-    if payload["interactionStatus"] == "pending" {
-        let expired = payload["expiresAtUnixMs"]
-            .as_i64()
-            .is_some_and(|deadline| deadline <= now_ms());
-        if terminal || expired {
-            payload["interactionStatus"] = json!(if expired { "expired" } else { "cancelled" });
-            payload["settledAtUnixMs"] = json!(now_ms());
-        }
-    }
-    json!({
-        "id": item["id"], "type": "tool", "tool_name": "request_user_input",
-        "status": if payload["interactionStatus"] == "pending" { "pending" } else { "done" },
-        "timestamp": item["createdAt"], "render_payload": payload,
-    })
-}
-
 pub(super) fn merge(existing: &Value, mut incoming: Value) -> Value {
     if existing["renderPayload"]["interactionStatus"] != "pending" {
         return existing.clone();
@@ -67,8 +49,13 @@ pub(super) fn merge(existing: &Value, mut incoming: Value) -> Value {
 }
 
 pub(super) fn settle_pending(item: &mut Value) {
-    if item["type"] == "mcpElicitation" && item["renderPayload"]["interactionStatus"] == "pending" {
-        item["renderPayload"] = block(item, true)["render_payload"].clone();
+    if matches!(
+        item["type"].as_str(),
+        Some("mcpElicitation" | "userInputRequest")
+    ) && item["renderPayload"]["interactionStatus"] == "pending"
+    {
+        item["renderPayload"] =
+            super::codex_user_input::interaction_block(item, true)["render_payload"].clone();
     }
 }
 

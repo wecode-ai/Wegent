@@ -81,6 +81,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         turn_id: &str,
         request_id: Option<&str>,
+        response: &Value,
     ) {
         let Ok(mut items) = self.active_codex_transcript_items.lock() else {
             return;
@@ -91,8 +92,18 @@ impl RuntimeWorkRpcHandler {
         else {
             return;
         };
-        if let Some(pending) = request_id.and_then(|id| active.user_input_requests.get_mut(id)) {
-            *pending = false;
+        let newly_answered = request_id
+            .and_then(|id| active.user_input_requests.get_mut(id))
+            .is_some_and(|pending| std::mem::replace(pending, false));
+        if let Some(item) = active.items.iter_mut().find(|item| {
+            newly_answered
+                && item["type"] == "userInputRequest"
+                && user_input_request_key(&item["renderPayload"]["requestId"]).as_deref()
+                    == request_id
+        }) {
+            item["renderPayload"]["response"] = response.clone();
+            item["renderPayload"]["interactionStatus"] = json!("answered");
+            item["renderPayload"]["settledAtUnixMs"] = json!(now_ms());
         }
         // MCP requests stay pending until their own answered/cancelled/expired notification.
         self.set_pending_user_input_status(local_task_id, active);
@@ -313,7 +324,9 @@ impl RuntimeWorkRpcHandler {
             {
                 active.user_input_requests.entry(request_id).or_insert(true);
             }
-            return;
+            if notification.method != "item/tool/requestUserInput" {
+                return;
+            }
         }
         let text_item_type = match notification.method.as_str() {
             "item/plan/delta" => Some("plan"),
@@ -329,7 +342,8 @@ impl RuntimeWorkRpcHandler {
             );
             return;
         }
-        let interaction = super::super::mcp_elicitation::item(message);
+        let interaction = super::super::mcp_elicitation::item(message)
+            .or_else(|| super::super::codex_user_input::request_item(message));
         if interaction.is_some()
             && notification.params.get("turnId").and_then(Value::as_str) != Some(turn_id)
         {
@@ -378,7 +392,10 @@ impl RuntimeWorkRpcHandler {
                 .get("createdAt")
                 .or_else(|| existing.get("created_at"))
                 .cloned();
-            *existing = if existing["type"] == "mcpElicitation" {
+            *existing = if matches!(
+                existing["type"].as_str(),
+                Some("mcpElicitation" | "userInputRequest")
+            ) {
                 super::super::mcp_elicitation::merge(existing, item)
             } else {
                 merge_codex_command_item(existing, item)

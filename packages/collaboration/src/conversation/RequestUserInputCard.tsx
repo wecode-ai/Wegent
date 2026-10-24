@@ -96,25 +96,17 @@ function RequestUserInputForm({
     formRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const handleSubmit = async (
-    answersOverride?: Record<string, string>,
-    activeQuestionIdOverride?: string | null,
+  const submitAnswers = async (
+    answers: RequestUserInputResponse["answers"],
   ): Promise<boolean> => {
     if (
       isDisabled ||
       requestUserInputExpired(payload) ||
       submitInFlightRef.current ||
-      questions.length === 0 ||
       !onSubmit
     )
       return false;
 
-    const effectiveAnswers = answersOverride ?? selectedAnswers;
-    const answers = responseAnswers(
-      questions,
-      effectiveAnswers,
-      activeQuestionIdOverride ?? activeQuestionId,
-    );
     submitInFlightRef.current = true;
     try {
       const accepted = await onSubmit({
@@ -130,6 +122,28 @@ function RequestUserInputForm({
     } finally {
       submitInFlightRef.current = false;
     }
+  };
+
+  const handleSubmit = (
+    answersOverride?: Record<string, string>,
+    activeQuestionIdOverride?: string | null,
+  ): Promise<boolean> => {
+    if (questions.length === 0) return Promise.resolve(false);
+    return submitAnswers(
+      responseAnswers(
+        questions,
+        answersOverride ?? selectedAnswers,
+        activeQuestionIdOverride ?? activeQuestionId,
+      ),
+    );
+  };
+
+  const isMcpForm = payload.interactionKind === "mcp_form";
+  const canIgnore = isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore);
+  const handleIgnore = () => {
+    // Cancel this MCP request, not the containing task or its other questions.
+    if (isMcpForm) void submitAnswers({});
+    else onIgnore?.();
   };
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -159,7 +173,7 @@ function RequestUserInputForm({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      onIgnore?.();
+      handleIgnore();
       return;
     }
 
@@ -185,12 +199,12 @@ function RequestUserInputForm({
 
   const actionControls = (
     <>
-      {(!compact || onIgnore) && (
+      {(!compact || canIgnore) && (
         <button
           type="button"
           data-testid="request-user-input-ignore-button"
-          disabled={isDisabled || !onIgnore}
-          onClick={onIgnore}
+          disabled={isDisabled || !canIgnore}
+          onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
           {t("request_user_input.ignore")}

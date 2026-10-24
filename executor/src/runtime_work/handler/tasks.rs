@@ -1840,8 +1840,9 @@ impl RuntimeWorkRpcHandler {
         let response_key = active_turn.as_ref().and_then(|turn| {
             self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
         });
-        // Send only to the channel captured before validation; a new turn must not receive this answer.
-        if pending_request.sender.send(response).await.is_err() {
+        // Reserve the validated channel before recording the answer. Delivery can
+        // immediately finish the turn, so history must be updated before send.
+        let Ok(permit) = pending_request.sender.reserve().await else {
             return Ok(json!({
                 "success": false,
                 "error": "request_user_input response channel is closed",
@@ -1849,16 +1850,18 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id,
                 "runtime": "codex",
             }));
-        }
+        };
         if self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
             if let Some(turn) = active_turn {
                 self.settle_request_user_input_response(
                     local_task_id,
                     &turn.turn_id,
                     response_key.as_deref(),
+                    &response,
                 );
             }
         }
+        permit.send(response);
         Ok(json!({
             "success": true,
             "accepted": true,
