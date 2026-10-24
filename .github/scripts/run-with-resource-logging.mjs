@@ -71,7 +71,7 @@ function sample(phase, exitCode) {
   }
   if (process.env.RUNNER_PROCESS_DIAGNOSTICS === '1') {
     try {
-      record.processes = execFileSync('ps', ['-eo', 'pid,ppid,stat,etime,comm'], {
+      record.processes = execFileSync('ps', ['-eo', 'pid,ppid,ni,pri,pcpu,stat,etime,comm'], {
         encoding: 'utf8',
         timeout: 5_000,
         maxBuffer: 256 * 1024,

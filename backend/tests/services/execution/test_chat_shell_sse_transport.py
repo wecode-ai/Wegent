@@ -268,7 +268,23 @@ async def test_terminal_cleanup_preserves_completion(
                 # Keep the original two-second bounds on the terminal drain itself.
                 await asyncio.wait_for(terminal_delivered.wait(), timeout=30)
                 if failure == "cancel":
-                    await asyncio.wait_for(body.tail_started.wait(), timeout=2)
+                    tail_started = asyncio.create_task(body.tail_started.wait())
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.wait(
+                                {task, tail_started},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            ),
+                            timeout=2,
+                        )
+                        if not body.tail_started.is_set():
+                            await task
+                            pytest.fail(
+                                "Dispatch ended before terminal cleanup started"
+                            )
+                    finally:
+                        tail_started.cancel()
+                        await asyncio.gather(tail_started, return_exceptions=True)
                     task.cancel()
                 await asyncio.wait_for(task, timeout=2)
             finally:

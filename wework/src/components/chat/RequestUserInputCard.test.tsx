@@ -137,6 +137,70 @@ const payload = {
 }
 
 describe('RequestUserInputCard', () => {
+  test('labels answer fields independently of protocol IDs and other mounted cards', async () => {
+    const onSubmit = vi.fn()
+    const question = { id: 'next step', question: '接下来做什么？' }
+    render(
+      <>
+        <RequestUserInputCard
+          payload={{ kind: 'request_user_input', questions: [question] }}
+          onSubmit={onSubmit}
+        />
+        <RequestUserInputCard payload={{ kind: 'request_user_input', questions: [question] }} />
+      </>
+    )
+    const answers = screen.getAllByRole('textbox', { name: question.question })
+    expect(answers).toHaveLength(2)
+    expect(answers[0].getAttribute('aria-labelledby')).not.toBe(
+      answers[1].getAttribute('aria-labelledby')
+    )
+    const user = userEvent.setup()
+    await user.type(answers[0], '继续')
+    await user.click(screen.getAllByTestId('request-user-input-submit-button')[0])
+    expect(onSubmit.mock.calls[0][0].answers).toEqual({ 'next step': { answers: ['继续'] } })
+  })
+
+  test.each([false, true])(
+    'keeps long free-text questions outside the answer field (compact=%s)',
+    async compact => {
+      const question =
+        '前两条已完成收发、移动和拆分验证。为补拍修正后的干净会话，请再手动发一条：@自己 AI 验证：最后确认完整的问题内容。\n发送后请告知结果。'
+      const onSubmit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const user = userEvent.setup()
+      render(
+        <RequestUserInputCard
+          compact={compact}
+          payload={{
+            kind: 'request_user_input',
+            requestId: 43,
+            questions: [{ id: 'details', question }],
+          }}
+          onSubmit={onSubmit}
+        />
+      )
+
+      const prompt = screen.getByText(question, { collapseWhitespace: false })
+      const answer = screen.getByRole('textbox', { name: question })
+      expect(prompt).toHaveClass('whitespace-pre-wrap', 'break-words')
+      expect(answer).toHaveValue('')
+      expect(answer).toHaveAttribute('placeholder', '输入你的回答')
+
+      await user.type(answer, '已发送')
+      expect(prompt).toBeVisible()
+      await user.click(screen.getByTestId('request-user-input-submit-button'))
+      expect(onSubmit).toHaveBeenLastCalledWith({
+        requestId: 43,
+        itemId: undefined,
+        answers: { details: { answers: ['已发送'] } },
+      })
+      expect(answer).toBeEnabled()
+      expect(answer).toHaveValue('已发送')
+      await user.click(screen.getByTestId('request-user-input-submit-button'))
+      expect(onSubmit).toHaveBeenCalledTimes(2)
+      expect(answer).toBeDisabled()
+    }
+  )
+
   test('renders Codex-style questions and submits selected answers', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()

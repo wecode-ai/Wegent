@@ -217,6 +217,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
         text: issue.id,
       })
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
       assert.equal(
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
         '在通知内继续处理分身任务'
