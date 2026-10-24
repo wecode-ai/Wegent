@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictInt,
     ValidationError,
     field_validator,
     model_serializer,
@@ -128,6 +129,14 @@ class RuntimeProjectEditingFeatures(BaseModel):
         return value if isinstance(value, bool) else None
 
 
+class RuntimePluginSyncFeatures(BaseModel):
+    """Explicit plugin synchronization wire protocol support."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    protocol_version: StrictInt = Field(..., ge=1, alias="protocolVersion")
+
+
 _runtime_feature_normalizers: dict[str, Callable[[Any], Any | None]] = {}
 
 
@@ -158,6 +167,18 @@ class RuntimeFeatures(BaseModel):
     project_editing: Optional[RuntimeProjectEditingFeatures] = Field(
         default=None, alias="projectEditing"
     )
+    plugin_sync: Optional[RuntimePluginSyncFeatures] = Field(
+        default=None, alias="pluginSync"
+    )
+
+    @field_validator("plugin_sync", mode="before")
+    @classmethod
+    def normalize_plugin_sync(cls, value: Any) -> Optional[RuntimePluginSyncFeatures]:
+        # A malformed optional feature must not erase unrelated capabilities.
+        try:
+            return RuntimePluginSyncFeatures.model_validate(value)
+        except ValidationError:
+            return None
 
     @field_validator("project_editing", mode="before")
     @classmethod
@@ -171,6 +192,9 @@ class RuntimeFeatures(BaseModel):
         if self.project_editing is None:
             result.pop("projectEditing", None)
             result.pop("project_editing", None)
+        if self.plugin_sync is None:
+            result.pop("pluginSync", None)
+            result.pop("plugin_sync", None)
         return result
 
     @model_validator(mode="before")
@@ -406,12 +430,36 @@ class DeviceCapabilityItemResult(BaseModel):
     error_code: Optional[str] = None
     retryable: Optional[bool] = None
     error: Optional[str] = None
+    generation: Optional[StrictInt] = Field(None, ge=1)
+    version: Optional[str] = None
+    checksum: Optional[str] = None
+    operation: Optional[Literal["upsert", "remove"]] = None
+
+    @model_serializer(mode="wrap")
+    def serialize_item(self, handler: Any) -> Dict[str, Any]:
+        result = handler(self)
+        for field in ("generation", "version", "checksum", "operation"):
+            if getattr(self, field) is None:
+                result.pop(field, None)
+        return result
+
+
+class PluginSyncMetadata(BaseModel):
+    """Snapshot identity echoed by a versioned plugin sync acknowledgement."""
+
+    version: Literal[2]
+    generation: StrictInt = Field(..., ge=1)
+    complete: bool
 
 
 class DeviceCapabilitySyncResult(BaseModel):
     """Per-device capability sync result."""
 
     scope: Optional[str] = None
+    plugin_sync: Optional[PluginSyncMetadata] = None
+    desired_plugin_snapshot: Optional[Dict[str, Any]] = Field(
+        default=None, exclude=True
+    )
 
     device_id: str
     success: bool
@@ -421,6 +469,13 @@ class DeviceCapabilitySyncResult(BaseModel):
     plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     errors: List[Dict[str, Any]] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def serialize_result(self, handler: Any) -> Dict[str, Any]:
+        result = handler(self)
+        if self.plugin_sync is None:
+            result.pop("plugin_sync", None)
+        return result
 
 
 class DeviceCapabilitySyncResponse(BaseModel):
