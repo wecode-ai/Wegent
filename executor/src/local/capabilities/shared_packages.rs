@@ -542,3 +542,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
 #[cfg(test)]
 #[path = "shared_packages_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shared_packages_reconnect_tests.rs"]
+mod reconnect_tests;

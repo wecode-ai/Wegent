@@ -656,7 +656,9 @@ export function createDesktopScenario({
           control,
           snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
           'Native item pagination did not finish',
-          uiTimeoutMs
+          // This checkpoint deliberately delays transcript reads and restores 1,250 native
+          // items. Include queued reads and hydration in the existing restoration budget.
+          WORKBENCH_READY_TIMEOUT_MS
         )
       }
       const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))

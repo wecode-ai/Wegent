@@ -16,8 +16,15 @@ import type {
   RequestUserInputOption,
 } from "@wegent/chat-core/runtime";
 export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
-import { hasImplementationPlanText } from "@wegent/chat-core/runtime-user-input";
+import {
+  hasImplementationPlanText,
+  hasRequestUserInputResponse,
+} from "@wegent/chat-core/runtime-user-input";
 import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
+import {
+  requestUserInputExpired,
+  useRequestUserInputDeadline,
+} from "./useRequestUserInputDeadline";
 
 interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
@@ -31,10 +38,27 @@ interface RequestUserInputCardProps {
 }
 
 export function RequestUserInputCard(props: RequestUserInputCardProps) {
-  if (props.payload.interactionKind === "mcp_url") {
-    return <McpUrlAuthorizationCard {...props} />;
+  const { expired, remainingTime } = useRequestUserInputDeadline(props.payload);
+  if (
+    expired ||
+    hasRequestUserInputResponse(props.payload) ||
+    (props.payload.interactionStatus &&
+      props.payload.interactionStatus !== "pending")
+  ) {
+    return (
+      <RequestUserInputSummary
+        payload={
+          expired
+            ? { ...props.payload, interactionStatus: "expired" }
+            : props.payload
+        }
+      />
+    );
   }
-  return <RequestUserInputForm {...props} />;
+  if (props.payload.interactionKind === "mcp_url") {
+    return <McpUrlAuthorizationCard {...props} remainingTime={remainingTime} />;
+  }
+  return <RequestUserInputForm {...props} remainingTime={remainingTime} />;
 }
 
 function RequestUserInputForm({
@@ -43,7 +67,8 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
-}: RequestUserInputCardProps) {
+  remainingTime,
+}: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation();
   const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
@@ -71,29 +96,25 @@ function RequestUserInputForm({
     formRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const handleSubmit = async (
-    answersOverride?: Record<string, string>,
-    activeQuestionIdOverride?: string | null,
+  const submitAnswers = async (
+    answers: RequestUserInputResponse["answers"],
   ): Promise<boolean> => {
     if (
       isDisabled ||
+      requestUserInputExpired(payload) ||
       submitInFlightRef.current ||
-      questions.length === 0 ||
       !onSubmit
     )
       return false;
 
-    const effectiveAnswers = answersOverride ?? selectedAnswers;
-    const answers = responseAnswers(
-      questions,
-      effectiveAnswers,
-      activeQuestionIdOverride ?? activeQuestionId,
-    );
     submitInFlightRef.current = true;
     try {
       const accepted = await onSubmit({
         requestId: payload.requestId ?? payload.request_id,
         itemId: payload.itemId ?? payload.item_id,
+        ...(payload.interactionScope
+          ? { interactionScope: payload.interactionScope }
+          : {}),
         answers,
       });
       if (accepted !== false) setSubmitted(true);
@@ -101,6 +122,28 @@ function RequestUserInputForm({
     } finally {
       submitInFlightRef.current = false;
     }
+  };
+
+  const handleSubmit = (
+    answersOverride?: Record<string, string>,
+    activeQuestionIdOverride?: string | null,
+  ): Promise<boolean> => {
+    if (questions.length === 0) return Promise.resolve(false);
+    return submitAnswers(
+      responseAnswers(
+        questions,
+        answersOverride ?? selectedAnswers,
+        activeQuestionIdOverride ?? activeQuestionId,
+      ),
+    );
+  };
+
+  const isMcpForm = payload.interactionKind === "mcp_form";
+  const canIgnore = isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore);
+  const handleIgnore = () => {
+    // Cancel this MCP request, not the containing task or its other questions.
+    if (isMcpForm) void submitAnswers({});
+    else onIgnore?.();
   };
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -130,7 +173,7 @@ function RequestUserInputForm({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      onIgnore?.();
+      handleIgnore();
       return;
     }
 
@@ -156,12 +199,12 @@ function RequestUserInputForm({
 
   const actionControls = (
     <>
-      {(!compact || onIgnore) && (
+      {(!compact || canIgnore) && (
         <button
           type="button"
           data-testid="request-user-input-ignore-button"
-          disabled={isDisabled || !onIgnore}
-          onClick={onIgnore}
+          disabled={isDisabled || !canIgnore}
+          onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
           {t("request_user_input.ignore")}
@@ -199,6 +242,16 @@ function RequestUserInputForm({
           : "rounded-2xl border border-border/70 bg-base shadow-sm",
       )}
     >
+      {remainingTime && (
+        <p
+          data-testid="request-user-input-deadline"
+          role="timer"
+          aria-live="off"
+          className="mb-2 text-sm text-text-muted"
+        >
+          {t("request_user_input.expires_in", { time: remainingTime })}
+        </p>
+      )}
       <div
         data-testid="request-user-input-questions"
         className="scrollbar-soft min-h-0 flex-1 overflow-y-auto pr-1"
@@ -332,6 +385,25 @@ export function RequestUserInputSummary({
         answer,
     };
   });
+
+  const interactionStatus = requestUserInputExpired(payload)
+    ? "expired"
+    : payload.interactionStatus;
+  if (interactionStatus === "expired" || interactionStatus === "cancelled") {
+    return (
+      <div
+        data-testid="request-user-input-summary"
+        className="text-sm text-text-secondary"
+      >
+        <p
+          role="status"
+          data-testid={`request-user-input-${interactionStatus}`}
+        >
+          {t(`request_user_input.${interactionStatus}`)}
+        </p>
+      </div>
+    );
+  }
 
   if (payload.interactionKind === "mcp_url") {
     return (

@@ -15,31 +15,37 @@ async fn goal_process_exit_never_replays_a_previous_completed_turn() {
                 client.state.lock().await.executor_shutdown_requested = shutdown;
                 let (sender, mut receiver) = broadcast::channel(16);
                 sender
-                    .send(json!({
-                        "method": "thread/goal/updated",
-                        "params": {"threadId": "goal-thread", "goal": {"status": "active"}}
-                    }))
+                    .send(
+                        json!({
+                            "method": "thread/goal/updated",
+                            "params": {"threadId": "goal-thread", "goal": {"status": "active"}}
+                        })
+                        .into(),
+                    )
                     .unwrap();
                 sender
                     .send(json!({
                         "method": "turn/completed",
                         "params": {"threadId": "goal-thread", "turn": {"id": "first", "status": "completed"}}
-                    }))
+                    }).into())
                     .unwrap();
                 if continuation_started {
                     sender
                         .send(json!({
                             "method": "turn/started",
                             "params": {"threadId": "goal-thread", "turn": {"id": "next", "status": "inProgress"}}
-                        }))
+                        }).into())
                         .unwrap();
                 }
                 if exit_notification {
                     sender
-                        .send(json!({
-                            "method": "codex/app-server/exited",
-                            "params": {"message": "synthetic process exit"}
-                        }))
+                        .send(
+                            json!({
+                                "method": "codex/app-server/exited",
+                                "params": {"message": "synthetic process exit"}
+                            })
+                            .into(),
+                        )
                         .unwrap();
                 }
                 drop(sender);

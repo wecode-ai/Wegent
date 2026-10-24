@@ -3,9 +3,9 @@ import { useConversationTranslation } from '../ConversationTranslation'
 import type { RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import type { ProcessingBlock, SubagentBlock } from './types'
 import {
-  isAnsweredRequestUserInputBlock,
   isHiddenRequestUserInputBlock,
   isRequestUserInputBlock,
+  isSettledRequestUserInputBlock,
 } from '@wegent/chat-core/runtime-user-input'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { FileEditDurationsByBlock } from './ToolFileChanges'
@@ -177,8 +177,7 @@ export function ToolBlocksDisplay({
         return
       }
 
-      const isUnansweredRequest =
-        block.status !== 'error' && !isAnsweredRequestUserInputBlock(block)
+      const isUnansweredRequest = block.status !== 'error' && !isSettledRequestUserInputBlock(block)
       const shouldHidePendingRequest =
         isUnansweredRequest &&
         (hideRequestUserInputBlocks || isHiddenRequestUserInputBlock(block, hiddenIds))
@@ -321,7 +320,7 @@ export function ToolBlocksDisplay({
         <div className="flex min-w-0 flex-col gap-3 pt-0.5">
           {displayItems.map(item => {
             if (item.type === 'request_user_input') {
-              return isAnsweredRequestUserInputBlock(item.block) ? (
+              return isSettledRequestUserInputBlock(item.block) ? (
                 <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
               ) : (
                 <RequestUserInputCard

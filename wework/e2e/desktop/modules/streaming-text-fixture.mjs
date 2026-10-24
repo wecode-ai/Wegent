@@ -936,10 +936,17 @@ export async function retainSecondTaskWorkspace(control, timeoutMs) {
 }
 
 export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs) {
-  await control.command('fill', COMPOSER_SELECTOR, { value: `${ORDER_FOLLOW_UP_PREFIX}_${index}` })
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-    timeoutMs: uiTimeoutMs,
-  })
+  const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
+  assert.equal(
+    await control.command('fill', COMPOSER_SELECTOR, { value: prompt }),
+    prompt,
+    `Follow-up ${index} was not filled into the active composer`
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+    { timeoutMs: uiTimeoutMs, visible: true }
+  )
   const response = await control.awaitScenarioRequestCount(
     'message_order_follow_up',
     index,

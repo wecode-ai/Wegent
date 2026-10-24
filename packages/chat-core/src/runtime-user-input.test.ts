@@ -2,14 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, test } from 'vitest'
-import type { RequestUserInputPayload } from './runtime'
+import { describe, expect, test, vi } from 'vitest'
+import type { RequestUserInputPayload, RequestUserInputResponse } from './runtime'
 import type { WorkbenchMessage } from './workbench-message-reducer'
 import {
   findRequestUserInputPayload,
+  applyRequestUserInputResponseToBlock,
   isAsyncRequestUserInputPayload,
+  isPendingRequestUserInputBlock,
+  isSettledRequestUserInputBlock,
+  preserveRequestUserInputResponse,
+  requestUserInputPayloadKey,
+  requestUserInputResponseKey,
   resolveAsyncRequestUserInputAnswers,
   resolveAsyncRequestUserInputReplies,
+  type RequestUserInputBlock,
 } from './runtime-user-input'
 
 const ASYNC_PAYLOAD: RequestUserInputPayload = {
@@ -55,6 +62,132 @@ function userMessage(content: string): WorkbenchMessage {
     createdAt: '2026-09-29T03:05:00.000Z',
   }
 }
+
+describe('runtime input identity', () => {
+  function form(scope: string): RequestUserInputBlock {
+    return {
+      id: 'request-user-input-0',
+      subtaskId: scope,
+      type: 'tool',
+      toolName: 'request_user_input',
+      status: 'pending',
+      renderPayload: {
+        kind: 'request_user_input',
+        requestId: 0,
+        itemId: 'mcp_server_elicitation',
+        interactionScope: scope,
+        interactionStatus: 'pending',
+        questions: [{ id: 'action', question: 'Publish?' }],
+      },
+    }
+  }
+
+  function answer(scope: string): RequestUserInputResponse {
+    return {
+      requestId: 0,
+      itemId: 'mcp_server_elicitation',
+      interactionScope: scope,
+      answers: { action: { answers: ['Publish'] } },
+    }
+  }
+
+  test('keeps a reused request ID visible after an earlier turn was dismissed', () => {
+    const previous = form('previous-turn')
+    const current = form('current-turn')
+    const dismissed = new Set([requestUserInputPayloadKey(previous.renderPayload)!])
+
+    expect(isPendingRequestUserInputBlock(previous, dismissed)).toBe(false)
+    expect(isPendingRequestUserInputBlock(current, dismissed)).toBe(true)
+    expect(requestUserInputPayloadKey(current.renderPayload)).toBe(
+      requestUserInputResponseKey(answer('current-turn'))
+    )
+  })
+
+  test('does not apply an old response or history answer to a new turn', () => {
+    const previous = form('previous-turn')
+    const current = form('current-turn')
+    const answeredPrevious = applyRequestUserInputResponseToBlock(previous, answer('previous-turn'))
+
+    expect(answeredPrevious).toMatchObject({
+      status: 'done',
+      renderPayload: { response: answer('previous-turn') },
+    })
+    expect(applyRequestUserInputResponseToBlock(current, answer('previous-turn'))).toBe(current)
+    expect(preserveRequestUserInputResponse(answeredPrevious, current)).toBe(current)
+    expect(
+      findRequestUserInputPayload(
+        [assistantMessage(previous.renderPayload), assistantMessage(current.renderPayload)],
+        requestUserInputResponseKey(answer('current-turn'))
+      )
+    ).toBe(current.renderPayload)
+  })
+
+  test('does not match scoped forms using an unscoped or unidentified response', () => {
+    const current = form('current-turn')
+
+    expect(applyRequestUserInputResponseToBlock(current, { requestId: 0, answers: {} })).toBe(
+      current
+    )
+    expect(applyRequestUserInputResponseToBlock(current, { answers: {} })).toBe(current)
+    expect(requestUserInputPayloadKey({ requestId: 0 })).toBe('request:0')
+  })
+
+  test('scopes item identifiers when a request ID is absent', () => {
+    const payload = { itemId: 'mcp_server_elicitation', interactionScope: 'previous-turn' }
+    expect(requestUserInputPayloadKey(payload)).not.toBe(
+      requestUserInputPayloadKey({ ...payload, interactionScope: 'current-turn' })
+    )
+  })
+
+  test.each(['cancelled', 'expired'] as const)(
+    'does not reopen a settled %s form or apply a late response',
+    interactionStatus => {
+      const current = form('current-turn')
+      current.renderPayload.interactionStatus = interactionStatus
+
+      expect(isPendingRequestUserInputBlock(current)).toBe(false)
+      expect(applyRequestUserInputResponseToBlock(current, answer('current-turn'))).toBe(current)
+    }
+  )
+
+  test('records the answer when the settled event arrives before the submit acknowledgment', () => {
+    const current = form('current-turn')
+    current.renderPayload.interactionStatus = 'answered'
+
+    expect(isPendingRequestUserInputBlock(current)).toBe(false)
+    expect(applyRequestUserInputResponseToBlock(current, answer('current-turn'))).toMatchObject({
+      renderPayload: { interactionStatus: 'answered', response: answer('current-turn') },
+    })
+  })
+
+  test('stops waiting at the deadline even when the runtime settlement event is missing', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000)
+      const current = form('current-turn')
+      current.renderPayload.expiresAtUnixMs = 2_000
+
+      expect(isPendingRequestUserInputBlock(current)).toBe(true)
+      vi.setSystemTime(2_000)
+      expect(isPendingRequestUserInputBlock(current)).toBe(false)
+      expect(isSettledRequestUserInputBlock(current)).toBe(true)
+      expect(current.renderPayload).not.toHaveProperty('response')
+      expect(current.renderPayload.interactionStatus).toBe('pending')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])(
+    'does not infer expiry from a missing or invalid deadline (%s)',
+    expiresAtUnixMs => {
+      const current = form('current-turn')
+      current.renderPayload.expiresAtUnixMs = expiresAtUnixMs
+
+      expect(isPendingRequestUserInputBlock(current)).toBe(true)
+    }
+  )
+})
 
 describe('async request user input', () => {
   test('treats only async delivery payloads as non-blocking', () => {

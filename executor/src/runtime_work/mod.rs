@@ -17,6 +17,7 @@ pub mod fork_transfer;
 mod handler;
 pub(crate) mod local_connector_auth;
 mod local_execution;
+mod mcp_elicitation;
 pub(crate) mod native_transcript;
 mod notification_mapping;
 mod remote_projects;

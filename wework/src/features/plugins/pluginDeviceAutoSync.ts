@@ -10,13 +10,31 @@ const reportedDeviceIds = new Set<string>()
 const reportedPayloadKeys = new Set<string>()
 const settledDeviceIds = new Set<string>()
 const inFlightDeviceIds = new Map<string, symbol>()
+const deviceSyncListeners = new Set<() => void>()
+const deviceSyncRevisions = new Map<string, number>()
+
+export function getPluginDeviceSyncRevision(deviceId: string): number {
+  return deviceSyncRevisions.get(deviceId.trim()) ?? 0
+}
+
+export function subscribePluginDeviceSync(listener: () => void): () => void {
+  deviceSyncListeners.add(listener)
+  return () => deviceSyncListeners.delete(listener)
+}
+
+function notifyDeviceSyncListeners(deviceId: string): void {
+  deviceSyncRevisions.set(deviceId, getPluginDeviceSyncRevision(deviceId) + 1)
+  for (const listener of deviceSyncListeners) listener()
+}
 
 export function clearPluginDeviceAutoSyncAttempts() {
   attemptedDeviceIds.clear()
   reportedDeviceIds.clear()
   reportedPayloadKeys.clear()
   settledDeviceIds.clear()
+  const syncingDeviceIds = [...inFlightDeviceIds.keys()]
   inFlightDeviceIds.clear()
+  for (const deviceId of syncingDeviceIds) notifyDeviceSyncListeners(deviceId)
 }
 
 /** Acquire the shared per-device plugin synchronization single-flight lock. */
@@ -25,10 +43,12 @@ export function beginPluginDeviceSync(deviceId: string): (() => void) | null {
   if (!normalized || inFlightDeviceIds.has(normalized)) return null
   const owner = Symbol(normalized)
   inFlightDeviceIds.set(normalized, owner)
+  notifyDeviceSyncListeners(normalized)
   return () => {
     // A late completion must not release a newer synchronization lease.
     if (inFlightDeviceIds.get(normalized) === owner) {
       inFlightDeviceIds.delete(normalized)
+      notifyDeviceSyncListeners(normalized)
     }
   }
 }
