@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -45,6 +46,23 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
     async verify(control) {
       await createSingleRootLocalProject(control, workspacePath, 'notification-tab-navigation')
       await selectE2EModel(control)
+      const taskTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
+        value: 'data-testid',
+      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      const projectName = 'Notification navigation source'
+      await createLocalCollaborationProject(control, ACTIVE, projectName)
+      const boardTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
+        value: 'data-testid',
+      })
+      const source = JSON.parse(await control.command('snapshot', 'body'))
+      const boardLocation = source.location
+      assert.ok(
+        new URL(boardLocation).searchParams.get('projectId'),
+        'The source must open a project'
+      )
+      const tabsBefore = source.testIds.filter(id => id.startsWith('workspace-tab-select-')).sort()
+      await control.command('click', selector(taskTab))
       await control.command('fill', COMPOSER, { value: PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
       const address = await waitFor(
@@ -56,20 +74,29 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         'The real runtime task did not start',
         modelResponseTimeoutMs
       )
-      const taskTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
-        value: 'data-testid',
-      })
-      const tabsBefore = JSON.parse(await control.command('snapshot', 'body'))
-        .testIds.filter(id => id.startsWith('workspace-tab-select-'))
-        .sort()
       const openBoard = async () => {
-        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        assert.equal(await control.command('getRoute', 'body'), '/todo')
+        await control.command('click', selector(boardTab))
+        await control.command('waitFor', `${ACTIVE} [data-testid="cloud-project-header-title"]`, {
+          text: projectName,
+        })
+        const current = JSON.parse(await control.command('snapshot', 'body'))
+        assert.equal(
+          current.location,
+          boardLocation,
+          'Navigation replaced the source project route'
+        )
       }
       const assertTask = async () => {
         await control.command('waitFor', `${selector(taskTab)}[aria-selected="true"]`)
-        const current = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-          .workbench?.currentRuntimeTask
+        const current = await waitFor(
+          control,
+          async () =>
+            JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+              ?.currentRuntimeTask,
+          value => value?.deviceId === address.deviceId && value?.taskId === address.taskId,
+          'The selected task tab did not restore the target conversation',
+          uiTimeoutMs
+        )
         assert.equal(current?.deviceId, address.deviceId)
         assert.equal(current?.taskId, address.taskId)
         const tabs = JSON.parse(await control.command('snapshot', 'body'))
