@@ -3133,8 +3133,8 @@ const CODEX_APPROVAL_QUESTION_ID: &str = "__codex_approval";
 fn restrict_stand_in_mcp_answer(response: &mut Value, decline_answer: &str) {
     if let Some(answers) = response.get_mut("answers").and_then(Value::as_object_mut) {
         for answer in answers.values_mut() {
-            if answer["answers"] != json!([MCP_ELICITATION_ALLOW]) {
-                answer["answers"] = json!([decline_answer]);
+            if answer.get("answers") != Some(&json!([MCP_ELICITATION_ALLOW])) {
+                *answer = json!({"answers": [decline_answer]});
             }
         }
     }

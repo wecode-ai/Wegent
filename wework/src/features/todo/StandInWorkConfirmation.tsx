@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { requestUserInputPayloadKey } from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
@@ -11,13 +11,39 @@ import { useTranslation } from '@/hooks/useTranslation'
 export function StandInWorkConfirmation({ address }: { address: RuntimeTaskAddress }) {
   const { t } = useTranslation('common')
   const { subscribeRuntimeTaskStream } = useWorkbenchPaneContext()
+  const stableAddress = useMemo<RuntimeTaskAddress>(
+    () => ({
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      runtime: address.runtime,
+      threadId: address.threadId,
+      workspacePath: address.workspacePath,
+      workspaceKind: address.workspaceKind,
+      worktreeId: address.worktreeId,
+      runtimeHandle: address.runtimeHandle,
+      issueExecution: address.issueExecution,
+      projectSession: address.projectSession,
+    }),
+    [
+      address.deviceId,
+      address.taskId,
+      address.runtime,
+      address.threadId,
+      address.workspacePath,
+      address.workspaceKind,
+      address.worktreeId,
+      address.runtimeHandle,
+      address.issueExecution,
+      address.projectSession,
+    ]
+  )
   const session = useWorkbenchPaneSession({
-    currentRuntimeTask: address,
+    currentRuntimeTask: stableAddress,
     debugSnapshotEnabled: false,
   })
   useEffect(
-    () => subscribeRuntimeTaskStream(address, { onMessageAction: () => undefined }),
-    [address, subscribeRuntimeTaskStream]
+    () => subscribeRuntimeTaskStream(stableAddress, { onMessageAction: () => undefined }),
+    [stableAddress, subscribeRuntimeTaskStream]
   )
   const pending = pendingRequestUserInputPayload(
     session.messages,

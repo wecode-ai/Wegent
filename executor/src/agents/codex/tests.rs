@@ -5619,3 +5619,23 @@ fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
     );
     assert!(!codex_auto_approve_mcp_tool_calls(&request));
 }
+
+#[test]
+fn stand_in_mcp_answers_decline_malformed_entries_without_panicking() {
+    for malformed in [
+        Value::Null,
+        json!(true),
+        json!(42),
+        json!("Allow"),
+        json!([]),
+        json!({"answers":"Allow"}),
+        json!({"answers":["Allow", "Cancel"]}),
+    ] {
+        let mut response = json!({"answers":{"approval":malformed}});
+        restrict_stand_in_mcp_answer(&mut response, "Cancel");
+        assert_eq!(
+            response,
+            json!({"answers":{"approval":{"answers":["Cancel"]}}})
+        );
+    }
+}

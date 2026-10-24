@@ -93,7 +93,7 @@ export function StandInConversation({
           return result
         } catch (cause) {
           options.onError(String(cause))
-          throw cause
+          return false
         }
       }}
     />
