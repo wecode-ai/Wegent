@@ -3,7 +3,12 @@ import path from 'node:path'
 
 // fs.watch can deliver pre-subscription events after the initial build starts.
 // Compare input versions so delayed or duplicate events do not rebuild unchanged inputs.
-export function developmentBuildInputs({ directories, files, excluded }) {
+export function developmentBuildInputs({
+  directories,
+  files,
+  excluded,
+  readDirectory = readdirSync,
+}) {
   const versions = new Map()
   const collect = (filename, directory, snapshot) => {
     if (excluded(filename, directory)) return
@@ -17,7 +22,7 @@ export function developmentBuildInputs({ directories, files, excluded }) {
     if (stat.isDirectory()) {
       let names
       try {
-        names = readdirSync(filename)
+        names = readDirectory(filename)
       } catch (error) {
         if (error.code === 'ENOENT') return
         if (error.code !== 'ENOTDIR') throw error

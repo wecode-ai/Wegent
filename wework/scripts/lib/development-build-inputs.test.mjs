@@ -1,14 +1,9 @@
+import { developmentBuildInputs } from './development-build-inputs.mjs'
 import { mkdtemp, mkdir, writeFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { expect, test, vi } from 'vitest'
+import { expect, test } from 'vitest'
 import { readdirSync, rmSync, writeFileSync } from 'node:fs'
-
-vi.mock('node:fs', async importOriginal => {
-  const original = await importOriginal()
-  return { ...original, readdirSync: vi.fn(original.readdirSync) }
-})
-import { developmentBuildInputs } from './development-build-inputs.mjs'
 
 test('ignores delayed startup notifications and duplicate events but detects input edits', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'build-inputs-'))
@@ -65,25 +60,28 @@ test.each(['deleted', 'replaced'])(
   async outcome => {
     const root = await mkdtemp(path.join(tmpdir(), 'build-inputs-race-'))
     const directory = path.join(root, 'source')
-    const actual = await vi.importActual('node:fs')
     try {
       await mkdir(directory)
       await writeFile(path.join(directory, 'entry.js'), 'original')
+      let mutateOnRead = false
       const changed = developmentBuildInputs({
         directories: [root],
         files: [],
         excluded: () => false,
+        readDirectory: filename => {
+          if (mutateOnRead && filename === directory) {
+            mutateOnRead = false
+            rmSync(directory, { recursive: true })
+            if (outcome === 'replaced') writeFileSync(directory, 'replacement file')
+          }
+          return readdirSync(filename)
+        },
       })
-      vi.mocked(readdirSync).mockImplementationOnce(filename => {
-        expect(filename).toBe(directory)
-        rmSync(directory, { recursive: true })
-        if (outcome === 'replaced') writeFileSync(directory, 'replacement file')
-        return actual.readdirSync(filename)
-      })
+      mutateOnRead = true
       expect(changed(directory, root)).toBe(true)
+      expect(mutateOnRead).toBe(false)
       expect(changed(directory, root)).toBe(false)
     } finally {
-      vi.mocked(readdirSync).mockReset().mockImplementation(actual.readdirSync)
       await rm(root, { recursive: true, force: true })
     }
   }
