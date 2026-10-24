@@ -799,6 +799,7 @@ async fn assert_goal_completion_during_backoff(resumed: bool) {
     client.state = Arc::new(Mutex::new(
         super::super::CodexAppServerSharedState::default(),
     ));
+    client.mark_thread_active("root-thread").await;
     let mut command = tokio::process::Command::new("sh");
     command
         .args(["-c", "cat"])
@@ -815,6 +816,11 @@ async fn assert_goal_completion_during_backoff(resumed: bool) {
         let mut shared = client.state.lock().await;
         shared.process_environment =
             client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
+        // Force a capability revision change while the reader owns its thread.
+        shared.process_environment.insert(
+            "WEGENT_CAPABILITY_REVISION".to_owned(),
+            "before-overload-backoff".to_owned(),
+        );
         shared.process = Some(CodexAppServerProcess {
             child,
             stdin: Arc::new(Mutex::new(stdin)),
