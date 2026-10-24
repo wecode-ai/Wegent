@@ -2015,6 +2015,16 @@ if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||
   exit 1
 fi
 
+for sandbox_job in "$wework_desktop_core_job" "$wework_desktop_cloud_job"; do
+  if [[ "$sandbox_job" != *"--security-opt seccomp=unconfined"* ]] ||
+    [[ "$sandbox_job" != *"--security-opt apparmor=unconfined"* ]] ||
+    [[ "$sandbox_job" != *"--security-opt systempaths=unconfined"* ]] ||
+    [[ "$sandbox_job" != *"bash .github/scripts/verify-native-sandbox-namespaces.sh"* ]]; then
+    printf 'Desktop E2E containers must support the real native sandbox namespaces\n' >&2
+    exit 1
+  fi
+done
+
 wework_windows_desktop_core_build_job="$(
   sed -n \
     '/^  build-wework-desktop-windows-core-e2e:/,/^  wework-desktop-windows-core-e2e:/p' \
