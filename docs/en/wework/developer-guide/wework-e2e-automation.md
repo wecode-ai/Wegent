@@ -542,15 +542,7 @@ On macOS, desktop E2E injects the test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` set
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Electron application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
-The hybrid Backend launcher gives Python Uvicorn a 2,400-second upstream HTTP
-keep-alive, longer than the workflow's longest 35-minute hybrid E2E job.
-`brz-http-gateway` 0.1.4 builds a hyper-util connection pool without installing
-its idle-connection timer. If Uvicorn expires an idle socket first, the gateway
-can reuse that upstream-closed connection and incorrectly return `502 fallback
-upstream unavailable`. Bounding the upstream lifetime beyond the job prevents
-that stale-socket window in this local hybrid launcher. The setting affects only
-the local Rust-to-Python fallback connection and does not disable keep-alive
-between external clients and the gateway.
+Both the main hybrid Backend launcher and the desktop cloud scenario's direct launcher must set Python Uvicorn's upstream HTTP keep-alive to 2,400 seconds. The upstream idle lifetime must exceed the gateway hyper-util pool's default 90-second retention period, preventing the upstream from closing a connection while the gateway sends a request on it. A real forwarding experiment with Uvicorn 0.38.0 and brz-http-gateway 0.2.11 reproduced the default five-second configuration as 502 SendRequest responses whose requests never reached Python. This setting only affects the local Rust-to-Python connection, preserving external client connection reuse.
 
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
 

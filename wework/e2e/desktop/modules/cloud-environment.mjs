@@ -498,6 +498,10 @@ class RealCloudEnvironment {
         '127.0.0.1',
         '--port',
         String(this.pythonBackendPort),
+        // Match backend-rs/scripts/start-hybrid-backend.sh: retiring upstream
+        // sockets at Uvicorn's 5s default races the gateway's pooled requests.
+        '--timeout-keep-alive',
+        '2400',
       ],
       {
         cwd: join(repoDir, 'backend'),
@@ -528,7 +532,7 @@ class RealCloudEnvironment {
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         BREEZE_LOG_DIR: rustLogDirectory,
-        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug,hyper_util::client::legacy::client=debug`,
+        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
