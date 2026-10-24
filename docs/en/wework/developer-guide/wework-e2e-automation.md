@@ -173,11 +173,18 @@ CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
 Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+Core uses 11 shards, with Windows sharing the same matrix, and Cloud uses 8.
 Combining short shards reuses container initialization, checkout, artifact
 downloads, and runtime preparation without increasing checkpoint concurrency
-within a runner. The two Core benchmark shards and three Cloud account-auth and
-long-plugin-list shards remain separate. The concurrency limit must accommodate
+within a runner. The two Core benchmark shards, one Core permission deadline shard,
+and three Cloud account-auth and long-plugin-list shards remain separate.
+`permission-modes` owns shard 11: its serial production deadlines include ten minutes
+for URL authorization, five minutes for a form, and five minutes for concurrent input.
+Run `40071612969` measured Windows shard 3 at 27 minutes 26 seconds, including only
+58 seconds for the old permission scenario. Keeping the added waits there would put
+the projected load above its 40-minute step budget. The dedicated shard preserves
+all assertions and deadlines through the existing runner and CI matrix.
+The concurrency limit must accommodate
 the complete matrix in one scheduling wave; classifier regression tests enforce
 both the shard budget and this constraint. Shared runner capacity can still
 introduce external queueing.
@@ -189,7 +196,8 @@ Cleanup and diagnostic upload steps retain their existing cancellation handling.
 Step timings from successful runs `39920301020` and `39920742402` separate test
 work from setup overhead. In the first sample, non-test steps across 42 shards
 consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
-was higher in the second sample. The final 18 shards remove 24 setup cycles.
+was higher in the second sample. That historical configuration used 18 shards,
+removing 24 setup cycles.
 
 Checkpoint timings from `39930854745` drive the final allocation: longest tasks
 start first and cumulative work is balanced, while CLI and Electron preparation
