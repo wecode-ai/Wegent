@@ -20,11 +20,11 @@ const CONTENT = 'export const citationProtocol = true'
 export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
   const directory = join(workspacePath, 'file citations')
   const source = join(directory, 'original.ts').replaceAll('\\', '/')
-  const output = join(directory, 'result.ts').replaceAll('\\', '/')
+  const output = join(directory, 'result%20final.ts').replaceAll('\\', '/')
   const completion = [
     `原稿依据：:codex-file-citation{path="${source}" purpose="source"}`,
     `输出：::codex-file-citation{path="${output}" purpose="output" line_range_start=1}`,
-    `旧式引用：【F:${output}†L1】`,
+    `旧式引用：【F:${encodeURI(output)}†L1】`,
     ':codex-followup[Explain this result]{prompt="Explain the citation result"}',
     '`' + ':codex-file-citation{path="example-only.md"}' + '`',
   ].join('\n\n')
@@ -74,7 +74,7 @@ export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
       await control.command('fill', composer, { value: PROMPT })
       await control.command('press', composer, { key: 'Enter' })
       await control.command('waitFor', `${LINK}[data-citation-purpose="output"]`, {
-        text: 'result.ts',
+        text: 'result%20final.ts',
       })
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       await verifyLinks(control)
@@ -82,7 +82,7 @@ export function createFileCitationChecks({ workspacePath, uiTimeoutMs }) {
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCount)
       await control.command('waitFor', `${LINK}[data-citation-purpose="output"]`, {
-        text: 'result.ts',
+        text: 'result%20final.ts',
         timeoutMs: uiTimeoutMs,
       })
       await verifyLinks(control)

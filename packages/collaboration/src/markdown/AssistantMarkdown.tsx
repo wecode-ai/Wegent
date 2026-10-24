@@ -252,7 +252,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       }: {
         href?: string
         children?: ReactNode
-        node?: Element
+        node?: Pick<Element, 'data'>
       }) {
         const renderLink = useContext(MarkdownCustomLinkContext)
         const annotation = node?.data?.assistantAnnotation
