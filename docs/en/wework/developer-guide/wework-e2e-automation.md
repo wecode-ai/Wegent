@@ -843,6 +843,8 @@ Authenticated flows should create users and data through backend APIs before the
 
 During installation reconciliation, plugin install/update primary actions and update confirmation reflect the same pending state as their handlers. Healthy installed plugins without updates remain available for immediate use. `plugin-runtime-path-recovery` retains its update confirmation, real invocation, uninstall, and restart assertions.
 
+Clearing the plugin catalog cache also invalidates older reads still waiting for Executor startup. A controlled Promise regression fixes the startup/invalidation order and verifies that the old read neither starts further catalog RPCs nor rebuilds the cleared snapshot. Catalog `installedVersion` must come from an observed local version or an explicit local snapshot, never the account's declared version. Unknown local presence must not default to true because the account has installed the plugin. Regressions also preserve status reporting from genuine cached local packages.
+
 `voice-input` uses `clickWhenEnabled` for New Task on initial entry and after restart. Control-channel and telemetry-dialog readiness do not establish sidebar readiness. Preserve the shared 10-second action budget and all first-use setup, dialog dismissal, and post-restart assertions.
 
 xterm updates all accessible row contents before batching transform resets, width measurements, and transform writes. This avoids per-row forced layouts. The dependency patch covers source, CommonJS, and ESM; a regression uses real xterm to verify all row contents are updated before the first measurement. `background-terminals` retains native paging, history, and accessibility assertions, with CPU profiles available to inspect layout hotspots.

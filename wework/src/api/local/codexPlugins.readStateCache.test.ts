@@ -1091,6 +1091,31 @@ describe('local codex plugin readState cache', () => {
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
   })
 
+  test('invalidates catalog reads still waiting for executor startup', async () => {
+    let finishStartup!: (value: { deviceId: string }) => void
+    mocks.ensureLocalExecutorStarted.mockReturnValueOnce(
+      new Promise(resolve => {
+        finishStartup = resolve
+      })
+    )
+    const pending = createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+
+    clearLocalCodexPluginsReadStateCache()
+    finishStartup({ deviceId: 'local-device' })
+
+    const failure = await pending.then(
+      () => null,
+      (error: unknown) => error
+    )
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+    expect(failure).toEqual(
+      expect.objectContaining({
+        message: 'Local plugin catalog read was invalidated while starting executor',
+      })
+    )
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+  })
+
   test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
     const openAiMarketplace = {
       name: 'openai-curated-remote',
