@@ -21,7 +21,10 @@ from app.models.user import User
 from app.services import model_credential_service
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
-from app.services.wework_model_config import wework_model_config_options
+from app.services.wework_model_config import (
+    positive_token_limit,
+    wework_model_config_options,
+)
 from shared.utils.crypto import CryptoConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -129,9 +132,11 @@ def _normalize_context_overflow(
         if match
         else max(request_body_length // CONTEXT_OVERFLOW_CHARS_PER_TOKEN, 1)
     )
+    # Claude Code needs positive counts with actual > limit to size compaction.
+    actual_tokens = max(actual_tokens, 2)
     limit_tokens = (
         context_window
-        if context_window is not None and context_window < actual_tokens
+        if context_window is not None and 0 < context_window < actual_tokens
         else max(actual_tokens - 1, 1)
     )
     return {
@@ -144,16 +149,6 @@ def _normalize_context_overflow(
             ),
         },
     }
-
-
-def _positive_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
 
 
 def _is_anthropic_messages_request(path: Any) -> bool:
@@ -595,14 +590,26 @@ async def proxy_llm_responses(
 
     content_type = upstream_response.headers.get("content-type", "text/event-stream")
     if upstream_response.status_code >= 400:
-        error_body = await upstream_response.aread()
-        await client.aclose()
+        try:
+            error_body = await upstream_response.aread()
+        except httpx.HTTPError as exc:
+            logger.error(
+                "LLM proxy failed to read upstream error body for user %s: %s",
+                current_user.id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Upstream request failed: {exc}",
+            ) from exc
+        finally:
+            await client.aclose()
         if _is_anthropic_messages_request(request.url.path):
             normalized = _normalize_context_overflow(
                 status_code=upstream_response.status_code,
                 body=error_body,
                 request_body_length=len(body_bytes),
-                context_window=_positive_int(model_config.get("context_window")),
+                context_window=positive_token_limit(model_config.get("context_window")),
             )
             if normalized is not None:
                 logger.warning(

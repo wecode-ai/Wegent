@@ -75,9 +75,10 @@ pub(super) fn normalize_context_overflow(
     }
 
     let actual_tokens = extract_token_count(&text)
-        .unwrap_or_else(|| (request_body_size as u64 / CONTEXT_OVERFLOW_CHARS_PER_TOKEN).max(1));
+        .unwrap_or(request_body_size as u64 / CONTEXT_OVERFLOW_CHARS_PER_TOKEN)
+        .max(2);
     let limit_tokens = model_context_window
-        .filter(|limit| *limit < actual_tokens)
+        .filter(|limit| *limit > 0 && *limit < actual_tokens)
         .unwrap_or_else(|| actual_tokens.saturating_sub(1).max(1));
 
     Some(json!({
@@ -176,6 +177,26 @@ mod tests {
             normalized["error"]["message"],
             "prompt is too long: 1000000 tokens > 999999 maximum"
         );
+    }
+
+    #[test]
+    fn keeps_overflow_counts_positive_and_ordered_for_small_requests() {
+        for request_size in [0, 1, 4, 8] {
+            for window in [None, Some(0), Some(1), Some(1_000_000)] {
+                let normalized = normalize_context_overflow(
+                    460,
+                    "对话内容太长".as_bytes(),
+                    request_size,
+                    window,
+                )
+                .expect("overflow");
+
+                assert_eq!(
+                    normalized["error"]["message"],
+                    "prompt is too long: 2 tokens > 1 maximum"
+                );
+            }
+        }
     }
 
     #[test]
