@@ -7,6 +7,7 @@ import { DesktopConversationTranslation } from './DesktopConversationTranslation
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isRequestUserInputBlock, requestUserInputPayloadKey } from './requestUserInputMessages'
 export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 
 export function RequestUserInputCard({
@@ -19,14 +20,25 @@ export function RequestUserInputCard({
   const callId = questionId?.startsWith('mcp_tool_call_approval_')
     ? questionId.slice('mcp_tool_call_approval_'.length)
     : undefined
+  const requestKey = requestUserInputPayloadKey(props.payload)
+  const owner =
+    requestKey && messages
+      ? [...messages]
+          .reverse()
+          .find(message =>
+            message.blocks?.some(
+              block =>
+                isRequestUserInputBlock(block) &&
+                requestUserInputPayloadKey(block.renderPayload) === requestKey
+            )
+          )
+      : undefined
   const reply =
     callId &&
-    messages
-      ?.flatMap(message => message.blocks ?? [])
-      .find(
-        block =>
-          block.id === callId && block.type === 'tool' && block.toolName === 'wework_stand_in.reply'
-      )
+    owner?.blocks?.find(
+      block =>
+        block.id === callId && block.type === 'tool' && block.toolName === 'wework_stand_in.reply'
+    )
   const text = reply && reply.type === 'tool' && reply.toolInput?.text
   const payload =
     typeof text === 'string' && props.payload.questions?.length === 1 && question

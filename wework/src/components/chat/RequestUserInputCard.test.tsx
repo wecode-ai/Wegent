@@ -607,6 +607,17 @@ test('shows the exact bound reply and localized actions while preserving native 
           toolInput: { text: '现在是北京时间13:25。' },
         },
         {
+          id: 'approval-1',
+          type: 'tool',
+          toolName: 'request_user_input',
+          status: 'pending',
+          renderPayload: {
+            kind: 'request_user_input',
+            requestId: 'approval-1',
+            itemId: 'call-reply',
+          },
+        },
+        {
           id: 'unrelated',
           type: 'tool',
           toolName: 'wework_stand_in.reply',
@@ -642,4 +653,109 @@ test('shows the exact bound reply and localized actions while preserving native 
     itemId: 'call-reply',
     answers: { 'mcp_tool_call_approval_call-reply': { answers: ['Allow'] } },
   })
+})
+
+test('binds reused tool IDs to the message owning the current approval request', () => {
+  const payload = {
+    kind: 'request_user_input',
+    requestId: 'current-request',
+    itemId: 'call-reused',
+    questions: [
+      {
+        id: 'mcp_tool_call_approval_call-reused',
+        question: 'Allow the tool?',
+        options: [{ label: 'Allow' }, { label: 'Cancel' }],
+      },
+    ],
+  }
+  const messages = [
+    {
+      id: 'old-turn',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      blocks: [
+        {
+          id: 'call-reused',
+          type: 'tool',
+          toolName: 'wework_stand_in.reply',
+          status: 'done',
+          toolInput: { text: '上一回合的旧回复' },
+        },
+      ],
+    },
+    {
+      id: 'current-turn',
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      blocks: [
+        {
+          id: 'call-reused',
+          type: 'tool',
+          toolName: 'wework_stand_in.reply',
+          status: 'pending',
+          toolInput: { text: '本次准备发送的回复' },
+        },
+        {
+          id: 'approval-current',
+          type: 'tool',
+          toolName: 'request_user_input',
+          status: 'pending',
+          renderPayload: payload,
+        },
+      ],
+    },
+  ] as WorkbenchMessage[]
+  render(<RequestUserInputCard messages={messages} payload={payload} onSubmit={vi.fn()} />)
+  expect(screen.getByText('本次准备发送的回复')).toBeVisible()
+  expect(screen.queryByText('上一回合的旧回复')).not.toBeInTheDocument()
+})
+
+test('keeps the native request when its owning message has no matching reply parameters', () => {
+  const payload = {
+    kind: 'request_user_input',
+    requestId: 'current-request',
+    itemId: 'call-reused',
+    questions: [
+      {
+        id: 'mcp_tool_call_approval_call-reused',
+        question: 'Native confirmation without bound text',
+        options: [{ label: 'Allow' }],
+      },
+    ],
+  }
+  const messages = [
+    {
+      id: 'old-turn',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      blocks: [
+        {
+          id: 'call-reused',
+          type: 'tool',
+          toolName: 'wework_stand_in.reply',
+          toolInput: { text: '不能用于本次确认的旧回复' },
+        },
+      ],
+    },
+    {
+      id: 'current-turn',
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      blocks: [
+        {
+          id: 'approval-current',
+          type: 'tool',
+          toolName: 'request_user_input',
+          renderPayload: payload,
+        },
+      ],
+    },
+  ] as WorkbenchMessage[]
+  render(<RequestUserInputCard messages={messages} payload={payload} onSubmit={vi.fn()} />)
+  expect(screen.getByText('Native confirmation without bound text')).toBeVisible()
+  expect(screen.queryByText('不能用于本次确认的旧回复')).not.toBeInTheDocument()
 })
