@@ -1414,8 +1414,13 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       return
       ;;
-    wework/e2e/desktop/scenarios/plugin-toggle-persistence.scenario.mjs | \
-      wework/e2e/desktop/modules/plugin-inventory-state.mjs)
+    wework/e2e/desktop/scenarios/plugin-toggle-persistence.scenario.mjs)
+      select_target "cloud:plugin-toggle-persistence"
+      return
+      ;;
+    wework/e2e/desktop/modules/plugin-inventory-state.mjs | \
+      wework/scripts/plugin-inventory-state.test.mjs)
+      select_target "cloud:plugin-runtime-path-recovery"
       select_target "cloud:plugin-toggle-persistence"
       return
       ;;

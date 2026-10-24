@@ -12,7 +12,7 @@ Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend a
 
 Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
 
-The first model-routing task and real Harness CLI launch use the workbench startup budget. Streaming scroll waits for the model request before applying the original ten-second UI assertion. After changing projects, wait for the execution mode control to become available. Scroll moved board cards into view before checking result visibility, and use the responsive view helper for cloud Stand-in navigation. Failed workbench snapshots include resource connection, request, and response timings with paths only, excluding query parameters.
+The first model-routing task and real Harness CLI launch use the workbench startup budget. Streaming scroll waits for the model request before applying the original ten-second UI assertion. After changing projects, wait for the execution mode control to become available. Scroll moved board cards into view before checking result visibility, and use the responsive view helper for cloud Stand-in navigation.
 
 Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
 
@@ -478,7 +478,10 @@ Task-board bulk actions confirm that the blank conversation is active before eac
 the editor node alone is insufficient. Goal restart fixtures observe one running task and
 one queued task before releasing the model response occupying the single execution slot.
 Work-list refreshes preserve the device owning an opened workspace so an earlier response
-cannot replace a newly selected cloud workspace. Diagnostics record project-selection
+cannot replace a newly selected cloud workspace.
+Workbench and conversation diagnostics share a 100ms publication scheduler. Continuous state updates must not cancel a pending publication, and each publication reads the latest state. Disabling diagnostics or unmounting cancels pending work so an inactive pane cannot overwrite the current snapshot. A failed conversation-title isolation assertion retains its assistant-count baseline and the title, lifecycle, and message summary from each poll.
+Manual conversation renames emit the existing `runtime.task.title.updated` event after persistence so other workbench consumers immediately receive the private title. Terminal history diagnostics record keyboard and actual viewport metadata without terminal contents. Native input waits for a trusted keyboard event at the exact target and a successful host response, rather than fixed 16ms settling timers. Missing events retain the 10-second step budget, and listeners are removed on success or failure. For native CPU traces, point `WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY` to an absolute directory. Isolated E2E saves `renderer-*.trace.json` every 20 seconds to identify renderer long tasks.
+Diagnostics record project-selection
 reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
 process IDs and initialization exit states, and failed Windows process-tree termination states.
 Configuration normalization and replacement record file size and the presence of model and built-in OpenAI URL fields; replacements also record their call site, without configuration contents.
@@ -749,6 +752,12 @@ Platform E2E services must start etcd and MinIO before Milvus. The GitHub runner
 
 Desktop E2E `clickWhenEnabled` starts the existing ten-second conversation layout diagnostic window. Milestone and failure artifacts retain `conversation-diagnostics` JSON with virtual ranges, message measurements, and scroll positions. These records contain no message text and do not change UI waits or business assertions. Compare them with `workbench-debug.json` when a completed message is missing from the rendered conversation.
 
+On Windows, a worktree's `.git` file can have the hidden attribute, causing Node's default `writeFile` mode to return `EPERM`. The archived-cleanup fixture opens the existing file with `r+`, explicitly truncates and writes it, and closes the handle in `finally`. Corruption, restoration, and failure cleanup share this implementation.
+
+For consecutive sends, compare request counts with composer diagnostics: a previous send resolving asynchronously must not clear a subsequently written draft. The pane uses an input-write version to constrain submission cleanup. Once the composer clears or the user writes the next draft, the old submission no longer owns that draft. Unit tests interleaving asynchronous acceptance and new draft writes must cover both ordinary messages and messages with code comments.
+
+The desktop control channel registers after model fixtures finish seeding, retaining diagnostic access if seeding fails. Workbench Home migration probes use `ensureLocalModelCatalogReady` to await model-catalog synchronization and its app-server restart before accessing the migrated Home with native Codex. Executor startup alone does not establish catalog readiness. A failed native probe retains `native-migration-turn-failure.json` with the actual Home, database integrity, and thread history mode. Check initialization warnings first: a log-database open failure can surface as a `list_turns` error without losing thread history.
+
 Opening project settings waits for and clicks the current project's edit or rename action directly. The sidebar chooses its menu identifier from the project's state owner and source; a snapshot taken before the menu renders cannot determine that action. Cloud project save, restart, and restored-settings assertions remain unchanged.
 
 During local macOS verification of cloud project state files, a running ChatGPT or Codex desktop application activates the existing state-write guard. A runner whose HOME and Codex Home are both inside its isolated test-result directory can use `WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH=1` to verify that state reaches disk.
@@ -824,6 +833,20 @@ Authenticated flows should create users and data through backend APIs before the
 
 ### Readiness for Local Project Scenarios
 
+During installation reconciliation, plugin install/update primary actions and update confirmation reflect the same pending state as their handlers. Healthy installed plugins without updates remain available for immediate use. `plugin-runtime-path-recovery` retains its update confirmation, real invocation, uninstall, and restart assertions.
+
+`voice-input` uses `clickWhenEnabled` for New Task on initial entry and after restart. Control-channel and telemetry-dialog readiness do not establish sidebar readiness. Preserve the shared 10-second action budget and all first-use setup, dialog dismissal, and post-restart assertions.
+
+xterm updates all accessible row contents before batching transform resets, width measurements, and transform writes. This avoids per-row forced layouts. The dependency patch covers source, CommonJS, and ESM; a regression uses real xterm to verify all row contents are updated before the first measurement. `background-terminals` retains native paging, history, and accessibility assertions, with CPU profiles available to inspect layout hotspots.
+
+Transcript conversion updates `runtimeStatus` together with the current message's `status`; a completed user message must not leave a stale status that overrides its streaming assistant. Smart app verification logs stage start, completion, and duration without environment variables or credentials. Locate stalled stages from these logs instead of extending E2E waits.
+
+Smart app verification sets `NPM_CONFIG_WORKSPACE_DIR` to the project itself and disables implicit dependency installation before scripts. Typechecking, tests, builds, and runtime probes still execute. Verification must not read or install the containing host workspace. Real pnpm regressions cover a conflicting host package-manager version and prevent creation of its lockfile.
+
+Desktop artifacts restore through `actions/download-artifact@v6`, including the upstream fix that rejects the pending promise on stream timeout instead of exiting successfully with a partial directory. See the [artifact SDK timeout fix](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc). Windows network-failure diagnostics retain connection states, dynamic/excluded port ranges, socket-exhaustion events, and memory-pool counters without process command lines or credentials.
+
+Stand-in completion can arrive before the runtime unread flag. A new completion after observation starts must remain unread, and delivery must consult the current read ledger rather than consume it as restored history. Persist delivery records once per batch before sending alerts. Regressions cover late unread updates, no replay after reload, and a single delivery-ledger write for 1,000 records.
+
 `createSingleRootLocalProject` must wait until the new project is the workbench’s current project. Closing the creation dialog or finding an older composer is insufficient. The cloud-context and running-history scenarios also select a registered model explicitly through `selectE2EModel` before entering the first message. Their stalled-context, attachment, history recovery, and task-move assertions remain intact.
 
 The running-history scenario measures its three-second responsiveness gate with the workbench snapshot, excluding the debugger protocol cost of forced GC inside `performanceSnapshot`. Full history, pagination, transfer, and memory assertions remain intact. Windows restart checks still require the original executor to exit and record the selected PID’s process name and start time together with the `taskkill` exit code and output, distinguishing a surviving executor from PID reuse without collecting process command lines or environment variables.
@@ -837,3 +860,13 @@ After a held cloud model request times out and is cancelled, explicitly refresh 
 When a blank conversation submission completes, reuse the current-task identity check and consume its draft key only if the created task is still selected. A late completion from the previous request must not clear text entered after returning to a new conversation. Rejected creation still restores the original draft and attachments. Regressions cover delayed creation and delayed refresh; the original nine-task bulk completion and archive E2E remains unchanged.
 
 Chunked history transport names immutable snapshots by their compressed-content hash. Concurrent requests reuse the same file through atomic publication without replacement, avoiding replacement of a snapshot being read on Windows. Regressions preserve the published file and its modification time, keep active readers valid, and restore the complete history from four concurrent requests. The original running-history E2E remains unchanged.
+
+Submission diagnostics retain Enter composition suppression, configured send key, and submission guard state (content presence, model readiness, and disabled controls) in the existing bounded composer event buffer without recording draft text. Trace native input, submission decisions, and Executor requests in order; the final button state does not establish its state when a key arrived.
+
+On a Windows socket-buffer error, the desktop runner immediately saves one port, process, memory, and TCP-event snapshot (`windows-network-exhaustion-at-error.json`) alongside the existing failure-time snapshot. An application-startup timeout can outlast TCP port reclamation, so its later snapshot cannot exclude allocation failure at the original error. Diagnostics neither retry requests nor replace the original failure.
+
+Publish native editor callbacks only during React layout commit. A suspended concurrent model-readiness render must not replace the send handler of the visible composer. Regressions cover native callback identity and the actual shared submission guard: an enabled composer submits with committed model readiness and remains usable after abandoning the suspended update.
+
+Isolated Windows desktop E2E launches disable Chromium `TcpPortRandomizationWin` so rapid loopback connections use normal OS port allocation. Electron 44.7.0 / Chromium 152.0.7977.130 enables this feature by default; upstream [572515601](https://issuetracker.google.com/issues/572515601) confirms WSAENOBUFS at low connection counts on Windows Server 2025 and other affected systems. Repository logs record native `ERR_NO_BUFFER_SPACE` together with TCP event 4231. Merge existing scenario feature switches and deduplicate entries; retain startup, model HTTP-error, and resource assertions.
+
+The Windows desktop E2E test step has a 40-minute budget within the 60-minute job limit, leaving time to upload failure logs and diagnostic artifacts. A previous Core shard 7 hit the job deadline; its job-log endpoint returned 404 and the run log archive omitted that shard, so evidence could not be recovered from the destroyed runner. Step timeouts remain failures and retain the existing always-run uploads.

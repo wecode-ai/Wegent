@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    tests::{packages, store},
+    tests::{counted as packages, store},
     *,
 };
 use std::sync::atomic::Ordering;
@@ -14,13 +14,13 @@ async fn reconnect_reuses_verified_plugin_and_changed_checksum_downloads() {
     let first = packages("v1");
     let mut payload = json!({"scope":"plugins", "plugins":[{"name":"demo", "installed_plugin_id":1,
         "marketplace":"wegent", "version":"1.0", "download_path":"/package",
-        "checksum":sha256_digest(&first.plugin)}]});
+        "checksum":sha256_digest(&first.package.plugin)}]});
     let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), first.clone());
     assert_eq!(
         handler.apply_sync(payload.clone()).await.unwrap()["success"],
         true
     );
-    assert_eq!(first.plugin_downloads.load(Ordering::SeqCst), 1);
+    assert_eq!(first.downloads.load(Ordering::SeqCst), 1);
 
     // A new connection has a new handler and signed URL, but the same package.
     payload["plugins"][0]["download_path"] = json!("/package?renewed-signature");
@@ -30,13 +30,13 @@ async fn reconnect_reuses_verified_plugin_and_changed_checksum_downloads() {
         reconnected.apply_sync(payload.clone()).await.unwrap()["success"],
         true
     );
-    assert_eq!(first.plugin_downloads.load(Ordering::SeqCst), 1);
+    assert_eq!(first.downloads.load(Ordering::SeqCst), 1);
 
     let second = packages("v2");
-    payload["plugins"][0]["checksum"] = json!(sha256_digest(&second.plugin));
+    payload["plugins"][0]["checksum"] = json!(sha256_digest(&second.package.plugin));
     let updated = CapabilitySyncHandler::with_package_provider("", store.clone(), second.clone());
     assert_eq!(updated.apply_sync(payload).await.unwrap()["success"], true);
-    assert_eq!(second.plugin_downloads.load(Ordering::SeqCst), 1);
+    assert_eq!(second.downloads.load(Ordering::SeqCst), 1);
     let manifest = store.manifest.load().unwrap();
     let native = PathBuf::from(
         manifest["plugins"]["demo@wegent"]["runtime"]["codex_link"]
@@ -57,7 +57,7 @@ async fn missing_or_legacy_shared_plugin_is_downloaded_again() {
         let packages = packages("v1");
         let payload = json!({"scope":"plugins", "plugins":[{"name":"demo", "installed_plugin_id":1,
             "marketplace":"wegent", "version":"1.0", "download_path":"/package",
-            "checksum":sha256_digest(&packages.plugin)}]});
+            "checksum":sha256_digest(&packages.package.plugin)}]});
         let handler =
             CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
         assert_eq!(
@@ -85,7 +85,7 @@ async fn missing_or_legacy_shared_plugin_is_downloaded_again() {
             reconnected.apply_sync(payload).await.unwrap()["success"],
             true
         );
-        assert_eq!(packages.plugin_downloads.load(Ordering::SeqCst), 2);
+        assert_eq!(packages.downloads.load(Ordering::SeqCst), 2);
         assert_eq!(
             fs::read_to_string(shared.join("payload.txt")).unwrap(),
             "v1"
@@ -94,13 +94,13 @@ async fn missing_or_legacy_shared_plugin_is_downloaded_again() {
 }
 
 #[tokio::test]
-async fn reconnect_rejects_corrupted_shared_plugin_without_redownloading() {
+async fn reconnect_rejects_corrupted_shared_plugin_without_replacing_manifest() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = packages("v1");
     let payload = json!({"scope":"plugins", "plugins":[{"name":"demo", "installed_plugin_id":1,
         "marketplace":"wegent", "version":"1.0", "download_path":"/package",
-        "checksum":sha256_digest(&packages.plugin)}]});
+        "checksum":sha256_digest(&packages.package.plugin)}]});
     let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
     assert_eq!(
         handler.apply_sync(payload.clone()).await.unwrap()["success"],
@@ -114,7 +114,9 @@ async fn reconnect_rejects_corrupted_shared_plugin_without_redownloading() {
         CapabilitySyncHandler::with_package_provider("", store.clone(), packages.clone());
     let result = reconnected.apply_sync(payload).await.unwrap();
     assert_eq!(result["success"], false);
-    assert_eq!(packages.plugin_downloads.load(Ordering::SeqCst), 1);
+    // A failed cache verification attempts a fresh download, but publication must
+    // still reject the corrupted immutable directory and preserve the manifest.
+    assert_eq!(packages.downloads.load(Ordering::SeqCst), 2);
     assert_eq!(
         store.manifest.load().unwrap()["plugins"]["demo@wegent"],
         before

@@ -97,6 +97,47 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     (await readFile(join(oldRoot, 'skills', sharedSkill, 'SKILL.md'), 'utf8')).includes(oldContent)
   )
   await access(join(oldRoot, 'skills', retiredSkill, 'SKILL.md'))
+  setPhase('plugin-parallel-installs-are-targeted')
+  const parallelFixtures = await Promise.all(
+    ['alpha', 'beta'].map(suffix =>
+      env.publishPluginRelease({
+        slug: `${pluginKey}-${suffix}`,
+        version: oldVersion,
+        skills: { [sharedSkill]: `Parallel install ${suffix}` },
+      })
+    )
+  )
+  const parallelInstalls = await Promise.all(
+    parallelFixtures.map(fixture =>
+      request(`/plugins/marketplace/${fixture.pluginId}/install?device_id=${deviceId}`, 'POST')
+    )
+  )
+  for (const installation of parallelInstalls) {
+    const result = installation.sync.results.find(result => result.plugin_sync?.version === 2)
+    assert.ok(result?.success, 'A new runtime must acknowledge targeted plugin synchronization')
+    assert.equal(result.scope, 'plugin_delta')
+    assert.equal(result.plugin_sync.complete, false)
+    assert.deepEqual(
+      result.plugins.map(plugin => String(plugin.id)),
+      [String(installation.plugin.metadata.labels.id)],
+      'Each concurrent install must synchronize only its affected plugin'
+    )
+  }
+  assert.deepEqual(
+    (await readCapabilities()).plugins[managedKey],
+    managed,
+    'Installing other plugins must preserve the existing plugin and its sync generation'
+  )
+  await Promise.all(
+    parallelInstalls.map(async installation => {
+      // Uninstall answers 204 No Content, so the JSON helper cannot parse it.
+      const removed = await fetch(
+        `${env.backendUrl}/api/plugins/installed/${installation.plugin.metadata.labels.id}`,
+        { method: 'DELETE', headers }
+      )
+      assert.equal(removed.status, 204)
+    })
+  )
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`, {
     timeoutMs: 30000,

@@ -179,6 +179,11 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'ensureLocalModelCatalogReady': {
+      const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
+      await ensureLocalModelCatalogReady()
+      return { handled: true, value: '' }
+    }
     case 'localConnectorAuth':
       return { handled: true, value: await localConnectorAuth(command) }
     case 'clickAt':

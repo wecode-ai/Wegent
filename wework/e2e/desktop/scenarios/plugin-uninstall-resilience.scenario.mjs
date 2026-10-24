@@ -332,6 +332,7 @@ export async function createDesktopScenario({
               verifyPluginRegistrationCoordination({
                 cloud,
                 control,
+                deviceProxy,
                 localDeviceId: local.device_id,
                 evidence,
                 timeoutMs: workbenchReadyTimeoutMs,
