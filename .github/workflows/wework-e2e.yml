@@ -461,7 +461,7 @@ jobs:
       - changes
     if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
       WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
@@ -503,6 +503,18 @@ jobs:
           path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
           key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
+      - name: Download same-run verified Windows Codex build
+        if: github.run_attempt > 1
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-windows-codex-source
+          path: ${{ runner.temp }}/wework-windows-codex-source
+
+      - name: Restore same-run verified Windows Codex build
+        if: github.run_attempt > 1
+        shell: bash
+        run: node wework/scripts/lib/codex-windows-source.mjs restore "$WEGENT_CODEX_CACHE_DIR" "$RUNNER_TEMP/wework-windows-codex-source"
+
       - name: Build Windows Wework Electron E2E application
         env:
           CI: true
@@ -515,6 +527,20 @@ jobs:
           test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+
+      - name: Stage verified Windows Codex build
+        if: github.run_attempt == 1
+        shell: bash
+        run: node wework/scripts/lib/codex-windows-source.mjs stage "$WEGENT_CODEX_CACHE_DIR" "$RUNNER_TEMP/wework-windows-codex-source"
+
+      - name: Upload same-run verified Windows Codex build
+        if: github.run_attempt == 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-windows-codex-source
+          path: ${{ runner.temp }}/wework-windows-codex-source
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Build Rust Backend Windows E2E gateway
         shell: pwsh
