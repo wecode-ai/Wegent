@@ -253,6 +253,21 @@ def test_custom_card_hides_missing_assignment_detail_and_links() -> None:
 
 
 @pytest.mark.parametrize(
+    ("kind", "kind_label"),
+    [("issue_dispatch_assignment", "任务分配")],
+)
+def test_custom_card_labels_known_task_notification_kinds(
+    kind: str, kind_label: str
+) -> None:
+    params = card_param_map(
+        push=push_copy(kind=kind, title="通知标题", body="通知正文"),
+        card_template_id="wegent-custom-template",
+    )
+
+    assert params["kindLabel"] == kind_label
+
+
+@pytest.mark.parametrize(
     "destination",
     [
         "wework://boards",

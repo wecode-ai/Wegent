@@ -71,9 +71,7 @@ fn extract_model_config(spec: &Value) -> Result<ModelConfig, FastApiError> {
         .ok_or_else(FastApiError::unhandled)?;
 
     let raw_api_key = string_field(env.get("api_key"));
-    let api_key =
-        crate::git_repositories::crypto::decrypt_git_token(&resolve_env_placeholder(&raw_api_key))
-            .map_err(|_| FastApiError::unhandled())?;
+    let api_key = decrypt_model_api_key(&raw_api_key)?;
     let base_url = string_or(env.get("base_url"), DEFAULT_BASE_URL);
     let model_id = string_or(env.get("model_id"), DEFAULT_MODEL_ID);
     let env_model = string_field(env.get("model")).trim().to_lowercase();
@@ -137,6 +135,78 @@ fn extract_model_config(spec: &Value) -> Result<ModelConfig, FastApiError> {
         api_format,
         protocol,
     })
+}
+
+/// `_extract_model_config`'s api_key step: resolve `${ENV}` placeholders, reject
+/// the masked `***` value, and decrypt a stored ciphertext.
+fn decrypt_model_api_key(raw: &str) -> Result<String, FastApiError> {
+    let resolved = if raw.contains("${") {
+        resolve_env_placeholder(raw)
+    } else {
+        raw.to_string()
+    };
+    if resolved == "***" {
+        return Err(credentials_unavailable());
+    }
+    if resolved.contains("${") {
+        return Ok(resolved);
+    }
+    crate::git_repositories::crypto::decrypt_git_token(&resolved)
+        .map_err(|_| credentials_unavailable())
+}
+
+/// `CryptoConfigurationError` mapping in `resolve_llm_proxy_model_config`.
+fn credentials_unavailable() -> FastApiError {
+    FastApiError::detail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Cloud model credentials are unavailable; check the encryption configuration",
+    )
+}
+
+/// `wework_model_config_options` validation reached from
+/// `resolve_llm_proxy_model_config`. The extracted options are unused by the
+/// proxy; only the source's `ValueError` → 400 contract is observable here.
+pub(crate) fn validate_wework_model_config_options(
+    spec: &Value,
+    model_name: &str,
+    config: &ModelConfig,
+) -> Result<(), FastApiError> {
+    let mode = spec
+        .get("modelConfig")
+        .and_then(Value::as_object)
+        .and_then(|model_config| model_config.get("codex_request_mode"))
+        .filter(|value| !value.is_null());
+    let Some(mode) = mode else {
+        return Ok(());
+    };
+    let Some(mode) = mode.as_str() else {
+        return Err(codex_request_mode_error());
+    };
+    match mode {
+        "auto" | "standard" => Ok(()),
+        "passthrough" => {
+            // `resolve_llm_proxy_protocol` runs before the options check when the
+            // model selects passthrough mode.
+            let protocol = resolve_llm_proxy_protocol(model_name, config)?;
+            if protocol == Protocol::OpenAiResponses {
+                Ok(())
+            } else {
+                Err(FastApiError::detail(
+                    StatusCode::BAD_REQUEST,
+                    "Codex passthrough requires an OpenAI Responses model",
+                ))
+            }
+        }
+        _ => Err(codex_request_mode_error()),
+    }
+}
+
+/// `wework_model_config_options`' `ValueError` for an unsupported mode.
+fn codex_request_mode_error() -> FastApiError {
+    FastApiError::detail(
+        StatusCode::BAD_REQUEST,
+        "codex_request_mode must be auto, standard or passthrough",
+    )
 }
 
 /// `_process_model_config_placeholders` for `api_key` and `default_headers`.
@@ -515,19 +585,92 @@ async fn user_groups(state: &AppState, user: &UserRow) -> Result<Vec<String>, Fa
         })
 }
 
-/// `str(env.get("api_key") or "")`.
+/// `str(env.get("api_key") or "")`: an absent or `null` key renders empty.
 fn string_field(value: Option<&Value>) -> String {
     match value {
+        None | Some(Value::Null) => String::new(),
         Some(Value::String(text)) => text.clone(),
         Some(other) => other.to_string(),
-        None => String::new(),
     }
 }
 
-/// `env.get(key, default)` for a string field.
+/// `env.get(key, default)`: the default applies only when the key is absent, so
+/// an explicit `null` or empty value reaches the proxy's incompleteness check
+/// instead of substituting the default endpoint.
 fn string_or(value: Option<&Value>, default: &str) -> String {
     match value {
-        Some(Value::String(text)) if !text.is_empty() => text.clone(),
-        _ => default.to_string(),
+        None => default.to_string(),
+        Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config(protocol: Option<&str>, api_format: Option<&str>) -> ModelConfig {
+        ModelConfig {
+            protocol: protocol.map(str::to_string),
+            api_format: api_format.map(str::to_string),
+            ..ModelConfig::default()
+        }
+    }
+
+    #[test]
+    fn codex_request_mode_validation_matches_source() {
+        let responses = config(Some("openai-responses"), Some("responses"));
+        let standard = json!({ "modelConfig": { "codex_request_mode": "standard", "env": {} } });
+        assert!(validate_wework_model_config_options(&standard, "m", &responses).is_ok());
+        let passthrough =
+            json!({ "modelConfig": { "codex_request_mode": "passthrough", "env": {} } });
+        assert!(validate_wework_model_config_options(&passthrough, "m", &responses).is_ok());
+        let chat = config(Some("openai"), Some("chat/completions"));
+        assert!(validate_wework_model_config_options(&passthrough, "m", &chat).is_err());
+        let invalid = json!({ "modelConfig": { "codex_request_mode": "sometimes", "env": {} } });
+        assert!(validate_wework_model_config_options(&invalid, "m", &responses).is_err());
+        let numeric = json!({ "modelConfig": { "codex_request_mode": 3, "env": {} } });
+        assert!(validate_wework_model_config_options(&numeric, "m", &responses).is_err());
+        let null = json!({ "modelConfig": { "codex_request_mode": null, "env": {} } });
+        assert!(validate_wework_model_config_options(&null, "m", &responses).is_ok());
+        assert!(validate_wework_model_config_options(&json!({}), "m", &responses).is_ok());
+    }
+
+    #[test]
+    fn masked_api_key_is_a_credential_configuration_error() {
+        assert_eq!(
+            decrypt_model_api_key("***").unwrap_err().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(decrypt_model_api_key("sk-1").unwrap(), "sk-1");
+        assert_eq!(
+            decrypt_model_api_key("${DEPLOYMENT_USER_API_KEY}").unwrap(),
+            "${DEPLOYMENT_USER_API_KEY}"
+        );
+    }
+
+    #[test]
+    fn placeholders_resolve_user_and_team_context() {
+        let mut config = config(None, None);
+        config.api_key = "k".to_string();
+        config.base_url = "https://api.example.invalid".to_string();
+        config.model_id = "m".to_string();
+        config.default_headers = vec![
+            (
+                "x-runtime-user".to_string(),
+                "${task_data.user.name}".to_string(),
+            ),
+            (
+                "x-runtime-wegent-agent-name".to_string(),
+                "${task_data.team.name}".to_string(),
+            ),
+        ];
+        process_placeholders(&mut config, 7, "alice");
+        assert_eq!(
+            config.default_headers,
+            vec![("x-runtime-user".to_string(), "alice".to_string())]
+        );
     }
 }

@@ -9,6 +9,7 @@ mod issue_provider;
 pub mod mcp;
 pub(crate) mod mcp_http;
 mod model;
+pub use store::personal_stand_in;
 mod router;
 pub(crate) mod runner_routing;
 mod store;

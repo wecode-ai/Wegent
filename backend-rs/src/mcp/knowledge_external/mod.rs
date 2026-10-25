@@ -31,7 +31,9 @@
 //! 6. A `200` binary response with the stored media type, the RFC 5987
 //!    `Content-Disposition`, and `X-Content-Type-Options: nosniff`.
 
+pub mod auth;
 mod rate_limit;
+mod sse;
 mod token;
 
 use std::sync::Arc;
@@ -447,7 +449,7 @@ fn parse_document_id(raw: &str) -> Option<i64> {
 /// the rightmost `x-forwarded-for` entry after the trusted proxy hops
 /// (`--forwarded-allow-ips`, `127.0.0.1` by default) are stripped from the
 /// right.
-fn client_ip(x_forwarded_for: Option<&str>) -> String {
+pub(super) fn client_ip(x_forwarded_for: Option<&str>) -> String {
     let Some(value) = x_forwarded_for else {
         return "unknown".to_string();
     };

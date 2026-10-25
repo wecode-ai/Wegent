@@ -40,6 +40,7 @@ use serde_json::Value;
 use serde_json::json;
 
 use crate::auth::SessionUser;
+pub use crate::device_online_state::online_key;
 use crate::device_running_tasks::{RunningTask, list_running_tasks};
 use crate::executor_version::latest_executor_version;
 use crate::http_compat::FastApiError;
@@ -123,12 +124,6 @@ const KINDS_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_u
      WHERE kinds.user_id = ? AND kinds.kind = 'Device' \
      AND kinds.namespace = 'default' AND kinds.is_active = true";
 
-/// Redis online-state key (`LocalDeviceProvider.generate_online_key`; the
-/// deployment's cloud device provider uses the same layout).
-pub fn online_key(user_id: i64, device_id: &str) -> String {
-    format!("device:online:{user_id}:{device_id}")
-}
-
 /// Source `record_route_id`: App devices use `app-record-<id>` as the transport
 /// identity (Redis key, execution_target_id, socket_device_id); all other device
 /// types use the Kind `name` (the logical device_id).
@@ -183,7 +178,8 @@ struct DeviceListResponse {
 ///
 /// The source model emits every known member, so `runtimeTaskCreate`,
 /// `interactiveSessions`, and `worktrees` are JSON null when the stored
-/// document omits them. `projectEditing` is omitted when unadvertised so verified
+/// document omits them. `pluginSync` is omitted unless a valid protocol is
+/// advertised. `projectEditing` is omitted when unadvertised so verified
 /// legacy runtimes retain their version contract. `extensions` carries the members a distribution
 /// registers through `register_runtime_feature_normalizer` (the source
 /// extension schema registers `desktop`); any other stored member is
@@ -197,6 +193,8 @@ pub struct RuntimeFeatures {
     pub worktrees: Option<RawJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_sync: Option<RuntimePluginSyncFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
 }
@@ -208,6 +206,12 @@ pub struct RuntimeProjectEditingFeatures {
     pub ai_settings: Option<bool>,
     pub default_project_space: Option<bool>,
     pub plugins: Option<bool>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimePluginSyncFeatures {
+    pub protocol_version: i64,
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -306,6 +310,8 @@ struct RuntimeFeatureInput {
         deserialize_with = "present_project_editing"
     )]
     project_editing: Option<OpaqueJson>,
+    #[serde(rename = "pluginSync")]
+    plugin_sync: Option<OpaqueJson>,
 }
 
 fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
@@ -694,6 +700,8 @@ pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
 ///   Optional defaults).
 /// - `projectEditing` is omitted when absent. Explicit malformed advertisements
 ///   retain a conservative object; only actual booleans authorize writes.
+/// - `pluginSync` preserves an explicit positive integer protocol version;
+///   absent or malformed advertisements never opt a legacy device in.
 /// - Any other stored key is dropped unless the distribution registers it as
 ///   an extension feature.
 fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> {
@@ -730,6 +738,18 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .project_editing
             .as_ref()
             .map(|value| project_editing_features(value, valid_header)),
+        plugin_sync: features
+            .plugin_sync
+            .as_ref()
+            .filter(|_| valid_header)
+            .and_then(|value| {
+                value
+                    .to_value()
+                    .get("protocolVersion")?
+                    .as_i64()
+                    .filter(|version| *version >= 1)
+                    .map(|protocol_version| RuntimePluginSyncFeatures { protocol_version })
+            }),
         extensions: serde_json::Map::new(),
     })
 }
@@ -767,6 +787,11 @@ impl DeviceItem {
     /// The `device_type` discriminator the source listing dict carries.
     pub(crate) fn device_type(&self) -> DeviceType {
         self.device_type
+    }
+
+    /// The `status` the source listing dict carries.
+    pub(crate) fn status(&self) -> &str {
+        &self.status
     }
 }
 
@@ -832,268 +857,5 @@ pub(crate) fn internal_error() -> FastApiError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn device_type(value: Value) -> DeviceType {
-        let spec = JsonProjection::<DeviceSpecInput>::from(value)
-            .value
-            .unwrap_or_default();
-        DeviceType::from_spec(&spec)
-    }
-
-    fn runtime_features(value: &Value) -> Option<RuntimeFeatures> {
-        let online = JsonProjection::<OnlineStateInput>::from_json(value)
-            .value
-            .unwrap_or_default();
-        project_runtime_features(&online)
-    }
-
-    fn online_info(capacity: Option<Value>) -> Value {
-        let mut info = json!({
-            "socket_id": "s",
-            "name": "n",
-            "status": "online",
-            "executor_version": "2.0.9",
-        });
-        if let Some(capacity) = capacity {
-            info["runtime_capacity"] = capacity;
-        }
-        info
-    }
-
-    fn capacity_slots(value: Option<&Value>) -> (i64, i64) {
-        let projected = value.cloned().map(JsonProjection::<OnlineStateInput>::from);
-        runtime_capacity_slot_values(projected.as_ref())
-    }
-
-    #[test]
-    fn slot_values_require_consistent_capacity() {
-        let valid = online_info(Some(json!({
-            "limit": 10, "active": 2, "active_task_ids": ["a", "b"],
-        })));
-        assert_eq!(capacity_slots(Some(&valid)), (2, 10));
-
-        let missing_ids = online_info(Some(json!({"limit": 10, "active": 2})));
-        assert_eq!(capacity_slots(Some(&missing_ids)), (0, 0));
-
-        let count_mismatch = online_info(Some(json!({
-            "limit": 10, "active": 3, "active_task_ids": ["a", "b"],
-        })));
-        assert_eq!(capacity_slots(Some(&count_mismatch)), (0, 0));
-
-        let limit_out_of_range = online_info(Some(json!({
-            "limit": 21, "active": 0, "active_task_ids": [],
-        })));
-        assert_eq!(capacity_slots(Some(&limit_out_of_range)), (0, 0));
-
-        assert_eq!(runtime_capacity_slot_values(None), (0, 0));
-    }
-
-    #[test]
-    fn update_available_matches_source_semantics() {
-        assert!(is_update_available(None, Some("2.0.16")));
-        assert!(is_update_available(Some("2.0.9"), Some("2.0.16")));
-        assert!(!is_update_available(Some("2.0.16"), Some("2.0.16")));
-        assert!(!is_update_available(Some("2.0.17"), Some("2.0.16")));
-        assert!(!is_update_available(Some("x"), Some("2.0.16")));
-        assert!(!is_update_available(Some("2.0.9"), Some("x")));
-    }
-
-    #[test]
-    fn item_json_matches_device_info_shape() {
-        let item = DeviceItem {
-            id: 268602,
-            execution_target_id: None,
-            device_id: "local-device".to_string(),
-            name: "local-device app".to_string(),
-            status: "online".to_string(),
-            is_default: false,
-            last_heartbeat: Some(raw_json(&json!("2026-09-04T15:52:17.193124"))),
-            device_type: DeviceType::App,
-            connection_mode: "websocket".to_string(),
-            capabilities: None,
-            slot_used: 0,
-            slot_max: 0,
-            running_tasks: Vec::new(),
-            executor_version: Some("1.8.5".to_string()),
-            latest_version: Some("2.0.16".to_string()),
-            update_available: true,
-            client_ip: Some(raw_json(&json!("127.0.0.1"))),
-            runtime_transfer_host: None,
-            runtime_instance_id: None,
-            app_device_id: None,
-            socket_device_id: None,
-            runtime_features: None,
-            cloud_config: None,
-            remote_config: None,
-            bind_shell: "claudecode".to_string(),
-        };
-        let value = crate::json_contract_tests::serialized(item).unwrap();
-        crate::json_contract_tests::assert_fixture("device", &value);
-        assert_eq!(value["device_type"], "app");
-        assert_eq!(value["running_tasks"], json!([]));
-        assert_eq!(value["socket_device_id"], Value::Null);
-        assert_eq!(value["cloud_config"], Value::Null);
-        assert_eq!(value["remote_config"], Value::Null);
-        assert_eq!(value["bind_shell"], "claudecode");
-    }
-
-    #[test]
-    fn device_type_defaults_to_local() {
-        assert_eq!(
-            device_type(json!({"deviceType": "cloud"})),
-            DeviceType::Cloud
-        );
-        assert_eq!(
-            device_type(json!({"deviceType": "remote"})),
-            DeviceType::Remote
-        );
-        assert_eq!(device_type(json!({"deviceType": "app"})), DeviceType::App);
-        assert_eq!(device_type(json!({})), DeviceType::Local);
-        assert_eq!(
-            device_type(json!({"deviceType": "unknown"})),
-            DeviceType::Local
-        );
-    }
-
-    #[test]
-    fn invalid_feature_envelopes_preserve_project_denials_without_granting_writes() {
-        for schema in [Value::Null, json!("invalid"), json!(0)] {
-            let features = runtime_features(&json!({
-                "runtime_features": {
-                "schemaVersion": schema,
-                "projectEditing": {"multiRoots": false, "aiSettings": true, "plugins": false},
-                "worktrees": {"version": "invalid"},
-                }
-            }))
-            .expect("explicit project advertisement must survive malformed headers");
-            let projected = crate::json_contract_tests::serialized(features).unwrap();
-            assert_eq!(projected["schemaVersion"], 1);
-            assert_eq!(projected["projectEditing"]["multiRoots"], false);
-            assert_eq!(projected["projectEditing"]["aiSettings"], Value::Null);
-            assert_eq!(projected["projectEditing"]["plugins"], false);
-            assert_eq!(projected["worktrees"], Value::Null);
-        }
-        assert!(
-            runtime_features(&json!({"runtime_features": {"schemaVersion": "invalid"}})).is_none()
-        );
-    }
-
-    #[test]
-    fn runtime_features_preserves_independent_project_editing_flags() {
-        let info = json!({
-            "runtime_features": {
-                "schemaVersion": 4,
-                "projectEditing": {"multiRoots": true, "aiSettings": false, "defaultProjectSpace": true, "plugins": false},
-            },
-        });
-        let projected =
-            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
-        assert_eq!(
-            projected["projectEditing"],
-            info["runtime_features"]["projectEditing"]
-        );
-    }
-
-    #[test]
-    fn absent_project_editing_does_not_mask_legacy_runtime_contracts() {
-        let info = json!({"runtime_features": {"schemaVersion": 4}});
-        let projected =
-            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
-        assert!(projected.get("projectEditing").is_none());
-    }
-
-    #[test]
-    fn malformed_explicit_project_editing_is_preserved_conservatively() {
-        for editing in [
-            Value::Null,
-            json!("invalid"),
-            json!({"multiRoots": "true", "plugins": false}),
-        ] {
-            let info = json!({"runtime_features": {"schemaVersion": 4, "projectEditing": editing}});
-            let projected =
-                crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
-            assert!(projected["projectEditing"].is_object());
-            assert_eq!(projected["projectEditing"]["multiRoots"], Value::Null);
-            assert_eq!(projected["projectEditing"]["aiSettings"], Value::Null);
-        }
-    }
-
-    #[test]
-    fn runtime_features_includes_interactive_sessions() {
-        let info = json!({
-            "runtime_features": {
-                "schemaVersion": 3,
-                "runtimeTaskCreate": {"schemaVersions": [1, 2]},
-                "interactiveSessions": {"codeServer": true, "terminal": true},
-                "worktrees": {"version": 1, "managed": true},
-            },
-        });
-        let projected =
-            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
-        assert_eq!(projected["schemaVersion"], 3);
-        assert!(projected["runtimeTaskCreate"].is_object());
-        assert!(projected["interactiveSessions"].is_object());
-        assert!(projected["worktrees"].is_object());
-    }
-
-    #[test]
-    fn runtime_features_null_interactive_sessions_when_absent() {
-        let info = json!({
-            "runtime_features": {
-                "schemaVersion": 2,
-                "runtimeTaskCreate": {"schemaVersions": [1, 2]},
-            },
-        });
-        let projected =
-            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
-        assert_eq!(projected["schemaVersion"], 2);
-        assert_eq!(projected["interactiveSessions"], Value::Null);
-        assert_eq!(
-            projected["runtimeTaskCreate"]["schemaVersions"],
-            json!([1, 2])
-        );
-        // worktrees is emitted as null when not stored
-        assert_eq!(projected["worktrees"], Value::Null);
-    }
-
-    #[test]
-    fn runtime_features_extensions_follow_the_known_members() {
-        let features = RuntimeFeatures {
-            schema_version: 4,
-            runtime_task_create: None,
-            interactive_sessions: None,
-            worktrees: None,
-            project_editing: None,
-            extensions: std::iter::once((
-                "desktop".to_string(),
-                json!({
-                    "version": 1,
-                    "available": true,
-                    "protocol": "rfb",
-                    "transport": "websocket",
-                    "clipboard": "text",
-                }),
-            ))
-            .collect(),
-        };
-        let projected = crate::json_contract_tests::serialized(features).unwrap();
-        assert_eq!(
-            projected,
-            json!({
-                "schemaVersion": 4,
-                "runtimeTaskCreate": null,
-                "interactiveSessions": null,
-                "worktrees": null,
-                "desktop": {
-                    "version": 1,
-                    "available": true,
-                    "protocol": "rfb",
-                    "transport": "websocket",
-                    "clipboard": "text",
-                },
-            })
-        );
-    }
-}
+#[path = "devices_tests.rs"]
+mod tests;

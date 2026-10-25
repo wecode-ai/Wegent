@@ -19,6 +19,8 @@ use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 
+use crate::plugins_marketplace::query::PluginQuery;
+
 /// Source `session_token.py`: sessions have no `scope` claim and a
 /// `token_use` of either absent or `wework_access`.
 const WEWORK_ACCESS_TOKEN_USE: &str = "wework_access";
@@ -26,9 +28,9 @@ const WEWORK_ACCESS_TOKEN_USE: &str = "wework_access";
 /// Source `OAuth2PasswordBearer.make_not_authenticated_error`.
 const NOT_AUTHENTICATED_DETAIL: &str = "Not authenticated";
 /// Source `security.py` `verify_token` / `get_current_user` failure detail.
-const UNAUTHORIZED_DETAIL: &str = "Could not validate credentials";
+pub(crate) const UNAUTHORIZED_DETAIL: &str = "Could not validate credentials";
 /// Source `security.py` `get_current_user` inactive-user detail.
-const USER_NOT_ACTIVATED_DETAIL: &str = "User not activated";
+pub(crate) const USER_NOT_ACTIVATED_DETAIL: &str = "User not activated";
 
 #[derive(Debug, Deserialize)]
 struct Claims {
@@ -130,11 +132,83 @@ impl brz_http_server::Authenticator<InstalledPluginsUser> for crate::auth::AppAu
     }
 }
 
+/// The verified session identity for `POST /installed/sync-device`.
+///
+/// Source `get_current_user` resolves against the request's `db` session, so
+/// its `users` read belongs to the same transaction that the endpoint commits.
+/// This principal therefore verifies the bearer token only; the handler loads
+/// the row on its transaction so the recorded session stays one connection.
+pub struct SyncDeviceUser {
+    pub user_name: String,
+}
+
+impl brz_http_server::Authenticator<SyncDeviceUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<SyncDeviceUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
+        verified_user_name(
+            &headers.view(),
+            &self.state().jwt_secret_keys,
+            &self.state().jwt_algorithm,
+        )
+        .map(|user_name| SyncDeviceUser { user_name })
+        .map_err(|error| match error {
+            AuthError::NotAuthenticated => {
+                brz_http_server::AuthFailure::missing_credentials(NOT_AUTHENTICATED)
+            }
+            AuthError::UserNotActivated | AuthError::InvalidCredentials => {
+                brz_http_server::AuthFailure::invalid_credentials("Bearer")
+            }
+            AuthError::Dependency => brz_http_server::AuthFailure::Internal,
+        })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a SyncDeviceUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: NOT_AUTHENTICATED,
+            } => crate::http_compat::FastApiError::unauthorized(NOT_AUTHENTICATED_DETAIL),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::internal()
+            }
+            _ => crate::http_compat::FastApiError::unauthorized(UNAUTHORIZED_DETAIL),
+        }
+        .into_http_error(arena)
+    }
+}
+
 pub async fn find_user_by_name<M>(mysql: &M, user_name: &str) -> MysqlResult<Option<UserRow>>
 where
     M: Mysql,
 {
-    mysql
+    let mut query = mysql;
+    find_user_by_name_on(&mut query, user_name).await
+}
+
+/// `find_user_by_name` on a borrowed session handle.
+pub async fn find_user_by_name_on<Q>(query: &mut Q, user_name: &str) -> MysqlResult<Option<UserRow>>
+where
+    Q: PluginQuery,
+{
+    query
         .fetch_optional(
             "SELECT id, user_name, is_active, `role` FROM users WHERE user_name = ? LIMIT 1",
             (user_name,),
@@ -212,6 +286,20 @@ pub enum AuthError {
     Dependency,
 }
 
+/// `get_current_user`'s verification chain up to the `users` read:
+/// `OAuth2PasswordBearer` credential extraction, `verify_token`, and the
+/// interactive-session payload check.
+pub fn verified_user_name(
+    headers: &impl crate::headers::Headers,
+    keys: &[Arc<str>],
+    algorithm: &str,
+) -> Result<String, AuthError> {
+    let Some(token) = bearer_token(headers) else {
+        return Err(AuthError::NotAuthenticated);
+    };
+    verify_token(token, keys, algorithm).ok_or(AuthError::InvalidCredentials)
+}
+
 /// Authenticate the request with the exact failure classification of the
 /// source scheme plus `get_current_user`.
 pub async fn authenticate<M>(
@@ -223,12 +311,7 @@ pub async fn authenticate<M>(
 where
     M: Mysql,
 {
-    let Some(token) = bearer_token(headers) else {
-        return Err(AuthError::NotAuthenticated);
-    };
-    let Some(username) = verify_token(token, keys, algorithm) else {
-        return Err(AuthError::InvalidCredentials);
-    };
+    let username = verified_user_name(headers, keys, algorithm)?;
     match find_user_by_name(mysql, &username).await {
         Ok(Some(user)) if user.is_active => Ok(user),
         Ok(Some(_)) => Err(AuthError::UserNotActivated),

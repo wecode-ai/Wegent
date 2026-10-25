@@ -80,6 +80,14 @@ for (const [name, eventName, action, labels, draft, label, expected] of [
 }
 
 const gate = "needs.changes.outputs.windows_desktop_core_e2e == 'true'";
+const cloudBlock = workflow
+  .split("  wework-desktop-cloud-e2e:\n")[1]
+  .split(/\n  [\w-]+:\n/)[0];
+assert.match(
+  cloudBlock,
+  /if: contains\(matrix.segments, 'plugin-write-coordination'\)\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+  "Cloud plugin write coordination must use real object storage for sync recovery",
+);
 for (const job of [
   "wework-desktop-core-e2e",
   "wework-desktop-windows-core-e2e",

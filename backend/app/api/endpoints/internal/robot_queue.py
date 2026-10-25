@@ -28,7 +28,8 @@ router = APIRouter(
 )
 
 
-@router.post("/emit-runtime-rpc")
+# MIGRATION-CANDIDATE(api="POST /api/internal/robot-queue/emit-runtime-rpc"): remove after final confirmation.
+# @router.post("/emit-runtime-rpc")
 async def emit_runtime_rpc(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Emit a runtime RPC (for example runtime.tasks.create) to one device.
 

@@ -17,7 +17,7 @@ export type ConversationSummaryResource =
     }
 
 export type ConversationOutputKind = 'file' | 'image' | 'website'
-export type ConversationOutputSourceKind = 'attachment' | 'memory' | 'website'
+export type ConversationOutputSourceKind = 'attachment' | 'memory' | 'website' | 'file'
 
 export interface ConversationOutput {
   readonly id: string

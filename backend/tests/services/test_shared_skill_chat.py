@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api.endpoints.kind.skills import list_unified_skills
 from app.api.ws.events import SkillRef
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -80,12 +81,15 @@ def test_member_selection_preserves_shared_skill_identity(
     shared_skill, test_client, test_db, test_admin_user, test_admin_token
 ):
     source, _, _ = shared_skill
-    response = test_client.get(
-        "/api/v1/kinds/skills/unified?scope=all",
-        headers={"Authorization": f"Bearer {test_admin_token}"},
+    skills = list_unified_skills(
+        skip=0,
+        limit=100,
+        scope="all",
+        group_name=None,
+        current_user=test_admin_user,
+        db=test_db,
     )
-    assert response.status_code == 200
-    listed = next(item for item in response.json() if item["id"] == source.id)
+    listed = next(item for item in skills if item["id"] == source.id)
     assert listed["is_group_shared"] is True
     assert listed["namespace"] == "default"
 

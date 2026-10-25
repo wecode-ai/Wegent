@@ -13,6 +13,7 @@ export interface StandInNotificationState {
   status: 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled'
   summary: string
   updatedAt: string
+  turnId?: string
 }
 
 export type StandInNotification = Omit<WeworkNotification, 'payload'> & {
@@ -63,8 +64,11 @@ export function standInState(item: RuntimeTaskReminderItem): StandInNotification
           ? 'completed'
           : 'running'
   const timestamp = status === 'waiting' ? task.updatedAt : (task.completedAt ?? task.updatedAt)
+  const taskTurnId = task.runtimeHandle?.lastTurnId
   return {
     ...item.address,
+    turnId:
+      item.lifecycle?.turn.latestId ?? (typeof taskTurnId === 'string' ? taskTurnId : undefined),
     status,
     summary: task.error ?? '',
     updatedAt: new Date(runtimeTimestamp(timestamp)).toISOString(),
@@ -72,7 +76,18 @@ export function standInState(item: RuntimeTaskReminderItem): StandInNotification
 }
 
 export function standInVersion(state: StandInNotificationState): string {
+  if (state.turnId) {
+    return `${state.status}:turn:${state.turnId}${state.status === 'waiting' ? `:${state.updatedAt}` : ''}`
+  }
   return `${state.status}:${state.updatedAt}`
+}
+
+export function matchesStandInVersion(
+  version: string | undefined,
+  state: StandInNotificationState
+): boolean {
+  // Accept existing timestamp markers while migrating to turn identity.
+  return version === standInVersion(state) || version === `${state.status}:${state.updatedAt}`
 }
 
 export function mergeStandInNotifications(
@@ -88,7 +103,8 @@ export function mergeStandInNotifications(
         notification.kind === 'issue_dispatch_assignment' &&
         notification.payload.projectId === origin.cloudProjectId &&
         notification.payload.itemId === origin.loopItemId &&
-        notification.payload.humanAssignmentId === origin.humanAssignmentId
+        notification.payload.humanAssignmentId === origin.humanAssignmentId &&
+        (!notification.runtimeItem || notification.runtimeItem.key === item.key)
     )
     const state = standInState(item)
     const url = weworkIssueScheme(

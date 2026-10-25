@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.endpoints.kind.skills import list_unified_skills
 from app.core.security import create_access_token, get_password_hash
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -1346,14 +1347,15 @@ tags: ["public", "api", "test"]
         }
 
         for target_group in (group, second_group):
-            response = test_client.get(
-                "/api/v1/kinds/skills/unified",
-                params={"scope": "group", "group_name": target_group.name},
-                headers={"Authorization": f"Bearer {test_token}"},
+            skills = list_unified_skills(
+                skip=0,
+                limit=100,
+                scope="group",
+                group_name=target_group.name,
+                current_user=test_user,
+                db=test_db,
             )
-
-            assert response.status_code == 200
-            matching = [item for item in response.json() if item["name"] == skill.name]
+            matching = [item for item in skills if item["name"] == skill.name]
             assert len(matching) == 1
             assert matching[0]["id"] == skill.id
             assert matching[0]["namespace"] == skill.namespace
@@ -1367,25 +1369,34 @@ tags: ["public", "api", "test"]
         )
         assert remove_response.status_code == 204
 
-        removed_group_response = test_client.get(
-            "/api/v1/kinds/skills/unified",
-            params={"scope": "group", "group_name": group.name},
-            headers={"Authorization": f"Bearer {test_token}"},
+        removed_group_skills = list_unified_skills(
+            skip=0,
+            limit=100,
+            scope="group",
+            group_name=group.name,
+            current_user=test_user,
+            db=test_db,
         )
-        retained_group_response = test_client.get(
-            "/api/v1/kinds/skills/unified",
-            params={"scope": "group", "group_name": second_group.name},
-            headers={"Authorization": f"Bearer {test_token}"},
+        retained_group_skills = list_unified_skills(
+            skip=0,
+            limit=100,
+            scope="group",
+            group_name=second_group.name,
+            current_user=test_user,
+            db=test_db,
         )
-        assert all(item["id"] != skill.id for item in removed_group_response.json())
-        assert any(item["id"] == skill.id for item in retained_group_response.json())
+        assert all(item["id"] != skill.id for item in removed_group_skills)
+        assert any(item["id"] == skill.id for item in retained_group_skills)
 
-        all_response = test_client.get(
-            "/api/v1/kinds/skills/unified",
-            params={"scope": "all"},
-            headers={"Authorization": f"Bearer {test_token}"},
+        all_skills = list_unified_skills(
+            skip=0,
+            limit=100,
+            scope="all",
+            group_name=None,
+            current_user=test_user,
+            db=test_db,
         )
-        all_matching = [item for item in all_response.json() if item["id"] == skill.id]
+        all_matching = [item for item in all_skills if item["id"] == skill.id]
         assert len(all_matching) == 1
         assert all_matching[0]["is_group_shared"] is True
 
@@ -1435,16 +1446,15 @@ tags: ["public", "api", "test"]
         test_db.add_all([personal_skill, group_skill])
         test_db.commit()
 
-        response = test_client.get(
-            "/api/v1/kinds/skills/unified",
-            params={"scope": "all"},
-            headers={"Authorization": f"Bearer {test_token}"},
+        skills = list_unified_skills(
+            skip=0,
+            limit=100,
+            scope="all",
+            group_name=None,
+            current_user=test_user,
+            db=test_db,
         )
-
-        assert response.status_code == 200
-        matching = [
-            item for item in response.json() if item["name"] == "same-name-skill"
-        ]
+        matching = [item for item in skills if item["name"] == "same-name-skill"]
         assert {item["namespace"] for item in matching} == {
             "default",
             group.name,
@@ -1455,6 +1465,8 @@ tags: ["public", "api", "test"]
         test_client: TestClient,
         test_admin_token: str,
         test_token: str,
+        test_db: Session,
+        test_user: User,
     ):
         """Test unified list returns hidden public skills for frontend filtering."""
         skill_md = """---
@@ -1491,16 +1503,16 @@ visible: false
         )
         assert update_response.status_code == 200
 
-        unified_response = test_client.get(
-            "/api/v1/kinds/skills/unified",
-            headers={"Authorization": f"Bearer {test_token}"},
+        skills = list_unified_skills(
+            skip=0,
+            limit=100,
+            scope="personal",
+            group_name=None,
+            current_user=test_user,
+            db=test_db,
         )
-
-        assert unified_response.status_code == 200
         hidden_skill = next(
-            skill
-            for skill in unified_response.json()
-            if skill["name"] == "hidden-public-unified"
+            skill for skill in skills if skill["name"] == "hidden-public-unified"
         )
         assert hidden_skill["displayName"] == "隐藏公共技能"
         assert hidden_skill["visible"] is False

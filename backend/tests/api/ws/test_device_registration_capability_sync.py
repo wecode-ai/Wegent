@@ -77,6 +77,7 @@ def registration_sync(monkeypatch):
     )
 
     service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(object()))
+    monkeypatch.setattr(service, "supports_plugin_delta", AsyncMock(return_value=False))
     skills = [{"name": "registered-skill", "installed_skill_id": 11}]
     mcps = [{"name": "registered-mcp", "installed_mcp_id": 12}]
     plugins = [{"name": "registered-plugin", "installed_plugin_id": 13}]

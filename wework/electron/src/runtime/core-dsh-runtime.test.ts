@@ -10,6 +10,7 @@ import {
   selectCoreDshRuntime,
 } from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+import { writeRuntime } from './core-dsh-runtime-fixture.js'
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -209,10 +210,13 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-secure-storage',
             '@wegent/dsh-terminal-runtime',
             '@wegent/dsh-plugin-runtime',
+            '@wegent/dsh-connection-runtime',
+            '@wegent/dsh-connection-dingtalk',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
             '@wegent/dsh-transcript-sync',
+            '@deepseek-ai/dsh-experimental-voice-input-bundle',
             '@wegent/dsh-conversation-export',
             '@wegent/dsh-ui-core-apps',
             '@wegent/dsh-ui-core-settings',
@@ -225,6 +229,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-home-developer',
             '@wegent/dsh-ui-git',
             '@wegent/dsh-ui-outputs',
+            '@wegent/dsh-voice-input',
           ],
         },
       },
@@ -243,6 +248,7 @@ describe('core DSH runtime', () => {
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
+      managedBundles: expect.arrayContaining(['@deepseek-ai/dsh-experimental-voice-input-bundle']),
     })
     const profileModules = join(
       dataDirectory,
@@ -375,6 +381,7 @@ describe('core DSH runtime', () => {
     ).toMatchObject({
       sourceFingerprint: 'b'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
+      managedBundles: expect.arrayContaining(['@deepseek-ai/dsh-experimental-voice-input-bundle']),
     })
     await root.remove()
   })
@@ -475,7 +482,7 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test.each(['corePluginsFingerprint', 'managedPluginCopyVersion'])(
+  test.each(['corePluginsFingerprint', 'managedPluginCopyVersion', 'managedBundles'])(
     'upgrades a legacy stamp without %s',
     async field => {
       const root = await temporaryDirectory('core-dsh-legacy-stamp-')
@@ -512,7 +519,46 @@ describe('core DSH runtime', () => {
         role: 'core',
         sourceFingerprint: 'a'.repeat(64),
         corePluginsFingerprint: 'f'.repeat(64),
+        managedBundles: expect.arrayContaining([
+          '@deepseek-ai/dsh-experimental-voice-input-bundle',
+        ]),
       })
+      await root.remove()
+    }
+  )
+
+  test.each([false, true])(
+    'restores an official bundle with current stamp: %s',
+    async currentStamp => {
+      const root = await temporaryDirectory('core-dsh-bundle-upgrade-')
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      const options = {
+        runtimeRoot: runtime.root,
+        dataDirectory: join(root.path, 'data'),
+        environment: {
+          WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+          WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        },
+      }
+      const launch = await prepareCoreDshRuntime(options)
+      const profileRoot = join(launch.dshHome, 'profiles', 'wework-core')
+      const manifestPath = join(profileRoot, 'package.json')
+      const stampPath = join(profileRoot, '.wework-runtime.json')
+      const bundle = '@deepseek-ai/dsh-experimental-voice-input-bundle'
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(
+        (name: string) => name !== bundle
+      )
+      const stamp = JSON.parse(await readFile(stampPath, 'utf8'))
+      if (!currentStamp) stamp.managedBundles = manifest.dsh.profile.bundles
+      await writeFile(manifestPath, JSON.stringify(manifest))
+      await writeFile(stampPath, JSON.stringify(stamp))
+
+      await prepareCoreDshRuntime(options)
+
+      const updated = JSON.parse(await readFile(manifestPath, 'utf8'))
+      expect(updated.dsh.profile.bundles).toContain(bundle)
+      expect(JSON.parse(await readFile(stampPath, 'utf8')).managedBundles).toContain(bundle)
       await root.remove()
     }
   )
@@ -631,6 +677,8 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
+      '@wegent/dsh-connection-runtime',
+      '@wegent/dsh-connection-dingtalk',
       '@wework/dsh-browser-auth',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
@@ -641,6 +689,8 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-secure-storage',
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-plugin-runtime',
+      '@wegent/dsh-connection-runtime',
+      '@wegent/dsh-connection-dingtalk',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',
@@ -868,65 +918,3 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 })
-
-async function writeRuntime(
-  root: string,
-  version: string,
-  fingerprintCharacter: string
-): Promise<{
-  root: string
-  fingerprint: string
-  pluginsRoot: string
-  pluginRoots: Record<string, string>
-}> {
-  const fingerprint = fingerprintCharacter.repeat(64)
-  const runtime = join(root, fingerprint)
-  const packageRoot = join(runtime, 'node_modules', '@deepseek-ai', 'dsh')
-  const pluginsRoot = join(root, 'core-plugins', fingerprint)
-  const pluginRoots = Object.fromEntries(
-    [
-      ['@wegent/dsh-app-wework', 'wework-app'],
-      ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
-      ['@wegent/dsh-electron-host', 'wework-electron-host'],
-      ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
-      ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
-      ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
-      ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
-      ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
-      ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
-      ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
-      ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
-      ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
-      ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
-      ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
-      ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
-      ['@wegent/dsh-wework-plugin-developer', 'wework-plugin-developer'],
-      ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
-      ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
-      ['@wegent/dsh-ui-git', 'wework-ui-git'],
-      ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
-    ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
-  )
-  pluginRoots['@wework/dsh-browser-auth'] = join(runtime, 'plugins', 'wework-browser-auth')
-  await mkdir(join(packageRoot, 'lib'), { recursive: true })
-  await Promise.all(Object.values(pluginRoots).map(root => mkdir(root, { recursive: true })))
-  await writeFile(
-    join(runtime, 'runtime.json'),
-    JSON.stringify({
-      dshVersion: version,
-      role: version === CORE_DSH_VERSION ? 'core' : 'workbench',
-      sourceFingerprint: fingerprint,
-    })
-  )
-  await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ version }))
-  await writeFile(join(packageRoot, 'lib', 'bin.js'), '')
-  await Promise.all(
-    Object.values(pluginRoots).map(root => writeFile(join(root, 'package.json'), '{}'))
-  )
-  return {
-    root: runtime,
-    fingerprint,
-    pluginsRoot,
-    pluginRoots,
-  }
-}

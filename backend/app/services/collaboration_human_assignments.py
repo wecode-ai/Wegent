@@ -20,6 +20,8 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.services.delivery.service import delivery_service
+from app.services.notification_copy import NotificationTarget
+from app.services.notification_target import board_notification_target
 from app.services.wework_notifications import create_notification
 
 DIRECT_HUMAN_ROUND_ID = "direct"
@@ -135,6 +137,7 @@ def notify_direct_human_assignment(
     assignment_id: str,
     task_title: str | None = None,
     instructions: str | None = None,
+    notification_target: NotificationTarget | None = None,
 ) -> None:
     """Notify a direct assignee without creating or mutating another Issue."""
 
@@ -161,6 +164,7 @@ def notify_direct_human_assignment(
         workflow_stage_id=None,
         body="这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
         action="open_issue",
+        notification_target=notification_target,
     )
 
 
@@ -181,6 +185,7 @@ def notify_collaboration_human_assignment(
     workflow_stage_id: str | None,
     body: str = "负责人向你分配了协作任务。",
     action: str = "create_personal_task",
+    notification_target: NotificationTarget | None = None,
 ) -> None:
     """Notify the person without creating a board child Issue."""
 
@@ -198,6 +203,9 @@ def notify_collaboration_human_assignment(
         for notification in existing
     ):
         return
+    target = notification_target or board_notification_target(
+        db, project, issue, pending_assignee_user_id=human.id
+    )
     create_notification(
         db,
         user_id=human.id,
@@ -208,7 +216,9 @@ def notify_collaboration_human_assignment(
         project_id=str(project.id),
         item_id=issue.id,
         payload={
+            **target.payload(),
             **({"actorName": actor_name} if actor_name else {}),
+            "assigneeName": human.user_name,
             "action": action,
             "projectId": str(project.id),
             "itemId": issue.id,

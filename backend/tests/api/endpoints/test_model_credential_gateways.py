@@ -221,3 +221,12 @@ def test_connection_uses_only_the_submitted_literal_key(
     assert response.json()["success"] is True
     resolver.assert_not_awaited()
     assert probe.call_args.kwargs["api_key"] == "submitted-literal-key"
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("llm_responses",)) as client:
+        yield client

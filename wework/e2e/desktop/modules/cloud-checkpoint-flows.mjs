@@ -687,6 +687,7 @@ async function verifyCloudCheckpoint({
   appBundlePath,
   appIdentifier,
   cloudEnvironment,
+  cloudHistorySearch,
   codexHome,
   control,
   desktopScenario,
@@ -904,6 +905,14 @@ async function verifyCloudCheckpoint({
         composerSelector,
         control,
         otherTaskRowTestId,
+      })
+      setPhase('cloud-project-history-search')
+      assert.ok(cloudHistorySearch, 'Cloud history search fixture was not prepared')
+      await cloudHistorySearch.verify({
+        cloudEnvironment,
+        control,
+        restartDesktopApp,
+        workspacePath,
       })
       return
     }

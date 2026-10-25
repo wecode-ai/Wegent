@@ -82,7 +82,7 @@ where
 /// `_access_role`: the caller's role for a published app, or `None` when the
 /// caller has no access. Shared with the ticketed artifact download, which
 /// rechecks access for the token's `user_id`.
-pub(super) async fn access_role<M, R>(
+pub(crate) async fn access_role<M, R>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -108,8 +108,24 @@ where
     if org_department_grants_app(mysql, redis, resolvers, app.id, user_id).await? {
         return Ok(Some("recipient"));
     }
+    namespace_grant_role(mysql, app.id, user_id).await
+}
+
+/// The `visibility == "restricted"` branch after the caller's precomputed ERP
+/// department ids: an approved direct or namespace grant makes the caller a
+/// recipient. The marketplace listing resolves the department ids once per
+/// request and calls this directly; the single-app paths route through
+/// [`access_role`].
+pub(crate) async fn namespace_grant_role<M>(
+    mysql: &M,
+    smart_app_id: i64,
+    user_id: i64,
+) -> MysqlResult<Option<&'static str>>
+where
+    M: Mysql,
+{
     let namespace_ids = db::find_namespace_ids(mysql, user_id).await?;
-    let granted = db::find_smart_app_grant(mysql, app.id, user_id, &namespace_ids).await?;
+    let granted = db::find_smart_app_grant(mysql, smart_app_id, user_id, &namespace_ids).await?;
     Ok(granted.then_some("recipient"))
 }
 
@@ -139,8 +155,9 @@ where
 
 /// `get_org_department_resource_ids(resource_type='SmartApp')`:
 /// candidate department bindings, the caller's matched departments, then the
-/// resource ids bound to those departments.
-async fn org_department_resource_ids<M, R>(
+/// resource ids bound to those departments. Shared with the marketplace
+/// listing, which resolves the whole set once per request.
+pub(crate) async fn org_department_resource_ids<M, R>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,

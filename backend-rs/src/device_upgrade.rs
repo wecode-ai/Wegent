@@ -25,15 +25,15 @@
 //! `False` and the endpoint then raises inside its own `try`.
 
 use brz_mysql::MysqlError;
-use brz_redis::{Redis as _, RedisBytes};
+use brz_redis::Redis as _;
 use serde_json::Value;
 
 use crate::auth::SessionUser;
 use crate::device_identity::{
     DeviceKindRow, KINDS_DEVICE_QUERY, record_id_from_route, resolve_owned_device_alias,
 };
+use crate::device_online_state::read_online_state;
 use crate::device_running_tasks::list_running_tasks;
-use crate::devices::online_key;
 use crate::executor_version::latest_executor_version;
 use crate::http_compat::FastApiError;
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
@@ -323,7 +323,7 @@ async fn upgrade_device(
 
     // `device_service.get_device_online_info`: the local provider key built
     // from the submitted id.
-    let Some(online) = read_online_state(state, user_id, device_id).await? else {
+    let Some(online) = read_online_state::<OnlineState>(state, user_id, device_id).await? else {
         tracing::error!(
             user_id,
             device_id,
@@ -429,9 +429,9 @@ async fn status_by_name(
         DeviceType::Cloud => spec.cloud_route_id(&device.name)?,
         _ => device_id.to_string(),
     };
-    let online = read_online_state(state, user_id, &route_id).await?;
+    let online = read_online_state::<OnlineState>(state, user_id, &route_id).await?;
     // `get_slot_usage` re-reads the online payload.
-    let slot_online = read_online_state(state, user_id, &route_id).await?;
+    let slot_online = read_online_state::<OnlineState>(state, user_id, &route_id).await?;
     let running_tasks = running_task_count(state, user_id, slot_online.as_ref()).await?;
     // `get_latest_version() or settings.EXECUTOR_LATEST_VERSION`; the value
     // itself is not part of the endpoint contract, but the read is.
@@ -466,7 +466,8 @@ async fn status_for_owned(
         return Ok(None);
     }
 
-    let online = read_online_state(state, user_id, &record_route_id(&device, &spec)?).await?;
+    let online =
+        read_online_state::<OnlineState>(state, user_id, &record_route_id(&device, &spec)?).await?;
     let online = spec.matching_online_info(online);
     let running_tasks = running_task_count(state, user_id, online.as_ref()).await?;
     let _ = latest_executor_version(state, request_id).await;
@@ -554,38 +555,6 @@ async fn running_task_count(
         .await
         .map(|tasks| tasks.len())
         .map_err(|error| mysql_failure(error, "running task lookup failed"))
-}
-
-/// `cache_manager.get_or_raise`: one `GET device:online:<user_id>:<device_id>`
-/// decoded as JSON. A missing key is `None`; a connection failure or an
-/// undecodable non-empty payload raises in the source.
-async fn read_online_state(
-    state: &AppState,
-    user_id: i64,
-    device_id: &str,
-) -> Result<Option<OnlineState>, FastApiError> {
-    let Some(redis) = state.redis.as_ref() else {
-        tracing::error!("device online state unavailable: no Redis service");
-        return Err(unhandled());
-    };
-    let key = online_key(user_id, device_id);
-    match redis.get::<_, RedisBytes>(key).await {
-        Ok(None) => Ok(None),
-        // `cache_manager._decode` keeps a non-JSON payload as raw bytes, which
-        // the source then indexes as a dict and raises on. An empty value is
-        // falsy, so it behaves like a missing key.
-        Ok(Some(bytes)) if bytes.as_ref().is_empty() => Ok(None),
-        Ok(Some(bytes)) => serde_json::from_slice(bytes.as_ref())
-            .map(Some)
-            .map_err(|error| {
-                tracing::error!(%error, "device online state decode failure");
-                unhandled()
-            }),
-        Err(error) => {
-            tracing::error!(%error, "device online state read failure");
-            Err(unhandled())
-        }
-    }
 }
 
 /// `DeviceNamespace.emit_upgrade_command`: serialize the parameters with

@@ -63,8 +63,22 @@ export async function createDesktopScenario({
             },
       ])
   )
+  const requests = []
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? '/', origin).pathname
+    requests.push(path)
+    if (
+      path === '/latest-mac.yml' ||
+      path === '/beta-mac.yml' ||
+      path === '/latest.yml' ||
+      path === '/beta.yml'
+    ) {
+      response.setHeader('content-type', 'text/yaml')
+      response.end(
+        `version: ${packaged.appVersion}\nfiles:\n  - url: unused.zip\n    sha512: ${Buffer.alloc(64).toString('base64')}\n    size: 1\npath: unused.zip\nsha512: ${Buffer.alloc(64).toString('base64')}\n`
+      )
+      return
+    }
     if (path === `/components-${packaged.channel}-${target.platform}-${target.arch}.json`) {
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -119,62 +133,59 @@ export async function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
       })
       const statePath = join(electronUserDataDirectory, 'managed-components', 'state.json')
-      await waitFor(
-        async () => {
-          const state = await readJson(statePath)
-          return state.pending?.components?.weworkCorePlugins?.contentSha256 === contentSha256
-        },
-        'The component update was not staged',
-        workbenchReadyTimeoutMs
+      const originalState = await readJson(statePath)
+      assert.equal(
+        originalState.pending,
+        undefined,
+        'Startup staged a same-version component update'
       )
-
-      const staged = await readJson(statePath)
-      for (const [id, component] of Object.entries(staged.pending.components)) {
-        const cached = join(
-          electronUserDataDirectory,
-          'managed-components',
-          'blobs',
-          id,
-          component.archiveSha256,
-          component.entryPath
+      if (process.platform === 'linux') {
+        await assert.rejects(
+          control.command('checkForAppUpdate', 'body'),
+          /Wework updater is not available on Linux/
         )
+      } else {
+        const check = JSON.parse(await control.command('checkForAppUpdate', 'body'))
+        assert.equal(check, null, 'A same-version release must not be offered as an app update')
+      }
+      assert.equal(
+        requests.some(path => path.startsWith('/components-')),
+        false,
+        'Checking the app version independently fetched a component update'
+      )
+      assert.equal(
+        requests.includes(`/${assetName}`),
+        false,
+        'Startup downloaded changed code without a new application version'
+      )
+      for (const [id, component] of Object.entries(packaged.components)) {
+        if (id === 'electron') continue
         assert.equal(
-          await hashComponentPath(cached),
-          component.contentSha256,
-          `The pending ${id} component must be usable without the original app bundle`
+          await hashComponentPath(join(resourcesRoot, component.path)),
+          component.sha256,
+          `The installed ${id} content must match its versioned packaged manifest`
         )
       }
-
       assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      const state = await waitFor(async () => {
-        const candidate = await readJson(statePath)
-        return candidate.current?.components?.weworkCorePlugins?.contentSha256 === contentSha256 &&
-          candidate.activationInProgress !== true
-          ? candidate
-          : null
-      }, 'The component update was not confirmed after restart')
-      assert.equal(state.pending, undefined)
+      const state = await readJson(statePath)
+      assert.equal(state.pending, undefined, 'Restart staged an unversioned update')
+      assert.deepEqual(
+        state.current,
+        originalState.current,
+        'Restart activated different code for the same app version'
+      )
       assert.equal(
-        await readFile(
-          join(
-            electronUserDataDirectory,
-            'managed-components',
-            'blobs',
-            'weworkCorePlugins',
-            archiveSha256,
-            MARKER_NAME
-          ),
-          'utf8'
-        ),
-        'component update activated\n'
+        requests.some(path => path.startsWith('/components-')),
+        false,
+        'Restart independently checked for component updates'
       )
       const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
       assert.doesNotMatch(appLog, /\[runtime\] startup failed/)
-      assert.match(appLog, /\[components\] update staged for the next application restart/)
+      assert.doesNotMatch(appLog, /\[components\] update staged for the next application restart/)
     },
 
     async cleanup() {
@@ -184,7 +195,8 @@ export async function createDesktopScenario({
 
     diagnostics() {
       return {
-        componentUpdateActivated: true,
+        sameVersionComponentUpdateRejected: true,
+        componentUpdateRequests: requests,
         componentUpdateContentSha256: contentSha256,
       }
     },
@@ -203,18 +215,13 @@ function componentTarget(platform, arch) {
   return { platform: targetPlatform, arch }
 }
 
-async function waitFor(predicate, message, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const value = await predicate().catch(() => null)
-    if (value) return value
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error(message)
-}
-
 async function readJson(path) {
-  return JSON.parse(await readFile(path, 'utf8'))
+  try {
+    return JSON.parse(await readFile(path, 'utf8'))
+  } catch (error) {
+    if (error.code === 'ENOENT') return {}
+    throw error
+  }
 }
 
 function sha256(bytes) {

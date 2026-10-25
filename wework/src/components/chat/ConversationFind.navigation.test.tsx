@@ -34,6 +34,42 @@ afterEach(() => {
 })
 
 describe('conversation find navigation', () => {
+  test('reports a missing visible range once and ignores cancelled navigation', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const frame = navigationFrames()
+    const content = document.createElement('div')
+    content.innerHTML =
+      '<article data-message-id="target"><div data-testid="assistant-message-content">different</div></article>'
+    const scroller = document.createElement('div')
+    const failure = vi.fn()
+    const target = {
+      query: 'needle',
+      messageId: 'target',
+      occurrence: 0,
+      matchCounts: new Map([['target', 1]]),
+    }
+    const props = {
+      target,
+      navigationPaused: false,
+      contentRef: { current: content },
+      scrollRef: { current: scroller },
+      onNavigationTargetChange: vi.fn(),
+      onNavigationFailure: failure,
+    }
+    const { rerender } = renderHook(props => useConversationSearchTarget(props), {
+      initialProps: props,
+    })
+    frame()
+    act(() => vi.advanceTimersByTime(1500))
+    expect(failure).toHaveBeenCalledExactlyOnceWith(target)
+    act(() => vi.advanceTimersByTime(1500))
+    expect(failure).toHaveBeenCalledOnce()
+    rerender({ ...props, target: { ...target }, navigationPaused: true })
+    frame()
+    act(() => vi.advanceTimersByTime(1500))
+    expect(failure).toHaveBeenCalledOnce()
+  })
+
   test('waits for a mounted match, then keeps its diagram section as the anchor through SVG rendering', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const frame = navigationFrames()

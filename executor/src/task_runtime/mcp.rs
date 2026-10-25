@@ -35,9 +35,12 @@ use super::{
 };
 
 mod comments;
+mod stand_in;
+pub(crate) use stand_in::{stand_in_identity, stand_in_mcp_client_config};
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
+pub const STAND_IN_MCP_SERVER_NAME: &str = "wework_stand_in";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
 pub const SPACE_CONTEXT_GRANT_ENV: &str = "WEWORK_SPACE_CONTEXT_GRANT";
 const SPACE_CONTEXT_GRANT_TTL_SECONDS: i64 = 60 * 60;
@@ -119,6 +122,7 @@ pub(crate) struct SpaceMcpRequestContext {
     surface: WeworkMcpSurface,
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
+    stand_in: Option<stand_in::StandInMcpIdentity>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -126,6 +130,7 @@ pub(crate) enum WeworkMcpSurface {
     #[default]
     ProjectSpace,
     Notifications,
+    StandIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +153,7 @@ impl SpaceMcpRequestContext {
             surface: WeworkMcpSurface::ProjectSpace,
             cloud_collaboration_dispatcher: None,
             event_sender: None,
+            stand_in: None,
         }
     }
 
@@ -159,6 +165,7 @@ impl SpaceMcpRequestContext {
             surface: WeworkMcpSurface::Notifications,
             cloud_collaboration_dispatcher: None,
             event_sender: None,
+            stand_in: None,
         }
     }
 
@@ -182,6 +189,7 @@ impl SpaceMcpRequestContext {
         match self.surface {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
         }
     }
 
@@ -893,6 +901,9 @@ async fn call_tool_with_context(
     arguments: Value,
     context: &SpaceMcpRequestContext,
 ) -> Value {
+    if context.surface == WeworkMcpSurface::StandIn {
+        return stand_in::call(runtime, name, arguments, context).await;
+    }
     if context.surface == WeworkMcpSurface::Notifications && name != "send_notification" {
         return text_result(
             format!("Unknown {NOTIFICATIONS_MCP_SERVER_NAME} tool: {name}"),
@@ -3508,6 +3519,9 @@ fn tools() -> Vec<Value> {
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+    if context.surface == WeworkMcpSurface::StandIn {
+        return stand_in::tools(context);
+    }
     if context.surface == WeworkMcpSurface::Notifications {
         return tools()
             .into_iter()

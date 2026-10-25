@@ -14,11 +14,11 @@
 //! (`with_id = true`), while the open-source single-table store leaves the id
 //! to MySQL (`with_id = false`).
 use async_trait::async_trait;
-use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlService, MysqlTransaction};
 
 use crate::task_store_statements::{
-    StatementArg, insert_subtask_statement, insert_task_shell_statement,
-    max_subtask_message_id_statement, update_task_name_and_json_statement,
+    StatementArg, insert_task_shell_statement, max_subtask_message_id_statement,
+    update_task_name_and_json_statement,
 };
 
 /// The task/subtask creation writes of the create path (`SqlAlchemyTaskStore` /
@@ -44,21 +44,45 @@ pub trait TaskStoreCreate: Send + Sync {
     /// `(task_id, workspace_id)`. The single-table store lets MySQL assign the
     /// ids; a sharded deployment allocates the user-scoped ids before the
     /// insert.
+    ///
+    /// `mysql` is the application's concrete service for the same reason as
+    /// the subtask insert below: `ai-strict` rejects a pooled `SAVEPOINT`, so
+    /// the savepoint pair and both inserts run through `with_transaction`,
+    /// whose future is not `Send` through a generic store handle.
     async fn create_task_shell_with_workspace(
         &self,
+        mysql: &MysqlService,
         request: &CreateTaskShellRequest<'_>,
     ) -> MysqlResult<(i64, i64)>;
 
-    /// `subtask_store.create_user_and_assistant_subtasks`: insert the paired
-    /// user/assistant subtasks inside one `SAVEPOINT`, returning
-    /// `(user_subtask_id, assistant_subtask_id)`. The savepoint index is the
-    /// session's nested-transaction counter, so a resumed Task that skipped the
-    /// task-creation savepoint uses `sa_savepoint_1`.
-    async fn create_user_and_assistant_subtasks(
+    /// `subtask_store.create_assistant_subtask` and
+    /// `create_user_and_assistant_subtasks`: resolve the task's executor
+    /// reference (the `_take_task_executor_reference` row lock, the label
+    /// consumption, and the fallback assistant read) and insert the paired
+    /// user/assistant subtasks inside one transaction, returning both ids and
+    /// the resolved executor fields.
+    ///
+    /// `mysql` is the application's concrete service: the locking read has to
+    /// run through `Mysql::with_transaction`, whose future is not `Send` through
+    /// a generic store handle. The store supplies its resolved table names and,
+    /// for a sharded deployment, the ids it allocated before the insert. The
+    /// savepoint index is the session's nested-transaction counter, so a
+    /// resumed Task that skipped the task-creation savepoint uses
+    /// `sa_savepoint_1`.
+    async fn create_user_and_assistant_subtasks_with_executor_reference(
         &self,
+        mysql: &MysqlService,
         savepoint: &str,
         request: &CreateSubtasksRequest<'_>,
-    ) -> MysqlResult<(i64, i64)>;
+    ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert>;
+
+    /// Atomically advance an automatic pipeline and append its next turn.
+    async fn advance_pipeline_stage(
+        &self,
+        mysql: &MysqlService,
+        task_id: i64,
+        completed_subtask_id: i64,
+    ) -> MysqlResult<Option<crate::task_store::PipelineStageAdvance>>;
 
     /// `task_store` message-id continuation read: `SELECT max(subtasks
     /// .message_id)` for one task, `None` when it has no subtasks.
@@ -88,15 +112,19 @@ pub struct NewTaskRow<'a> {
 /// `create_pending_task_shell` / `create_workspace`: insert one `tasks` row and
 /// return its id (the supplied id when the store allocates, else MySQL's
 /// `last_insert_id`).
-pub async fn insert_task_row<M: Mysql>(
-    mysql: &M,
+///
+/// The insert runs on the caller's open transaction: `ai-strict` only admits
+/// DML through a pooled `execute`, so every statement inside the source's
+/// savepoint is issued on the transaction handle.
+pub async fn insert_task_row<T: MysqlTransaction>(
+    transaction: &mut T,
     table: &str,
     with_id: bool,
     row: &NewTaskRow<'_>,
 ) -> MysqlResult<i64> {
     let sql = insert_task_shell_statement(table, with_id);
     let execution = if with_id {
-        mysql
+        transaction
             .execute(
                 sql,
                 (
@@ -116,7 +144,7 @@ pub async fn insert_task_row<M: Mysql>(
             )
             .await?
     } else {
-        mysql
+        transaction
             .execute(
                 sql,
                 (
@@ -188,14 +216,9 @@ pub struct NewSubtaskRow<'a> {
     pub reply_to_subtask_id: i64,
 }
 
-/// `subtask_store.create_user_subtask` / `create_assistant_subtask`: insert one
-/// `subtasks` row and return its id.
-pub async fn insert_subtask_row<M: Mysql>(
-    mysql: &M,
-    table: &str,
-    with_id: bool,
-    row: &NewSubtaskRow<'_>,
-) -> MysqlResult<i64> {
+/// `insert_subtask_statement`'s bound arguments in column order: the id first
+/// when the store allocated it, every other mapped column after.
+pub fn subtask_insert_arguments(row: &NewSubtaskRow<'_>, with_id: bool) -> Vec<StatementArg> {
     let mut args: Vec<StatementArg> = Vec::with_capacity(21);
     if with_id {
         args.push(StatementArg::Int(row.id));
@@ -220,15 +243,7 @@ pub async fn insert_subtask_row<M: Mysql>(
     args.push(StatementArg::Str(row.sender_type.to_string()));
     args.push(StatementArg::Int(row.sender_user_id));
     args.push(StatementArg::Int(row.reply_to_subtask_id));
-
-    let execution = mysql
-        .execute(insert_subtask_statement(table, with_id), args)
-        .await?;
-    Ok(if with_id {
-        row.id
-    } else {
-        execution.last_insert_id as i64
-    })
+    args
 }
 
 /// One `max_1` scalar row.
@@ -284,6 +299,12 @@ pub struct CreateTaskShellRequest<'a> {
 /// `preallocated` carries the store-assigned ids for the sharded deployment
 /// (`Some((task_id, workspace_id))`); the single-table store passes `None` and
 /// reads the autoincrement ids back.
+///
+/// The source's request session already had an open transaction, so the
+/// savepoint and both inserts belong to one atomic block. `brz-mysql`'s
+/// `ai-strict` rejects `SAVEPOINT`/`RELEASE SAVEPOINT` through the pooled
+/// `execute`; the block therefore runs on an explicit transaction, which keeps
+/// the savepoint pair and the two inserts atomic and commits them together.
 pub async fn create_task_shell_with_workspace<M: Mysql>(
     mysql: &M,
     table: &str,
@@ -292,45 +313,51 @@ pub async fn create_task_shell_with_workspace<M: Mysql>(
     request: &CreateTaskShellRequest<'_>,
 ) -> MysqlResult<(i64, i64)> {
     let with_id = preallocated.is_some();
-    mysql.execute(format!("SAVEPOINT {savepoint}"), ()).await?;
-
-    let task_row = NewTaskRow {
-        id: preallocated.map_or(0, |ids| ids.0),
-        user_id: request.user_id,
-        kind: "Task",
-        name: request.pending_name,
-        namespace: "default",
-        json: "{\"kind\": \"Task\"}",
-        is_active: 1,
-        created_at: request.created_at,
-        updated_at: request.updated_at,
-        project_id: request.project_id,
-        client_origin: request.client_origin,
-        is_group_chat: i64::from(request.is_group_chat),
-    };
-    let task_id = insert_task_row(mysql, table, with_id, &task_row).await?;
-
-    let workspace = (request.workspace)(task_id);
-    let workspace_row = NewTaskRow {
-        id: preallocated.map_or(0, |ids| ids.1),
-        user_id: request.user_id,
-        kind: "Workspace",
-        name: &workspace.name,
-        namespace: &workspace.namespace,
-        json: &workspace.json,
-        is_active: 1,
-        created_at: request.created_at,
-        updated_at: request.updated_at,
-        project_id: 0,
-        client_origin: request.client_origin,
-        is_group_chat: 0,
-    };
-    let workspace_id = insert_task_row(mysql, table, with_id, &workspace_row).await?;
-
     mysql
-        .execute(format!("RELEASE SAVEPOINT {savepoint}"), ())
-        .await?;
-    Ok((task_id, workspace_id))
+        .with_transaction(async |transaction| {
+            transaction
+                .execute(format!("SAVEPOINT {savepoint}"), ())
+                .await?;
+
+            let task_row = NewTaskRow {
+                id: preallocated.map_or(0, |ids| ids.0),
+                user_id: request.user_id,
+                kind: "Task",
+                name: request.pending_name,
+                namespace: "default",
+                json: "{\"kind\": \"Task\"}",
+                is_active: 1,
+                created_at: request.created_at,
+                updated_at: request.updated_at,
+                project_id: request.project_id,
+                client_origin: request.client_origin,
+                is_group_chat: i64::from(request.is_group_chat),
+            };
+            let task_id = insert_task_row(transaction, table, with_id, &task_row).await?;
+
+            let workspace = (request.workspace)(task_id);
+            let workspace_row = NewTaskRow {
+                id: preallocated.map_or(0, |ids| ids.1),
+                user_id: request.user_id,
+                kind: "Workspace",
+                name: &workspace.name,
+                namespace: &workspace.namespace,
+                json: &workspace.json,
+                is_active: 1,
+                created_at: request.created_at,
+                updated_at: request.updated_at,
+                project_id: 0,
+                client_origin: request.client_origin,
+                is_group_chat: 0,
+            };
+            let workspace_id = insert_task_row(transaction, table, with_id, &workspace_row).await?;
+
+            transaction
+                .execute(format!("RELEASE SAVEPOINT {savepoint}"), ())
+                .await?;
+            Ok((task_id, workspace_id))
+        })
+        .await
 }
 
 /// `subtask_store.create_user_and_assistant_subtasks` inputs.
@@ -339,33 +366,180 @@ pub struct CreateSubtasksRequest<'a> {
     pub assistant_subtask: NewSubtaskRow<'a>,
 }
 
-/// `create_user_and_assistant_subtasks`: insert the paired user/assistant
-/// subtasks inside `SAVEPOINT {savepoint}` and return `(user_id, assistant_id)`.
-pub async fn create_user_and_assistant_subtasks<M: Mysql>(
-    mysql: &M,
-    table: &str,
-    savepoint: &str,
-    with_id: bool,
-    request: &CreateSubtasksRequest<'_>,
-) -> MysqlResult<(i64, i64)> {
-    mysql.execute(format!("SAVEPOINT {savepoint}"), ()).await?;
-    let user_id = insert_subtask_row(mysql, table, with_id, &request.user_subtask).await?;
-    let assistant_id =
-        insert_subtask_row(mysql, table, with_id, &request.assistant_subtask).await?;
-    mysql
-        .execute(format!("RELEASE SAVEPOINT {savepoint}"), ())
-        .await?;
-    Ok((user_id, assistant_id))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sql_test_support::KindQueryCapture;
     use crate::task_store_statements::{
-        SUBTASKS_TABLE, TASKS_TABLE, insert_subtask_statement, insert_task_shell_statement,
+        TASKS_TABLE, insert_subtask_statement, insert_task_shell_statement,
         update_task_name_and_json_statement,
     };
+    use brz_mysql::{
+        FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,
+        MysqlService,
+    };
+    use std::sync::{Arc, Mutex};
+
+    /// The statements issued on an open transaction: collapsed SQL and the
+    /// bound parameter count.
+    #[derive(Clone, Default)]
+    struct TransactionWriteLog {
+        writes: Arc<Mutex<Vec<(String, usize)>>>,
+    }
+
+    impl TransactionWriteLog {
+        fn writes(&self) -> Vec<(String, usize)> {
+            self.writes.lock().unwrap().clone()
+        }
+    }
+
+    impl MysqlTransaction for TransactionWriteLog {
+        async fn execute<S, A>(&mut self, sql: S, arguments: A) -> MysqlResult<MysqlExecution>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+        {
+            let collapsed = sql
+                .as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            self.writes
+                .lock()
+                .unwrap()
+                .push((collapsed, arguments.len()));
+            Ok(MysqlExecution {
+                rows_affected: 1,
+                last_insert_id: 0,
+            })
+        }
+
+        async fn fetch_optional<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Option<T>>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        {
+            Ok(None)
+        }
+
+        async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<T>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        {
+            panic!("unexpected fetch_one")
+        }
+
+        async fn fetch_all<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Vec<T>>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        {
+            Ok(Vec::new())
+        }
+
+        fn fetch<'transaction, S, A, T>(
+            &'transaction mut self,
+            _: S,
+            _: A,
+        ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'transaction
+        where
+            S: AsRef<str> + Send + 'transaction,
+            A: MysqlArgs + Send + 'transaction,
+            T: FromMysqlRow + Send + 'transaction,
+        {
+            futures_util::stream::once(async { panic!("unexpected streaming query") })
+        }
+    }
+
+    /// A pooled handle that only admits `with_transaction`: `ai-strict` rejects
+    /// pool-level `SAVEPOINT`/`RELEASE SAVEPOINT`, so any statement sent
+    /// through the pool is a defect this fake surfaces.
+    #[derive(Default)]
+    struct TransactionOnlyMysql {
+        log: TransactionWriteLog,
+        transactions: Arc<Mutex<usize>>,
+    }
+
+    impl TransactionOnlyMysql {
+        fn transaction_count(&self) -> usize {
+            *self.transactions.lock().unwrap()
+        }
+    }
+
+    impl Mysql for TransactionOnlyMysql {
+        type Transaction = TransactionWriteLog;
+
+        fn with_route<R: MysqlRouting + 'static>(&self, _: R) -> MysqlService {
+            panic!("unexpected route")
+        }
+
+        fn route<K: MysqlRouteKey>(&self, _: K) -> Self {
+            panic!("unexpected route")
+        }
+
+        async fn fetch_optional<S, A, T>(&self, _: S, _: A) -> MysqlResult<Option<T>>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        {
+            panic!("unexpected pooled read")
+        }
+
+        async fn fetch_one<S, A, T>(&self, _: S, _: A) -> MysqlResult<T>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        {
+            panic!("unexpected pooled read")
+        }
+
+        async fn fetch_all<S, A, T>(&self, _: S, _: A) -> MysqlResult<Vec<T>>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        {
+            panic!("unexpected pooled read")
+        }
+
+        fn fetch<'service, S, A, T>(
+            &'service self,
+            _: S,
+            _: A,
+        ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'service
+        where
+            S: AsRef<str> + Send + 'service,
+            A: MysqlArgs + Send + 'service,
+            T: FromMysqlRow + Send + 'service,
+        {
+            futures_util::stream::once(async { panic!("unexpected pooled read") })
+        }
+
+        async fn execute<S, A>(&self, _: S, _: A) -> MysqlResult<MysqlExecution>
+        where
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+        {
+            panic!("ai-strict rejects pooled SAVEPOINT/RELEASE SAVEPOINT")
+        }
+
+        async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
+        where
+            T: Send,
+            F: for<'transaction> AsyncFnOnce(&'transaction mut Self::Transaction) -> MysqlResult<T>
+                + Send,
+        {
+            *self.transactions.lock().unwrap() += 1;
+            let mut transaction = self.log.clone();
+            operation(&mut transaction).await
+        }
+    }
 
     fn task_row() -> NewTaskRow<'static> {
         NewTaskRow {
@@ -412,34 +586,28 @@ mod tests {
 
     #[tokio::test]
     async fn insert_task_row_binds_the_sharded_id() {
-        let mysql = KindQueryCapture::writing();
-        let id = insert_task_row(&mysql, "tasks_0383", true, &task_row())
+        let mut transaction = TransactionWriteLog::default();
+        let id = insert_task_row(&mut transaction, "tasks_0383", true, &task_row())
             .await
             .expect("insert");
         assert_eq!(id, 897_064_049_841_442);
-        let writes = mysql.writes();
+        let writes = transaction.writes();
         assert_eq!(writes.len(), 1);
-        assert_eq!(
-            writes[0].sql,
-            insert_task_shell_statement("tasks_0383", true)
-        );
-        assert_eq!(writes[0].args, 12);
+        assert_eq!(writes[0].0, insert_task_shell_statement("tasks_0383", true));
+        assert_eq!(writes[0].1, 12);
     }
 
     #[tokio::test]
     async fn insert_task_row_returns_the_database_id_on_the_base_table() {
-        let mysql = KindQueryCapture::writing();
-        let id = insert_task_row(&mysql, TASKS_TABLE, false, &task_row())
+        let mut transaction = TransactionWriteLog::default();
+        let id = insert_task_row(&mut transaction, TASKS_TABLE, false, &task_row())
             .await
             .expect("insert");
         // The capture fake reports `last_insert_id = 0`.
         assert_eq!(id, 0);
-        let writes = mysql.writes();
-        assert_eq!(
-            writes[0].sql,
-            insert_task_shell_statement(TASKS_TABLE, false)
-        );
-        assert_eq!(writes[0].args, 11);
+        let writes = transaction.writes();
+        assert_eq!(writes[0].0, insert_task_shell_statement(TASKS_TABLE, false));
+        assert_eq!(writes[0].1, 11);
     }
 
     #[tokio::test]
@@ -464,30 +632,28 @@ mod tests {
         assert_eq!(writes[0].args, 4);
     }
 
-    #[tokio::test]
-    async fn insert_subtask_row_binds_the_recorded_columns() {
-        let mysql = KindQueryCapture::writing();
-        let id = insert_subtask_row(
-            &mysql,
-            "subtasks_0383",
-            true,
-            &subtask_row(897_064_049_841_444),
-        )
-        .await
-        .expect("insert");
-        assert_eq!(id, 897_064_049_841_444);
-        let writes = mysql.writes();
+    #[test]
+    fn insert_subtask_columns_bind_in_the_recorded_order() {
+        let row = subtask_row(897_064_049_841_444);
+        let allocated = subtask_insert_arguments(&row, true);
+        assert_eq!(allocated.len(), 21);
+        assert!(matches!(
+            allocated[0],
+            StatementArg::Int(897_064_049_841_444)
+        ));
+        assert!(matches!(allocated[1], StatementArg::Int(6527)));
+        assert!(matches!(
+            allocated[4],
+            StatementArg::Str(ref title) if title == "User message"
+        ));
         assert_eq!(
-            writes[0].sql,
-            insert_subtask_statement("subtasks_0383", true)
+            insert_subtask_statement("subtasks_0383", true),
+            "INSERT INTO subtasks_0383 (id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now(), ?, ?, ?, ?)"
         );
-        assert_eq!(writes[0].args, 21);
 
-        let base = KindQueryCapture::writing();
-        insert_subtask_row(&base, SUBTASKS_TABLE, false, &subtask_row(0))
-            .await
-            .expect("insert");
-        assert_eq!(base.writes()[0].args, 20);
+        let auto = subtask_insert_arguments(&row, false);
+        assert_eq!(auto.len(), 20, "the autoincrement form binds no id");
+        assert!(matches!(auto[0], StatementArg::Int(6527)));
     }
 
     #[tokio::test]
@@ -511,8 +677,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_task_shell_with_workspace_emits_the_savepoint_pair() {
-        let mysql = KindQueryCapture::writing();
+    async fn create_task_shell_with_workspace_emits_the_savepoint_pair_in_one_transaction() {
+        let mysql = TransactionOnlyMysql::default();
         let workspace = |task_id: i64| WorkspacePayload {
             name: format!("workspace-{task_id}"),
             namespace: "default".to_string(),
@@ -539,46 +705,15 @@ mod tests {
         .expect("create");
         assert_eq!(ids, (897_064_049_841_442, 897_064_049_841_443));
 
-        let writes = mysql.writes();
-        let sqls: Vec<&str> = writes.iter().map(|write| write.sql.as_str()).collect();
+        // `ai-strict` rejects pooled `SAVEPOINT`/`RELEASE SAVEPOINT`: the whole
+        // block must run on one explicit transaction.
+        assert_eq!(mysql.transaction_count(), 1);
+        let writes = mysql.log.writes();
+        let sqls: Vec<&str> = writes.iter().map(|(sql, _)| sql.as_str()).collect();
         assert_eq!(sqls.len(), 4);
         assert_eq!(sqls[0], "SAVEPOINT sa_savepoint_1");
         assert!(sqls[1].starts_with("INSERT INTO tasks_0383 (id, user_id"));
         assert!(sqls[2].starts_with("INSERT INTO tasks_0383 (id, user_id"));
         assert_eq!(sqls[3], "RELEASE SAVEPOINT sa_savepoint_1");
-    }
-
-    #[tokio::test]
-    async fn create_subtasks_emits_the_second_savepoint_pair() {
-        let mysql = KindQueryCapture::writing();
-        let request = CreateSubtasksRequest {
-            user_subtask: subtask_row(897_064_049_841_444),
-            assistant_subtask: subtask_row(897_064_049_841_445),
-        };
-        let ids = create_user_and_assistant_subtasks(
-            &mysql,
-            "subtasks_0383",
-            "sa_savepoint_2",
-            true,
-            &request,
-        )
-        .await
-        .expect("create");
-        assert_eq!(ids, (897_064_049_841_444, 897_064_049_841_445));
-
-        let writes = mysql.writes();
-        assert_eq!(writes.len(), 4);
-        assert_eq!(writes[0].sql, "SAVEPOINT sa_savepoint_2");
-        assert!(
-            writes[1]
-                .sql
-                .starts_with("INSERT INTO subtasks_0383 (id, user_id")
-        );
-        assert!(
-            writes[2]
-                .sql
-                .starts_with("INSERT INTO subtasks_0383 (id, user_id")
-        );
-        assert_eq!(writes[3].sql, "RELEASE SAVEPOINT sa_savepoint_2");
     }
 }

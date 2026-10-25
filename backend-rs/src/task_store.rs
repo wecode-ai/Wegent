@@ -20,6 +20,7 @@ pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     page_subtasks_by_task, subtask_context_columns,
 };
+pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
     active_project_task_statement, fetch_active_project_task, task_by_id_refresh_statement,
     task_project_update_statement, update_task_project_and_json,
@@ -43,9 +44,20 @@ pub enum ContextPolicy {
     OnlyWhenResolved,
 }
 
+pub use crate::task_store_cancel_statements::{
+    running_assistant_for_user_statement, update_subtask_cancelled_statement,
+};
 pub use crate::task_store_create::*;
 pub use crate::task_store_edit::*;
-pub use crate::task_store_project_count::{TaskStoreProjectCount, count_active_project_tasks_read};
+pub use crate::task_store_executor_reference::{
+    AssistantExecutor, SubtaskPairInsert, consume_executor_reference,
+    create_subtask_pair_with_executor_reference, latest_assistant_executor_statement,
+    task_for_update_first_statement,
+};
+pub use crate::task_store_project_count::{
+    TaskStoreProjectCount, active_task_status_predicate, count_active_project_tasks_read,
+    count_active_tasks_by_project_read,
+};
 pub use crate::task_store_public_share::TaskStorePublicShare;
 pub use crate::task_store_statements::*;
 pub use crate::task_store_subtask_content::{SubtaskContentField, execute_subtask_content_update};
@@ -73,6 +85,12 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     async fn get_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
         self.mysql
             .fetch_optional(active_task_statement(TASKS_TABLE), (task_id,))
+            .await
+    }
+
+    async fn get_regular_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
+        self.mysql
+            .fetch_optional(regular_active_task_statement(TASKS_TABLE), (task_id,))
             .await
     }
 
@@ -290,6 +308,14 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         .await
     }
 
+    async fn running_assistant_for_user(
+        &self,
+        task_id: i64,
+        user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        crate::task_store_subtask_writes::running_assistant_for_user(self, task_id, user_id).await
+    }
+
     async fn update_subtask_completed(
         &self,
         _task_id: i64,
@@ -304,6 +330,24 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             result_json,
             updated_at,
             completed_at,
+        )
+        .await
+    }
+
+    async fn update_subtask_cancelled(
+        &self,
+        _task_id: i64,
+        subtask_id: i64,
+        updated_at: &str,
+        completed_at: &str,
+        reset_error_message: bool,
+    ) -> MysqlResult<u64> {
+        crate::task_store_subtask_writes::update_subtask_cancelled(
+            self,
+            subtask_id,
+            updated_at,
+            completed_at,
+            reset_error_message,
         )
         .await
     }
