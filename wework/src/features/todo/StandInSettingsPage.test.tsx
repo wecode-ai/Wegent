@@ -47,6 +47,7 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
     userId: 7,
     services: {
       standInApi: {
+        connectionProviders: vi.fn(async () => ({ items: [] })),
         personalGet,
         personalSave,
         personalAgents: vi.fn(async () => [{ id: 42, name: 'Personal reviewer' }]),

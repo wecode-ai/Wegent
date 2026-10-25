@@ -46,7 +46,7 @@ impl RuntimeWorkRpcHandler {
         };
         if !(matches!(
             origin["type"].as_str(),
-            Some("stand_in_identity" | "dingtalk_work")
+            Some("stand_in_identity" | "dingtalk_work" | "connection_work")
         ) || (origin["type"] == "issue_dispatch" && origin["initiatedBy"] == "stand_in"))
         {
             return Ok(());
@@ -77,9 +77,7 @@ impl RuntimeWorkRpcHandler {
                 return Err("Work belongs to another role".into());
             }
             let source = &work["source"];
-            Some(
-                json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]}),
-            )
+            Some(crate::task_runtime::personal_stand_in::connection_memory_scope(source))
         } else if origin["type"] == "issue_dispatch" {
             Some(
                 json!({"kind":"project","id":origin["cloudProjectId"],"store":origin["projectStore"]}),

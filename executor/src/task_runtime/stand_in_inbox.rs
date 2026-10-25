@@ -1,4 +1,5 @@
 //! Durable source cursors, message deduplication and role-owned work associations.
+use super::personal_stand_in::source_namespace;
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -70,7 +71,7 @@ impl LocalTaskStore {
     pub fn stand_in_source(&self, user: i64, source: &Value) -> Result<Value, TaskRuntimeError> {
         let key = stand_in_record_key(
             "stand-in-source",
-            &json!([user, source["profile"], source["kind"], source["id"]]),
+            &json!([user, source_namespace(source), source["kind"], source["id"]]),
         );
         let connection = self.connection()?;
         Ok(read_record(&connection, &key, "stand_in_source")?.unwrap_or(Value::Null))
@@ -84,7 +85,7 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let key = stand_in_record_key(
             "stand-in-source",
-            &json!([user, source["profile"], source["kind"], source["id"]]),
+            &json!([user, source_namespace(source), source["kind"], source["id"]]),
         );
         let mut state = state.clone();
         state["userId"] = json!(user);
@@ -127,10 +128,10 @@ impl LocalTaskStore {
         .collect()
     }
 
-    pub fn known_stand_in_message(
+    pub fn known_stand_in_message<T: serde::Serialize + ?Sized>(
         &self,
         user: i64,
-        profile: &str,
+        profile: &T,
         message: &str,
     ) -> Result<Option<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
@@ -153,7 +154,7 @@ impl LocalTaskStore {
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let key = stand_in_record_key(
             "stand-in-message",
-            &json!([user, source["profile"], message["id"]]),
+            &json!([user, source_namespace(source), message["id"]]),
         );
         if let Some(existing) = read_record(&connection, &key, "stand_in_message")? {
             let result = read_record(

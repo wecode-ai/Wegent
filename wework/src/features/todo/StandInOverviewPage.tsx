@@ -176,12 +176,12 @@ export function StandInOverviewPage({
                 className="mt-1 block truncate pl-6 text-xs text-text-muted"
                 title={[
                   ...projects.map(project => project.name),
-                  ...(value.dingtalk ?? []).map(source => source.name),
+                  ...(value.connections ?? []).map(source => source.name),
                 ].join(' · ')}
               >
                 {[
                   ...projects.map(project => project.name),
-                  ...(value.dingtalk ?? []).map(source => source.name),
+                  ...(value.connections ?? []).map(source => source.name),
                 ].join(' · ') ||
                   t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
               </span>

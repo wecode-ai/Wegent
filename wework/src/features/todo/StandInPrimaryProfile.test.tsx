@@ -35,8 +35,9 @@ function fixture() {
         enabled: true,
         prompt: 'Review my work',
         preferences: 'Keep replies concise',
-        dingtalk: [
+        connections: [
           {
+            providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
             id: 'group',
             name: 'Design team',
             kind: 'group' as const,

@@ -24,19 +24,19 @@ function fixture() {
       enabled: true,
       prompt: 'Shared instructions',
       preferences: '',
-      dingtalk: [connection],
+      connections: [connection],
     },
   }
   const settings = {
     ...current,
-    primary: { ...current.primary!, dingtalk: [] },
+    primary: { ...current.primary!, connections: [] },
     roles: [
       {
         ...newStandInRole('mac', 'reply'),
         name: 'Reply role',
         enabled: true,
         prompt: 'Handle group mentions only',
-        dingtalk: [connection],
+        connections: [connection],
       },
     ],
   }

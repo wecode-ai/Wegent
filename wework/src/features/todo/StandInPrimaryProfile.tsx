@@ -141,7 +141,11 @@ export function StandInPrimaryProfile({
           localDeviceId={localDeviceId}
           disabled={saving}
           onChange={value =>
-            setDraft({ ...draft, collaboration: value.collaboration, dingtalk: value.dingtalk })
+            setDraft({
+              ...draft,
+              collaboration: value.collaboration,
+              connections: value.connections,
+            })
           }
         />
       </div>

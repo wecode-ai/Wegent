@@ -1,11 +1,13 @@
 //! Source collection is deterministic; only ambiguous role/work selection uses a model.
 use super::stand_in::settings_error;
 use super::*;
-use crate::task_runtime::personal_stand_in::{dingtalk_connection, stand_in_identities};
+use crate::task_runtime::personal_stand_in::{
+    source_namespace, source_provider, stand_in_connection, stand_in_identities,
+};
 use chrono::TimeZone;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn start_dingtalk_stand_in_scheduler(&self) {
+    pub(super) fn start_connection_stand_in_scheduler(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -15,9 +17,9 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                if let Err(error) = handler.poll_dingtalk_stand_ins().await {
+                if let Err(error) = handler.poll_connection_stand_ins().await {
                     log_executor_event(
-                        "DingTalk stand-in collection failed",
+                        "Connection stand-in collection failed",
                         &[("code", error.code), ("error", error.message)],
                     );
                 }
@@ -25,7 +27,7 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    async fn poll_dingtalk_stand_ins(&self) -> Result<(), AppIpcError> {
+    async fn poll_connection_stand_ins(&self) -> Result<(), AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         for settings in store
             .all_personal_stand_ins(&self.device_id)
@@ -38,8 +40,14 @@ impl RuntimeWorkRpcHandler {
                 .iter()
                 .filter(|identity| identity["enabled"] == true)
             {
-                for source in identity["dingtalk"].as_array().into_iter().flatten() {
-                    let key = json!([source["profile"], source["kind"], source["id"]]).to_string();
+                for source in identity["connections"].as_array().into_iter().flatten() {
+                    let key = json!([
+                        source_provider(source),
+                        source["profile"],
+                        source["kind"],
+                        source["id"]
+                    ])
+                    .to_string();
                     let entry = sources
                         .entry(key)
                         .or_insert_with(|| (source.clone(), Vec::new()));
@@ -62,11 +70,15 @@ impl RuntimeWorkRpcHandler {
                 if state["source"]["enabledAfter"] != source["enabledAfter"] {
                     state = Value::Null;
                 }
-                if state["error"].is_object() && state["version"] == settings["version"] {
+                if state["retryAt"]
+                    .as_i64()
+                    .is_some_and(|at| at > chrono::Utc::now().timestamp())
+                    && state["version"] == settings["version"]
+                {
                     continue;
                 }
                 let outcome = self
-                    .collect_dingtalk_source(&store, user, source, roles, &state)
+                    .collect_connection_source(&store, user, source, roles, &state)
                     .await;
                 let mut next = match outcome {
                     Ok(next) => next,
@@ -77,6 +89,7 @@ impl RuntimeWorkRpcHandler {
                             json!({})
                         };
                         next["error"] = json!({"code":error.code,"message":error.message});
+                        next["retryAt"] = json!(chrono::Utc::now().timestamp() + 60);
                         next
                     }
                 };
@@ -89,7 +102,7 @@ impl RuntimeWorkRpcHandler {
                 .list_stand_in_work(user, None)
                 .map_err(settings_error)?
             {
-                self.reconcile_dingtalk_dispatch(&store, user, &mut work)?;
+                self.reconcile_connection_dispatch(&store, user, &mut work)?;
                 if work["status"] != "pending" {
                     continue;
                 }
@@ -99,11 +112,11 @@ impl RuntimeWorkRpcHandler {
                 else {
                     continue;
                 };
-                if dingtalk_connection(role, &work["source"])
+                if stand_in_connection(role, &work["source"])
                     .is_some_and(|source| source["policy"]["automatic"] == true)
                 {
                     if let Err(error) = self
-                        .dispatch_dingtalk_work(
+                        .dispatch_connection_work(
                             user,
                             work["id"].as_str().unwrap_or_default(),
                             false,
@@ -111,7 +124,7 @@ impl RuntimeWorkRpcHandler {
                         .await
                     {
                         log_executor_event(
-                            "DingTalk work dispatch failed",
+                            "Connection work dispatch failed",
                             &[
                                 ("work_id", work["id"].to_string()),
                                 ("error", error.message),
@@ -124,7 +137,7 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn collect_dingtalk_source(
+    async fn collect_connection_source(
         &self,
         store: &LocalTaskStore,
         user: i64,
@@ -132,12 +145,63 @@ impl RuntimeWorkRpcHandler {
         roles: &[Value],
         state: &Value,
     ) -> Result<Value, AppIpcError> {
-        let (messages, next) = super::super::dingtalk::source_page(source, state).await?;
+        let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
+            if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
+                && state["after"].is_string()
+            {
+                let mut checkpoint = json!({"after":state["after"],"cursor":state["cursor"]});
+                if state["until"].is_string() {
+                    checkpoint["until"] = state["until"].clone();
+                }
+                checkpoint
+            } else {
+                Value::Null
+            }
+        });
+        let page = self
+            .connection_call(
+                "collect",
+                Some(source_provider(source)),
+                json!({"source":source,"checkpoint":checkpoint}),
+            )
+            .await?;
+        let messages = page["events"].as_array().ok_or_else(|| {
+            AppIpcError::new("connection_response_invalid", "Missing connection events")
+        })?;
+        let next = page["nextCheckpoint"].as_object().ok_or_else(|| {
+            AppIpcError::new(
+                "connection_response_invalid",
+                "Missing connection checkpoint",
+            )
+        })?;
+        let next = json!({"checkpoint":next});
+        let current = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        if roles
+            .iter()
+            .any(|role| role["personalVersion"] != current["version"])
+        {
+            return Err(AppIpcError::new(
+                "connection_configuration_changed",
+                "Connection settings changed during collection",
+            ));
+        }
         for message in messages {
+            if !["id", "text", "at"].iter().all(|key| {
+                message[*key]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty())
+            }) {
+                return Err(AppIpcError::new(
+                    "connection_response_invalid",
+                    "Connection event is missing required fields",
+                ));
+            }
             if store
                 .known_stand_in_message(
                     user,
-                    source["profile"].as_str().unwrap_or_default(),
+                    &source_namespace(source),
                     message["id"].as_str().unwrap_or_default(),
                 )
                 .map_err(settings_error)?
@@ -149,7 +213,7 @@ impl RuntimeWorkRpcHandler {
             let candidates: Vec<Value> = roles
                 .iter()
                 .filter(|role| {
-                    dingtalk_connection(role, source).is_some_and(|source| {
+                    stand_in_connection(role, source).is_some_and(|source| {
                         source["enabledAfter"]
                             .as_str()
                             .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
@@ -176,9 +240,9 @@ impl RuntimeWorkRpcHandler {
                     AppIpcError::new("stand_in_selection_failed", "No role matches this message")
                 })?;
             let (work_id, confident) = self
-                .group_dingtalk_message(store, user, &role, source, &message)
+                .group_connection_message(store, user, &role, source, &message)
                 .await?;
-            let selected_source = dingtalk_connection(&role, source)
+            let selected_source = stand_in_connection(&role, source)
                 .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
             let work = store
                 .ingest_stand_in_message(
@@ -212,7 +276,7 @@ impl RuntimeWorkRpcHandler {
         Ok(next)
     }
 
-    async fn group_dingtalk_message(
+    async fn group_connection_message(
         &self,
         store: &LocalTaskStore,
         user: i64,
@@ -222,11 +286,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(Option<String>, bool), AppIpcError> {
         if let Some(quoted) = message["quotedMessageId"].as_str() {
             if let Some(previous) = store
-                .known_stand_in_message(
-                    user,
-                    source["profile"].as_str().unwrap_or_default(),
-                    quoted,
-                )
+                .known_stand_in_message(user, &source_namespace(source), quoted)
                 .map_err(settings_error)?
             {
                 if previous["roleId"] == role["id"] {
@@ -240,7 +300,8 @@ impl RuntimeWorkRpcHandler {
         let candidates: Vec<Value> = works
             .into_iter()
             .filter(|work| {
-                work["source"]["id"] == source["id"]
+                source_provider(&work["source"]) == source_provider(source)
+                    && work["source"]["id"] == source["id"]
                     && work["source"]["profile"] == source["profile"]
                     && work["source"]["kind"] == source["kind"]
             })

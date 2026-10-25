@@ -3,7 +3,7 @@ import { dequal } from 'dequal'
 import type { StandInIdentity, StandInHandlingPolicy, StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 
-type Sources = Pick<StandInIdentity, 'dingtalk' | 'collaboration'>
+type Sources = Pick<StandInIdentity, 'connections' | 'collaboration'>
 
 export function StandInProposalSources({
   identity,
@@ -30,10 +30,10 @@ export function StandInProposalSources({
               : 'standIn.workspace.policy_automatic'
         )
       : t('standIn.workspace.inherited_policy')
-  const sourceKey = (row: NonNullable<Sources['dingtalk']>[number]) =>
-    JSON.stringify([row.profile, row.kind, row.id])
-  const before = previous?.dingtalk ?? []
-  const after = identity.dingtalk ?? []
+  const sourceKey = (row: NonNullable<Sources['connections']>[number]) =>
+    JSON.stringify([row.providerId, row.profile, row.kind, row.id])
+  const before = previous?.connections ?? []
+  const after = identity.connections ?? []
   const changed = after.filter(
     row =>
       !dequal(
