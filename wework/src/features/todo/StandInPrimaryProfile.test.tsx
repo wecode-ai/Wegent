@@ -142,6 +142,17 @@ it('shows existing local connection names on a remote device while limiting new 
   const row = screen.getByTestId('stand-in-connection-project-local-local-project')
   expect(row).toHaveTextContent('Local review project')
   await user.click(row)
-  expect(screen.queryByRole('checkbox', { name: 'Local review project' })).not.toBeInTheDocument()
+  expect(screen.getByRole('checkbox', { name: 'Local review project' })).toBeChecked()
   expect(screen.getByRole('checkbox', { name: 'Cloud review project' })).not.toBeChecked()
+  await user.click(screen.getByRole('checkbox', { name: 'Local review project' }))
+  expect(screen.getByRole('checkbox', { name: 'Local review project' })).toBeDisabled()
+  expect(screen.getByRole('checkbox', { name: 'Local review project' })).not.toBeChecked()
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({
+        collaboration: expect.objectContaining({ projects: [] }),
+      }),
+    })
+  )
 })

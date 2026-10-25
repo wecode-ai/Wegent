@@ -70,5 +70,13 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
     saved.roles.find(role => role.id === ROLE).collaboration.projects,
     collaboration.projects
   )
+  await control.command('click', row)
+  await control.command('click', `[data-testid="stand-in-connect-project-${project.id}"]`)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await control.command('waitFor', '[data-testid="stand-in-connections-empty"]')
+  const disconnected = await rpc('runtime.stand_in.personal.get', { userId: USER })
+  assert.deepEqual(disconnected.roles.find(role => role.id === ROLE).collaboration.projects, [])
+  assert.deepEqual(disconnected.primary.collaboration.projects, collaboration.projects)
   await control.command('click', '[data-testid="stand-in-cancel"]')
 }

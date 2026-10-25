@@ -150,9 +150,8 @@ export function StandInConnectionSettings({
           {view === 'projects' ? (
             <StandInConnections
               role={role}
-              projects={projects.filter(
-                project => project.project_store !== 'local' || deviceId === localDeviceId
-              )}
+              projects={projects}
+              allowLocalProjects={deviceId === localDeviceId}
               focusedProjectId={focusedProjectId}
               disabled={disabled}
               onChange={onChange}

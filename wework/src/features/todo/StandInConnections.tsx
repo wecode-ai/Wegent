@@ -9,12 +9,14 @@ import { StandInHandlingSelect } from './StandInHandlingSelect'
 export function StandInConnections({
   role,
   projects,
+  allowLocalProjects,
   onChange,
   disabled,
   focusedProjectId,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
+  allowLocalProjects: boolean
   onChange(role: StandInRole): void
   disabled: boolean
   focusedProjectId?: string
@@ -116,7 +118,9 @@ export function StandInConnections({
                       checked={roleIncludesProject(role, ref(project))}
                       disabled={
                         disabled ||
-                        Boolean(role.agentProject && role.agentProject.id !== project.id)
+                        (!allowLocalProjects &&
+                          project.project_store === 'local' &&
+                          !roleIncludesProject(role, ref(project)))
                       }
                       onChange={event => toggleProject(project, event.target.checked)}
                     />

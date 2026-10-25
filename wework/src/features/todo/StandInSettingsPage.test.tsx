@@ -90,8 +90,17 @@ describe('Personal stand-in settings', () => {
       'Cloud project'
     )
     await user.click(screen.getByTestId('stand-in-connection-project-local-one'))
-    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'First project' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Second project' })).toBeDisabled()
     expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: 'First project' }))
+    expect(screen.getByRole('checkbox', { name: 'First project' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'First project' })).toBeDisabled()
+    await user.click(screen.getByTestId('stand-in-connections-back'))
+    expect(screen.queryByTestId('stand-in-connection-project-local-one')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
+      'Cloud project'
+    )
   })
 
   it('returns the created role to its parent after the first save', async () => {
