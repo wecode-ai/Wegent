@@ -133,7 +133,7 @@ impl RuntimeWorkRpcHandler {
         state: &Value,
     ) -> Result<Value, AppIpcError> {
         let page = super::super::dingtalk::source_page(source, state).await?;
-        self.collect_dingtalk_page(store, user, source, roles, state, page)
+        self.collect_dingtalk_page(store, user, source, roles, page)
             .await
     }
 
@@ -143,58 +143,37 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         source: &Value,
         roles: &[Value],
-        state: &Value,
         page: (Vec<Value>, Value),
     ) -> Result<Value, AppIpcError> {
-        let (messages, mut next) = page;
-        let mut pending = Vec::new();
-        for retry in state["pending"].as_array().into_iter().flatten() {
-            if roles.iter().any(|role| role["id"] == retry["roleId"]) {
-                pending.push(retry.clone());
-            }
-        }
+        let (messages, next) = page;
+        let mut failure = None;
         for message in messages {
-            for role in roles {
-                pending.push(json!({"roleId":role["id"],"message":message}));
-            }
-        }
-        let mut retries = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for mut retry in pending {
-            if !seen.insert(json!([retry["roleId"], retry["message"]["id"]]).to_string()) {
-                continue;
-            }
-            let role = roles
-                .iter()
-                .find(|role| role["id"] == retry["roleId"])
-                .unwrap();
-            let at = message_time(&retry["message"]["at"])?;
-            if !dingtalk_connection(role, source).is_some_and(|connection| {
-                connection["enabledAfter"]
-                    .as_str()
-                    .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                    .is_some_and(|enabled| at >= enabled.timestamp_millis())
+            let at = message_time(&message["at"])?;
+            for role in roles.iter().filter(|role| {
+                dingtalk_connection(role, source).is_some_and(|connection| {
+                    connection["enabledAfter"]
+                        .as_str()
+                        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+                        .is_some_and(|enabled| at >= enabled.timestamp_millis())
+                })
             }) {
-                continue;
-            }
-            if let Err(error) = self
-                .collect_dingtalk_message(store, user, role, source, &retry["message"])
-                .await
-            {
-                log_executor_event(
-                    "DingTalk message collection failed",
-                    &[
-                        ("role_id", role["id"].to_string()),
-                        ("message_id", retry["message"]["id"].to_string()),
-                        ("error", error.message.clone()),
-                    ],
-                );
-                retry["error"] = json!({"code":error.code,"message":error.message});
-                retries.push(retry);
+                if let Err(error) = self
+                    .collect_dingtalk_message(store, user, role, source, &message)
+                    .await
+                {
+                    log_executor_event(
+                        "DingTalk message persistence failed",
+                        &[
+                            ("role_id", role["id"].to_string()),
+                            ("message_id", message["id"].to_string()),
+                            ("error", error.message.clone()),
+                        ],
+                    );
+                    failure.get_or_insert(error);
+                }
             }
         }
-        next["pending"] = json!(retries);
-        Ok(next)
+        failure.map_or(Ok(next), Err)
     }
 
     async fn collect_dingtalk_message(
@@ -218,33 +197,38 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(());
         }
-        let (work_id, confident) = self
+        let (work_id, confident, grouping_error) = match self
             .group_dingtalk_message(store, user, role, source, message)
-            .await?;
+            .await
+        {
+            Ok((work, confident)) => (work, confident, None),
+            Err(error) if error.code == "stand_in_settings" => return Err(error),
+            Err(error) => {
+                log_executor_event(
+                    "DingTalk message requires manual grouping",
+                    &[
+                        ("role_id", role_id.to_owned()),
+                        ("message_id", message["id"].to_string()),
+                        ("error", error.message.clone()),
+                    ],
+                );
+                (None, false, Some(error.message))
+            }
+        };
         let connection = dingtalk_connection(role, source)
             .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
-        let work = store
-            .ingest_stand_in_message(user, role_id, connection, message, work_id.as_deref())
-            .map_err(settings_error)?;
-        if !confident {
-            let records = store
-                .stand_in_messages(user, work["id"].as_str().unwrap())
-                .map_err(settings_error)?;
-            let ids = records
-                .iter()
-                .filter(|row| row["id"] == message["id"])
-                .filter_map(|row| row["recordId"].as_str().map(str::to_owned))
-                .collect::<Vec<_>>();
-            store
-                .update_stand_in_dispatch(
-                    user,
-                    work["id"].as_str().unwrap(),
-                    &ids,
-                    "needs_grouping",
-                    None,
-                )
-                .map_err(settings_error)?;
+        if confident {
+            store.ingest_stand_in_message(user, role_id, connection, message, work_id.as_deref())
+        } else {
+            store.ingest_ungrouped_stand_in_message(
+                user,
+                role_id,
+                connection,
+                message,
+                grouping_error.as_deref(),
+            )
         }
+        .map_err(settings_error)?;
         Ok(())
     }
 
@@ -342,8 +326,25 @@ fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn failed_role_retries_do_not_stop_shared_pagination_or_other_roles() {
+    #[test]
+    fn failed_grouping_is_durable_manual_work_without_blocking_other_roles() {
+        let _lock = crate::test_env::lock();
+        let environment = tempfile::tempdir().unwrap();
+        let _env: Vec<_> = [
+            "WEGENT_CODEX_HOME",
+            "WEGENT_EXECUTOR_HOME",
+            "WEGENT_CLAUDE_HOME",
+            "WEGENT_WORKBENCH_HOME",
+            "WEGENT_CAPABILITIES_HOME",
+        ]
+        .into_iter()
+        .map(|key| {
+            let directory = environment.path().join(key);
+            fs::create_dir_all(&directory).unwrap();
+            super::super::tests::ScalarEnv::set(key, directory.to_str().unwrap())
+        })
+        .collect();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         let root = tempfile::tempdir().unwrap();
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -368,16 +369,28 @@ mod tests {
                 7,
                 &source,
                 &roles,
-                &Value::Null,
                 (vec![first.clone()], json!({"cursor":"page2"})),
             )
             .await
             .unwrap();
         assert_eq!(next["cursor"], "page2");
-        assert_eq!(next["pending"].as_array().unwrap().len(), 1);
-        assert_eq!(next["pending"][0]["roleId"], "broken");
         store.save_stand_in_source(7, &source, &next).unwrap();
-        let state = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(
+            store.stand_in_source(7, &source).unwrap()["cursor"],
+            "page2"
+        );
+        let known = store
+            .known_stand_in_message(7, "broken", &source, "first")
+            .unwrap()
+            .unwrap();
+        assert_eq!(known["dispatchStatus"], "needs_grouping");
+        let manual = store
+            .stand_in_work(7, known["workId"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(manual["status"], "needs_grouping");
+        assert!(manual["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()));
         let second =
             json!({"id":"second","text":"Next page","topicId":"new","at":"2026-10-25T00:01:00Z"});
         let next = handler
@@ -386,65 +399,46 @@ mod tests {
                 7,
                 &source,
                 &roles,
-                &state,
-                (vec![second], json!({"cursor":"page3"})),
+                (vec![first, second], json!({"cursor":"page3"})),
             )
             .await
             .unwrap();
         assert_eq!(next["cursor"], "page3");
-        assert_eq!(next["pending"].as_array().unwrap().len(), 2);
         let good = store.list_stand_in_work(7, Some("good")).unwrap();
         assert_eq!(good.len(), 1);
         assert_eq!(good[0]["messageCount"], 2);
-        let mut reconnected = roles.clone();
+        assert_eq!(
+            store.list_stand_in_work(7, Some("broken")).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            store
+                .stand_in_work(7, known["workId"].as_str().unwrap())
+                .unwrap()["status"],
+            "needs_grouping"
+        );
+        let mut reconnected = roles;
         reconnected[0]["dingtalk"][0]["enabledAfter"] = json!("2026-10-26T00:00:00Z");
-        let reset = handler
+        let old = json!({"id":"old-after-reconnect","text":"Prior message","topicId":"new","at":"2026-10-25T00:02:00Z"});
+        handler
             .collect_dingtalk_page(
                 &store,
                 7,
                 &source,
                 &reconnected,
-                &next,
-                (vec![], json!({"cursor":"page4"})),
+                (vec![old], json!({"cursor":"page4"})),
             )
             .await
             .unwrap();
-        assert_eq!(reset["pending"], json!([]));
         assert!(store
-            .known_stand_in_message(7, "broken", &source, "first")
+            .known_stand_in_message(7, "broken", &source, "old-after-reconnect")
             .unwrap()
             .is_none());
-        store
-            .ingest_stand_in_message(
-                7,
-                "broken",
-                &source,
-                &json!({"id":"repair","text":"Group repaired","topicId":"new"}),
-                None,
-            )
-            .unwrap();
-        let recovered = handler
-            .collect_dingtalk_page(
-                &store,
-                7,
-                &source,
-                &roles,
-                &next,
-                (vec![], json!({"cursor":"page4"})),
-            )
-            .await
-            .unwrap();
-        assert_eq!(recovered["pending"], json!([]));
-        for id in ["first", "second"] {
-            assert!(store
-                .known_stand_in_message(7, "broken", &source, id)
-                .unwrap()
-                .is_some());
-        }
-        assert_eq!(
-            store.list_stand_in_work(7, Some("good")).unwrap()[0]["messageCount"],
-            2
-        );
+        assert!(store
+            .known_stand_in_message(7, "good", &source, "old-after-reconnect")
+            .unwrap()
+            .is_some());
+        });
     }
 
     #[tokio::test]
