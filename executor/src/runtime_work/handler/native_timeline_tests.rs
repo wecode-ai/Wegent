@@ -441,3 +441,60 @@ async fn native_approval_expiry_clears_only_its_waiter_and_updates_the_visible_c
     ));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn native_timeline_declined_command_supersedes_a_stale_running_overlay() {
+    let (mut handler, root) = native_handler("native-declined-command");
+    let command = json!({
+        "id":"denied-command", "type":"commandExecution", "command":"cat private.txt",
+        "cwd":"/tmp/project", "processId":null, "exitCode":null, "status":"declined"
+    });
+    fs::write(
+        root.join("thread_timeline_list.json"),
+        json!({"data":[
+        {"type":"turnStarted","position":1,"turnId":"current"},
+        {"type":"item","position":2,"turnId":"current","item":command},
+        {"type":"item","position":3,"turnId":"current","item":{
+            "id":"current-text","type":"agentMessage","phase":"final_answer","text":"Done"
+        }},
+        {"type":"turnCompleted","position":4,"turnId":"current","status":"completed"}
+    ],"nextCursor":null})
+        .to_string(),
+    )
+    .unwrap();
+    handler.begin_active_codex_transcript("task-1", "thread-1", "current");
+    let mut started = command;
+    started["status"] = json!("inProgress");
+    handler.record_active_codex_transcript_item("task-1", "current", &json!({
+        "method":"item/started", "params":{"threadId":"thread-1","turnId":"current","item":started}
+    }));
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "current",
+        &json!({
+            "method":"item/completed", "params":{"threadId":"thread-1","turnId":"current","item":{
+                "id":"review", "type":"autoApprovalReview", "name":"auto_approval_review",
+                "status":"failed", "arguments":{"type":"command"},
+                "output":{"rationale":"Private data is outside the assigned task"}
+            }}
+        }),
+    );
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    let response = read_and_stop(&mut handler).await.unwrap();
+    assert_eq!(response["running"], false);
+    for projection in ["turns", "runtimeTurns"] {
+        let command = response[projection]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+            .find(|item| item["id"] == "denied-command")
+            .unwrap();
+        assert_eq!(
+            command["block"]["status"], "error",
+            "projection: {projection}"
+        );
+        assert_eq!(command["block"]["render_payload"]["status"], "declined");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
