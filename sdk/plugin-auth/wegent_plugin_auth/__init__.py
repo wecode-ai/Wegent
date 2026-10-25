@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Dependency-free native plugin credential transport (protocol draft 1)."""
 
+# Observe transport loading before importing business-runtime dependencies.
+from .transport import _trace_stage  # isort: skip
+
 from .adapter import AccountAuthAdapter, AuthError, SourceChanged
 from .configuration import local_configuration
 from .runtime import delegate_cloud_command, run_account_command
@@ -14,3 +17,5 @@ __all__ = [
     "delegate_cloud_command",
     "run_account_command",
 ]
+
+_trace_stage("ready")

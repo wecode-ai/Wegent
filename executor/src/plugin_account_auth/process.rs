@@ -61,6 +61,7 @@ pub(super) async fn invoke(
         .port();
     let mut nonce = [0u8; 32];
     getrandom::fill(&mut nonce).map_err(|_| AuthError("plugin_auth_transport_unavailable"))?;
+    let trace = super::process_diagnostics::create_trace();
     let mut command = Command::new(interpreter);
     let local_configuration = super::local_configuration::capture(
         adapter.definition.local_environment.as_ref(),
@@ -80,6 +81,9 @@ pub(super) async fn invoke(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if let Some(trace) = &trace {
+        command.env("WEGENT_PLUGIN_AUTH_TRACE_FILE", trace.path());
+    }
     if let Some(configuration) = local_configuration {
         command.env("WEGENT_PLUGIN_AUTH_LOCAL_CONFIGURATION", configuration);
     }
@@ -209,6 +213,10 @@ pub(super) async fn invoke(
             "plugin_auth_timeout",
             &[
                 ("transport_stage", stage.to_string()),
+                (
+                    "adapter_stage",
+                    super::process_diagnostics::stage_name(trace.as_ref()).to_string(),
+                ),
                 (
                     "stdout_finished",
                     stdout_finished.load(Ordering::Relaxed).to_string(),

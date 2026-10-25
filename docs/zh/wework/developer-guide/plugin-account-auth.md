@@ -265,6 +265,14 @@ pnpm --filter wework e2e:desktop --cloud-only --segment plugin-account-auth
 
 ### 本机授权诊断流
 
+CI 通过 `WEGENT_PLUGIN_AUTH_DIAGNOSTICS=1` 启用宿主管理的临时阶段文件；调用结束后自动删除。
+原生凭据适配器发生 `plugin_auth_timeout` 时，Executor 记录宿主传输阶段与 SDK
+最后确认的阶段（`imported`、`ready`、`nonce_read`、`connected`、`nonce_sent`，尚未收到时为
+`not_observed`）。这些固定标记用于区分解释器启动、能力读取与回环握手；不会记录
+原始 stderr、能力值、凭据或配置。`imported` 与 `ready` 分别标记传输模块载入和 SDK 导入完成。
+阶段文件只写固定枚举，宿主最多读取 32 字节，忽略未知值。诊断不可用时不影响认证。
+适配器 stdout、stderr 和原有执行期限保持不变。
+
 本机授权命令可通过 stderr 输出 `WEWORK_PLUGIN_AUTH_DIAGNOSTIC:` 前缀的 JSON 行。
 Executor 在命令退出前持续读取，筛选约定字段后写入现有 `executor.log`，复用统一反馈
 导出。stdout 仍只承载命令 JSON 结果；插件不应直接写 Executor 的日志文件。
