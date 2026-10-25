@@ -3,7 +3,13 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from './executor-rpc.mjs'
-import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import {
+  ACTIVE_WORKBENCH_SELECTOR,
+  DEFAULT_STEP_TIMEOUT_MS,
+  resultDir,
+  writeFile,
+} from './shared.mjs'
+import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import {
   SEARCH_CONTRACT_CASES,
   SEARCH_CONTRACT_QUERIES,
@@ -711,9 +717,24 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
   const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
   const latest = `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 1}`
+  assert.ok(address.threadId, 'Native history requires a resolved thread identity')
+  const settledPane = async () =>
+    (
+      await waitForWorkbenchDebugState(
+        control,
+        ({ pane }) =>
+          pane?.currentRuntimeTask?.taskId === address.taskId &&
+          pane.currentRuntimeTask.threadId === address.threadId &&
+          pane.transcript.loading === false &&
+          pane.transcript.loadingMoreBefore === false,
+        'The native history thread did not finish loading',
+        timeoutMs
+      )
+    ).pane
   await control.command('waitFor', loadOlder, { timeoutMs })
   await control.command('waitFor', ANSWERS, { text: latest })
-  const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  // Seeded content can stay visible while the resolved thread identity triggers a reload.
+  const original = await settledPane()
   await assertAsyncHistoryUnloaded(control)
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|TERMINAL_ERROR_BODY/)
   for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
@@ -746,11 +767,25 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
   )
   await control.command('nativePress', FIND, { key: 'Escape' })
   await control.command('waitFor', ANSWERS, { text: latest })
-  const restored = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+  const restored = await settledPane()
+  await writeFile(
+    join(resultDir, 'native-history-search-restore.json'),
+    JSON.stringify({
+      taskId: address.taskId,
+      threadId: address.threadId,
+      original: { transcript: original.transcript, messageSummary: original.messageSummary },
+      restored: { transcript: restored.transcript, messageSummary: restored.messageSummary },
+    })
+  )
   for (const field of ['loading', 'hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {
-    assert.deepEqual(restored.transcript[field], original.transcript[field])
+    assert.deepEqual(
+      restored.transcript[field],
+      original.transcript[field],
+      `Search changed original native pagination: ${field}`
+    )
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary)
+  assert.equal(Number(await control.command('getElementCount', FIND)), 0)
   assert.equal(Number(await control.command('getElementCount', loadNewer)), 0)
   await assertAsyncHistoryUnloaded(control)
 }
