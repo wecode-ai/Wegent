@@ -5,6 +5,7 @@ import {
 
 import { tmpdir } from 'node:os'
 import { waitForProcessExit } from '../process-lifecycle.mjs'
+import { installSocketDiagnostics } from '../socket-diagnostics.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1085,6 +1086,7 @@ async function writeLocalHarnessDiagnostics(control, resultDir) {
 }
 
 async function main() {
+  installSocketDiagnostics()
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
