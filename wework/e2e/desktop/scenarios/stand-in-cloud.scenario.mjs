@@ -251,6 +251,9 @@ export function createDesktopScenario({
           `[data-testid="stand-in-agent"] option[value=${JSON.stringify(agentValue)}]`
         )
         await control.command('select', '[data-testid="stand-in-agent"]', { value: agentValue })
+        await control.command('waitFor', '[data-testid="stand-in-project-agent-scope"]', {
+          text: project.name,
+        })
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')

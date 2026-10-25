@@ -63,6 +63,33 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('uses the project store in both project-agent scope labels', async () => {
+    const role = newStandInRole('mac', 'review')
+    role.agentId = 'reviewer'
+    role.agentProject = { id: 'one', store: 'cloud' }
+    role.collaboration = {
+      ...role.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [role.agentProject],
+    }
+    const { props } = fixture({ roles: [role] })
+    props.projects.push({
+      id: 'one',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    expect(await screen.findByTestId('stand-in-project-agent-scope')).toHaveTextContent(
+      'Cloud project'
+    )
+    await user.click(screen.getByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-connection-project-cloud-one'))
+    expect(screen.getByTestId('stand-in-connections')).toHaveTextContent('Cloud project')
+    expect(screen.getByTestId('stand-in-connections')).not.toHaveTextContent('First project')
+  })
+
   it('keeps project names visible on another device without offering local projects to connect', async () => {
     const role = newStandInRole('remote', 'review')
     role.collaboration = {
