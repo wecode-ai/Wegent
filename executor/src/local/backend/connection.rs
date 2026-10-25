@@ -85,6 +85,9 @@ where
     }
 
     pub async fn connect_and_register(&self) -> Result<(), String> {
+        if let Ok(mut route_id) = self.device_route_id.lock() {
+            *route_id = None;
+        }
         let epoch = *self.connection_epoch.lock().expect("connection epoch lock");
         self.client.connect().await?;
         match self
@@ -93,13 +96,6 @@ where
             .await
         {
             Ok(Some(route_id)) => {
-                if let Ok(mut slot) = self.device_route_id.lock() {
-                    *slot = if route_id.is_empty() {
-                        None
-                    } else {
-                        Some(route_id)
-                    };
-                }
                 if let Err(error) = self.client.emit_liveness_heartbeat().await {
                     let _ = self.client.disconnect().await;
                     return Err(error);
@@ -110,7 +106,7 @@ where
                         .expect("session handler lock")
                         .prepare_terminal_reconnect();
                 }
-                if let Err(error) = self.publish_registered_connection(epoch) {
+                if let Err(error) = self.publish_registered_connection(epoch, route_id) {
                     let _ = self.client.disconnect().await;
                     return Err(error);
                 }
@@ -129,10 +125,17 @@ where
     }
 
     /// Publish readiness atomically with respect to connection-close notifications.
-    fn publish_registered_connection(&self, registered_epoch: u64) -> Result<(), String> {
+    fn publish_registered_connection(
+        &self,
+        registered_epoch: u64,
+        route_id: String,
+    ) -> Result<(), String> {
         let epoch = self.connection_epoch.lock().expect("connection epoch lock");
         if *epoch != registered_epoch {
             return Err("local backend connection closed during registration".to_owned());
+        }
+        if let Ok(mut slot) = self.device_route_id.lock() {
+            *slot = (!route_id.is_empty()).then_some(route_id);
         }
         self.connection_status.store(true, Ordering::Release);
         Ok(())

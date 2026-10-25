@@ -249,7 +249,7 @@ async def test_single_plugin_ack_preserves_unrelated_removal_queue(
     dispatch = AsyncMock(return_value=response)
     monkeypatch.setattr(
         plugin_device_sync.device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         dispatch,
     )
 
@@ -333,7 +333,7 @@ async def test_current_device_snapshot_coordination_failure_is_deferred_once(
     monkeypatch.setattr(plugin_device_sync, "run_plugin_operation", operation)
     monkeypatch.setattr(
         plugin_device_sync.device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         dispatch,
     )
 

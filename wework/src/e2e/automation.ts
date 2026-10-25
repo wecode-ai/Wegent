@@ -3222,9 +3222,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         getKnownLocalExecutorDeviceId,
         getKnownLocalExecutorDeviceRouteId,
       } = await import('@/desktop/localExecutor')
-      const status = await ensureLocalExecutorAvailable({ refresh: true })
+      const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
+      const status = await ensureLocalExecutorAvailable()
       return JSON.stringify({
         status,
+        description: await describeDshExecutor(),
         deviceId: getKnownLocalExecutorDeviceId(),
         deviceRouteId: getKnownLocalExecutorDeviceRouteId(),
       })

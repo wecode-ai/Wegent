@@ -413,9 +413,11 @@ async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailab
 async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat() {
     let transport = RuntimeWorkPollTransport::default();
     let connection_status = Arc::new(AtomicBool::new(true));
+    let route_slot = Arc::new(TestMutex::new(Some("app-record-42".to_owned())));
     let runner =
         LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
-            .with_connection_status(Arc::clone(&connection_status));
+            .with_connection_status(Arc::clone(&connection_status))
+            .with_device_route_id_slot(Arc::clone(&route_slot));
     runner.register_handlers();
     let on_close = transport
         .close_handler
@@ -427,6 +429,7 @@ async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat()
     on_close();
 
     assert!(!connection_status.load(Ordering::Acquire));
+    assert!(route_slot.lock().unwrap().is_none());
     let stable_connection =
         tokio::time::timeout(Duration::from_secs(1), runner.heartbeat_until_reconnect())
             .await
@@ -438,22 +441,41 @@ async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat()
 #[tokio::test]
 async fn socket_close_during_registration_cannot_publish_ready_status() {
     let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() =
+        Some(json!({"success": true, "device_route_id": "app-record-42"}));
     transport
         .close_during_registration
         .store(true, AtomicOrdering::Release);
     let connection_status = Arc::new(AtomicBool::new(false));
+    let route_slot = Arc::new(TestMutex::new(None));
     let runner =
         LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
-            .with_connection_status(Arc::clone(&connection_status));
+            .with_connection_status(Arc::clone(&connection_status))
+            .with_device_route_id_slot(Arc::clone(&route_slot));
     runner.register_handlers();
 
     let result = runner.connect_and_register().await;
 
     assert!(result.is_err(), "a closed registration cannot become ready");
     assert!(!connection_status.load(Ordering::Acquire));
+    assert!(route_slot.lock().unwrap().is_none());
 
     runner.connect_and_register().await.unwrap();
     assert!(connection_status.load(Ordering::Acquire));
+    assert_eq!(route_slot.lock().unwrap().as_deref(), Some("app-record-42"));
+}
+
+#[tokio::test]
+async fn rejected_registration_clears_the_previous_plugin_route() {
+    let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() = Some(json!({"success": false}));
+    let route_slot = Arc::new(TestMutex::new(Some("app-record-41".to_owned())));
+    let runner = LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
+        .with_device_route_id_slot(Arc::clone(&route_slot));
+    runner.register_handlers();
+
+    assert!(runner.connect_and_register().await.is_err());
+    assert!(route_slot.lock().unwrap().is_none());
 }
 
 #[test]

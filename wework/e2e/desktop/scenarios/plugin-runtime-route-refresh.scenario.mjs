@@ -60,8 +60,8 @@ export async function createDesktopScenario({
     const before = await identity(control)
     const original = appRecord(await cloud.devices(), before.status)
     assert.ok(original, 'The initial real IPC identity has no online App registration')
-    assert.equal(before.deviceRouteId, original.execution_target_id)
-    assert.equal(before.deviceId, original.execution_target_id)
+    assert.equal(before.description.device_route_id, original.execution_target_id)
+    assert.equal(before.deviceId, before.status.deviceId)
     assert.notEqual(before.status.deviceId, original.device_id)
 
     await cloud.startDuplicateAppDeviceIdentity()
@@ -110,19 +110,18 @@ export async function createDesktopScenario({
     assert.notEqual(current.id, original.id)
     assert.notEqual(current.execution_target_id, original.execution_target_id)
     assert.notEqual(current.execution_target_id, duplicate.execution_target_id)
-    // The server publishes online state before the registration ACK reaches
-    // the real IPC description. Wait for that observed ACK-derived route.
+    // Observe the ACK through raw IPC without changing the renderer cache.
+    // Normal device-event refreshes may already have updated the cached route.
     const refreshed = await until(
       () => identity(control),
-      value => value.status.deviceRouteId === current.execution_target_id,
+      value => value.description.device_route_id === current.execution_target_id,
       'The new registration route did not reach the real Executor IPC description',
       workbenchReadyTimeoutMs
     )
     assert.equal(refreshed.status.runtimeInstanceId, before.status.runtimeInstanceId)
     assert.equal(refreshed.status.deviceId, before.status.deviceId)
-    assert.equal(refreshed.status.deviceRouteId, current.execution_target_id)
-    assert.equal(refreshed.deviceRouteId, current.execution_target_id)
-    assert.equal(refreshed.deviceId, current.execution_target_id)
+    assert.equal(refreshed.description.device_id, before.status.deviceId)
+    assert.equal(refreshed.deviceId, before.status.deviceId)
     const devices = await cloud.devices()
     assert.equal(
       devices.find(device => device.id === original.id)?.runtime_instance_id,
@@ -141,7 +140,7 @@ export async function createDesktopScenario({
     return { current, stableDeviceId: before.status.deviceId }
   }
 
-  async function installOnCurrentRuntime(control, current, stableDeviceId) {
+  async function prepareInstall(control) {
     const slug = 'plugin-runtime-route-refresh'
     const release = await cloud.publishPluginRelease({
       slug,
@@ -152,12 +151,14 @@ export async function createDesktopScenario({
     await openPlugin(control, fixture)
     await refreshPluginInventory(control, workbenchReadyTimeoutMs)
     await control.command('waitFor', testId(`plugin-marketplace-install-${release.pluginId}`))
+    return fixture
+  }
+
+  async function installOnCurrentRuntime(control, current, stableDeviceId, fixture) {
+    const { slug, pluginId } = fixture
     const writeStart = transport.writes.length
     const capabilityStart = transport.capabilities.length
-    await control.command(
-      'clickWhenEnabled',
-      testId(`plugin-marketplace-install-${release.pluginId}`)
-    )
+    await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${pluginId}`))
     await control.command('waitFor', testId('install-plugin-dialog-confirm'))
     await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
     const installed = await until(
@@ -182,7 +183,7 @@ export async function createDesktopScenario({
       .filter(
         request =>
           request.method === 'POST' &&
-          request.path === `/api/plugins/marketplace/${release.pluginId}/install`
+          request.path === `/api/plugins/marketplace/${pluginId}/install`
       )
     assert.equal(writes.length, 1, 'One UI confirmation must issue one account install')
     assert.equal(writes[0].deviceId, current.execution_target_id)
@@ -209,7 +210,10 @@ export async function createDesktopScenario({
       'The current Runtime did not acknowledge its real plugin install'
     ).then(values => values.find(acknowledgesInstall))
     assert.deepEqual(acknowledgement.pluginSync, sync[0].pluginSync)
-    await control.command('waitFor', testId(`plugin-marketplace-actions-${release.pluginId}`), {
+    const installedIdentity = await identity(control)
+    assert.equal(installedIdentity.deviceRouteId, current.execution_target_id)
+    assert.equal(installedIdentity.deviceId, stableDeviceId)
+    await control.command('waitFor', testId(`plugin-marketplace-actions-${pluginId}`), {
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', testId('new-chat-button'))
@@ -237,6 +241,7 @@ export async function createDesktopScenario({
       sync,
       acknowledgement,
       inventory: state,
+      installedIdentity,
     })
   }
 
@@ -263,8 +268,9 @@ export async function createDesktopScenario({
       try {
         await cloud.waitForConnectedAppDevice()
         await createSingleRootLocalProject(control, workspacePath, 'plugin-route-refresh-workspace')
+        const fixture = await prepareInstall(control)
         const { current, stableDeviceId } = await refreshRoute(control)
-        await installOnCurrentRuntime(control, current, stableDeviceId)
+        await installOnCurrentRuntime(control, current, stableDeviceId, fixture)
         await captureScreenshot(control, 'plugin-runtime-route-refresh.png', 'body')
       } finally {
         appProxy.disconnectWebSockets(false)

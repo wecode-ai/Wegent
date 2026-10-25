@@ -208,7 +208,7 @@ def test_runtime_state_write_preserves_account_when_current_device_sync_fails(
     failed_sync = AsyncMock(side_effect=failure)
     monkeypatch.setattr(
         plugin_device_sync.device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         failed_sync,
     )
 
@@ -243,3 +243,98 @@ def test_repeated_install_still_skips_current_device_when_same_release_is_instal
     context.run_background()
     assert [device_id for device_id, _ in calls] == [OTHER_DEVICE_ID]
     assert inventory[DEVICE_ID] == before
+
+
+@pytest.mark.parametrize(
+    "preference",
+    [
+        {"enabled": False},
+        {"componentStates": {"review": False}},
+        {"updatePolicy": "manual"},
+    ],
+)
+def test_repeated_install_preserves_existing_preferences(
+    runtime_state_sync, preference
+):
+    context, calls, inventory = runtime_state_sync
+    updated = context.client.put(
+        f"/plugins/installed/{context.installed_id}",
+        params={"device_id": DEVICE_ID},
+        json=preference,
+    )
+    assert updated.status_code == 200, updated.text
+    context.run_background()
+    before = deepcopy(inventory[DEVICE_ID])
+    calls.clear()
+
+    response = context.write("marketplace")
+
+    assert response.status_code == 200, response.text
+    installed = response.json()["plugin"]
+    assert int(installed["metadata"]["labels"]["id"]) == context.installed_id
+    for key, value in preference.items():
+        assert installed["spec"][key] == value
+    assert calls == []
+    assert inventory[DEVICE_ID] == before
+    context.run_background()
+    assert inventory[DEVICE_ID] == before
+
+
+def test_failed_plugin_ack_records_failure_after_account_release_commit(
+    runtime_state_sync, monkeypatch
+):
+    context, _calls, inventory = runtime_state_sync
+    before = deepcopy(inventory[DEVICE_ID])
+
+    async def reject_package(*, device_id, payload, **_kwargs):
+        plugin = payload["plugins"][0]
+        return DeviceCapabilitySyncResult(
+            device_id=device_id,
+            success=False,
+            acknowledged=True,
+            scope="plugin_delta",
+            desired_plugin_snapshot=deepcopy(payload),
+            plugin_sync=payload["plugin_sync"],
+            error="Download checksum mismatch",
+            plugins=[
+                {
+                    "id": plugin["installed_plugin_id"],
+                    "status": "failed",
+                    "operation": "upsert",
+                    "generation": payload["plugin_sync"]["generation"],
+                    "error_code": "CHECKSUM_MISMATCH",
+                    "error": "Download checksum mismatch",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(
+        plugin_device_sync.device_capability_sync_service,
+        "sync_device_payload",
+        AsyncMock(side_effect=reject_package),
+    )
+
+    response = context.client.put(
+        f"/plugins/installed/{context.installed_id}",
+        params={"device_id": DEVICE_ID},
+        json={"releaseId": context.upgraded_release_id},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["spec"]["releaseId"] == context.upgraded_release_id
+    assert inventory[DEVICE_ID] == before
+    with context.sessions() as db:
+        installed = db.get(Kind, context.installed_id)
+        assert installed.json["spec"]["releaseId"] == context.upgraded_release_id
+        row = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(installed_kind_id=context.installed_id, device_id=DEVICE_ID)
+            .one()
+        )
+        assert row.state == "failed"
+        assert row.attempt_count == 1
+        assert row.error_code == "CHECKSUM_MISMATCH"
+        assert row.error_message == "Download checksum mismatch"
+        assert row.actual_release_id == context.release_id
+        assert row.desired_release_id == context.upgraded_release_id
+    context.run_background()

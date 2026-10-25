@@ -1921,11 +1921,9 @@ export function PluginsWorkspace({
     if (!connected) return { connected: false, deviceId: '' }
 
     try {
-      // Registration can finish after the cached description. Read its stable
-      // identity; the plugin API owns the record address used for cloud requests.
-      const executor = await ensureLocalExecutorAvailable({
-        refresh: !getKnownLocalExecutorDeviceRouteId(),
-      })
+      // Registration can replace a cached record route after reconnecting.
+      // Refresh at the plugin operation boundary; retain stable inventory identity.
+      const executor = await ensureLocalExecutorAvailable({ refresh: true })
       return {
         connected: true,
         deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),

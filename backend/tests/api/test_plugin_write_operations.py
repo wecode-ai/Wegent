@@ -276,6 +276,9 @@ def plugin_requests(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(sync_service, "sync_installed_plugin_to_device", plugin_sync)
+    monkeypatch.setattr(
+        sync_service, "sync_installed_plugin_to_device_result", plugin_sync
+    )
     monkeypatch.setattr(sync_service, "sync_plugin_change", changed_sync)
     monkeypatch.setattr(sync_service, "sync_current_device_capabilities", current_sync)
     monkeypatch.setattr(
@@ -293,6 +296,7 @@ def plugin_requests(tmp_path, monkeypatch):
     app.include_router(endpoints.router, prefix="/plugins")
     app.dependency_overrides[get_db] = request_db
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[endpoints._get_plugin_sync_user] = lambda: user
     try:
         with TestClient(app) as client:
             yield PluginRequests(
@@ -558,6 +562,11 @@ def test_snapshot_coordination_failure_preserves_commit_without_retrying_device(
     deferred = Mock(wraps=plugin_device_sync.deferred_plugin_sync)
     monkeypatch.setattr(
         "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices",
+        snapshot,
+    )
+    monkeypatch.setattr(
+        endpoints.device_capability_sync_service,
+        "sync_installed_plugin_to_device_result",
         snapshot,
     )
     monkeypatch.setattr(

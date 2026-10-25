@@ -16,6 +16,7 @@ from app.services.device.capability_sync_service import (
     device_capability_sync_service,
 )
 from app.services.device.plugin_change_sync import schedule_other_devices
+from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device_service import device_service
 from app.services.plugin_device_identity import plugin_device_id, plugin_device_rows
 from app.services.plugin_device_installation_service import (
@@ -162,21 +163,33 @@ async def sync_plugin_to_other_devices_after_change(
                 if current_device_id
                 else None
             )
-            targets = list(
-                dict.fromkeys(
-                    plugin_device_id(db, user_id, target)
-                    for device in devices
-                    if (
-                        target := device_capability_sync_service._extract_device_id(
-                            device
-                        )
-                    )
+            current_route = (
+                resolve_runtime_route_identity(
+                    db, user_id=user_id, submitted_device_id=current_device_id
                 )
+                if current_device_id
+                else None
             )
+            excluded = {current, current_device_id}
+            if current_route:
+                excluded.add(current_route.runtime_device_id)
+            targets = []
+            for device in devices:
+                target = device_capability_sync_service._extract_device_id(device)
+                if not target or target in excluded:
+                    continue
+                route = resolve_runtime_route_identity(
+                    db, user_id=user_id, submitted_device_id=target
+                )
+                if route and route.runtime_device_id in excluded:
+                    continue
+                target = plugin_device_id(db, user_id, target)
+                if target not in excluded and target not in targets:
+                    targets.append(target)
         schedule_other_devices(
             device_capability_sync_service,
             user_id=user_id,
-            device_ids=[target for target in targets if target != current],
+            device_ids=targets,
             installed_plugin_ids=[installed_plugin_id],
         )
     except Exception:
@@ -272,7 +285,7 @@ async def sync_installed_plugin_on_device(
         return previous
     try:
         merge_sync = (
-            await device_capability_sync_service.sync_installed_plugin_to_device(
+            await device_capability_sync_service.sync_installed_plugin_to_device_result(
                 db,
                 user_id=user_id,
                 device_id=device_id,

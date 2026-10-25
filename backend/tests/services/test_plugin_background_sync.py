@@ -86,6 +86,59 @@ async def test_background_excludes_current_app_aliases_and_deduplicates_other_ap
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("current_alias", ["cloud-current", "cloud-socket-current"])
+async def test_background_excludes_current_cloud_connection_alias(
+    test_db, test_user, monkeypatch, current_alias
+):
+    devices = [
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name=f"cloud-{name}",
+            is_active=True,
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": f"cloud-socket-{name}"},
+                }
+            },
+        )
+        for name in ("current", "other")
+    ]
+    test_db.add_all(devices)
+    test_db.commit()
+    monkeypatch.setattr(
+        plugin_device_sync, "get_db_session", plugin_write_operations.get_db_session
+    )
+    monkeypatch.setattr(
+        plugin_device_sync.device_service,
+        "get_online_devices",
+        AsyncMock(
+            return_value=[
+                {"device_id": "cloud-current"},
+                {"device_id": "cloud-socket-current"},
+                {"device_id": "cloud-other"},
+                {"device_id": "cloud-other"},
+            ]
+        ),
+    )
+    schedule = Mock()
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", schedule)
+
+    await plugin_device_sync.sync_plugin_to_other_devices_after_change(
+        test_user.id, 17, current_alias
+    )
+
+    schedule.assert_called_once_with(
+        plugin_device_sync.device_capability_sync_service,
+        user_id=test_user.id,
+        device_ids=["cloud-other"],
+        installed_plugin_ids=[17],
+    )
+
+
+@pytest.mark.asyncio
 async def test_background_dispatch_preserves_unrelated_inventory_and_generation(
     test_db, test_user, monkeypatch
 ):

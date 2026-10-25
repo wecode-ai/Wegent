@@ -489,7 +489,11 @@ class PluginMarketplaceService:
                 )
         release = self._installable_release(db, plugin, None)
         installed = existing
-        payload = self._installed_payload(plugin, release)
+        payload = (
+            self._installed_release_payload(installed, plugin=plugin, release=release)
+            if installed and installed.is_active
+            else self._installed_payload(plugin, release)
+        )
         if installed:
             replace_installed_kind(db, installed, payload, is_active=True)
         else:

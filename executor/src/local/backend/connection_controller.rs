@@ -140,7 +140,9 @@ impl LocalBackendConnectionController {
 
         if let Some(task) = state.task.take() {
             self.connection_status.store(false, Ordering::Release);
+            // Stop the old route producer before clearing the shared slot.
             task.abort();
+            let _ = task.await;
         }
         if let Some(transport) = state.transport.take() {
             if let Err(error) = transport.disconnect().await {
@@ -149,6 +151,9 @@ impl LocalBackendConnectionController {
                     &[("error", error)],
                 ));
             }
+        }
+        if let Ok(mut route_id) = self.device_route_id.lock() {
+            *route_id = None;
         }
 
         if let Some(profile) = &profile {
@@ -507,6 +512,46 @@ mod tests {
             .expect("backend status should be available");
         assert_eq!(status["configured"], true);
         assert_eq!(status["connected"], false);
+    }
+
+    #[tokio::test]
+    async fn changing_backend_profile_invalidates_the_previous_plugin_route() {
+        let controller = LocalBackendConnectionController::start(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: "http://127.0.0.1:9".to_owned(),
+                auth_token: "old-token".to_owned(),
+                ..ConnectionConfig::default()
+            },
+            ..DeviceConfig::default()
+        })
+        .await;
+        *controller.device_route_id.lock().unwrap() = Some("app-record-42".to_owned());
+        let unchanged = controller
+            .configure_backend(json!({
+                "backend_url": "http://127.0.0.1:9",
+                "auth_token": "old-token",
+            }))
+            .await
+            .unwrap();
+        assert_eq!(unchanged["changed"], false);
+        assert_eq!(
+            controller.device_route_id.lock().unwrap().as_deref(),
+            Some("app-record-42")
+        );
+
+        let changed = controller
+            .configure_backend(json!({
+                "backend_url": "http://127.0.0.1:9",
+                "auth_token": "new-token",
+            }))
+            .await
+            .unwrap();
+        assert_eq!(changed["changed"], true);
+        assert!(controller.device_route_id.lock().unwrap().is_none());
+
+        *controller.device_route_id.lock().unwrap() = Some("app-record-71".to_owned());
+        controller.configure_backend(json!({})).await.unwrap();
+        assert!(controller.device_route_id.lock().unwrap().is_none());
     }
 
     #[tokio::test]

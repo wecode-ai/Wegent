@@ -927,7 +927,14 @@ async def test_legacy_builtin_sync_failure_preserves_operation_error_policy(
     )
     dispatch = AsyncMock(side_effect=sync_error)
     monkeypatch.setattr(
-        "app.services.plugin_device_sync.device_capability_sync_service.sync_installed_plugin_to_device",
+        (
+            "app.services.plugin_device_sync.device_capability_sync_service."
+            + (
+                "sync_installed_plugin_to_device_result"
+                if operation == "update"
+                else "sync_installed_plugin_to_device"
+            )
+        ),
         dispatch,
     )
     background = BackgroundTasks()

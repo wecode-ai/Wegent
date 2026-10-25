@@ -986,6 +986,8 @@ def test_marketplace_release_update_and_reinstall_advance_revision(test_db, test
     assert int(reinstalled.metadata["labels"]["id"]) == installed.id
     assert installed.json["spec"]["revision"] == 4
     assert installed.is_active is True
+    assert reinstalled.spec.enabled is True
+    assert reinstalled.spec.componentStates == {}
 
 
 def test_manual_release_update_preserves_manual_policy(test_db, test_user):
@@ -3024,7 +3026,7 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
     mock_plugin_change_sync(monkeypatch, sync_global)
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         sync_plugin,
     )
 
@@ -3111,7 +3113,7 @@ async def test_install_returns_plugin_when_device_sync_fails(
     mock_plugin_change_sync(monkeypatch, sync)
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         merge_sync,
     )
     monkeypatch.setattr(
@@ -3178,7 +3180,7 @@ async def test_release_update_syncs_current_device_before_background_convergence
     )
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         sync_current,
     )
     monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", sync_others)

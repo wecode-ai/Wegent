@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
+from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.config import settings
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.models.subtask import SubtaskStatus
@@ -58,6 +59,7 @@ from app.services.auth.task_token import TaskTokenInfo, verify_task_token
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.plugin_reconciliation import reconcile_device_plugins
 from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
+from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
@@ -175,12 +177,30 @@ def _ensure_submission_matches_task_token(
     )
 
 
+def _get_plugin_sync_user(
+    reconcile: bool = False,
+    token: str = Depends(security.oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Allow personal device credentials only for plugin-only reconciliation."""
+    if reconcile and is_api_key(token):
+        user = verify_api_key(db, token, update_last_used_at=False)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+    return security.get_current_user(token=token, db=db)
+
+
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
     reconcile: bool = False,
     db: Session = Depends(get_plugin_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_plugin_sync_user),
 ) -> PluginDeviceSyncResponse:
     """Push account desired plugins to one device and refresh device rows."""
     normalized_device_id = device_id.strip()
@@ -189,6 +209,13 @@ async def sync_installed_plugins_to_device(
     user_id = current_user.id
 
     if reconcile:
+        if (
+            resolve_runtime_route_identity(
+                db, user_id=user_id, submitted_device_id=normalized_device_id
+            )
+            is None
+        ):
+            raise HTTPException(status_code=404, detail="Device not found")
         db.close()
         return await reconcile_device_plugins(user_id, normalized_device_id)
 
