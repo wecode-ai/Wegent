@@ -15,7 +15,7 @@ function run(script) {
       '--input-type=module',
       '-e',
       `import { installSocketDiagnostics } from ${JSON.stringify(diagnosticsUrl)}
-       installSocketDiagnostics()
+       const setSocketDiagnosticPhase = installSocketDiagnostics()
        ${script}`,
     ],
     { encoding: 'utf8', timeout: 5000 }
@@ -82,4 +82,33 @@ test('leaves handled socket errors with their existing owner', () => {
   `)
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stderr, '')
+})
+
+test('retains server ownership and ports when an error follows socket closure', () => {
+  const result = run(`
+    import { createServer, connect } from 'node:net'
+    const server = createServer(socket => {
+      socket.once('close', () => {
+        server.close()
+        setSocketDiagnosticPhase('teardown:desktop application')
+        socket.emit('error', Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+      })
+      socket.destroy()
+    })
+    server.listen(0, '127.0.0.1', () => {
+      connect(server.address().port, '127.0.0.1').on('error', () => {})
+    })
+  `)
+  assert.equal(result.status, 1, result.stderr)
+  const line = result.stderr
+    .split('\n')
+    .find(value => value.startsWith('[desktop-e2e] Unhandled socket error '))
+  assert.ok(line, result.stderr)
+  const record = JSON.parse(line.slice('[desktop-e2e] Unhandled socket error '.length))
+  assert.equal(record.owner, 'net.server')
+  assert.equal(typeof record.localPort, 'number')
+  assert.equal(typeof record.remotePort, 'number')
+  assert.match(record.serverListenStack, /\[eval1\]/)
+  assert.equal(record.phase, 'teardown:desktop application')
+  assert.match(result.stderr, /Unhandled 'error' event/)
 })

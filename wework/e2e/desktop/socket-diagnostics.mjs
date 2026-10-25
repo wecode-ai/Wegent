@@ -6,6 +6,8 @@ import { writeSync } from 'node:fs'
 // terminate the checkpoint, including failures after its business assertions.
 export function installSocketDiagnostics() {
   const sockets = new WeakMap()
+  const servers = new WeakMap()
+  let phase = 'setup'
   const observe = (socket, owner) => {
     if (!socket) return
     const existing = sockets.get(socket)
@@ -14,6 +16,12 @@ export function installSocketDiagnostics() {
       return
     }
     const metadata = { ...owner, createdAt: new Error().stack }
+    const captureEndpoints = () => {
+      metadata.localPort = socket.localPort ?? null
+      metadata.remotePort = socket.remotePort ?? null
+    }
+    captureEndpoints()
+    socket.on('connect', captureEndpoints)
     sockets.set(socket, metadata)
     socket.on(errorMonitor, error => {
       if (socket.listenerCount('error') > 0) return
@@ -21,9 +29,8 @@ export function installSocketDiagnostics() {
         ...metadata,
         code: error.code ?? null,
         syscall: error.syscall ?? null,
-        localPort: socket.localPort ?? null,
-        remotePort: socket.remotePort ?? null,
         readyState: socket.readyState,
+        phase,
       }
       try {
         writeSync(2, `[desktop-e2e] Unhandled socket error ${JSON.stringify(record)}\n`)
@@ -37,6 +44,17 @@ export function installSocketDiagnostics() {
   }
   subscribe('net.client.socket', ({ socket }) => observe(socket, { owner: 'net.client' }))
   subscribe('net.server.socket', ({ socket }) => observe(socket, { owner: 'net.server' }))
+  subscribe('tracing:net.server.listen:asyncStart', ({ server }) => {
+    let metadata = servers.get(server)
+    if (!metadata) {
+      metadata = {}
+      servers.set(server, metadata)
+      server.prependListener('connection', socket => {
+        observe(socket, { owner: 'net.server', ...metadata })
+      })
+    }
+    metadata.serverListenStack = new Error().stack
+  })
   subscribe('child_process', ({ process: child }) => {
     child.once('spawn', () => {
       for (const [index, stream] of (child.stdio ?? []).entries()) {
@@ -44,4 +62,7 @@ export function installSocketDiagnostics() {
       }
     })
   })
+  return nextPhase => {
+    phase = nextPhase
+  }
 }

@@ -1086,7 +1086,7 @@ async function writeLocalHarnessDiagnostics(control, resultDir) {
 }
 
 async function main() {
-  installSocketDiagnostics()
+  const setSocketDiagnosticPhase = installSocketDiagnostics()
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
@@ -1658,6 +1658,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      setSocketDiagnosticPhase(phase)
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)
@@ -4702,6 +4703,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
   } finally {
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
+      setSocketDiagnosticPhase(`teardown:${label}`)
       try {
         await action()
       } catch (error) {
