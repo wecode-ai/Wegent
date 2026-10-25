@@ -413,11 +413,11 @@ async fn runtime_transcript_accumulates_codex_file_changes_and_uses_move_target_
     assert_eq!(deleted_script["deletions"], 3);
     let turn_page_calls = read_json_lines(&log_path)
         .into_iter()
-        .filter(|call| call["method"] == "thread/turns/list")
+        .filter(|call| call["method"] == "thread/timeline/list")
         .collect::<Vec<_>>();
     assert_eq!(turn_page_calls.len(), 2);
     assert_eq!(turn_page_calls[0]["params"]["cursor"], Value::Null);
-    assert_eq!(turn_page_calls[1]["params"]["cursor"], "turn-page-1");
+    assert_eq!(turn_page_calls[1]["params"]["cursor"], "timeline-page-1");
 }
 
 fn write_fake_interrupted_commentary_codex(log_path: &Path) -> PathBuf {
@@ -504,7 +504,8 @@ fn write_fake_file_change_codex(log_path: &Path) -> PathBuf {
             "status": "idle",
             "turns": [{
                 "id": "turn-file-change",
-                "createdAt": 1780000000,
+                "status": "completed",
+                "startedAt": 1780000000,
                 "items": [
                     {
                         "id": "user-1",
@@ -554,7 +555,8 @@ fn write_fake_codex(log_path: &Path) -> PathBuf {
             "status": "idle",
             "turns": [{
                 "id": "turn-1",
-                "createdAt": 1780000000,
+                "status": "completed",
+                "startedAt": 1780000000,
                 "items": [
                     {
                         "id": "user-1",
@@ -606,7 +608,8 @@ fn write_fake_multi_patch_codex(log_path: &Path) -> PathBuf {
             "status": "idle",
             "turns": [{
                 "id": "turn-merged",
-                "createdAt": 1780000000_i64,
+                "status": "completed",
+                "startedAt": 1780000000_i64,
                 "items": [
                     {
                         "id": "user-1",
@@ -657,12 +660,14 @@ fn write_fake_accumulated_file_changes_codex(log_path: &Path) -> PathBuf {
             "turns": [
                 {
                     "id": "turn-empty",
-                    "createdAt": 1779999990_i64,
+                    "status": "completed",
+                    "startedAt": 1779999990_i64,
                     "items": [],
                 },
                 {
                     "id": "turn-accumulated",
-                    "createdAt": 1780000000_i64,
+                    "status": "completed",
+                    "startedAt": 1780000000_i64,
                     "items": [
                         {
                             "id": "user-1",
@@ -783,7 +788,7 @@ fn shell_single_quote(value: &str) -> String {
 }
 
 fn write_fake_rich_codex(log_path: &Path) -> PathBuf {
-    write_fake_transcript_codex(
+    write_fake_legacy_transcript_codex(
         "fake-codex-rich-transcript",
         log_path,
         json!({
@@ -868,7 +873,8 @@ fn write_fake_web_search_codex(log_path: &Path) -> PathBuf {
                 "status": "idle",
                 "turns": [{
                     "id": "turn-web-search",
-                    "createdAt": 1780000000_i64,
+                    "status": "completed",
+                    "startedAt": 1780000000_i64,
                     "items": [
                         {
                             "id": "user-1",
@@ -915,6 +921,29 @@ fn write_fake_web_search_codex(log_path: &Path) -> PathBuf {
     )
 }
 
+fn write_fake_legacy_transcript_codex(prefix: &str, log_path: &Path, thread: Value) -> PathBuf {
+    let path = temp_path(prefix, "sh");
+    let read_response = json!({"id":"__REQUEST_ID__","result":{"thread":thread}});
+    let turns = thread["turns"].as_array().unwrap();
+    fs::write(
+        &path,
+        fake_transcript_codex_script(
+            log_path,
+            &read_response,
+            &fake_turn_page_response_cases(turns),
+            "",
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn write_fake_transcript_codex(prefix: &str, log_path: &Path, mut thread: Value) -> PathBuf {
     let path = temp_path(prefix, "sh");
     let _ = fs::remove_file(log_path);
@@ -940,114 +969,83 @@ fn write_fake_transcript_codex(prefix: &str, log_path: &Path, mut thread: Value)
 }
 
 fn take_fake_transcript_turns(thread: &mut Value) -> (Vec<Value>, String) {
-    let turns = thread
-        .as_object_mut()
-        .and_then(|object| object.remove("turns"))
-        .unwrap_or_else(|| json!([]));
-    let mut turns = turns
-        .as_array()
-        .cloned()
-        .expect("fake transcript turns should be an array");
-    let item_response_cases = turns
-        .iter_mut()
-        .map(fake_item_response_case)
+    let mut turns = thread["turns"].as_array().cloned().unwrap_or_default();
+    let mut pages = Vec::new();
+    let mut position = 0;
+    for turn in &mut turns {
+        let items = turn
+            .as_object_mut()
+            .unwrap()
+            .remove("items")
+            .unwrap_or_else(|| json!([]));
+        let status = turn["status"]
+            .as_str()
+            .expect("native transcript fixture must declare its turn status");
+        let mut entries = vec![json!({
+            "type": "turnStarted",
+            "turnId": turn["id"],
+            "position": position,
+            "startedAt": turn["startedAt"],
+        })];
+        position += 1;
+        for item in items.as_array().into_iter().flatten() {
+            entries
+                .push(json!({"type":"item","turnId":turn["id"],"position":position,"item":item}));
+            position += 1;
+        }
+        entries.push(json!({
+            "type": "turnCompleted",
+            "turnId": turn["id"],
+            "position": position,
+            "status": status,
+            "startedAt": turn["startedAt"],
+            "completedAt": turn["completedAt"],
+            "durationMs": turn["durationMs"],
+            "error": turn["error"],
+        }));
+        position += 1;
+        pages.push(entries);
+        turn["items"] = json!([]);
+        turn["itemsView"] = json!("notLoaded");
+    }
+    pages.reverse();
+    let cases = pages
+        .iter()
+        .enumerate()
+        .map(|(index, entries)| {
+            let cursor = if index == 0 {
+                Value::Null
+            } else {
+                json!(format!("timeline-page-{index}"))
+            };
+            let next = if index + 1 < pages.len() {
+                json!(format!("timeline-page-{}", index + 1))
+            } else {
+                Value::Null
+            };
+            let response =
+                json!({"id":"__REQUEST_ID__","result":{"data":entries,"nextCursor":next}});
+            format!(
+                r#"        *'"cursor":{cursor}'*)
+          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+          ;;"#,
+                shell_single_quote(&response.to_string())
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     turns.reverse();
-    (turns, item_response_cases)
-}
-
-fn fake_item_response_case(turn: &mut Value) -> String {
-    let turn_id = turn["id"]
-        .as_str()
-        .expect("fake transcript turn should have an id")
-        .to_owned();
-    let items = turn
-        .as_object_mut()
-        .and_then(|object| object.remove("items"))
-        .unwrap_or_else(|| json!([]));
-    turn["itemsView"] = json!("notLoaded");
-    let data = items
-        .as_array()
-        .expect("fake transcript items should be an array")
-        .iter()
-        .map(|item| json!({"turnId": turn_id, "item": item}))
-        .collect::<Vec<_>>();
-    let ascending_response = json!({
-        "id": "__REQUEST_ID__",
-        "result": {"data": data, "nextCursor": null},
-    });
-    let descending_response = json!({
-        "id": "__REQUEST_ID__",
-        "result": {
-            "data": data.into_iter().rev().collect::<Vec<_>>(),
-            "nextCursor": null,
-        },
-    });
-    format!(
-        r#"        *'"sortDirection":"desc"'*'"turnId":"{}"'*)
-          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
-          ;;
-        *'"turnId":"{}"'*)
-          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
-          ;;"#,
-        turn_id,
-        shell_single_quote(&descending_response.to_string()),
-        turn_id,
-        shell_single_quote(&ascending_response.to_string()),
-    )
+    (turns, cases)
 }
 
 fn fake_turn_page_response_cases(turns: &[Value]) -> String {
-    if turns.is_empty() {
-        let response = json!({
-            "id": "__REQUEST_ID__",
-            "result": {
-                "data": [],
-                "nextCursor": null,
-                "backwardsCursor": null,
-            },
-        });
-        format!(
-            r#"        *'"cursor":null'*)
+    let response = json!({"id":"__REQUEST_ID__","result":{"data":turns,"nextCursor":null}});
+    format!(
+        r#"        *)
           printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
           ;;"#,
-            shell_single_quote(&response.to_string()),
-        )
-    } else {
-        turns
-            .iter()
-            .enumerate()
-            .map(|(index, turn)| {
-                let request_cursor = if index == 0 {
-                    Value::Null
-                } else {
-                    Value::String(format!("turn-page-{index}"))
-                };
-                let next_cursor = if index + 1 < turns.len() {
-                    Value::String(format!("turn-page-{}", index + 1))
-                } else {
-                    Value::Null
-                };
-                let response = json!({
-                    "id": "__REQUEST_ID__",
-                    "result": {
-                        "data": [turn],
-                        "nextCursor": next_cursor,
-                        "backwardsCursor": null,
-                    },
-                });
-                format!(
-                    r#"        *'"cursor":{}'*)
-          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
-          ;;"#,
-                    request_cursor,
-                    shell_single_quote(&response.to_string()),
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+        shell_single_quote(&response.to_string())
+    )
 }
 
 fn fake_transcript_codex_script(
@@ -1078,7 +1076,7 @@ while IFS= read -r line; do
 {}
       esac
       ;;
-    *'"method":"thread/items/list"'*)
+    *'"method":"thread/timeline/list"'*)
       request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
       case "$line" in
 {}

@@ -95,7 +95,6 @@ export function useProjectCreateController({
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
   const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
   const defaultAgentResourceIds = resourceSetup?.defaultAgentResourceIds ?? [];
-  const defaultAgentResourceIdsKey = defaultAgentResourceIds.join("\0");
   const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
     useState<number[]>(() =>
       defaultExecutionEnvironmentDeviceIds(
@@ -133,13 +132,6 @@ export function useProjectCreateController({
       ),
     );
   }, [resourceSetup?.executionEnvironments]);
-
-  useEffect(() => {
-    if (!defaultAgentResourceIdsKey) return;
-    setAgentResourceIds((current) => [
-      ...new Set([...defaultAgentResourceIds, ...current]),
-    ]);
-  }, [defaultAgentResourceIdsKey]);
 
   async function submit() {
     if (!canSubmit) return;
@@ -179,11 +171,9 @@ export function useProjectCreateController({
           : {}),
         ...(location === "local" && resourceSetup
           ? {
-              includeDefaultAgent:
-                defaultAgentResourceIds.length === 0 ||
-                defaultAgentResourceIds.some((id) =>
-                  agentResourceIds.includes(id),
-                ),
+              includeDefaultAgent: defaultAgentResourceIds.some((id) =>
+                agentResourceIds.includes(id),
+              ),
             }
           : {}),
       });

@@ -93,3 +93,25 @@ async def test_sdk_preloads_before_channels_start(monkeypatch, isolated_lifespan
     get_channel_manager().start_all_enabled.side_effect = start_channels
     async with isolated_lifespan(FastAPI()):
         assert len(preload_threads) == 1
+
+
+async def test_plugin_cleanup_failure_still_closes_cache(
+    monkeypatch, isolated_lifespan
+):
+    import app.main as main
+
+    monkeypatch.setattr(main, "preload_openai_sdk", MagicMock())
+    monkeypatch.setattr(main.settings, "SCHEDULED_TASKS_ENABLED", False)
+    monkeypatch.setattr(
+        main,
+        "close_plugin_write_resources",
+        MagicMock(side_effect=RuntimeError("plugin cleanup failed")),
+    )
+    close_cache = AsyncMock(wraps=main.cache_manager.aclose)
+    monkeypatch.setattr(main.cache_manager, "aclose", close_cache)
+
+    with pytest.raises(RuntimeError, match="plugin cleanup failed"):
+        async with isolated_lifespan(FastAPI()):
+            pass
+
+    close_cache.assert_awaited_once()

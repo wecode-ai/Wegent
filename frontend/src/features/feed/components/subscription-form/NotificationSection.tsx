@@ -147,6 +147,7 @@ export function NotificationSection({
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
+        group_mention_user_ids: [],
       },
     [channelBindingConfigs]
   )
@@ -206,6 +207,7 @@ export function NotificationSection({
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
+        group_mention_user_ids: [],
       }
       const next = updater({
         bind_private: existing.bind_private,
@@ -236,8 +238,25 @@ export function NotificationSection({
           ...existing,
           group_conversation_id: undefined,
           group_name: undefined,
+          group_mention_user_ids: [],
         },
       ]
+    })
+  }
+
+  const updateGroupMentionUserIds = (channelId: number, userIds: string[]) => {
+    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
+      const existing = prev.find(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
+      ) ?? {
+        channel_id: channelId,
+        bind_private: true,
+        bind_group: false,
+      }
+      const rest = prev.filter(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
+      )
+      return [...rest, { ...existing, group_mention_user_ids: userIds }]
     })
   }
 
@@ -371,6 +390,7 @@ export function NotificationSection({
                             setGroupBindingDialogChannel(channel.id)
                           }
                         } else {
+                          clearGroupBinding(channel.id)
                           void onCancelBinding(channel.id)
                         }
                       }}
@@ -386,6 +406,7 @@ export function NotificationSection({
                       onUnbind={() => {
                         void handleUnbind(channel.id)
                       }}
+                      onMentionUserIdsChange={value => updateGroupMentionUserIds(channel.id, value)}
                     />
                   )
                 })}

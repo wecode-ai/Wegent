@@ -372,6 +372,8 @@ function mcpElicitationConfigToml(evidencePath) {
     `command = ${command}`,
     `args = [${server}, ${evidence}]`,
     'env = { ELECTRON_RUN_AS_NODE = "1" }',
+    // Keep the real tool alive beyond the production ten-minute URL deadline.
+    'tool_timeout_sec = 1200',
     'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')

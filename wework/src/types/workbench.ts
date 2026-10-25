@@ -40,6 +40,7 @@ export type {
 export type { RuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 import type { RuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 export interface RuntimePaneTranscriptLoadOptions {
+  threadOnly?: boolean
   limit?: number
   beforeCursor?: string | null
   afterCursor?: string | null
@@ -47,6 +48,8 @@ export interface RuntimePaneTranscriptLoadOptions {
   includeFullContent?: boolean
   conversationContextOnly?: boolean
   navigationOnly?: boolean
+  /** Read full search context without adopting or hydrating the live conversation. */
+  isolated?: boolean
 }
 
 export type RuntimeTranscriptLoader = (

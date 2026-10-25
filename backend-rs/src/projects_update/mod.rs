@@ -505,6 +505,19 @@ mod tests {
     }
 
     #[test]
+    fn config_validation_preserves_task_source() {
+        for source in ["api", "dingtalk"] {
+            let config = validate_project_config(&json!({"taskSource": source})).unwrap();
+            assert_eq!(dump_config(&config), json!({"taskSource": source}));
+        }
+
+        for invalid in [json!("other"), json!(42)] {
+            let error = validate_project_config(&json!({"taskSource": invalid})).unwrap_err();
+            assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    #[test]
     fn config_validation_rejects_workspace_violations() {
         for body in [
             json!({"mode": "workspace", "workspace": {"source": "git"}}),

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -15,6 +15,41 @@ afterEach(async () => {
 })
 
 describe('runSmartAppProjectScripts', () => {
+  test.each(['pnpm@99.0.0', 'pnpm@11.7.0'])(
+    'ignores the containing workspace when running prepared project scripts (%s)',
+    async packageManager => {
+      const host = await projectRoot()
+      const root = join(host, 'fixtures', 'smart-app')
+      await mkdir(root, { recursive: true })
+      await writeFile(
+        join(host, 'package.json'),
+        JSON.stringify({ name: 'host-workspace', packageManager })
+      )
+      await writeFile(join(host, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n')
+      await writeFile(
+        join(root, 'package.json'),
+        JSON.stringify({
+          name: 'prepared-project',
+          scripts: { check: 'node -e "process.exit(0)"' },
+        })
+      )
+      const pnpmEntry = process.env.npm_execpath
+      if (!pnpmEntry) throw new Error('Run this regression through pnpm test')
+      const result = await runSmartAppProjectScripts({
+        ...options(root),
+        scripts: { typecheck: 'check', test: 'check', build: 'check' },
+        resolveCommand: async () => ({
+          command: process.execPath,
+          argsPrefix: [pnpmEntry, '--pm-on-fail=error'],
+          environment: { PATH: process.env.PATH, CI: 'true' },
+        }),
+      })
+      expect(result.issues).toEqual([])
+      expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
+      await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
   test('runs typecheck, test, and build in a fixed order through managed pnpm', async () => {
     const root = await projectRoot()
     const run = vi.fn<SmartAppScriptCommandRunner>().mockResolvedValue({
@@ -36,7 +71,7 @@ describe('runSmartAppProjectScripts', () => {
     ])
     expect(run).toHaveBeenCalledWith(
       '/managed/node',
-      ['/managed/pnpm.cjs', 'run', 'check:types'],
+      ['/managed/pnpm.cjs', '--config.verify-deps-before-run=false', 'run', 'check:types'],
       expect.objectContaining({ cwd: root, shell: false })
     )
     expect(result.issues).toEqual([])
@@ -105,13 +140,18 @@ describe('runSmartAppProjectScripts', () => {
         PATH: '/managed/bin',
         LANG: 'zh_CN.UTF-8',
         DSH_HOME: '/personal/dsh',
+        NPM_CONFIG_WORKSPACE_DIR: '/unrelated-workspace',
         WEWORK_HARNESS_CONTEXT_TOKEN: 'secret',
       },
       run,
     })
 
     const environment = run.mock.calls[0]?.[2].env
-    expect(environment).toMatchObject({ PATH: '/managed/bin', LANG: 'zh_CN.UTF-8' })
+    expect(environment).toMatchObject({
+      PATH: '/managed/bin',
+      LANG: 'zh_CN.UTF-8',
+      NPM_CONFIG_WORKSPACE_DIR: root,
+    })
     expect(environment).not.toHaveProperty('DSH_HOME')
     expect(environment).not.toHaveProperty('WEWORK_HARNESS_CONTEXT_TOKEN')
   })
@@ -142,6 +182,7 @@ describe('runSmartAppProjectScripts', () => {
       expect(result).toEqual({ issues: [] })
       expect(run.mock.calls[0]?.[2].env).toEqual({
         PATH: '/managed/bin',
+        NPM_CONFIG_WORKSPACE_DIR: root,
         SMART_APP_BASE_URL: 'http://127.0.0.1:41001/',
         ...(cookieHeader ? { SMART_APP_COOKIE: cookieHeader } : {}),
       })

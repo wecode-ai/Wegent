@@ -51,6 +51,7 @@ pub(super) fn prepare(
     for name in [
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
         crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
     ] {
         servers.remove(name);
     }

@@ -354,7 +354,7 @@ pub fn task_to_response_object(
     let created_at_unix = task_created_at_unix(task).unwrap_or_else(unix_now);
 
     // Output items from the subtasks (assistant role only).
-    let output = build_response_output(subtasks, config)?;
+    let output = build_response_output(subtasks, config, None)?;
 
     // Error only when the task failed and carries a message.
     let error = if wegent_status == "FAILED" {
@@ -426,18 +426,42 @@ fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// The assistant turn a create response renders with `StatusUpdatingEmitter`
+/// overrides (`active_assistant_*` in `build_response_output`).
+#[derive(Debug, Clone, Copy)]
+pub struct ActiveAssistant<'a> {
+    pub subtask_id: i64,
+    /// The create response's status (`in_progress` / `completed`); the source
+    /// passes a literal, so the message status keeps its `&'static str` shape.
+    pub status: &'static str,
+    /// `QueueBasedEmitter.collect`'s accumulated stream content.
+    pub content: &'a str,
+}
+
 /// `build_response_output`: output items for the subtasks in list order.
 /// Only ASSISTANT subtasks produce items (`build_output_items_for_subtask`).
 pub fn build_response_output(
     subtasks: &[super::responses_repository::SubtaskRow],
     config: &AuthConfig,
+    active: Option<ActiveAssistant<'_>>,
 ) -> Result<Vec<OutputItem>, HttpError> {
     let mut output = Vec::new();
     for subtask in subtasks {
         if subtask.role != "ASSISTANT" {
             continue;
         }
-        output.extend(build_output_items_for_subtask(subtask, config)?);
+        let (content_override, status_override) = match active {
+            Some(active) if active.subtask_id == subtask.id => {
+                (active.content, Some(active.status))
+            }
+            _ => ("", None),
+        };
+        output.extend(build_output_items_for_subtask(
+            subtask,
+            config,
+            content_override,
+            status_override,
+        )?);
     }
     Ok(output)
 }
@@ -448,6 +472,8 @@ pub fn build_response_output(
 pub fn build_output_items_for_subtask(
     subtask: &super::responses_repository::SubtaskRow,
     config: &AuthConfig,
+    content_override: &str,
+    status_override: Option<&'static str>,
 ) -> Result<Vec<OutputItem>, HttpError> {
     let result = subtask
         .result
@@ -456,18 +482,27 @@ pub fn build_output_items_for_subtask(
     let Some(result) = result else {
         return Ok(Vec::new());
     };
-    let message_status = subtask_status_to_message_status(&subtask.status);
+    let message_status: &'static str =
+        status_override.unwrap_or_else(|| subtask_status_to_message_status(&subtask.status));
 
-    if let Some(items) = build_items_from_messages_chain(subtask, result, message_status) {
+    if let Some(items) =
+        build_items_from_messages_chain(subtask, result, message_status, content_override)
+    {
         return Ok(items);
     }
-    if let Some(items) = build_items_from_blocks(subtask, result, message_status, config)? {
+    if let Some(items) =
+        build_items_from_blocks(subtask, result, message_status, config, content_override)?
+    {
         return Ok(items);
     }
 
     // Plain `value`/`reasoning_content` result (`build_output_items_for_subtask`
     // tail): one message with the bare subtask id.
-    let text = result.value.0.as_str();
+    let text = if content_override.is_empty() {
+        result.value.0.as_str()
+    } else {
+        content_override
+    };
     let reasoning = result.reasoning_content.as_deref().unwrap_or("");
     if text.is_empty() && reasoning.is_empty() {
         return Ok(Vec::new());
@@ -491,6 +526,7 @@ fn build_items_from_messages_chain(
     subtask: &super::responses_repository::SubtaskRow,
     result: &ResultInput,
     message_status: &'static str,
+    content_override: &str,
 ) -> Option<Vec<OutputItem>> {
     let chain = result
         .messages_chain
@@ -540,7 +576,11 @@ fn build_items_from_messages_chain(
         // nothing); the caller falls through to the blocks path (`if items:`
         // in `build_output_items_for_subtask`), so tool-only chains do not
         // short-circuit.
-        let final_text = result.value.0.as_str();
+        let final_text = if content_override.is_empty() {
+            result.value.0.as_str()
+        } else {
+            content_override
+        };
         let final_reasoning = result.reasoning_content.as_deref().unwrap_or("");
         if !final_text.is_empty() || !final_reasoning.is_empty() {
             items.push(OutputItem::Message(OutputMessage {
@@ -634,6 +674,7 @@ fn build_items_from_blocks(
     result: &ResultInput,
     message_status: &'static str,
     config: &AuthConfig,
+    content_override: &str,
 ) -> Result<Option<Vec<OutputItem>>, HttpError> {
     let Some(blocks) = result.blocks.as_ref() else {
         return Ok(None);
@@ -734,8 +775,10 @@ fn build_items_from_blocks(
 
     let final_text = if emitted_text || emitted_media {
         String::new()
-    } else {
+    } else if content_override.is_empty() {
         result.value.0.clone()
+    } else {
+        content_override.to_string()
     };
     let final_reasoning = result.reasoning_content.clone().unwrap_or_default();
     if !final_text.is_empty() || (!final_reasoning.is_empty() && !emitted_reasoning) {

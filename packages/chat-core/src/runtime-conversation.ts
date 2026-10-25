@@ -66,6 +66,7 @@ export type WorkbenchMessage = Omit<
 > & {
   blocks?: ProcessingBlock[];
   runtimeDisplayItems?: RuntimeAssistantDisplayItem[];
+  runtimeItemId?: string;
   runtimeMessageIndex?: number | null;
   turnId?: string | null;
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null;
@@ -93,6 +94,7 @@ export type RuntimeAssistantDisplayItem =
 
 export interface RuntimeConversationTurn {
   id: string | null;
+  position?: number;
   clientUserMessageId?: string;
   runtimeMessageIndex?: number;
   itemMerge?: "prepend";
@@ -111,7 +113,7 @@ export interface RuntimeConversationTurn {
   memoryCitations?: CodexMemoryCitation[];
 }
 
-export type RuntimeConversationItem =
+export type RuntimeConversationItem = { position?: number } & (
   | {
       id: string;
       type: "user_message";
@@ -128,7 +130,8 @@ export type RuntimeConversationItem =
       id: string;
       type: "block";
       block: ProcessingBlock;
-    };
+    }
+);
 
 export type RuntimePaneMessageAction =
   import("./workbench-message-reducer").WorkbenchMessageAction<

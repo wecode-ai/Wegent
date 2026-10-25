@@ -5,7 +5,7 @@
 'use client'
 
 import React from 'react'
-import { X, Database, MessageSquare, FileText } from 'lucide-react'
+import { X, Database, FileText, MessageSquare, MessageSquareText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   getExternalKnowledgeSourceLabel,
@@ -42,6 +42,8 @@ const getContextIcon = (type: ContextItem['type']) => {
       return FileText
     case 'external_knowledge':
       return Database
+    case 'conversation':
+      return MessageSquareText
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
@@ -73,6 +75,8 @@ export default function ContextBadge({
         return 'border-orange-400 bg-orange-400/10 text-orange-600'
       case 'external_knowledge':
         return 'border-cyan-500 bg-cyan-500/10 text-cyan-700'
+      case 'conversation':
+        return 'border-border bg-muted text-text-primary'
       default:
         return 'border-primary bg-primary/10 text-primary'
     }
@@ -127,6 +131,11 @@ export default function ContextBadge({
 
   return (
     <div
+      data-testid={
+        context.type === 'conversation'
+          ? `input-conversation-reference-${context.task_id ?? context.id}`
+          : undefined
+      }
       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${getBadgeColor()} ${
         isClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
       }`}
@@ -158,6 +167,9 @@ export default function ContextBadge({
           <span className="text-xs opacity-70 truncate">
             {getExternalKnowledgeSourceLabel(externalProvider ?? '', externalSource)}
           </span>
+        )}
+        {context.type === 'conversation' && (
+          <span className="text-xs opacity-70 truncate">{t('chat:mention.referencedTask')}</span>
         )}
       </div>
       <Button

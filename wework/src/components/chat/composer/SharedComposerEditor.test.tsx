@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { createRef } from 'react'
+import { createRef, startTransition, Suspense, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import {
   ComposerProseMirrorEditor,
@@ -43,6 +43,70 @@ function renderEditor(value = '', services?: ComposerEditorServices) {
 }
 
 describe('shared rich editor in a browser host', () => {
+  test('uses the committed submit handler while a later render is suspended', async () => {
+    const submit = vi.fn()
+    const attemptedPendingRender = vi.fn()
+    let releasePendingRender!: () => void
+    let readyToCommit = false
+    const blocked = new Promise<void>(resolve => {
+      releasePendingRender = resolve
+    })
+    const textareaRef = createRef<HTMLElement>()
+    let beginPendingRender = () => undefined
+    function PendingBoundary({ pending }: { pending: boolean }) {
+      if (pending && !readyToCommit) {
+        attemptedPendingRender()
+        throw blocked
+      }
+      return null
+    }
+    function Harness() {
+      const [pending, setPending] = useState(false)
+      beginPendingRender = () => startTransition(() => setPending(true))
+      return (
+        <Suspense fallback={<span>Loading</span>}>
+          <ComposerProseMirrorEditor
+            value="请先迁移当前进程，并验证任务仍在运行。"
+            onChange={vi.fn()}
+            onSnapshotChange={vi.fn()}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !pending) submit()
+              return event.key === 'Enter'
+            }}
+            onBeforeInput={() => false}
+            onKeyUp={vi.fn()}
+            onCompositionStart={vi.fn()}
+            onCompositionEnd={vi.fn()}
+            onPaste={() => false}
+            onDrop={() => false}
+            onClick={vi.fn()}
+            onFocus={vi.fn()}
+            placeholder="Message"
+            testId="concurrent-editor"
+            rows={2}
+            textareaRef={textareaRef}
+            className="min-h-12"
+          />
+          <button disabled={pending}>Send</button>
+          <PendingBoundary pending={pending} />
+        </Suspense>
+      )
+    }
+    render(<Harness />)
+    await act(async () => beginPendingRender())
+    expect(attemptedPendingRender).toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
+    fireEvent.keyDown(screen.getByTestId('concurrent-editor'), { key: 'Enter' })
+    expect(submit).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      readyToCommit = true
+      releasePendingRender()
+    })
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    fireEvent.keyDown(screen.getByTestId('concurrent-editor'), { key: 'Enter' })
+    expect(submit).toHaveBeenCalledTimes(1)
+  })
+
   test.each([
     '[test-label](~/workspace/skills/test-skill/SKILL.md)',
     '**bold**',

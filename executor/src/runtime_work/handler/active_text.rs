@@ -31,6 +31,7 @@ impl RuntimeWorkRpcHandler {
         if transcript.turn_id != turn_id {
             transcript.turn_id = turn_id.to_owned();
             transcript.items.clear();
+            transcript.user_input_requests.clear();
         }
         if let Some(existing) = transcript
             .items

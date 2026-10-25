@@ -158,11 +158,20 @@ print(json.dumps(result))
   await writeFile(
     join(fixtureRoot, 'scripts/provider.py'),
     `
-import json
+import json, time
 from pathlib import Path
 def export():
     (Path.home() / "account-auth-export-attempted").write_text("attempted")
-    return json.loads((Path.home() / "account-auth-synthetic.json").read_text())
+    credential = json.loads((Path.home() / "account-auth-synthetic.json").read_text())
+    gate = Path.home() / "account-auth-export-held"
+    if gate.exists():
+        (Path.home() / "account-auth-export-inflight").write_text("ready")
+        deadline = time.monotonic() + 30
+        while gate.exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Synthetic credential export was not released")
+            time.sleep(0.05)
+    return credential
 def execute(credential, arguments):
     assert credential["password"] in ("${secret}", "${secret}-updated")
     print(json.dumps({"account": credential["username"], "result": "cloud-account-updated" if credential["password"].endswith("-updated") else "cloud-account-read"}))
@@ -237,14 +246,16 @@ source = Path(${JSON.stringify(transferSource)})
 receipt = Path(${JSON.stringify(transferReceipt)})
 fence = Path(${JSON.stringify(transferFence)})
 def export():
-    credential = json.loads(source.read_text())
-    if credential["refresh_token"] == "${transferSecret}":
-        rotated = {**credential, "refresh_token":"${transferSecret}-rotated"}
-        source.write_text(json.dumps(rotated))
-    return credential
+    return json.loads(source.read_text())
 def detach(migration_id, credential):
     if fence.exists() and fence.read_text() == migration_id:
         raise SourceChanged()
+    # Inject the source change at the ownership boundary, after escrow exists.
+    # Export may legitimately be followed by a rejected staging request.
+    if not fence.exists() and source.exists():
+        current = json.loads(source.read_text())
+        rotated = {**current, "refresh_token":"${transferSecret}-rotated"}
+        source.write_text(json.dumps(rotated))
     if source.exists() and json.loads(source.read_text()) != credential:
         fence.write_text(migration_id)
         raise SourceChanged()

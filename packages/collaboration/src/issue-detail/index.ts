@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./IssueDetailCore";
+export { TagEditor } from "./TagEditor";
 export * from "./IssueActivityPanel";
 export * from "./IssueActivityFeed";
 export * from "./IssueDetailControls";

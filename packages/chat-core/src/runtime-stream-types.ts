@@ -243,6 +243,7 @@ export interface RuntimeEventLaggedPayload {
 export interface RuntimeWorkChangedPayload {
   deviceId?: string;
   taskId: string;
+  archiveCleanup?: { workspacePath: string; errors: string[] };
 }
 
 export interface ProjectTaskAssignedPayload {

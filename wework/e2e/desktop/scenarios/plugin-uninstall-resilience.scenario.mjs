@@ -3,6 +3,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
+import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
+import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
+import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -24,10 +28,30 @@ export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
   resultDir,
+  executorHome,
   workbenchReadyTimeoutMs,
 }) {
   const appEnvironment = {}
   const evidence = []
+  const objectStorage =
+    checkpoint === 'plugin-write-coordination'
+      ? await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
+      : null
+  let packageProxy
+  try {
+    if (objectStorage) {
+      // Preserve the signed Host while forwarding real S3 traffic to MinIO.
+      packageProxy = await new TransportFaultProxy(
+        objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT,
+        {
+          preserveHost: true,
+        }
+      ).start()
+    }
+  } catch (error) {
+    await objectStorage?.stop()
+    throw error
+  }
   let cloud
   let apiProxy
   let deviceProxy
@@ -48,7 +72,7 @@ export async function createDesktopScenario({
     )
   const pendingRows = item =>
     cloud.queryDatabase(
-      'SELECT state FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+      'SELECT state, error_code, attempt_count, last_sync_at, updated_at, desired_release_id, actual_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
       [1, item.installedId, CLOUD_DEVICE_ID]
     )
 
@@ -125,6 +149,8 @@ export async function createDesktopScenario({
   }
 
   async function heldCleanup(control, suffix) {
+    // Catalog refresh must preserve removals while another install remains active.
+    const retained = await fixture(`${suffix}-retained`)
     const item = await fixture(suffix)
     const remoteHome = dirname(cloud.remoteCodexHome)
     const installed = await until(
@@ -155,6 +181,7 @@ export async function createDesktopScenario({
     await assertInstallButton(control, item)
     await assertInventory(control, item.slug, false)
     assert.ok(await pathExists(runtimePath), 'Cleanup unexpectedly finished before fault release')
+    assert.ok(await accountPlugin(cloud, retained.slug), 'Unrelated active install disappeared')
     evidence.push({ case: suffix, accountResponseMs: elapsedMs })
     return { item, runtimePath, remoteHome }
   }
@@ -162,8 +189,20 @@ export async function createDesktopScenario({
   async function restartRecovery(control) {
     const { item, runtimePath, remoteHome } = await heldCleanup(control, 'restart-pending')
     // Stop real processes, losing the in-memory in-flight set while retaining MySQL.
+    const beforeStop = await pendingRows(item)
+    const stopStartedAt = Date.now()
     await cloud.stopBackend()
-    assert.ok((await pendingRows(item)).some(row => row.state === 'uninstalling'))
+    const afterStop = await pendingRows(item)
+    evidence.push({
+      case: 'restart-persisted-state-diagnostics',
+      beforeStop,
+      afterStop,
+      stopDurationMs: Date.now() - stopStartedAt,
+    })
+    assert.ok(
+      afterStop.some(row => row.state === 'uninstalling'),
+      `Persisted cleanup changed while stopping the backend: ${JSON.stringify({ beforeStop, afterStop })}`
+    )
     await cloud.launchBackend()
     deviceProxy.pauseDeviceDelivery(false)
     await Promise.all([
@@ -242,7 +281,7 @@ export async function createDesktopScenario({
       await openPlugin(control, item)
       await control.command('click', testId('plugins-refresh-button'))
       await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
-      await assertSurfaces(control, item, true)
+      await assertSurfaces(control, { ...item, installedId: currentId }, true)
       assert.equal(deletes(item).length, 1)
     } finally {
       deviceProxy.pauseDeviceDelivery(false)
@@ -253,10 +292,24 @@ export async function createDesktopScenario({
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
+    ...(objectStorage
+      ? {
+          backendEnv: {
+            ...objectStorage.backendEnv,
+            ATTACHMENT_S3_ENDPOINT: packageProxy.url,
+          },
+        }
+      : {}),
     async prepareCloud({ backendUrl }) {
       apiProxy = await new TransportFaultProxy(backendUrl).start()
       deviceProxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = apiProxy.url
+      if (checkpoint === 'plugin-write-coordination') {
+        // Keep the real connection on the fault proxy when cloud metadata
+        // advertises the backend's direct Socket.IO endpoint during startup.
+        appEnvironment.WEWORK_BACKEND_URL = apiProxy.url
+        appEnvironment.WEWORK_SOCKET_URL = apiProxy.url
+      }
     },
     setCloudEnvironment(value) {
       cloud = value
@@ -273,6 +326,42 @@ export async function createDesktopScenario({
       )
       try {
         const checks = new Map([
+          [
+            'plugin-registration-coordination',
+            control =>
+              verifyPluginRegistrationCoordination({
+                cloud,
+                control,
+                deviceProxy,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              }),
+          ],
+          [
+            'plugin-write-coordination',
+            async control => {
+              await verifyPluginSyncDisconnect({
+                cloud,
+                control,
+                apiProxy,
+                packageProxy,
+                executorHome,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              })
+              await verifyPluginWriteCoordination({
+                cloud,
+                control,
+                apiProxy,
+                deviceProxy,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              })
+            },
+          ],
           ['plugin-uninstall-lost-response', lostResponse],
           ['plugin-uninstall-unknown-result', unknownResult],
           ['plugin-uninstall-restart-recovery', restartRecovery],
@@ -284,16 +373,27 @@ export async function createDesktopScenario({
         await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
       } finally {
         apiProxy.rule = () => null
+        apiProxy.disconnectWebSockets(false)
         deviceProxy.pauseDeviceDelivery(false)
+        deviceProxy.pauseDeviceAcknowledgements(false)
         await writeFile(
           join(resultDir, 'plugin-uninstall-evidence.json'),
-          JSON.stringify({ evidence, requests: apiProxy.requests }, null, 2)
+          JSON.stringify(
+            { evidence, requests: apiProxy.requests, packageRequests: packageProxy?.requests },
+            null,
+            2
+          )
         )
       }
     },
-    diagnostics: () => ({ evidence, requests: apiProxy?.requests }),
+    diagnostics: () => ({
+      evidence,
+      requests: apiProxy?.requests,
+      packageRequests: packageProxy?.requests,
+    }),
     async cleanup() {
-      await Promise.all([apiProxy?.stop(), deviceProxy?.stop()])
+      await Promise.all([apiProxy?.stop(), deviceProxy?.stop(), packageProxy?.stop()])
+      await objectStorage?.stop()
     },
   }
 }

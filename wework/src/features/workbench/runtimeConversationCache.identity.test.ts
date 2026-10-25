@@ -3,6 +3,7 @@ import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import type { RuntimeConversationTurn, RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   applyRuntimeConversationAction,
+  adoptRuntimeConversationThread,
   applyRuntimeConversationSubagentActivity,
   beginRuntimeConversationHydration,
   cacheConversationScrollSnapshot,
@@ -51,6 +52,16 @@ function queue(id: string, content = id): RuntimePaneQueuedMessage {
 }
 
 describe('runtime conversation identity synchronization', () => {
+  it('does not merge old native thread positions when device aliases converge', () => {
+    adoptRuntimeConversationThread(alias, 'old-thread')
+    adoptRuntimeConversationThread(canonical, 'current-thread')
+    replaceRuntimeConversationSnapshot(alias, turns('Old branch', 'done'))
+    replaceRuntimeConversationSnapshot(canonical, turns('Current branch', 'done'))
+    syncRuntimeConversationDeviceAliases([device])
+    expect(getRuntimeConversationMessages(canonical).map(message => message.content)).toEqual([
+      'Current branch',
+    ])
+  })
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     vi.useRealTimers()
@@ -273,8 +284,12 @@ describe('runtime conversation identity synchronization', () => {
     })
 
     syncRuntimeConversationDeviceAliases([device])
+    const liveTurns = getRuntimeConversationTurns(canonical)
+    expect(getRuntimeConversationMessages(canonical).map(message => message.content)).toEqual([
+      'Buffered follow up',
+    ])
     completeRuntimeConversationHydration(alias, oldToken, turns('Stale request', 'done'))
-    expect(getRuntimeConversationTurns(canonical)).toEqual([])
+    expect(getRuntimeConversationTurns(canonical)).toBe(liveTurns)
     completeRuntimeConversationHydration(canonical, token, turns('Current request', 'done'))
 
     expect(getRuntimeConversationMessages(canonical).map(message => message.content)).toEqual([

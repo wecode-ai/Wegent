@@ -5,7 +5,7 @@
 //! Focused compatibility tests for the terminal task-completion subsystem.
 use super::Tables;
 use super::collect::{is_blank_text_value, merge_blocks};
-use super::sql::{assistant_subtasks, update_subtask_terminal};
+use super::sql::{assistant_subtasks, update_subtask_running, update_subtask_terminal};
 use super::terminal_status;
 use serde_json::json;
 
@@ -42,6 +42,17 @@ fn assistant_subtasks_statement_matches_the_source_shape() {
          subtasks_0030.reply_to_subtask_id AS subtasks_0030_reply_to_subtask_id \nFROM subtasks_0030 \n\
          WHERE subtasks_0030.task_id = ? AND subtasks_0030.`role` = 'ASSISTANT' \n\
          ORDER BY subtasks_0030.message_id ASC"
+    );
+}
+
+/// Recorded `UPDATE subtasks_0438 SET status='RUNNING', updated_at='...' WHERE
+/// subtasks_0438.id = ?`: `_update_subtask_to_running` only dirties `status`,
+/// and the model's `onupdate` also refreshes `updated_at`.
+#[test]
+fn subtask_running_update_writes_the_status_only_flush() {
+    assert_eq!(
+        update_subtask_running(tables()),
+        "UPDATE subtasks_0030 SET status=?, updated_at=? WHERE subtasks_0030.id = ?"
     );
 }
 
@@ -148,6 +159,36 @@ fn the_pet_refresh_statement_is_the_unlabeled_primary_key_load() {
         super::sql::kind_refresh_by_id(),
         "SELECT kinds.id, kinds.user_id, kinds.kind, kinds.name, kinds.namespace, kinds.json, \
          kinds.is_active, kinds.created_at, kinds.updated_at \nFROM kinds WHERE kinds.id = ?"
+    );
+}
+
+/// `subtask_store.list_not_executor_deleted_by_task`: the full subtask
+/// projection of the task's undeleted runtime rows, with the source's
+/// `executor_deleted_at = false` predicate and no ordering.
+#[test]
+fn the_undeleted_runtime_subtask_read_matches_the_source_shape() {
+    let sql = super::sql::subtasks_not_executor_deleted_by_task(tables());
+    let flat = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.starts_with("SELECT subtasks_0030.id AS subtasks_0030_id,"),
+        "{flat}"
+    );
+    assert!(
+        flat.ends_with(
+            "FROM subtasks_0030 WHERE subtasks_0030.task_id = ? \
+             AND subtasks_0030.executor_deleted_at = false"
+        ),
+        "{flat}"
+    );
+}
+
+/// `subtask_store.update_fields(executor_deleted_at=True)`'s flush: the mapper
+/// orders `executor_deleted_at` before the `updated_at` audit clock.
+#[test]
+fn the_executor_deleted_update_follows_the_mapper_column_order() {
+    assert_eq!(
+        super::sql::update_subtask_executor_deleted(tables()),
+        "UPDATE subtasks_0030 SET executor_deleted_at=?, updated_at=? WHERE subtasks_0030.id = ?"
     );
 }
 

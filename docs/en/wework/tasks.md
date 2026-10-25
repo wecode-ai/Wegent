@@ -12,6 +12,16 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+### Voice input
+
+Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
+
+Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
+
+Stop recording to transcribe. The recognized text is inserted at the position captured when recording started, ready to review, edit, and send. Cancelling leaves the draft unchanged. If you edit the draft during recording, the transcript is retained; select **Insert text** to insert it at the current cursor position.
+
+Voice input reuses the official DSH plugin. Once downloaded, the default local recognition model transcribes on the device.
+
 ### Edit Markdown and tables
 
 Pasted Markdown appears as editable content in the composer. Sent messages also render tables, lists, bold text, and code. Use `Shift+Enter` for a new line and `Tab` / `Shift+Tab` to move between table cells.
@@ -19,6 +29,8 @@ Pasted Markdown appears as editable content in the composer. Sent messages also 
 Hover over a message table to copy its Markdown or expand it; press `Esc` to close the expanded view. Click an HTTP/HTTPS link in the composer to open its actions. Sent links open using your browser preference. Text appended after a pasted link stays separate and does not change its destination.
 
 ## Add a conversation to a project-space board
+
+Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
 
 After enabling Experimental features, open the composer's **+** menu and select **Project space**. Selecting a space opens the **Add to "Project space name"** dialog even before a new task sends its first message. Choose **Create board task** or **Link an existing board task**. Confirmation saves the choice; the first message creates the card or links the selected Issue. Cancelling keeps the previous selection. Select the current space again to change the association choice or target Issue.
 
@@ -121,6 +133,10 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
+
+### Answer AI questions
+
+Question cards show the full question above the answer field. Long questions wrap, and oversized cards scroll. Questions without options remain visible while you type. Enter your answer in the field labeled “Type your answer”, then click **Submit**.
 
 ## Use the personal supervisor
 

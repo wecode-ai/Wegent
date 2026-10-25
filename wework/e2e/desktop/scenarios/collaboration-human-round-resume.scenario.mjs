@@ -69,13 +69,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
   assert.equal(
     response.ok,
     true,
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
-  return body
+  return text ? JSON.parse(text) : null
 }
 
 function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
@@ -287,11 +286,16 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: uiTimeoutMs,
   })
-  await waitForValue(
+  const group = await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/collaboration-groups`),
     response => response.items?.find(value => value.name === GROUP),
     '端上创建人机协作小组未持久化',
     uiTimeoutMs
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-group-detail-${group.id}"]`),
+    { text: GROUP, timeoutMs: uiTimeoutMs }
   )
   await control.command('click', scoped('[data-testid="collaboration-group-detail-tab-rules"]'))
   await control.command('fill', scoped('[data-testid="collaboration-group-detail-instructions"]'), {

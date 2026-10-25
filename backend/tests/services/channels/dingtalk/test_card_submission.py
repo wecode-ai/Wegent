@@ -265,13 +265,23 @@ async def test_drain_waits_for_execution_in_original_job(
     monkeypatch.setattr(CardTaskExecution, "run", execute)
     await receiver.inbox.enqueue(receipt)
     receiver._schedule("event-1")
+    job = next(iter(receiver._jobs))
     drain = asyncio.create_task(receiver.drain())
+    started = asyncio.create_task(execution_started.wait())
     try:
-        await asyncio.wait_for(execution_started.wait(), timeout=1)
+        # Drain owns the shutdown deadline; observe the actual job lifecycle.
+        done, _ = await asyncio.wait(
+            {started, job, drain}, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert (
+            started in done
+        ), "The original job must reach execution before drain ends"
+        assert not job.done()
         assert not drain.done()
         execution_finished.set()
-        await asyncio.wait_for(drain, timeout=1)
+        await drain
         assert not receiver._jobs
     finally:
         execution_finished.set()
-        await drain
+        started.cancel()
+        await asyncio.gather(started, job, drain, return_exceptions=True)

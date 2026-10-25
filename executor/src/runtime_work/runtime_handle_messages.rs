@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::response::RuntimeTaskLink;
 
@@ -364,26 +364,20 @@ pub(crate) fn bind_runtime_handle_user_message_presentation_to_turn(
     if client_user_message_id.is_empty() || turn_id.is_empty() {
         return;
     }
-    let Some(presentations) = runtime_handle
-        .get_mut("userMessagePresentations")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    let Some(presentation) = presentations
-        .iter_mut()
-        .find(|presentation| {
-            presentation
-                .get("clientUserMessageId")
-                .or_else(|| presentation.get("client_user_message_id"))
-                .and_then(Value::as_str)
-                == Some(client_user_message_id)
-        })
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    presentation.insert("turnId".to_owned(), Value::String(turn_id.to_owned()));
+    let presentations = runtime_handle_user_message_presentations_mut(runtime_handle);
+    if let Some(presentation) = presentations.iter_mut().find(|presentation| {
+        presentation
+            .get("clientUserMessageId")
+            .or_else(|| presentation.get("client_user_message_id"))
+            .and_then(Value::as_str)
+            == Some(client_user_message_id)
+    }) {
+        presentation["turnId"] = json!(turn_id);
+    } else {
+        // A plain execution can have a send identity without a display overlay.
+        // Retain only the explicit turn binding; this must not synthesize user text.
+        presentations.push(json!({"clientUserMessageId":client_user_message_id,"turnId":turn_id,"ensureVisible":false}));
+    }
 }
 
 fn runtime_handle_messages_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
@@ -426,6 +420,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn turn_binding_records_identity_without_requiring_a_display_overlay() {
+        let mut handle = json!({});
+        bind_runtime_handle_user_message_presentation_to_turn(
+            &mut handle,
+            "client-user",
+            "native-turn",
+        );
+        assert_eq!(
+            handle["userMessagePresentations"][0]["clientUserMessageId"],
+            "client-user"
+        );
+        assert_eq!(
+            handle["userMessagePresentations"][0]["turnId"],
+            "native-turn"
+        );
+        assert_ne!(handle["userMessagePresentations"][0]["ensureVisible"], true);
+    }
 
     #[test]
     fn completed_transcript_cache_is_scoped_to_provider_thread() {

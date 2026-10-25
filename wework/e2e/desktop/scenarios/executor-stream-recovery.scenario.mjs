@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
@@ -133,9 +134,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = Buffer.concat(chunks).toString('utf8')
+      const body = await readRawRequestBody(request)
       assert.ok(body.includes(PROMPT), 'The executor stream recovery prompt was not preserved')
 
       const responseId = `wework-executor-stream-recovery-${Date.now()}`

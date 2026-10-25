@@ -912,7 +912,9 @@ function hasRuntimeTaskBranchWarning(task: RuntimeTaskSummary): boolean {
 }
 
 function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
-  if (task.interactionStatus) return true
+  // The lifecycle store owns explicit interaction metadata and may already have
+  // accepted a reply newer than this task-list snapshot.
+  if (task.interactionStatus !== undefined) return false
   const status = task.status?.trim().toLowerCase() ?? ''
   return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
     status.includes(value)

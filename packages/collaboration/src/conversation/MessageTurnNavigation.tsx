@@ -286,7 +286,9 @@ export function MessageTurnNavigation({
     const anchor = targetMessageId
       ? findMessageAnchor(contentRef, targetMessageId)
       : null;
-    if (!scroller || !targetMessageId || !anchor) return;
+    if (!scroller || !targetMessageId) return;
+    onNavigationScrollTargetChange?.(targetMessageId);
+    if (!anchor) return;
 
     scrollToMessageId(scroller, targetMessageId);
     setLoadingMarkerId((current) =>
@@ -296,8 +298,10 @@ export function MessageTurnNavigation({
     finishNavigationLoad(onNavigationLoadStateChange);
   }, [
     contentRef,
+    markers,
     messages,
     onNavigationLoadStateChange,
+    onNavigationScrollTargetChange,
     pendingScrollTarget,
     scrollRef,
     scrollToMessageId,
@@ -402,11 +406,14 @@ export function MessageTurnNavigation({
 
       const loadedMessageId = findLoadedNavigationMessageId(messages, {
         navigationId: marker.id,
+        userMessageId: marker.userMessageId,
+        turnId: marker.turnId,
         messageIndex: marker.messageIndex,
       });
       if (loadedMessageId) {
         setPendingScrollTarget({
           navigationId: marker.id,
+          userMessageId: marker.userMessageId,
           turnId: marker.turnId,
           messageIndex: marker.messageIndex,
         });
@@ -421,6 +428,7 @@ export function MessageTurnNavigation({
       }
       setPendingScrollTarget({
         navigationId: marker.id,
+        userMessageId: marker.userMessageId,
         turnId: marker.turnId,
         messageIndex: marker.messageIndex,
       });

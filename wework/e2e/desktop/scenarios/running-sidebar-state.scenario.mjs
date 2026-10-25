@@ -1,6 +1,8 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -94,9 +96,8 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
         !['/v1/responses', '/responses'].includes(url.pathname)
       )
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = Buffer.concat(chunks).toString('utf8')
+      const body = await readRawRequestBody(request)
+      if (handleEmptyReplyPrediction(JSON.parse(body), response)) return true
       assert.ok(body.includes(FIRST) || body.includes(FILLER))
       requests += 1
       const id = `sidebar-state-${requests}`

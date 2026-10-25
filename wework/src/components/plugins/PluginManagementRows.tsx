@@ -81,6 +81,8 @@ export function InstalledPluginRow({
             ? t('workbench.plugins_distribution_external', '第三方市场')
             : t('workbench.plugins_distribution_public', 'Wework官方')
   const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
+  const recoveryError = plugin.raw.spec.sourcePayload?.runtimeRecoveryError
+  const needsRecovery = typeof recoveryError === 'string' && Boolean(recoveryError.trim())
 
   useEffect(() => {
     if (!isMenuOpen) return
@@ -127,6 +129,16 @@ export function InstalledPluginRow({
         <small className="mt-0.5 block truncate text-sm leading-5 text-text-muted">
           {subtitle}
         </small>
+        {needsRecovery && (
+          <small
+            role="status"
+            data-testid={`installed-plugin-recovery-${plugin.id}`}
+            title={recoveryError}
+            className="block truncate text-sm leading-5 text-text-secondary"
+          >
+            {t('workbench.plugins_runtime_recovery_required')}
+          </small>
+        )}
       </div>
     </>
   )
@@ -160,7 +172,7 @@ export function InstalledPluginRow({
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             {t('workbench.plugins_uninstalling', '正在卸载')}
           </span>
-        ) : onTry ? (
+        ) : onTry && !needsRecovery ? (
           <button
             type="button"
             aria-label={`${t('workbench.plugins_try_now', '立即对话')} ${plugin.name}`}

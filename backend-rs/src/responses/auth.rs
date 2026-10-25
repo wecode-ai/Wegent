@@ -13,9 +13,10 @@
 //! 5. task token (JWT with `type=task_token`) as fallback.
 //!
 //! The recorded case authenticates with a personal API key: the source
-//! selects the key by SHA-256 hash, updates `last_used_at` (UPDATE + COMMIT),
-//! reloads the expired row (SELECT by id), and resolves the owner user
-//! through the configured `userReader` (`user_reader::UserByIdReader`).
+//! selects the key by SHA-256 hash, updates `last_used_at` (UPDATE + COMMIT in
+//! its helper session), reloads the expired row (SELECT by id), and resolves
+//! the owner user through the configured `userReader`
+//! (`user_reader::UserByIdReader`).
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -590,9 +591,10 @@ pub async fn get_current_user_flexible(
     {
         tracing::warn!(%error, "[auth] last_used_at update failed; continuing");
     }
-    if let Err(error) = mysql.execute("COMMIT", ()).await {
-        tracing::warn!(%error, "[auth] last_used_at commit failed; continuing");
-    }
+    // The source's helper session ends this write with `db.commit()`.
+    // `brz-mysql`'s `ai-strict` rejects a pooled `COMMIT` because the service
+    // manages autocommit itself, and the pooled `UPDATE` above is already
+    // durable; no manual commit is issued.
     // SQLAlchemy expires the ORM object on commit; the endpoint's later
     // `api_key_record.name` read reloads the row by primary key (full
     // labeled projection, literal id).

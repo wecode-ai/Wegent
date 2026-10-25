@@ -5,8 +5,8 @@
 use super::*;
 
 pub(super) async fn wait_for_context_compaction(
-    mut route_notification: impl FnMut(&Value),
-    mut notifications: broadcast::Receiver<Value>,
+    mut route_notification: impl FnMut(&CodexNotification),
+    mut notifications: broadcast::Receiver<CodexNotification>,
     thread_id: &str,
     previous_turn_id: Option<&str>,
 ) -> Result<(String, String), String> {
@@ -217,7 +217,7 @@ mod tests {
             "threadId": "thread", "turn": {"id": "compact-turn", "status": "completed", "items": [
                 {"id": "compact-item", "type": "contextCompaction"}
             ]}
-        }})).unwrap();
+        }}).into()).unwrap();
         assert_eq!(
             action.await.unwrap(),
             Ok(("compact-turn".to_owned(), "compact-item".to_owned()))
@@ -228,14 +228,14 @@ mod tests {
     async fn keeps_waiting_after_notification_lag_when_completion_is_still_buffered() {
         let (sender, receiver) = broadcast::channel(2);
         for _ in 0..4 {
-            sender.send(json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "other-thread"}})).unwrap();
+            sender.send(json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "other-thread"}}).into()).unwrap();
         }
         sender.send(json!({"method": "item/completed", "params": {
             "threadId": "thread", "turnId": "compact-turn", "item": {"id": "compact-item", "type": "contextCompaction"}
-        }})).unwrap();
+        }}).into()).unwrap();
         sender.send(json!({"method": "turn/completed", "params": {
             "threadId": "thread", "turn": {"id": "compact-turn", "status": "completed", "items": []}
-        }})).unwrap();
+        }}).into()).unwrap();
         assert_eq!(
             wait_for_context_compaction(|_| {}, receiver, "thread", Some("previous")).await,
             Ok(("compact-turn".to_owned(), "compact-item".to_owned()))

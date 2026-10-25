@@ -29,6 +29,7 @@ from app.schemas.subscription import (
     NotificationWebhook,
     NotificationWebhookType,
     SubscriptionFollowConfig,
+    normalize_dingtalk_mention_user_ids,
 )
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -41,6 +42,97 @@ MESSAGER_KIND = "Messager"
 
 # Attachment URL pattern for link conversion
 ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
+
+# Mention display names are stable for the lifetime of the process.
+_DINGTALK_MENTION_NAME_CACHE: Dict[str, str] = {}
+DINGTALK_MENTION_RESOLUTION_TIMEOUT_SECONDS = 5.0
+
+
+async def _lookup_employee_email(staff_id: str) -> str:
+    """Resolve an employee email through the optional enterprise ERP integration."""
+    try:
+        from dingtalk.services.dingtalk_service import dingtalk_service
+    except ImportError:
+        return ""
+    return await dingtalk_service.get_employee_email(staff_id) or ""
+
+
+def _get_dingtalk_user_info_url() -> str:
+    """Return the optional enterprise user-info endpoint."""
+    from app.core.config import settings
+
+    return getattr(settings, "DINGTALK_USER_INFO_URL", "")
+
+
+async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
+    """Resolve a DingTalk staff ID to the user's display name."""
+    from app.core.cache import cache_manager
+    from app.models.user import User
+
+    cache_key = f"dingtalk:mention_name:{user_id}"
+    cached_name = await cache_manager.get(cache_key)
+    if cached_name:
+        return cached_name
+
+    user = (
+        db.query(User).filter(User.user_name == user_id, User.is_active == True).first()
+    )
+    email = user.email if user else ""
+    if not email:
+        email = await _lookup_employee_email(user_id)
+    user_info_url = _get_dingtalk_user_info_url()
+    if not email or not user_info_url:
+        return ""
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                user_info_url,
+                headers={"Content-Type": "application/json"},
+                json={"emails": [email]},
+            )
+            response.raise_for_status()
+            users = response.json()
+    except Exception as exc:
+        logger.warning(
+            "[SubscriptionNotificationDispatcher] Failed to resolve DingTalk "
+            "mention name for staffId=%s: %s",
+            user_id,
+            exc,
+        )
+        return ""
+
+    if not users:
+        return ""
+    name = str(users[0].get("NAME") or "").strip()
+    if name:
+        await cache_manager.set(cache_key, name, expire=86400)
+    return name
+
+
+async def _resolve_dingtalk_mention_user_ids(
+    db: Session, values: Optional[List[str]]
+) -> List[str]:
+    """Attach display names to DingTalk mention IDs for card rendering."""
+    resolved: List[str] = []
+    for value in values or []:
+        raw = value.strip()
+        if not raw:
+            continue
+        staff_id, separator, _ = raw.partition(":")
+        lookup_id = (
+            staff_id.strip() if separator and staff_id.strip().isdigit() else raw
+        )
+        if not lookup_id.isdigit():
+            resolved.append(lookup_id)
+            continue
+        name = _DINGTALK_MENTION_NAME_CACHE.get(lookup_id, "")
+        if not name:
+            name = await _lookup_dingtalk_mention_name(db, lookup_id)
+            if name:
+                _DINGTALK_MENTION_NAME_CACHE[lookup_id] = name
+        resolved.append(f"{lookup_id}:{name}" if name else lookup_id)
+    return resolved
 
 
 def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
@@ -80,6 +172,7 @@ def _convert_attachment_links_to_public(message: str) -> str:
 
     # Find all attachment URLs and replace with public share URLs
     def replace_url(match: re.Match) -> str:
+        """Replace one attachment URL with a public share URL."""
         attachment_id = int(match.group(1))
 
         # Generate public share token for this attachment
@@ -309,10 +402,14 @@ class SubscriptionNotificationDispatcher:
                 send_private = True
                 send_group = False
                 group_conversation_id = None
+                group_mention_user_ids: List[str] = []
                 if binding_config:
                     send_private = bool(binding_config.get("bind_private", True))
                     send_group = bool(binding_config.get("bind_group", False))
                     group_conversation_id = binding_config.get("group_conversation_id")
+                    group_mention_user_ids = normalize_dingtalk_mention_user_ids(
+                        binding_config.get("group_mention_user_ids") or []
+                    )
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -326,6 +423,7 @@ class SubscriptionNotificationDispatcher:
                         send_private=send_private,
                         send_group=send_group,
                         group_conversation_id=group_conversation_id,
+                        group_mention_user_ids=group_mention_user_ids,
                     )
                 )
             elif channel_type == "telegram":
@@ -364,6 +462,7 @@ class SubscriptionNotificationDispatcher:
         send_private: bool = True,
         send_group: bool = False,
         group_conversation_id: Optional[str] = None,
+        group_mention_user_ids: Optional[List[str]] = None,
     ) -> None:
         """
         Send notification via DingTalk.
@@ -377,6 +476,7 @@ class SubscriptionNotificationDispatcher:
             subscription_id: Subscription ID
             execution_id: Background execution ID
             subscription_display_name: Display name of the subscription
+            group_mention_user_ids: DingTalk user IDs to mention in group cards
         """
         try:
             dingtalk_user_id = binding.sender_staff_id or binding.sender_id
@@ -453,6 +553,21 @@ class SubscriptionNotificationDispatcher:
 
                 if send_group and group_conversation_id:
                     group_open_space_id = f"dtv1.card//IM_GROUP.{group_conversation_id}"
+                    group_mentions = group_mention_user_ids
+                    if group_mention_user_ids:
+                        try:
+                            group_mentions = await asyncio.wait_for(
+                                _resolve_dingtalk_mention_user_ids(
+                                    db, group_mention_user_ids
+                                ),
+                                timeout=DINGTALK_MENTION_RESOLUTION_TIMEOUT_SECONDS,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "[SubscriptionNotificationDispatcher] Mention name "
+                                "resolution failed, using raw IDs: %s",
+                                exc,
+                            )
                     logger.info(
                         f"[_send_dingtalk_notification] Sending group AI card to "
                         f"group_conversation_id={group_conversation_id}, open_space_id={group_open_space_id}"
@@ -465,6 +580,7 @@ class SubscriptionNotificationDispatcher:
                         status="",
                         enable_streaming=False,
                         open_space_id=group_open_space_id,
+                        mention_user_ids=group_mentions,
                     )
                     logger.info(
                         f"[_send_dingtalk_notification] Group AI card result: {group_result}"
@@ -1196,6 +1312,7 @@ class SubscriptionNotificationDispatcher:
 
         # Find all attachment URLs and replace with public share URLs
         def replace_url(match: re.Match) -> str:
+            """Replace one attachment URL with a public share URL."""
             attachment_id = int(match.group(1))
 
             # Generate public share token for this attachment

@@ -189,6 +189,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderActivity: context =>
       props.projectChatClient ? (
         <TaskActivityView
+          commentAssignment={context.commentAssignment}
           key={context.item.id}
           client={props.projectChatClient}
           project={context.project as CloudProject}

@@ -43,6 +43,7 @@ from app.services.device.runtime_route import (
     runtime_route_resolver,
 )
 from app.services.device.runtime_rpc_service import (
+    APP_DEVICE_TASK_READ_METHODS,
     RuntimeRpcError,
     encode_runtime_rpc_response,
     runtime_rpc_service,
@@ -478,6 +479,11 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             )
         for message in result:
             await emit_project_chat_message(self, message)
+        if result:
+            from app.core.async_utils import schedule_async_task
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            schedule_async_task(consume_queues_background)
         return {"ok": True, "result": result}
 
 
@@ -493,12 +499,12 @@ async def relay_ipc_request(
 
     project_transcript = False
     if (
-        method == "runtime.tasks.transcript"
+        method in APP_DEVICE_TASK_READ_METHODS
         and params.get("projectSession") is not None
     ):
         try:
             user_id, params = await run_sync_in_executor(
-                _project_transcript_request, user_id, device_id, params
+                _project_transcript_request, user_id, device_id, params, method
             )
             project_transcript = True
         except (HTTPException, ValidationError) as exc:
@@ -559,16 +565,34 @@ async def relay_ipc_request(
 
 
 def _project_transcript_request(
-    user_id: int, device_id: str, params: dict[str, Any]
+    user_id: int,
+    device_id: str,
+    params: dict[str, Any],
+    method: str,
 ) -> tuple[int, dict[str, Any]]:
-    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.schemas.runtime_work import (
+        RuntimeTranscriptRequest,
+        RuntimeTranscriptSearchRequest,
+    )
     from app.services.project_chat.session_access import resolve_project_transcript
-    from app.services.runtime_work_service import _runtime_transcript_payload
+    from app.services.runtime_work_service import (
+        _runtime_transcript_payload,
+        _runtime_transcript_search_payload,
+    )
 
-    request = RuntimeTranscriptRequest.model_validate({**params, "deviceId": device_id})
+    search = method == "runtime.tasks.transcript.search"
+    request_type = (
+        RuntimeTranscriptSearchRequest if search else RuntimeTranscriptRequest
+    )
+    request = request_type.model_validate({**params, "deviceId": device_id})
     with get_db_session() as db:
         owner, address = resolve_project_transcript(db, user_id, request)
-        return owner, _runtime_transcript_payload(request, address)
+        payload = (
+            _runtime_transcript_search_payload(request, address)
+            if search
+            else _runtime_transcript_payload(request, address)
+        )
+        return owner, payload
 
 
 def ipc_error(
@@ -599,8 +623,13 @@ def runtime_rpc_failure(result: dict, method: str) -> dict[str, Any]:
 
     error = result.get("error")
     if isinstance(error, str) and error.strip():
+        code = result.get("code")
         return {
-            "code": "runtime_rpc_failed",
+            "code": (
+                code.strip()
+                if isinstance(code, str) and code.strip()
+                else "runtime_rpc_failed"
+            ),
             "message": error.strip(),
             "retryable": False,
             "details": {},

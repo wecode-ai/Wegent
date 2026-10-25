@@ -1685,3 +1685,14 @@ def test_agent_assignment_rejects_agent_from_another_project(
         .count()
         == 0
     )
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(
+        test_client, ("workspaces", "groups", "issue_assignments", "execution_statuses")
+    ) as client:
+        yield client

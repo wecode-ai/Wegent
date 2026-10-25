@@ -1,3 +1,4 @@
+import { rendererCrashStore } from './rendererCrashStore'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -18,21 +19,28 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
 import {
+  listLegacyLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { getProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { sendNativeKeyAndWait } from './native-key-acknowledgement'
+import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
   startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { readConversationSearchContent } from '@wegent/collaboration/conversation'
+import { matchConversationText } from '@wegent/chat-core/conversation-search'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
@@ -57,7 +65,11 @@ import {
   type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
-import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
+import {
+  getDesktopE2ERuntimeConfig,
+  loadDesktopE2ERuntimeConfig,
+  type DesktopE2ERuntimeConfig,
+} from './runtime-config'
 import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
@@ -403,18 +415,130 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-async function seedDesktopE2ECloudConnection(): Promise<void> {
-  const runtimeConfig = getDesktopE2ERuntimeConfig()
-  const backendUrl =
-    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
-  if (!backendUrl) return
-  const modelServerUrl =
-    runtimeConfig.modelServerUrl ??
-    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
-    backendUrl
+export function seedDesktopE2ELocalModels(
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  modelServerUrl: string
+): void {
+  const seedLocalModels =
+    runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
+  if (!seedLocalModels) return
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
+  const localModels = [
+    {
+      id: 'desktop-e2e-responses',
+      displayName: 'Desktop E2E Responses',
+      modelId: 'desktop-e2e-responses-model',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/responses',
+    },
+    {
+      id: 'desktop-e2e-chat',
+      displayName: 'Desktop E2E Chat',
+      modelId: 'desktop-e2e-chat-model',
+      apiFormat: 'openai-chat-completions' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/chat/completions',
+    },
+    {
+      id: 'desktop-e2e-anthropic',
+      displayName: 'Desktop E2E Anthropic',
+      modelId: 'desktop-e2e-anthropic-model',
+      apiFormat: 'anthropic-messages' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/messages',
+    },
+    {
+      id: 'desktop-e2e-luna-overseas',
+      displayName: 'GPT 5.6 Luna (海外)',
+      modelId: 'gpt-5.6-luna',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'custom' as const,
+      requestPath: '/v1/responses',
+    },
+    // The vision proxy must be saved before the primary model that references it.
+    {
+      id: 'desktop-e2e-vision',
+      providerProfileId: 'kimi' as const,
+      displayName: 'Desktop E2E Vision',
+      modelId: 'kimi-k3',
+      apiFormat: 'openai-chat-completions' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/chat/completions',
+      catalogReady: true,
+    },
+    {
+      id: 'desktop-e2e-vision-main',
+      providerProfileId: 'deepseek' as const,
+      displayName: 'Desktop E2E DeepSeek Pro Vision Main',
+      modelId: 'deepseek-v4-pro',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'custom' as const,
+      requestPath: '/v1/responses',
+      contextWindow: 1_048_576,
+      webSearchMode: 'live' as const,
+      codexCatalogModelId: 'wework-deepseek-v4-pro',
+      visionModelConfigId: 'desktop-e2e-vision',
+      catalogReady: true,
+    },
+  ]
+  const providerOwnedModelIds = new Set(getProviderModelConfigs().map(model => model.id))
+  // saveLocalModelConfig validates vision proxies against standalone storage.
+  const standaloneModelIds = new Set(
+    listLegacyLocalModelConfigs()
+      .filter(model => model.enabled)
+      .map(model => model.id)
+  )
+  for (const model of localModels) {
+    if (providerOwnedModelIds.has(model.id)) continue
+    const visionModelConfigId =
+      'visionModelConfigId' in model ? model.visionModelConfigId : undefined
+    if (visionModelConfigId && !standaloneModelIds.has(visionModelConfigId)) {
+      console.warn(
+        `[Wework] Skipping E2E model fixture ${model.id}: its vision proxy ${visionModelConfigId} is not an enabled standalone model.`
+      )
+      continue
+    }
+    saveLocalModelConfig({
+      catalogReady: localModelsCatalogReady,
+      ...model,
+      baseUrl: modelServerUrl,
+      apiKey: 'wework-e2e-test-key',
+      enabled: true,
+    })
+    standaloneModelIds.add(model.id)
+  }
+  saveLocalUserPreferences({
+    wework_new_chat_model_selection: {
+      modelName: 'gpt-5.4',
+      modelType: 'runtime',
+      options: {},
+    },
+  })
+}
+
+function resolveDesktopE2ECloudBackendUrl(runtimeConfig: DesktopE2ERuntimeConfig) {
+  return runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+}
+
+function resolveDesktopE2EModelServerUrl(
+  runtimeConfig: DesktopE2ERuntimeConfig,
+  backendUrl?: string
+) {
+  return (
+    runtimeConfig.modelServerUrl ??
+    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
+    backendUrl
+  )
+}
+
+async function seedDesktopE2ECloudConnection(
+  runtimeConfig: DesktopE2ERuntimeConfig
+): Promise<void> {
+  const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
+  if (!backendUrl) return
   const config = normalizeCloudBackendUrl(backendUrl)
   const token = runtimeConfig.cloudToken ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim()
   const response = await fetch(`${config.apiBaseUrl}/users/me`, {
@@ -429,84 +553,16 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
     user,
     connectedAt: new Date().toISOString(),
   })
-  const localModels =
-    (runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true')
-      ? [
-          {
-            id: 'desktop-e2e-responses',
-            displayName: 'Desktop E2E Responses',
-            modelId: 'desktop-e2e-responses-model',
-            apiFormat: 'openai-responses' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/responses',
-          },
-          {
-            id: 'desktop-e2e-chat',
-            displayName: 'Desktop E2E Chat',
-            modelId: 'desktop-e2e-chat-model',
-            apiFormat: 'openai-chat-completions' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/chat/completions',
-          },
-          {
-            id: 'desktop-e2e-anthropic',
-            displayName: 'Desktop E2E Anthropic',
-            modelId: 'desktop-e2e-anthropic-model',
-            apiFormat: 'anthropic-messages' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/messages',
-          },
-          {
-            id: 'desktop-e2e-luna-overseas',
-            displayName: 'GPT 5.6 Luna (海外)',
-            modelId: 'gpt-5.6-luna',
-            apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
-            requestPath: '/v1/responses',
-          },
-          // The vision proxy must be saved before the primary model that references it.
-          {
-            id: 'desktop-e2e-vision',
-            providerProfileId: 'kimi' as const,
-            displayName: 'Desktop E2E Vision',
-            modelId: 'kimi-k3',
-            apiFormat: 'openai-chat-completions' as const,
-            toolProfile: 'function' as const,
-            requestPath: '/v1/chat/completions',
-            catalogReady: true,
-          },
-          {
-            id: 'desktop-e2e-vision-main',
-            providerProfileId: 'deepseek' as const,
-            displayName: 'Desktop E2E DeepSeek Pro Vision Main',
-            modelId: 'deepseek-v4-pro',
-            apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
-            requestPath: '/v1/responses',
-            contextWindow: 1_048_576,
-            webSearchMode: 'live' as const,
-            codexCatalogModelId: 'wework-deepseek-v4-pro',
-            visionModelConfigId: 'desktop-e2e-vision',
-            catalogReady: true,
-          },
-        ]
-      : []
-  for (const model of localModels) {
-    saveLocalModelConfig({
-      catalogReady: localModelsCatalogReady,
-      ...model,
-      baseUrl: modelServerUrl,
-      apiKey: 'wework-e2e-test-key',
-      enabled: true,
-    })
+}
+
+export async function seedDesktopE2ERuntime(): Promise<void> {
+  const runtimeConfig = getDesktopE2ERuntimeConfig()
+  const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
+  const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
+  if (modelServerUrl) {
+    seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
-  saveLocalUserPreferences({
-    wework_new_chat_model_selection: {
-      modelName: 'gpt-5.4',
-      modelType: 'runtime',
-      options: {},
-    },
-  })
+  await seedDesktopE2ECloudConnection(runtimeConfig)
 }
 
 export async function installWeworkAutomationBridge(
@@ -524,7 +580,7 @@ export async function installWeworkAutomationBridge(
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
-  await seedDesktopE2ECloudConnection()
+  await seedDesktopE2ERuntime()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
@@ -1053,41 +1109,51 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
 async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
-  phase: 'press' | 'down' | 'up' = 'press'
+  phase: 'press' | 'down' | 'up' = 'press',
+  measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  const startedAt = Date.now()
+  const trace = (stage: string) =>
+    console.info(
+      `[desktop-e2e-key] ${JSON.stringify({ stage, key, phase, windowLabel, elapsedMs: Date.now() - startedAt })}`
+    )
+  trace('focus-start')
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
-  await waitForDesktopControlTick()
+  trace('focus-complete')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
-  const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
-  const recordKey = (event: KeyboardEvent) => received.push(event)
+  const expectedKey = parseDesktopControlKey(key).key
+  const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
+  if (measurement && !viewportTarget) throw new Error('Native viewport target is unavailable')
+  const observation = viewportTarget
+    ? createNativeKeyObservation(element, () => readNativeTerminalViewport(viewportTarget))
+    : null
+  const recordKey = (event: KeyboardEvent) => {
+    if (event.key === expectedKey) observation?.record(event)
+  }
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', {
-      windowLabel,
-      key,
-      phase,
-      focus: false,
-    })
-    await waitForDesktopControlTick()
-    if (!received.some(event => event.isTrusted && event.target === element)) {
-      throw new Error(
-        `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
-          `active=${document.activeElement?.getAttribute('data-testid') ?? ''}, ` +
-          `received=${received.map(event => event.key).join(',')}`
-      )
-    }
+    trace('key-start')
+    await sendNativeKeyAndWait(element, phase, () =>
+      invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
+    )
+    trace('key-observed')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return document.activeElement?.getAttribute('data-testid') ?? ''
+  return observation && viewportTarget
+    ? JSON.stringify({
+        viewportBefore: observation.result(),
+        viewportAfter: readNativeTerminalViewport(viewportTarget),
+      })
+    : (document.activeElement?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -1306,6 +1372,16 @@ function endDesktopControlDataTransfer(command: DesktopControlCommand): string {
 function dragDesktopControlDataTransfer(command: DesktopControlCommand): string {
   startDesktopControlDataTransfer(command)
   return endDesktopControlDataTransfer(command)
+}
+
+function hoverDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  const activeDrag = activeDesktopControlDataTransfer
+  if (!activeDrag) throw new Error('No data-transfer drag is active')
+  const target = findDesktopControlElements(command.selector)[0]
+  if (!target) throw new Error(`Unable to find selector "${command.selector}"`)
+  dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
+  dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
+  return target.textContent?.trim() ?? ''
 }
 
 function contextMenuDesktopControlElement(selector: string): string {
@@ -1813,6 +1889,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'crashRenderer':
+      rendererCrashStore.trigger()
+      return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
     case 'getNativeWindowState':
@@ -1884,6 +1963,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'getEmbeddedBrowserDocumentState':
+      return JSON.stringify(
+        await evalEmbeddedBrowserJson<{
+          href: string
+          readyState: DocumentReadyState
+          bodyText: string
+        }>(
+          `({
+            href: window.location.href,
+            readyState: document.readyState,
+            bodyText: (document.body?.innerText ?? '').trim().slice(0, 4096)
+          })`,
+          command.value
+        )
+      )
     case 'setEmbeddedBrowserAgentControlPaused': {
       const input = JSON.parse(command.value ?? '{}') as {
         label?: string
@@ -1909,6 +2003,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'requestMainWindowClose':
       return ''
     case 'requestStartupSplashClose':
+    case 'refreshFromApplicationMenu':
       return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
@@ -1930,6 +2025,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'getLocalRuntimeTranscript':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.transcript', JSON.parse(command.value ?? '{}'))
+      )
+    case 'answerRuntimeUserInputDirectly': {
+      const { taskId, requestUserInputResponse } = JSON.parse(command.value ?? '{}')
+      if (
+        typeof taskId !== 'string' ||
+        !taskId.trim() ||
+        !requestUserInputResponse ||
+        typeof requestUserInputResponse !== 'object' ||
+        Array.isArray(requestUserInputResponse)
+      ) {
+        throw new Error(
+          'answerRuntimeUserInputDirectly requires taskId and requestUserInputResponse'
+        )
+      }
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.send', { taskId, requestUserInputResponse })
+      )
+    }
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
@@ -2359,6 +2475,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return startDesktopControlDataTransfer(command)
     case 'dragDataTransferEnd':
       return endDesktopControlDataTransfer(command)
+    case 'dragDataTransferOver':
+      return hoverDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
     case 'doubleClick':
@@ -2406,6 +2524,43 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getConversationSearchHighlightMetrics': {
+      const containers = findDesktopControlElements(command.selector)
+        .map(element => ({ element, ...readConversationSearchContent(element) }))
+        .filter(({ text }) => text.trim() === command.text?.trim())
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
+      const ranges = Array.from(highlights)
+        .filter(([name]) => /^conversation-search-.+-active$/.test(name))
+        .flatMap(([, highlight]) => Array.from(highlight))
+        .flatMap(range => {
+          const container = containers.find(
+            ({ element }) =>
+              element.contains(range.startContainer) && element.contains(range.endContainer)
+          )
+          if (range.collapsed || !container) return []
+          const boundaryOffset = (node: Node, offset: number) => {
+            for (const entry of container.nodes) {
+              if (entry.node === node) return entry.start + offset
+              const sourceRange = document.createRange()
+              sourceRange.selectNodeContents(entry.node)
+              if (sourceRange.comparePoint(node, offset) <= 0) return entry.start
+            }
+            return container.text.length
+          }
+          const start = boundaryOffset(range.startContainer, range.startOffset)
+          const end = boundaryOffset(range.endContainer, range.endOffset)
+          const occurrence = matchConversationText(container.text, query).findIndex(
+            match => match.start === start && match.end === end
+          )
+          if (occurrence < 0) return []
+          const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
+          return [{ text: range.toString(), occurrence, top, bottom, left, right, width, height }]
+        })
+      return JSON.stringify({ query, ranges })
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {
@@ -3045,6 +3200,35 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
     }
+    case 'getPluginSyncDiagnostics': {
+      const deviceId = command.value?.trim()
+      if (!deviceId) throw new Error('getPluginSyncDiagnostics requires a device id')
+      const { hasInFlightPluginDeviceSync } =
+        await import('@/features/plugins/pluginDeviceAutoSync')
+      const { getLocalExecutorCloudConnectionStatus } =
+        await import('@/features/cloud-connection/localExecutorCloudConnectionStatus')
+      const backend = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
+        'executor.backend.status'
+      )
+      return JSON.stringify({
+        deviceId,
+        backend: { configured: backend.configured, connected: backend.connected },
+        rendererConnected: getLocalExecutorCloudConnectionStatus().connected,
+        inFlight: hasInFlightPluginDeviceSync(deviceId),
+        localCatalogReads: ['started', 'completed', 'failed']
+          .flatMap(phase =>
+            performance
+              .getEntriesByName(`wework:plugin-local-catalog:${phase}`, 'mark')
+              .map(entry => ({
+                phase,
+                time: entry.startTime,
+                startedAt:
+                  phase === 'started' ? entry.startTime : (entry as PerformanceMark).detail,
+              }))
+          )
+          .sort((left, right) => left.time - right.time),
+      })
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
@@ -3177,7 +3361,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
     case 'nativePress': {
-      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+      return pressNativeDesktopControlKey(
+        command.selector,
+        command.key ?? '',
+        'press',
+        command.target ? { selector: command.target } : undefined
+      )
     }
     case 'nativeKeyDownOnly': {
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'down')
@@ -3234,13 +3423,37 @@ async function postDesktopControlStarted(
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
-  const response = await fetch(`${url}/started`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ id: command.id, clientId }),
-  })
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  let response: Response
+  try {
+    response = await fetch(`${url}/started`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify({ id: command.id, clientId }),
+    })
+  } finally {
+    window.clearInterval(probe)
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+  }
   if (!response.ok) {
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
+  }
+  if (Date.now() - startedAt > 1000) {
+    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
+      commandId: command.id,
+      action: command.action,
+      startedAt,
+      elapsedMs: Date.now() - startedAt,
+      maxEventLoopLagMs,
+      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+      visibility: document.visibilityState,
+    })
   }
 }
 
@@ -3273,7 +3486,10 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      const diagnostic = { commandId: command.id, action: command.action, clientId }
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
       await postDesktopControlStarted(url, command, clientId)
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3287,14 +3503,20 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
+        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
         await postDesktopControlResult(url, result)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
-        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
-          commandId: command.id,
-          action: command.action,
-          actionSucceeded: result.ok,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        console.error(
+          '[Wework] Desktop E2E result acknowledgement failed:',
+          JSON.stringify({
+            commandId: command.id,
+            action: command.action,
+            actionSucceeded: result.ok,
+            actionError: result.error,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
         throw error
       }
       if (result.ok) {
@@ -3312,6 +3534,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           return
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
+          return
+        } else if (command.action === 'refreshFromApplicationMenu') {
+          const activated = await invokeDesktopHost('e2e.activateApplicationMenu', {
+            id: 'view.refresh',
+          })
+          if (!activated) throw new Error('View > Refresh is unavailable')
           return
         }
       }

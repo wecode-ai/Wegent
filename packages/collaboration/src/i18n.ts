@@ -269,11 +269,15 @@ const sharedMessages: Record<
     "todo.project_member_inherited_named": "继承自 {{space}}",
     "todo.project_member_inherited_parent": "继承自父空间",
     "todo.project_member_direct": "直接邀请",
+    "todo.project_member_project_role": "项目角色",
+    "todo.reset_member_role": "恢复 {{name}} 的空间角色",
+    "todo.reset_member_role_confirm":
+      "移除“{{name}}”的项目角色，恢复空间角色？",
     "todo.project_member_owner": "本地项目所有者",
     "todo.project_members_loading": "正在加载成员…",
     "todo.project_members_empty": "暂无项目成员",
     "todo.project_member_inherited_hint":
-      "继承角色由空间管理，项目内不能修改或移除。",
+      "项目角色可覆盖空间成员或只读成员的继承角色，移除项目角色后恢复继承。空间管理员始终可管理项目。",
     "todo.project_member_capability_hint":
       "职责与能力在离开输入框后自动保存，帮助 AI 选择合适的负责人。",
     "todo.permission_admin": "管理员",
@@ -311,10 +315,12 @@ const sharedMessages: Record<
     "todo.agent_picker_select_hint": "选择智能体后即可添加",
     "todo.agent_picker_adding": "添加中…",
     "todo.agent_picker_description": "选择一个智能体，加入后即可分配项目任务。",
-    "todo.agent_picker_workspace_description": "选择一个智能体，供空间内项目复用。",
-    "todo.agent_picker_workspace_share": "添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
+    "todo.agent_picker_workspace_description":
+      "选择一个智能体，供空间内项目复用。",
+    "todo.agent_picker_workspace_share":
+      "添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
     "common.actions": "操作",
-    "standIn.start_failed": "任务已创建，替身未能启动：",
+    "standIn.start_failed": "任务已创建，分身未能启动：",
     "standIn.retry": "重试处理",
     "issue_creation.owner": "负责人",
     "issue_creation.user": "成员",
@@ -543,6 +549,10 @@ const sharedMessages: Record<
     "todo.priority_urgent": "紧急",
     "todo.assignee": "负责人",
     "todo.search_assignee": "搜索负责人",
+    "todo.comment_assign_to": "转派给",
+    "todo.keep_assignee": "保持当前",
+    "todo.send_and_assign": "发送并转派",
+    "todo.assign_only": "转派",
     "todo.no_matching_assignee": "没有匹配的负责人",
     "todo.assignee_add_member": "添加人员",
     "todo.assignee_add_agent": "添加智能体",
@@ -715,8 +725,6 @@ const sharedMessages: Record<
       "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
     "todo.execution_duration_help":
       "执行时长：{{duration}}。从本轮执行开始后持续计时。",
-    "todo.expand_execution_details": "展开",
-    "todo.collapse_execution_details": "收起",
     "todo.follow_up_owner": "跟进人",
     "todo.new_task": "新建任务",
     "todo.no_linked_task": "暂无关联任务",
@@ -764,11 +772,15 @@ const sharedMessages: Record<
     "todo.project_member_inherited_named": "Inherited from {{space}}",
     "todo.project_member_inherited_parent": "Inherited from parent space",
     "todo.project_member_direct": "Direct invitation",
+    "todo.project_member_project_role": "Project role",
+    "todo.reset_member_role": "Restore {{name}}’s space role",
+    "todo.reset_member_role_confirm":
+      "Remove the project role for “{{name}}” and restore the space role?",
     "todo.project_member_owner": "Local project owner",
     "todo.project_members_loading": "Loading members…",
     "todo.project_members_empty": "No project members yet",
     "todo.project_member_inherited_hint":
-      "Inherited roles are managed in the space and cannot be changed or removed here.",
+      "Project roles can override inherited member or viewer roles. Removing a project role restores inheritance. Space administrators always manage the project.",
     "todo.project_member_capability_hint":
       "Responsibilities save when you leave the field and help AI choose the right assignee.",
     "todo.permission_admin": "Administrator",
@@ -803,14 +815,18 @@ const sharedMessages: Record<
     "todo.agent_picker_empty": "No agents available to add",
     "todo.agent_picker_try_search": "Try another name or clear your search.",
     "todo.agent_picker_create_hint": "Create an agent to help with tasks.",
-    "todo.agent_picker_share_hint": "Ask a space administrator to share an agent first.",
+    "todo.agent_picker_share_hint":
+      "Ask a space administrator to share an agent first.",
     "todo.agent_picker_clear_search": "Clear search",
     "todo.agent_picker_selected": "Selected: {{name}}",
     "todo.agent_picker_select_hint": "Select an agent to continue",
     "todo.agent_picker_adding": "Adding…",
-    "todo.agent_picker_description": "Choose an agent to assign project tasks to.",
-    "todo.agent_picker_workspace_description": "Choose an agent for projects in this space to reuse.",
-    "todo.agent_picker_workspace_share": "Projects in this space can reuse this agent. Definitions and private credentials retain their own permissions.",
+    "todo.agent_picker_description":
+      "Choose an agent to assign project tasks to.",
+    "todo.agent_picker_workspace_description":
+      "Choose an agent for projects in this space to reuse.",
+    "todo.agent_picker_workspace_share":
+      "Projects in this space can reuse this agent. Definitions and private credentials retain their own permissions.",
     "common.actions": "Actions",
     "standIn.start_failed": "Issue created. Stand-in could not start:",
     "standIn.retry": "Retry",
@@ -1050,6 +1066,10 @@ const sharedMessages: Record<
     "todo.priority_urgent": "Urgent",
     "todo.assignee": "Assignee",
     "todo.search_assignee": "Search assignees",
+    "todo.comment_assign_to": "Assign to",
+    "todo.keep_assignee": "Keep current",
+    "todo.send_and_assign": "Send and assign",
+    "todo.assign_only": "Assign",
     "todo.no_matching_assignee": "No matching assignees",
     "todo.assignee_add_member": "Add member",
     "todo.assignee_add_agent": "Add agent",
@@ -1233,8 +1253,6 @@ const sharedMessages: Record<
       "Visibility: {{value}}. Controls who can view this issue's details.",
     "todo.execution_duration_help":
       "Execution duration: {{duration}}. Counts from the start of the current run.",
-    "todo.expand_execution_details": "Expand",
-    "todo.collapse_execution_details": "Collapse",
     "todo.follow_up_owner": "Owner",
     "todo.new_task": "New task",
     "todo.no_linked_task": "No linked tasks",

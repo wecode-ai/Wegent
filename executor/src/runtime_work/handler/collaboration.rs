@@ -489,7 +489,7 @@ impl RuntimeWorkRpcHandler {
                 !value.backend_url.trim().is_empty() && !value.auth_token.trim().is_empty()
             })
             .ok_or_else(|| "Backend connection is unavailable".to_owned())?;
-        let response = reqwest::Client::new()
+        let response = crate::agents::backend_url::backend_http_client()?
             .post(format!(
                 "{}/api/v1/cloud-projects/{}/executions/assignment-status",
                 connection.backend_url.trim_end_matches('/'),
@@ -620,7 +620,7 @@ impl RuntimeWorkRpcHandler {
                 !value.backend_url.trim().is_empty() && !value.auth_token.trim().is_empty()
             })
             .ok_or_else(|| "Backend connection is unavailable".to_owned())?;
-        let response = reqwest::Client::new()
+        let response = crate::agents::backend_url::backend_http_client()?
             .post(format!(
                 "{}/api/v1/cloud-projects/{}/executions/statuses",
                 connection.backend_url.trim_end_matches('/'),

@@ -24,7 +24,13 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
         .post(|headers: HeaderMap, Json(body): Json<Value>| async move {
             assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
             assert_eq!(body["body"], "Review report");
-            Json(json!({"id": "visible-report", "body": body["body"]}))
+            assert_eq!(
+                body["mentions"],
+                json!([{"type": "user", "id": "52", "label": "Reviewer"}])
+            );
+            Json(
+                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"]}),
+            )
         }),
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -39,11 +45,13 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
     let written = call_backend_tool(
         &context,
         "add_board_item_comment",
-        &json!({"item_id": "ISSUE-1", "body": "Review report"}),
+        &json!({"item_id": "ISSUE-1", "body": "Review report",
+            "mentions": [{"type": "user", "id": "52", "label": "Reviewer"}]}),
     )
     .await
     .unwrap();
     assert_eq!(written["id"], "visible-report");
+    assert_eq!(written["mentions"][0]["id"], "52");
     let comments = call_backend_tool(
         &context,
         "list_board_item_comments",
@@ -92,6 +100,25 @@ async fn local_comment_history_pages_the_same_activity_without_crossing_issues()
     let args = json!({"space_id": project.id, "item_id": issue.id, "limit": 1});
     let latest = list(&runtime, &args).await.unwrap();
     assert_eq!(latest[0]["body"], "Review report");
+    let error = add_local(
+        &runtime,
+        &json!({
+            "space_id": project.id, "item_id": issue.id, "body": "@Reviewer review",
+            "mentions": [{"type": "user", "id": "52", "label": "Reviewer"}]
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("require a shared Backend project"));
+    assert_eq!(
+        runtime
+            .list_comments(&project.id, &issue.id, 0)
+            .unwrap()
+            .len(),
+        2
+    );
     let mut after = args.clone();
     after["after_sequence"] = json!(1);
     assert_eq!(list(&runtime, &after).await.unwrap(), latest);
@@ -105,4 +132,27 @@ async fn local_comment_history_pages_the_same_activity_without_crossing_issues()
     after["space_id"] = json!(other.id);
     after["limit"] = json!(1);
     assert!(list(&runtime, &after).await.is_err());
+}
+
+#[test]
+fn comment_tool_exposes_structured_mentions_to_the_model() {
+    let tool = super::super::tools()
+        .into_iter()
+        .find(|tool| tool["name"] == "add_board_item_comment")
+        .unwrap();
+    let mentions = &tool["inputSchema"]["properties"]["mentions"];
+    assert_eq!(mentions["type"], "array");
+    assert_eq!(mentions["maxItems"], 64);
+    assert_eq!(
+        mentions["items"]["required"],
+        json!(["type", "id", "label"])
+    );
+    assert_eq!(
+        mentions["items"]["properties"]["type"]["enum"],
+        json!(["user", "agent"])
+    );
+    assert!(!tool["inputSchema"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("mentions")));
 }

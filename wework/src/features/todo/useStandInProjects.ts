@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { subscribeStandInSettings, type StandInProjectSettings } from '@/api/standIn'
+import { subscribePersonalStandIn } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 
@@ -25,6 +26,19 @@ export function useStandInProjects(
       changed.set(key(value), value)
       setSettings(current => [...current.filter(row => key(row) !== key(value)), value])
     })
+    const unsubscribePersonal = subscribePersonalStandIn(value => {
+      if (value.userId !== userId) return
+      void services.standInApi
+        ?.list(userId, value.executionDeviceId, true)
+        .then(rows => {
+          if (active)
+            setSettings(current => [
+              ...current.filter(row => row.executionDeviceId !== value.executionDeviceId),
+              ...rows,
+            ])
+        })
+        .catch(error => console.warn('[Wework] Failed to refresh Stand-in project state', error))
+    })
     void (async () => {
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       const targets = new Set(deviceIds.split('\n').filter(Boolean))
@@ -48,6 +62,7 @@ export function useStandInProjects(
     return () => {
       active = false
       unsubscribe()
+      unsubscribePersonal()
     }
   }, [services, deviceIds, userId])
   return new Set(

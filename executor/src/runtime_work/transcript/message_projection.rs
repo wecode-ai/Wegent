@@ -180,7 +180,7 @@ pub(super) fn push_accumulated_assistant(
     assistant: &mut AssistantTurnAccumulation,
     include_file_only: bool,
     options: TranscriptBuildOptions,
-) {
+) -> Vec<Value> {
     let has_content = if include_file_only {
         assistant.has_output()
     } else {
@@ -190,7 +190,7 @@ pub(super) fn push_accumulated_assistant(
         include_file_only && context.status == "failed" && *segment_index == 0;
     let should_emit = has_content || is_first_failed_turn;
     if !should_emit {
-        return;
+        return Vec::new();
     }
 
     apply_turn_completed_at(&mut assistant.blocks, context.completed_at);
@@ -224,6 +224,7 @@ pub(super) fn push_accumulated_assistant(
     }));
     *segment_index += 1;
     assistant.clear_after_emit();
+    runtime_items
 }
 
 fn user_message(
@@ -291,16 +292,19 @@ pub(super) fn push_user_message_once(
 }
 
 pub(crate) fn normalized_user_request_content(content: &str) -> String {
+    visible_user_request_content(content)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn visible_user_request_content(content: &str) -> &str {
     let request_content = content
         .find(CODEX_REQUEST_MARKER)
         .map(|index| &content[index + CODEX_REQUEST_MARKER.len()..])
         .filter(|request| !request.trim().is_empty())
         .unwrap_or(content);
-    let visible_content = strip_leading_application_context(request_content);
-    visible_content
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    strip_leading_application_context(request_content)
 }
 
 fn strip_leading_application_context(content: &str) -> &str {
@@ -613,42 +617,32 @@ pub(super) fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
     fold_commentary: bool,
-    interleave_visible_text: bool,
-    has_later_process: bool,
+    unphased_is_process: bool,
     assistant: &mut AssistantTurnAccumulation,
     options: TranscriptBuildOptions,
 ) {
     if let Some(content) = extract_text(item) {
-        if interleave_visible_text {
-            assistant.blocks.push(process_text_block(
-                item,
-                content,
-                fallback_timestamp,
-                options,
-            ));
-        } else {
-            match assistant_message_phase(item, fold_commentary, has_later_process) {
-                AssistantMessagePhase::Process => {
-                    assistant.blocks.push(process_text_block(
-                        item,
+        match assistant_message_phase(item, fold_commentary, unphased_is_process) {
+            AssistantMessagePhase::Process => {
+                assistant.blocks.push(process_text_block(
+                    item,
+                    content,
+                    fallback_timestamp,
+                    options,
+                ));
+            }
+            AssistantMessagePhase::Final => {
+                if !duplicates_completed_plan_block(&content, &assistant.blocks)
+                    && !assistant
+                        .assistant_parts
+                        .iter()
+                        .any(|part| part.content == content)
+                {
+                    assistant.assistant_parts.push(AssistantTextPart {
+                        id: item_id(item, "assistant-text"),
                         content,
-                        fallback_timestamp,
-                        options,
-                    ));
-                }
-                AssistantMessagePhase::Final => {
-                    if !duplicates_completed_plan_block(&content, &assistant.blocks)
-                        && !assistant
-                            .assistant_parts
-                            .iter()
-                            .any(|part| part.content == content)
-                    {
-                        assistant.assistant_parts.push(AssistantTextPart {
-                            id: item_id(item, "assistant-text"),
-                            content,
-                            created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
-                        });
-                    }
+                        created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
+                    });
                 }
             }
         }
@@ -683,12 +677,13 @@ enum AssistantMessagePhase {
 fn assistant_message_phase(
     item: &Value,
     fold_commentary: bool,
-    has_later_process: bool,
+    unphased_is_process: bool,
 ) -> AssistantMessagePhase {
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
-        None if has_later_process
+        // A completed item can precede a tool while its turn is still active.
+        None if unphased_is_process
             || string_field(item, "status")
                 .is_some_and(|status| normalized_phase_or_status(status) == "inprogress") =>
         {

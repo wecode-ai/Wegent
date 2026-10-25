@@ -14,6 +14,8 @@ const sources = {
   branches: readSource('dsh/ui-git/src/workspace-menu-section.tsx'),
   errors: readSource('src/components/plugins/workspace/AddMarketDialog.tsx'),
   browser: readSource('src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx'),
+  standInProject: readSource('src/features/todo/StandInProjectSetup.tsx'),
+  projectSpace: readSource('src/features/todo/ProjectSpacePickerMenu.tsx'),
 }
 const variants = `
   border border-[#737373]/[.37] keyboard:focus:border-[#339cff]/70
@@ -206,6 +208,40 @@ test('non-text radio rows gate their complete focus-within ring', () => {
     expect(computed(markup, modality).ring).not.toBe(pointer.ring)
   }
 })
+
+test.each([
+  {
+    name: 'project stand-in selection',
+    source: sources.standInProject,
+    expression: /className="([^"]*focus-within:ring-focus[^"]*)"/,
+    tag: 'select',
+    nested: true,
+  },
+  {
+    name: 'project space search',
+    source: sources.projectSpace,
+    expression: /className="([^"]*focus-within:ring-blue-500\/70[^"]*)"/,
+    tag: 'input',
+    nested: true,
+  },
+  {
+    name: 'project space sorting',
+    source: sources.projectSpace,
+    expression: /className="([^"]*focus-visible:ring-blue-500\/70[^"]*)"/,
+    tag: 'select',
+    nested: false,
+  },
+])(
+  '$name preserves the pointer baseline and keyboard ring',
+  ({ source, expression, tag, nested }) => {
+    const classes = sourceClass(source, expression)
+    const markup = nested ? container(classes, `<${tag} data-focus></${tag}>`) : field(classes, tag)
+    const { pointer } = expectPointerBaseline(markup)
+    for (const modality of ['keyboard', undefined] as const) {
+      expect(computed(markup, modality).ring).not.toBe(pointer.ring)
+    }
+  }
+)
 
 test.each(['projects', 'branches'] as const)(
   'floating %s source retains its translucent base border and gates focus paint',

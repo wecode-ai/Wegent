@@ -7,11 +7,7 @@ import type {
   CodexReference,
 } from "@wegent/chat-core/runtime";
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../markdown/MarkdownServices";
-import {
-  basename,
-  fileExtension,
-  getDisplayCodexReferences,
-} from "./codexReferences";
+import { basename, fileExtension } from "./codexReferences";
 
 const DEFAULT_VISIBLE_REFERENCE_COUNT = 3;
 
@@ -71,15 +67,14 @@ export function CodexReferenceList({
 }) {
   const { t } = useConversationTranslation();
   const [expanded, setExpanded] = useState(false);
-  const uniqueReferences = getDisplayCodexReferences(references);
-  if (uniqueReferences.length === 0) return null;
+  if (references.length === 0) return null;
   const hiddenCount = Math.max(
     0,
-    uniqueReferences.length - DEFAULT_VISIBLE_REFERENCE_COUNT,
+    references.length - DEFAULT_VISIBLE_REFERENCE_COUNT,
   );
   const visibleReferences = expanded
-    ? uniqueReferences
-    : uniqueReferences.slice(0, DEFAULT_VISIBLE_REFERENCE_COUNT);
+    ? references
+    : references.slice(0, DEFAULT_VISIBLE_REFERENCE_COUNT);
 
   return (
     <section

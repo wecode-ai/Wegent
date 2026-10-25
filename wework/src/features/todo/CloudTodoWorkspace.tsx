@@ -1,3 +1,4 @@
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -611,13 +612,11 @@ export function CloudTodoWorkspace({
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
     taskStatusExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
-  const changeRequestMonitor = useMemo(
-    () =>
-      changeRequestStatusEnabled && services.deviceApi
-        ? getChangeRequestMonitor(services.deviceApi)
-        : null,
-    [changeRequestStatusEnabled, services.deviceApi]
-  )
+  const issueChangeRequestMonitor =
+    services.deviceApi && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+      ? getChangeRequestMonitor(services.deviceApi)
+      : null
+  const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
   const cloudWorkspaceApi = services.sharedWorkspaceApi
   const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
   const runtimeTaskExecutionStatusByAddress = useMemo(
@@ -4961,6 +4960,14 @@ export function CloudTodoWorkspace({
                             archiveDisabled={isAITableProject}
                             progressDisplay={progressDisplay}
                             changeRequestMonitor={changeRequestMonitor}
+                            renderBadges={badges => (
+                              <IssueChangeRequestBadges
+                                badges={badges}
+                                monitor={issueChangeRequestMonitor}
+                                compact
+                                testId={`cloud-todo-card-badges-${item.id}`}
+                              />
+                            )}
                             onContinueChangeRequestRepair={
                               workbench ? continueChangeRequestRepair : undefined
                             }

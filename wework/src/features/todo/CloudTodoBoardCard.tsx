@@ -6,7 +6,15 @@ import {
   createIssueBoardCardLabels,
   createCollaborationTranslator,
 } from '@wegent/collaboration'
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
@@ -41,6 +49,7 @@ import {
   type UseBoardRuntimeConversationsOptions,
 } from './useBoardRuntimeConversations'
 import { Archive, CircleCheck } from 'lucide-react'
+import { IssueBadges } from './IssueBadges'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -142,6 +151,7 @@ interface CloudTodoBoardCardProps {
   }
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
+  renderBadges?: (badges: CollaborationIssueBadge[]) => ReactNode
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -171,6 +181,7 @@ export function CloudTodoBoardCard({
   cardAction,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
+  renderBadges,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const t = useBoardTranslate()
@@ -248,6 +259,19 @@ export function CloudTodoBoardCard({
       dragEnabled={editable && !dragDisabled}
       cardClassName="group/cloud-todo-card"
       onOpen={onClick}
+      summary={
+        item.can_view_detail !== false && item.badges?.length ? (
+          renderBadges ? (
+            renderBadges(item.badges)
+          ) : (
+            <IssueBadges
+              badges={item.badges}
+              compact
+              testId={`cloud-todo-card-badges-${item.id}`}
+            />
+          )
+        ) : null
+      }
       childrenAction={
         cardAction ? (
           <span className="absolute right-2 top-2 z-20">

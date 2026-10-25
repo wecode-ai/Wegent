@@ -213,7 +213,9 @@ async fn build_lite_task_list(
     // does not return; the registered reader keeps the source dependency
     // topology.
     let _ = state.user_reader.get_by_id(user_id).await;
-    let device_data = device_display_names(&state.mysql, user_id, &device_ids).await;
+    let device_data = device_display_names(&state.mysql, user_id, &device_ids)
+        .await
+        .unwrap_or_default();
     let group_task_ids: Vec<i64> = tasks.iter().map(|task| task.id).collect();
     let members = approved_group_chat_members(&state.mysql, &group_task_ids).await?;
 

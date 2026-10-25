@@ -10,7 +10,6 @@ import {
   type Ref,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
 import {
@@ -126,7 +125,7 @@ function mimeTypeForFileName(name: string): string {
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
-  const normalizedPath = decodeMarkdownFilePath(path.trim()).replace(/\\/g, '/')
+  const normalizedPath = path.trim().replace(/\\/g, '/')
   if (!normalizedPath) return null
   if (isAbsoluteWorkspacePath(normalizedPath)) {
     try {

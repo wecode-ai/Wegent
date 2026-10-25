@@ -231,22 +231,32 @@ impl RuntimeWorkRpcHandler {
                 return Ok(json!({"success": false, "error": error}));
             }
         }
-        latest_link.title = title.clone();
-        latest_link.updated_at = now_ms();
-        self.upsert_local_task(latest_link);
-        emit_response_event(
-            &self.event_tx,
-            &self.device_id,
-            "runtime.task.title.updated",
-            &local_task_id,
-            &request,
-            json!({"title": title}),
-        );
+        self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
             "friendly task title generation completed",
             &[("local_task_id", local_task_id)],
         );
         Ok(json!({"success": true, "title": title}))
+    }
+
+    pub(super) fn commit_runtime_task_title(
+        &self,
+        mut link: RuntimeTaskLink,
+        title: String,
+    ) -> RuntimeTaskLink {
+        link.title = title.clone();
+        link.updated_at = now_ms();
+        self.upsert_local_task(link.clone());
+        let request = runtime_event_request_from_link(&link);
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.task.title.updated",
+            &link.local_task_id,
+            &request,
+            json!({"title": title}),
+        );
+        link
     }
 
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1044,6 +1054,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
+            self.refresh_stand_in_confirmation(&mut request)?;
         }
         request.new_session = false;
         if request.runtime_project_key.is_none() {
@@ -1414,6 +1425,7 @@ impl RuntimeWorkRpcHandler {
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
+        self.refresh_stand_in_confirmation(&mut request)?;
         request.new_session = false;
         if !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -1737,11 +1749,19 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         thread_id: &str,
     ) -> Result<String, String> {
+        let mut request = runtime_event_request_from_link(link);
+        self.apply_backend_connection(&mut request);
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
         params.insert(
             "approvalPolicy".to_owned(),
-            codex_runtime_approval_policy(&runtime_event_request_from_link(link)),
+            codex_runtime_approval_policy(&request),
+        );
+        // A history read can cold-resume a thread before its next turn. Codex
+        // preserves that loaded thread's shell policy on subsequent resumes.
+        params.insert(
+            "config".to_owned(),
+            Value::Object(crate::agents::task_identity_thread_config(&request)),
         );
         params.insert("excludeTurns".to_owned(), Value::Bool(true));
         if !link.workspace_path.trim().is_empty() {
@@ -1767,13 +1787,12 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         response: Value,
     ) -> Result<Value, AppIpcError> {
-        let sender = self
+        let pending_request = self
             .active_request_user_inputs
             .lock()
             .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned())
-            .map(|request| request.sender);
-        let Some(sender) = sender else {
+            .and_then(|requests| requests.get(local_task_id).cloned());
+        let Some(pending_request) = pending_request else {
             return Ok(json!({
                 "success": false,
                 "error": "request_user_input is not pending",
@@ -1782,7 +1801,50 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         };
-        if sender.send(response).await.is_err() {
+        let active_turn = self.active_codex_turn(local_task_id);
+        let scoped_to_other_turn = response.get("interactionScope").is_some_and(|scope| {
+            active_turn
+                .as_ref()
+                .map_or(true, |turn| scope.as_str() != Some(turn.turn_id.as_str()))
+        }) || active_turn
+            .as_ref()
+            .is_some_and(|turn| turn.execution_id != pending_request.execution_id);
+        let invalid_mcp_response = self
+            .active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|items| {
+                items.get(local_task_id).map(|active| {
+                    active
+                        .items
+                        .iter()
+                        .find_map(|item| {
+                            super::super::mcp_elicitation::accepts_response(item, &response)
+                        })
+                        .map(|accepted| !accepted)
+                        .unwrap_or_else(|| {
+                            super::super::mcp_elicitation::response_id(&response).is_none()
+                                && active.items.iter().any(|item| {
+                                    item["type"] == "mcpElicitation"
+                                        && item["renderPayload"]["interactionStatus"] == "pending"
+                                })
+                        })
+                })
+            })
+            .unwrap_or(false);
+        if scoped_to_other_turn || invalid_mcp_response {
+            return Ok(json!({
+                "success": false, "code": "stale_request_user_input",
+                "error": "This interaction is expired, settled, or belongs to another turn",
+                "taskId": local_task_id, "runtime": "codex",
+            }));
+        }
+        let response_key = active_turn.as_ref().and_then(|turn| {
+            self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
+        });
+        // Reserve the validated channel before recording the answer. Delivery can
+        // immediately finish the turn, so history must be updated before send.
+        let Ok(permit) = pending_request.sender.reserve().await else {
             return Ok(json!({
                 "success": false,
                 "error": "request_user_input response channel is closed",
@@ -1790,8 +1852,18 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id,
                 "runtime": "codex",
             }));
+        };
+        if self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
+            if let Some(turn) = active_turn {
+                self.settle_request_user_input_response(
+                    local_task_id,
+                    &turn.turn_id,
+                    response_key.as_deref(),
+                    &response,
+                );
+            }
         }
-        self.set_interaction_status(local_task_id, None);
+        permit.send(response);
         Ok(json!({
             "success": true,
             "accepted": true,

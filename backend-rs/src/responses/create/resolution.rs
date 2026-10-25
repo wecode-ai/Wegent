@@ -379,15 +379,14 @@ pub fn model_public_statement() -> String {
 }
 
 /// `_find_model_with_namespace`: the caller's private Model, then a referenced
-/// capability shared with the caller, then a group Model, then the public
-/// Model.
+/// capability shared with the caller, then a group Model, then each group's
+/// referenced Model, then the public Model behind the `allowedUsers` gate.
 ///
 /// The caller's groups are read at the source's own position — only after the
 /// private and referenced reads miss — so a privately owned or shared Model
 /// never reads `get_user_groups`.
 ///
-/// Documented gaps (no recorded create case reaches them): the per-group
-/// referenced read and the `bind_model` pointer chain
+/// Documented gap: the `bind_model` pointer chain
 /// (`_resolve_bind_model_pointer`).
 pub async fn resolve_model_for_bot<R: Redis>(
     mysql: &MysqlService,
@@ -425,10 +424,34 @@ pub async fn resolve_model_for_bot<R: Redis>(
         {
             return Ok(Some(model));
         }
+        // `for group_name in user_groups: get_referenced_capability(namespace=
+        // group_name)` (model_resolver.py:901-906): the namespace-id scope,
+        // then the referenced-Model read for that scope.
+        for group in &user_groups {
+            if let Some(model) = resolve_referenced_model(mysql, user_id, name, group).await? {
+                return Ok(Some(model));
+            }
+        }
     }
-    mysql
-        .fetch_optional::<_, _, KindRow>(model_public_statement(), (name,))
-        .await
+    let public: Option<KindRow> = mysql
+        .fetch_optional(model_public_statement(), (name,))
+        .await?;
+    let Some(model) = public else {
+        return Ok(None);
+    };
+    // `is_public_model_allowed_for_user`: the caller's row, then the
+    // `allowedUsers` whitelist. A denied public Model is reported as not found
+    // (`_resolve_model_for_bot` treats `PublicModelAccessDeniedError` that way
+    // for a Bot-bound Model).
+    let user_name = crate::teams::team_union_lookups::user_by_id(mysql, user_id)
+        .await?
+        .map(|user| user.users_user_name);
+    let model_json = brz_json::OpaqueJson::from(model.json.0.clone());
+    if crate::teams::public_model_access::allowed_for_user_name(&model_json, user_name.as_deref()) {
+        Ok(Some(model))
+    } else {
+        Ok(None)
+    }
 }
 
 /// `_resolve_model_for_bot`'s name selection (priorities 1-4).
@@ -724,6 +747,24 @@ mod tests {
         assert!(referenced.contains("resource_members.status = 'approved'"));
         assert!(referenced.contains("AND kinds.user_id != 0"));
         assert!(referenced.contains("ORDER BY kinds.id ASC LIMIT 1"));
+    }
+
+    /// `_find_model_with_namespace`'s public-model gate
+    /// (`model_resolver.py:924`) reads the caller with
+    /// `db.query(User).filter(User.id == user_id).first()`. The recorded
+    /// statement carries the aliased ORM projection and the `.first()` limit,
+    /// which is what `team_union_lookups::user_by_id` renders.
+    #[test]
+    fn the_public_model_whitelist_reads_the_recorded_user_statement() {
+        let sql = normalize(&format!(
+            "SELECT {} FROM users WHERE users.id = ? LIMIT 1",
+            crate::teams::teams_repository::USER_COLUMNS
+        ));
+        assert!(sql.starts_with(
+            "SELECT users.id AS users_id, users.user_name AS users_user_name, \
+             users.password_hash AS users_password_hash"
+        ));
+        assert!(sql.contains("WHERE users.id = ? LIMIT 1"));
     }
 
     #[test]

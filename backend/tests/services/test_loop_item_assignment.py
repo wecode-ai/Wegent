@@ -465,6 +465,11 @@ def test_create_with_human_led_group_notifies_leader_without_executor_dispatch(
         f"group:{group['id']}:"
     )
     assert "Assign verifiable work" in payload["instructions"]
+    assert payload["projectName"] == project.name
+    assert payload["itemKey"] == item.id
+    assert payload["itemTitle"] == item.title
+    assert payload["itemStatus"] == "进行中"
+    assert payload["assigneeName"] == test_user.user_name
     assert payload.get("humanAssignmentId") is None
     assert item.status == "in_progress"
     assert _active_execution(test_db, item) is None
