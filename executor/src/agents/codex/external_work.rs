@@ -135,10 +135,11 @@ pub(super) fn configure(
     )?;
     config.config_overrides.extend(overrides);
     config.thread_config.extend(permission_config(request));
-    #[cfg(windows)]
+    // Root-deny profiles require MXC. Both restricted-token backends reject
+    // this boundary; never replace it with full-disk read or unsandboxed access.
     config
         .thread_config
-        .insert("windows.sandbox".into(), json!("unelevated"));
+        .insert("windows.sandbox".into(), json!("mxc"));
     config
         .thread_config
         .insert("approvals_reviewer".into(), json!(reviewer(request)));
@@ -242,6 +243,7 @@ mod tests {
             true
         );
         assert_eq!(params["config"]["approvals_reviewer"], "auto_review");
+        assert_eq!(params["config"]["windows.sandbox"], "mxc");
         assert_eq!(
             codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
             true
@@ -267,6 +269,40 @@ mod tests {
         );
         assert!(!codex_auto_approve_mcp_tool_calls(&request(false)));
         assert_eq!(reviewer(&request(true)), "user");
+    }
+
+    #[test]
+    fn issue_and_stand_in_runs_keep_root_deny_with_the_supporting_windows_backend() {
+        let root = tempfile::tempdir().unwrap();
+        let requests = [
+            serde_json::from_value(json!({"origin":{"type":"issue_dispatch"}})).unwrap(),
+            request(false),
+            request(true),
+        ];
+        for request in requests {
+            let mut launch = CodexLaunchConfig::default();
+            configure(&request, &mut launch, root.path()).unwrap();
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(params["config"]["windows.sandbox"], "mxc");
+                for profile in [SOURCE_READ_PROFILE, SOURCE_PROJECT_PROFILE] {
+                    assert_eq!(
+                        params["config"][format!("permissions.{profile}.filesystem")][":root"],
+                        "deny"
+                    );
+                }
+                assert_ne!(
+                    params["permissions"],
+                    CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+                );
+            }
+        }
+        let mut ordinary = CodexLaunchConfig::default();
+        configure(&ExecutionRequest::default(), &mut ordinary, root.path()).unwrap();
+        assert!(ordinary.thread_config.is_empty());
     }
 
     #[test]
