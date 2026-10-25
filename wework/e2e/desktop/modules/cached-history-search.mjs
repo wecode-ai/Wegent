@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { SEARCH_CONTRACT_CASES, SEARCH_CONTRACT_QUERIES } from './conversation-search-contract.mjs'
 import {
+  HISTORY_TRANSCRIPT_CONTENT_SELECTOR,
   TERMINAL_ANALYSIS_PROJECTION,
   USER_HISTORY_PROJECTION,
   waitForHighlightedHistoryMatch,
@@ -300,9 +301,13 @@ export async function verifyCachedHistorySearch(
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
   assert.doesNotMatch(await control.command('getText', ANSWERS), /interrupted|WEWORK_E2E_CACHED_/)
-  const originalText = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+  const originalText = await control.command('getText', HISTORY_TRANSCRIPT_CONTENT_SELECTOR)
   for (const marker of OLD_VISIBLE_MARKERS) {
-    assert.equal(originalText.includes(marker), false, 'The cached fixture was already loaded')
+    assert.equal(
+      originalText.includes(marker),
+      false,
+      `The cached fixture marker ${JSON.stringify(marker)} was already loaded`
+    )
   }
   for (const { query, matches } of CASES) {
     const result = await search(query)
@@ -411,8 +416,12 @@ export async function verifyCachedHistorySearch(
   }
   assert.deepEqual(restored.messageSummary, original.messageSummary)
   assert.equal(Number(await control.command('getElementCount', NEWER)), 0)
-  const restoredText = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+  const restoredText = await control.command('getText', HISTORY_TRANSCRIPT_CONTENT_SELECTOR)
   for (const marker of OLD_VISIBLE_MARKERS) {
-    assert.equal(restoredText.includes(marker), false, 'Search polluted the original cached view')
+    assert.equal(
+      restoredText.includes(marker),
+      false,
+      `Search polluted the original cached view with marker ${JSON.stringify(marker)}`
+    )
   }
 }

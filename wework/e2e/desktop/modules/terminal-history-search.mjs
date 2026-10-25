@@ -227,6 +227,12 @@ const COUNT =
 const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const USERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
 const QUESTION_REPLIES = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`
+// Navigation keeps previews for unloaded turns mounted outside the transcript content.
+export const HISTORY_TRANSCRIPT_CONTENT_SELECTOR = [
+  USERS,
+  ANSWERS,
+  `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+].join(', ')
 
 export const terminalHistoryTurn = index => {
   const fixture = searchContractCase(index)
@@ -242,7 +248,7 @@ export const terminalHistoryUserText = (index, fallbackText) => {
 
 export async function assertAsyncHistoryUnloaded(control) {
   assert.equal(Number(await control.command('getElementCount', QUESTION_REPLIES)), 0)
-  const initialText = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+  const initialText = await control.command('getText', HISTORY_TRANSCRIPT_CONTENT_SELECTOR)
   for (const marker of [
     ASYNC_QUESTION_QUERY,
     ASYNC_RAW_ANSWER_QUERY,
@@ -254,7 +260,7 @@ export async function assertAsyncHistoryUnloaded(control) {
     assert.equal(
       initialText.includes(marker),
       false,
-      'Async history must start outside the loaded page'
+      `Async history marker ${JSON.stringify(marker)} must start outside the loaded page`
     )
   }
 }
@@ -502,7 +508,32 @@ export async function waitForHistorySearchCount(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   // Settling history search includes two serial reads: the index and the selected match page.
-  await control.command('waitFor', COUNT, { text, timeoutMs: 2 * timeoutMs })
+  try {
+    await control.command('waitFor', COUNT, { text, timeoutMs: 2 * timeoutMs })
+  } catch (error) {
+    const diagnostics = { expectedCount: text }
+    for (const [field, action, selector] of [
+      ['query', 'getValue', FIND],
+      ['count', 'getText', '[data-testid="conversation-find-count"]'],
+      ['retry', 'getText', '[data-testid="conversation-find-retry"]'],
+      ['snapshot', 'getWorkbenchDebugSnapshot', 'body'],
+    ]) {
+      try {
+        const value = await control.command(action, selector)
+        if (field === 'snapshot') {
+          const snapshot = JSON.parse(value)
+          diagnostics.pane = {
+            transcript: snapshot.pane?.transcript,
+            messageSummary: snapshot.pane?.messageSummary,
+          }
+        } else diagnostics[field] = value
+      } catch (diagnosticError) {
+        diagnostics[field] = { error: String(diagnosticError) }
+      }
+    }
+    console.error('[desktop-e2e] History search count failed:', JSON.stringify(diagnostics))
+    throw error
+  }
 }
 
 async function verifyAsyncReplyContext(control, contextPrompt, timeoutMs, olderTurn) {
@@ -562,6 +593,10 @@ export async function verifyTerminalHistorySearch(
     browseContext,
     browseReplyContext,
   } of TERMINAL_HISTORY_SEARCH_CASES) {
+    console.log(
+      '[desktop-e2e] History search query:',
+      JSON.stringify({ query, expectedMatches: matches.length })
+    )
     // Typing preserves a legal result index; start each independent query at the first match.
     await control.command('fill', FIND, { value: '' })
     await control.command('waitFor', '[data-testid="conversation-find-next-button"][disabled]')

@@ -504,7 +504,8 @@ fn write_fake_file_change_codex(log_path: &Path) -> PathBuf {
             "status": "idle",
             "turns": [{
                 "id": "turn-file-change",
-                "createdAt": 1780000000,
+                "status": "completed",
+                "startedAt": 1780000000,
                 "items": [
                     {
                         "id": "user-1",
@@ -554,7 +555,8 @@ fn write_fake_codex(log_path: &Path) -> PathBuf {
             "status": "idle",
             "turns": [{
                 "id": "turn-1",
-                "createdAt": 1780000000,
+                "status": "completed",
+                "startedAt": 1780000000,
                 "items": [
                     {
                         "id": "user-1",
@@ -606,7 +608,8 @@ fn write_fake_multi_patch_codex(log_path: &Path) -> PathBuf {
             "status": "idle",
             "turns": [{
                 "id": "turn-merged",
-                "createdAt": 1780000000_i64,
+                "status": "completed",
+                "startedAt": 1780000000_i64,
                 "items": [
                     {
                         "id": "user-1",
@@ -657,12 +660,14 @@ fn write_fake_accumulated_file_changes_codex(log_path: &Path) -> PathBuf {
             "turns": [
                 {
                     "id": "turn-empty",
-                    "createdAt": 1779999990_i64,
+                    "status": "completed",
+                    "startedAt": 1779999990_i64,
                     "items": [],
                 },
                 {
                     "id": "turn-accumulated",
-                    "createdAt": 1780000000_i64,
+                    "status": "completed",
+                    "startedAt": 1780000000_i64,
                     "items": [
                         {
                             "id": "user-1",
@@ -868,7 +873,8 @@ fn write_fake_web_search_codex(log_path: &Path) -> PathBuf {
                 "status": "idle",
                 "turns": [{
                     "id": "turn-web-search",
-                    "createdAt": 1780000000_i64,
+                    "status": "completed",
+                    "startedAt": 1780000000_i64,
                     "items": [
                         {
                             "id": "user-1",
@@ -972,16 +978,31 @@ fn take_fake_transcript_turns(thread: &mut Value) -> (Vec<Value>, String) {
             .unwrap()
             .remove("items")
             .unwrap_or_else(|| json!([]));
-        let mut entries = vec![
-            json!({"type":"turnStarted","turnId":turn["id"],"position":position,"startedAt":turn["startedAt"]}),
-        ];
+        let status = turn["status"]
+            .as_str()
+            .expect("native transcript fixture must declare its turn status");
+        let mut entries = vec![json!({
+            "type": "turnStarted",
+            "turn_id": turn["id"],
+            "position": position,
+            "started_at": turn["startedAt"],
+        })];
         position += 1;
         for item in items.as_array().into_iter().flatten() {
             entries
                 .push(json!({"type":"item","turnId":turn["id"],"position":position,"item":item}));
             position += 1;
         }
-        entries.push(json!({"type":"turnCompleted","turnId":turn["id"],"position":position,"status":turn["status"],"completedAt":turn["completedAt"]}));
+        entries.push(json!({
+            "type": "turnCompleted",
+            "turn_id": turn["id"],
+            "position": position,
+            "status": status,
+            "started_at": turn["startedAt"],
+            "completed_at": turn["completedAt"],
+            "duration_ms": turn["durationMs"],
+            "error": turn["error"],
+        }));
         position += 1;
         pages.push(entries);
         turn["items"] = json!([]);
