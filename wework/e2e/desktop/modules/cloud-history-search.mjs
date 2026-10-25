@@ -242,8 +242,8 @@ export function createCloudHistorySearchVerification() {
         const nativeCreated = await createTask('Project-bound native history search')
         assert.equal(nativeCreated.accepted, true)
         nativeTaskId = nativeCreated.taskId
-        const nativeAddress = { ...address, taskId: nativeTaskId }
-        const nativeTask = await cloud.waitForRuntimeTask(nativeAddress)
+        const nativeTask = await cloud.waitForRuntimeTask({ ...address, taskId: nativeTaskId })
+        const nativeAddress = { ...address, taskId: nativeTaskId, threadId: nativeTask.threadId }
         const cachedTask = await seedHistory(cloud, taskId, nativeTaskId)
         cachedTaskId = cachedTask.local_task_id
 
