@@ -112,7 +112,7 @@ fn execute(
         )
         .is_err()
     {
-        return Err(denied());
+        return Err(denied_path(path.as_path()));
     }
     let mut file = open_checked(
         &canonical_policy,
@@ -120,7 +120,13 @@ fn execute(
         cwd,
         path.as_path(),
         read_data,
-    )?;
+    )
+    .map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("Windows read broker: {}: {error}", path.display()),
+        )
+    })?;
     let metadata = file.metadata()?;
     if read_data {
         if !metadata.is_file() {
@@ -205,6 +211,16 @@ fn denied() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
         "Windows read broker: filesystem permission denied",
+    )
+}
+
+fn denied_path(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "Windows read broker: filesystem permission denied: {}",
+            path.display()
+        ),
     )
 }
 

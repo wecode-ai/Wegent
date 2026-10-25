@@ -152,6 +152,61 @@ fn project_preparation_clones_before_creating_independent_worktrees() {
 }
 
 #[test]
+fn worktree_preparation_retargets_source_root_aliases() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let additional = temp.path().join("additional");
+    initialize_test_repository(&source);
+    fs::create_dir(&additional).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (handler, root) = isolated_runtime_work_handler("worktree-root-alias");
+        handler
+            .worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(temp.path().join("worktrees").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let plan = handler.worktrees.plan(&source, "alias-task", None).unwrap();
+        let alias = format!("{}/.", source.display());
+        assert_eq!(fs::canonicalize(&alias).unwrap(), plan.source_path);
+        let mut turn = turn_with_setup("alias-task", "");
+        turn.request.project_workspace_path = Some(plan.path.display().to_string());
+        turn.request.runtime_workspace_roots = vec![alias, additional.display().to_string()];
+        turn.request.extra.insert(
+            "deferred_worktree_source_path".into(),
+            json!(plan.source_path),
+        );
+        turn.request
+            .extra
+            .insert("deferred_worktree_path".into(), json!(plan.path));
+        turn.request.extra.insert(
+            "deferred_worktree_repo_root_fingerprint".into(),
+            json!(plan.repo_root_fingerprint),
+        );
+
+        handler.prepare_deferred_worktree(&mut turn).await.unwrap();
+
+        assert_eq!(
+            turn.request.runtime_workspace_roots,
+            vec![
+                turn.request.cwd().unwrap().to_owned(),
+                additional.display().to_string(),
+            ]
+        );
+        assert!(Path::new(turn.request.cwd().unwrap())
+            .join("tracked.txt")
+            .is_file());
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
 fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
     let _lock = crate::test_env::lock();
     let temp = tempfile::tempdir().unwrap();
