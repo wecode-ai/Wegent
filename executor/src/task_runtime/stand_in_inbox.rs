@@ -27,6 +27,27 @@ fn write_record(
     Ok(())
 }
 
+fn find_message(
+    connection: &Connection,
+    user: i64,
+    role: &str,
+    source: &Value,
+    message: &str,
+) -> Result<Option<Value>, TaskRuntimeError> {
+    let raw: Option<String> = connection.query_row(
+        "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
+         AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
+         AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message],
+        |row| row.get(0),
+    ).optional()?;
+    raw.map(|raw| {
+        serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .transpose()
+}
+
 fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRuntimeError> {
     let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at DESC,id DESC")?;
     let rows = statement.query_map(
@@ -130,15 +151,12 @@ impl LocalTaskStore {
     pub fn known_stand_in_message(
         &self,
         user: i64,
-        profile: &str,
+        role: &str,
+        source: &Value,
         message: &str,
     ) -> Result<Option<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
-        read_record(
-            &connection,
-            &stand_in_record_key("stand-in-message", &json!([user, profile, message])),
-            "stand_in_message",
-        )
+        find_message(&connection, user, role, source, message)
     }
 
     pub fn ingest_stand_in_message(
@@ -153,9 +171,22 @@ impl LocalTaskStore {
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let key = stand_in_record_key(
             "stand-in-message",
-            &json!([user, source["profile"], message["id"]]),
+            &json!([
+                user,
+                role,
+                source["profile"],
+                source["kind"],
+                source["id"],
+                message["id"]
+            ]),
         );
-        if let Some(existing) = read_record(&connection, &key, "stand_in_message")? {
+        if let Some(existing) = find_message(
+            &connection,
+            user,
+            role,
+            source,
+            message["id"].as_str().unwrap_or_default(),
+        )? {
             let result = read_record(
                 &connection,
                 existing["workId"].as_str().unwrap_or_default(),

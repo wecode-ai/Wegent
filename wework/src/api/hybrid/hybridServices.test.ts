@@ -509,7 +509,6 @@ describe('stand-in save routing', () => {
         userId: 7,
         executionDeviceId: 'old-device',
         version: 1,
-        autoSelect: false,
         roles: [],
       }
       const services = createServices()

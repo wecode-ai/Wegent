@@ -1,4 +1,4 @@
-//! Source collection is deterministic; only ambiguous role/work selection uses a model.
+//! Every connected identity receives source messages; only work grouping uses a model.
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{dingtalk_connection, stand_in_identities};
@@ -133,83 +133,85 @@ impl RuntimeWorkRpcHandler {
         state: &Value,
     ) -> Result<Value, AppIpcError> {
         let (messages, next) = super::super::dingtalk::source_page(source, state).await?;
+        let mut failure = None;
         for message in messages {
-            if store
-                .known_stand_in_message(
-                    user,
-                    source["profile"].as_str().unwrap_or_default(),
-                    message["id"].as_str().unwrap_or_default(),
-                )
-                .map_err(settings_error)?
-                .is_some()
-            {
-                continue;
-            }
             let at = message_time(&message["at"])?;
-            let candidates: Vec<Value> = roles
-                .iter()
-                .filter(|role| {
-                    dingtalk_connection(role, source).is_some_and(|source| {
-                        source["enabledAfter"]
-                            .as_str()
-                            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                            .is_some_and(|enabled| at >= enabled.timestamp_millis())
-                    })
+            for role in roles.iter().filter(|role| {
+                dingtalk_connection(role, source).is_some_and(|source| {
+                    source["enabledAfter"]
+                        .as_str()
+                        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+                        .is_some_and(|enabled| at >= enabled.timestamp_millis())
                 })
-                .enumerate()
-                .map(|(order, role)| {
-                    let mut config = role.clone();
-                    config["autoSelect"] = json!(true);
-                    config["roleOrder"] = json!(order);
-                    config["tags"] = json!([]);
-                    config
-                })
-                .collect();
-            if candidates.is_empty() {
-                continue;
-            }
-            let issue = json!({"id":message["id"],"title":message["text"],"description":message["text"],"tags":[]});
-            let role = self
-                .select_personal_role(&candidates, &issue)
-                .await?
-                .ok_or_else(|| {
-                    AppIpcError::new("stand_in_selection_failed", "No role matches this message")
-                })?;
-            let (work_id, confident) = self
-                .group_dingtalk_message(store, user, &role, source, &message)
-                .await?;
-            let selected_source = dingtalk_connection(&role, source)
-                .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
-            let work = store
-                .ingest_stand_in_message(
-                    user,
-                    role["id"].as_str().unwrap_or_default(),
-                    selected_source,
-                    &message,
-                    work_id.as_deref(),
-                )
-                .map_err(settings_error)?;
-            if !confident {
-                let records = store
-                    .stand_in_messages(user, work["id"].as_str().unwrap())
-                    .map_err(settings_error)?;
-                let ids = records
-                    .iter()
-                    .filter(|row| row["id"] == message["id"])
-                    .filter_map(|row| row["recordId"].as_str().map(str::to_owned))
-                    .collect::<Vec<_>>();
-                store
-                    .update_stand_in_dispatch(
-                        user,
-                        work["id"].as_str().unwrap(),
-                        &ids,
-                        "needs_grouping",
-                        None,
-                    )
-                    .map_err(settings_error)?;
+            }) {
+                if let Err(error) = self
+                    .collect_dingtalk_message(store, user, role, source, &message)
+                    .await
+                {
+                    log_executor_event(
+                        "DingTalk message collection failed",
+                        &[
+                            ("role_id", role["id"].to_string()),
+                            ("message_id", message["id"].to_string()),
+                            ("error", error.message.clone()),
+                        ],
+                    );
+                    failure.get_or_insert(error);
+                }
             }
         }
-        Ok(next)
+        failure.map_or(Ok(next), Err)
+    }
+
+    async fn collect_dingtalk_message(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        role: &Value,
+        source: &Value,
+        message: &Value,
+    ) -> Result<(), AppIpcError> {
+        let role_id = role["id"].as_str().unwrap_or_default();
+        if store
+            .known_stand_in_message(
+                user,
+                role_id,
+                source,
+                message["id"].as_str().unwrap_or_default(),
+            )
+            .map_err(settings_error)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let (work_id, confident) = self
+            .group_dingtalk_message(store, user, role, source, message)
+            .await?;
+        let connection = dingtalk_connection(role, source)
+            .ok_or_else(|| AppIpcError::new("source_removed", "Source was disconnected"))?;
+        let work = store
+            .ingest_stand_in_message(user, role_id, connection, message, work_id.as_deref())
+            .map_err(settings_error)?;
+        if !confident {
+            let records = store
+                .stand_in_messages(user, work["id"].as_str().unwrap())
+                .map_err(settings_error)?;
+            let ids = records
+                .iter()
+                .filter(|row| row["id"] == message["id"])
+                .filter_map(|row| row["recordId"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            store
+                .update_stand_in_dispatch(
+                    user,
+                    work["id"].as_str().unwrap(),
+                    &ids,
+                    "needs_grouping",
+                    None,
+                )
+                .map_err(settings_error)?;
+        }
+        Ok(())
     }
 
     async fn group_dingtalk_message(
@@ -224,7 +226,8 @@ impl RuntimeWorkRpcHandler {
             if let Some(previous) = store
                 .known_stand_in_message(
                     user,
-                    source["profile"].as_str().unwrap_or_default(),
+                    role["id"].as_str().unwrap_or_default(),
+                    source,
                     quoted,
                 )
                 .map_err(settings_error)?
@@ -299,4 +302,48 @@ fn message_time(value: &Value) -> Result<i64, AppIpcError> {
                 "Message timestamp is invalid or ambiguous",
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn each_connected_role_keeps_its_own_messages_and_reply_thread() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let source = json!({"id":"group","kind":"group","profile":"account","policy":{"automatic":true,"askBeforeAct":true}});
+        let roles =
+            ["one", "two"].map(|id| json!({"id":id,"enabled":true,"dingtalk":[source.clone()]}));
+        let first = json!({"id":"first","text":"Check this proposal","at":"2026-10-25T00:00:00Z"});
+        let reply = json!({"id":"reply","text":"And check its budget","quotedMessageId":"first","at":"2026-10-25T00:01:00Z"});
+        for role in &roles {
+            for message in [&first, &first, &reply, &reply] {
+                handler
+                    .collect_dingtalk_message(&store, 7, role, &source, message)
+                    .await
+                    .unwrap();
+            }
+        }
+        let works = store.list_stand_in_work(7, None).unwrap();
+        assert_eq!(works.len(), 2);
+        assert_ne!(works[0]["taskId"], works[1]["taskId"]);
+        for role in ["one", "two"] {
+            let owned = store.list_stand_in_work(7, Some(role)).unwrap();
+            assert_eq!(owned.len(), 1);
+            assert_eq!(owned[0]["messageCount"], 2);
+            let messages = store
+                .stand_in_messages(7, owned[0]["id"].as_str().unwrap())
+                .unwrap();
+            assert!(messages.iter().all(|message| message["roleId"] == role));
+            let known = store
+                .known_stand_in_message(7, role, &source, "reply")
+                .unwrap()
+                .unwrap();
+            assert_eq!(known["workId"], owned[0]["id"]);
+        }
+        assert!(store.list_stand_in_work(8, None).unwrap().is_empty());
+    }
 }
