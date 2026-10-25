@@ -39,6 +39,8 @@ import {
   startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { readConversationSearchContent } from '@wegent/collaboration/conversation'
+import { matchConversationText } from '@wegent/chat-core/conversation-search'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
@@ -2522,6 +2524,43 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getConversationSearchHighlightMetrics': {
+      const containers = findDesktopControlElements(command.selector)
+        .map(element => ({ element, ...readConversationSearchContent(element) }))
+        .filter(({ text }) => text.trim() === command.text?.trim())
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
+      const ranges = Array.from(highlights)
+        .filter(([name]) => /^conversation-search-.+-active$/.test(name))
+        .flatMap(([, highlight]) => Array.from(highlight))
+        .flatMap(range => {
+          const container = containers.find(
+            ({ element }) =>
+              element.contains(range.startContainer) && element.contains(range.endContainer)
+          )
+          if (range.collapsed || !container) return []
+          const boundaryOffset = (node: Node, offset: number) => {
+            for (const entry of container.nodes) {
+              if (entry.node === node) return entry.start + offset
+              const sourceRange = document.createRange()
+              sourceRange.selectNodeContents(entry.node)
+              if (sourceRange.comparePoint(node, offset) <= 0) return entry.start
+            }
+            return container.text.length
+          }
+          const start = boundaryOffset(range.startContainer, range.startOffset)
+          const end = boundaryOffset(range.endContainer, range.endOffset)
+          const occurrence = matchConversationText(container.text, query).findIndex(
+            match => match.start === start && match.end === end
+          )
+          if (occurrence < 0) return []
+          const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
+          return [{ text: range.toString(), occurrence, top, bottom, left, right, width, height }]
+        })
+      return JSON.stringify({ query, ranges })
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {

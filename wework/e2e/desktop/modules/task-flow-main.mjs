@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
+import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
@@ -1201,6 +1202,7 @@ async function main() {
   let appBundlePath
   let blockingNetworkProxy
   let cloudEnvironment
+  let cloudHistorySearch
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
@@ -1260,6 +1262,10 @@ async function main() {
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
       executorBinary = builtExecutor
+      if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT === 'conversation-state') {
+        cloudHistorySearch = createCloudHistorySearchVerification()
+        await cloudHistorySearch.prepareCloud(cloudEnvironment)
+      }
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
@@ -1421,7 +1427,11 @@ async function main() {
     if (electronCoreRuntimeRoot) {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
-    Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    Object.assign(
+      appEnvironment,
+      desktopScenario?.appEnvironment ?? {},
+      cloudHistorySearch?.appEnvironment ?? {}
+    )
     if (DESKTOP_SEGMENT === 'running-conversation-history') {
       appEnvironment.WEWORK_E2E_RUNTIME_TRANSCRIPT_DELAY_MS = '1500'
     } else {
@@ -1729,6 +1739,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           appBundlePath,
           appIdentifier,
           cloudEnvironment,
+          cloudHistorySearch,
           codexHome,
           control,
           desktopScenario,
@@ -4688,6 +4699,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('desktop controller', async () => control.close())
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {

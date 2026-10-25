@@ -535,16 +535,65 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs"
 
-assert_desktop_case "uninstall transport faults select real cloud recovery" \
+assert_desktop_case "cloud history search selects its real cloud conversation checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-4","name":"Cloud / shard 4","segments":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
+  "wework/e2e/desktop/modules/cloud-history-search.mjs"
+
+history_search_expected='wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"running-conversation-history"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-4","name":"Cloud / shard 4","segments":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false'
+for history_search_path in \
+  "wework/e2e/desktop/modules/terminal-history-search.mjs" \
+  "wework/e2e/desktop/modules/cached-history-search.mjs" \
+  "wework/e2e/desktop/modules/conversation-search-contract.mjs" \
+  "packages/chat-core/test-fixtures/conversation-search-contract.json"; do
+  assert_desktop_case "shared history search selects local and cloud checkpoints: $history_search_path" \
+    "$history_search_expected" "$history_search_path"
+done
+
+assert_desktop_case "plugin uninstall scenario selects its independent checkpoints" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
+  "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs"
+
+assert_desktop_case "shared transport faults select board recovery and cloud history search" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"collaboration-board-move-recovery"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"conversation-state,plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"}]}
 wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs" \
-  "wework/e2e/desktop/modules/transport-fault-proxy.mjs" \
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
+  "wework/e2e/desktop/modules/transport-fault-proxy.mjs"
+
+assert_desktop_case "transport fault tests select cloud recovery and history search" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"conversation-state,plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
   "wework/scripts/plugin-fault-proxy.test.mjs"
 
 for uninstall_path in \

@@ -29,7 +29,7 @@ import {
 } from '../issue-detail/attachmentPresentation'
 import {
   splitRuntimeUserMessage,
-  visibleRuntimeUserMessage,
+  projectRuntimeUserText,
 } from '@wegent/chat-core/runtime-user-message'
 import { UserMessageEditForm } from './UserMessageEditForm'
 import { isIMSource } from '@wegent/chat-core/im-source'
@@ -126,9 +126,7 @@ export function UserMessage({
     () => parseCodexLocalFileMentions(message.content),
     [message.content]
   )
-  const displayContent = normalizeCodexUserMessageContent(
-    codexLocalFileMentions?.requestText ?? visibleRuntimeUserMessage(message.content)
-  )
+  const displayContent = getUserMessageTextContent(message.content)
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
     [message.attachments]
@@ -278,6 +276,7 @@ export function UserMessage({
           >
             <div
               data-testid="user-message-content"
+              data-search-region-id={message.runtimeItemId ?? message.id}
               data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words bg-muted px-4 py-1.5',
@@ -382,9 +381,14 @@ export function UserMessage({
 }
 
 export function getUserMessageTextContent(content: string): string {
-  return normalizeCodexUserMessageContent(
-    parseCodexLocalFileMentions(content)?.requestText ?? visibleRuntimeUserMessage(content)
-  )
+  return getUserMessageTextProjection(content).content
+}
+
+export function getUserMessageTextProjection(content: string) {
+  const request = projectRuntimeUserText(content)
+  const mentions = parseCodexLocalFileMentions(content)
+  if (mentions && !mentions.requestText) return { content: '', sourceStart: 0, sourceEnd: 0 }
+  return { ...request, content: normalizeCodexUserMessageContent(request.content) }
 }
 
 function normalizeCodexUserMessageContent(content: string): string {

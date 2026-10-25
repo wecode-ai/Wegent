@@ -465,6 +465,17 @@ classify_wework_path() {
       select_target "core:system-pac"
       return
       ;;
+    wework/e2e/desktop/modules/terminal-history-search.mjs | \
+      wework/e2e/desktop/modules/cached-history-search.mjs | \
+      wework/e2e/desktop/modules/conversation-search-contract.mjs)
+      select_target "core:running-conversation-history"
+      select_target "cloud:conversation-state"
+      return
+      ;;
+    wework/e2e/desktop/modules/cloud-history-search.mjs)
+      select_target "cloud:conversation-state"
+      return
+      ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \
@@ -1333,6 +1344,11 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    packages/chat-core/test-fixtures/conversation-search-contract.json)
+      select_target "core:running-conversation-history"
+      select_target "cloud:conversation-state"
+      return
+      ;;
     wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs | \
       wework/scripts/plugin-runtime-path-fixture.test.mjs)
@@ -1430,10 +1446,14 @@ classify_path() {
       wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
       wework/e2e/desktop/modules/plugin-sync-disconnect.mjs | \
       wework/e2e/desktop/modules/plugin-write-lease.mjs | \
-      wework/e2e/desktop/support/plugin-write-lease.py | \
-      wework/scripts/plugin-fault-proxy.test.mjs | \
+      wework/e2e/desktop/support/plugin-write-lease.py)
+      select_uninstall_checkpoints
+      return
+      ;;
+    wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/transport-fault-proxy*)
       select_uninstall_checkpoints
+      select_target "cloud:conversation-state"
       if [[ "$path" == wework/e2e/desktop/modules/transport-fault-proxy* ]]; then
         select_target "core:collaboration-board-move-recovery"
       fi

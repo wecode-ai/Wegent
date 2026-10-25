@@ -34,6 +34,8 @@ mod task_lookup_tests;
 
 #[path = "task_rename_tests.rs"]
 mod task_rename_tests;
+#[path = "transcript_turn_status_tests.rs"]
+mod transcript_turn_status_tests;
 
 #[path = "transcript_status_tests.rs"]
 mod transcript_status_tests;
