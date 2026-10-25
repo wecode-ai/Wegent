@@ -13,7 +13,7 @@ import type { useProjectMembers } from './useProjectMembers'
 const grid =
   'grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.8fr)_2.25rem] md:gap-4'
 const focus =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/70 focus-visible:ring-offset-2'
+  'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 keyboard:focus-visible:ring-offset-2'
 const roles = ['Maintainer', 'Developer', 'Viewer'] as const
 
 function roleLabel(role: ProjectManageRole, host: ProjectManageHost) {
@@ -136,7 +136,7 @@ export function ProjectMembersSection<
                   data-testid="cloud-project-member-picker"
                   className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-border bg-background p-3 shadow-lg"
                 >
-                  <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 focus-within:ring-2 focus-within:ring-focus/70 md:min-h-9">
+                  <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/70 md:min-h-9">
                     <Search className="h-4 w-4 shrink-0 text-text-muted" />
                     <input
                       ref={memberSearchInputRef}

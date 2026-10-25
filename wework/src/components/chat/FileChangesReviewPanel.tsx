@@ -409,7 +409,7 @@ function ReviewToolbar({
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   onClick={() => setMenuOpen(open => !open)}
-                  className="flex h-8 items-center gap-1 rounded-md bg-muted px-2 text-xs font-medium text-text-primary transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  className="flex h-8 items-center gap-1 rounded-md bg-muted px-2 text-xs font-medium text-text-primary transition-colors hover:bg-muted/80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40"
                 >
                   <span>{toolbarTitle}</span>
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -550,7 +550,7 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40',
+        'flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40',
         pressed && 'border-border bg-muted text-text-primary'
       )}
     >
@@ -703,7 +703,7 @@ function FileDiffSection({
           aria-label={`${actionLabel}: ${section.path}`}
           title={actionLabel}
           onClick={onToggle}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/35"
         >
           {collapsed ? (
             <ChevronRight className="h-3.5 w-3.5 text-text-muted" />

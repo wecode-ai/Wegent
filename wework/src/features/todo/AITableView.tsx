@@ -222,7 +222,7 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
         value={cellText(raw)}
         disabled={saving}
         onChange={event => void commit(event.target.value)}
-        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-border focus:border-primary focus:outline-none"
+        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-border keyboard:focus:border-primary focus:outline-none"
       >
         <option value="">—</option>
         {fieldOptions(field).map(option => (
@@ -245,7 +245,7 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
         onChange={event =>
           void commit(Array.from(event.target.selectedOptions, option => option.value))
         }
-        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-border focus:border-primary focus:outline-none"
+        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-border keyboard:focus:border-primary focus:outline-none"
       >
         {fieldOptions(field).map(option => (
           <option key={option.name} value={option.name}>
@@ -621,7 +621,7 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
           onKeyDown={event => {
             if (event.key === 'Enter') void load(query || undefined)
           }}
-          className="h-8 w-56 rounded-md border border-border bg-background px-2 text-sm focus:border-primary focus:outline-none"
+          className="h-8 w-56 rounded-md border border-border bg-background px-2 text-sm keyboard:focus:border-primary focus:outline-none"
         />
         <button
           type="button"
@@ -701,13 +701,13 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
             placeholder="新字段名称"
             value={newFieldName}
             onChange={event => setNewFieldName(event.target.value)}
-            className="h-8 w-48 rounded-md border border-border bg-background px-2 text-sm focus:border-primary focus:outline-none"
+            className="h-8 w-48 rounded-md border border-border bg-background px-2 text-sm keyboard:focus:border-primary focus:outline-none"
           />
           <select
             data-testid="aitable-field-type"
             value={newFieldType}
             onChange={event => setNewFieldType(event.target.value)}
-            className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:border-primary focus:outline-none"
+            className="h-8 rounded-md border border-border bg-background px-2 text-sm keyboard:focus:border-primary focus:outline-none"
           >
             <option value="text">文本</option>
             <option value="number">数字</option>

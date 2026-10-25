@@ -239,7 +239,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         ) : null
       }
       detailButtonTestId={detailButtonTestId ?? `cloud-todo-card-${item.id}`}
-      detailButtonClassName="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
+      detailButtonClassName="focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/30"
       onOpen={canOpenItem ? activateCard : undefined}
       detailButtonProps={{
         ...detailButtonProps,
@@ -279,7 +279,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                     setPreviewOpen(false);
                     openItem();
                   }}
-                  className="pointer-events-none flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary hover:opacity-100 focus:pointer-events-auto focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100 max-md:pointer-events-auto max-md:min-h-11 max-md:min-w-11 max-md:opacity-60"
+                  className="pointer-events-none flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary hover:opacity-100 focus:pointer-events-auto focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100 max-md:pointer-events-auto max-md:min-h-11 max-md:min-w-11 max-md:opacity-60"
                 >
                   <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
@@ -337,7 +337,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
               type="button"
               data-testid={`cloud-todo-card-progress-popup-${item.id}-close`}
               aria-label={t("common.close", "关闭")}
-              className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+              className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -407,7 +407,7 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
               aria-pressed={binding.id === selectedBinding?.id}
               onClick={() => setSelectedBindingId(binding.id)}
               className={cn(
-                "min-h-7 max-w-full truncate rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30",
+                "min-h-7 max-w-full truncate rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30",
                 binding.id === selectedBinding?.id && "bg-muted",
               )}
             >

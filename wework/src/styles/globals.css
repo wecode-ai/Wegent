@@ -2,11 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  /* Search and address inputs provide their own focus feedback in the chrome. */
-  .workbench-chrome-input:focus-visible {
-    outline-color: transparent;
-  }
+/* DSH paints text-field outlines too; pointer focus uses its dedicated token. */
+html[data-input-modality='pointer'] body :focus-visible {
+  --dsw-focus-ring-color: transparent;
 }
 
 .electron-titlebar-drag-region {
@@ -993,21 +991,25 @@ button.plugin-operation-notice-dismiss svg {
   height: 16px;
 }
 
-.plugin-dialog-surface button:focus-visible,
-.plugin-dialog-surface input:focus-visible,
-.plugin-dialog-surface textarea:focus-visible,
-.plugin-dialog-surface [tabindex]:focus-visible,
-button.plugin-market-action-button:focus-visible,
-button.plugin-market-icon-button:focus-visible,
-button.plugin-market-filter:focus-visible,
-button.plugin-installed-strip-item:focus-visible,
-button.plugin-installed-overflow-button:focus-visible,
-button.plugin-operation-notice-action:focus-visible,
-button.plugin-operation-notice-dismiss:focus-visible,
-button.plugin-detail-action-primary:focus-visible,
-button.plugin-detail-action-secondary:focus-visible,
-button.plugin-detail-action-menu:focus-visible,
-button.plugin-route-back-button:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .plugin-dialog-surface button:focus-visible,
+:where(html:not([data-input-modality='pointer'])) .plugin-dialog-surface input:focus-visible,
+:where(html:not([data-input-modality='pointer'])) .plugin-dialog-surface textarea:focus-visible,
+:where(html:not([data-input-modality='pointer'])) .plugin-dialog-surface [tabindex]:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-market-action-button:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-market-icon-button:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-market-filter:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-installed-strip-item:focus-visible,
+:where(html:not([data-input-modality='pointer']))
+  button.plugin-installed-overflow-button:focus-visible,
+:where(html:not([data-input-modality='pointer']))
+  button.plugin-operation-notice-action:focus-visible,
+:where(html:not([data-input-modality='pointer']))
+  button.plugin-operation-notice-dismiss:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-detail-action-primary:focus-visible,
+:where(html:not([data-input-modality='pointer']))
+  button.plugin-detail-action-secondary:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-detail-action-menu:focus-visible,
+:where(html:not([data-input-modality='pointer'])) button.plugin-route-back-button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 0.7);
   outline-offset: 2px;
 }
@@ -1132,7 +1134,7 @@ button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
   overscroll-behavior-x: contain;
 }
 
-.plugin-installed-icons-scroller:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .plugin-installed-icons-scroller:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 0.6);
   outline-offset: -2px;
 }
@@ -1375,7 +1377,7 @@ button.plugin-installed-overflow-button:hover {
   transform: translateY(0);
 }
 
-.plugin-task-example:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .plugin-task-example:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 0.9);
   outline-offset: 2px;
 }
@@ -1776,7 +1778,7 @@ button.plugin-route-back-button:hover {
   color: rgb(var(--color-text-muted));
 }
 
-.plugin-market-search-input:focus {
+:where(html:not([data-input-modality='pointer'])) .plugin-market-search-input:focus {
   border-color: rgb(var(--color-focus) / 0.7);
   box-shadow: 0 0 0 3px rgb(var(--color-focus) / 0.12);
 }
@@ -1806,7 +1808,7 @@ button.plugin-route-back-button:hover {
   color: rgb(var(--color-text-primary));
 }
 
-.plugin-market-search-clear:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .plugin-market-search-clear:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 0.8);
   outline-offset: 1px;
 }
@@ -1952,7 +1954,7 @@ article.plugin-market-card.is-locked:hover {
   stroke-width: 1.8;
 }
 
-article.plugin-market-card:focus-visible {
+:where(html:not([data-input-modality='pointer'])) article.plugin-market-card:focus-visible {
   outline: none;
   border-color: rgb(var(--color-focus) / 0.7);
   box-shadow: 0 0 0 3px rgb(var(--color-focus) / 0.12);
@@ -2085,7 +2087,7 @@ button.plugin-market-reveal-button:hover {
   color: rgb(var(--color-text-secondary));
 }
 
-button.plugin-market-reveal-button:focus-visible {
+:where(html:not([data-input-modality='pointer'])) button.plugin-market-reveal-button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 0.7);
   outline-offset: 2px;
 }

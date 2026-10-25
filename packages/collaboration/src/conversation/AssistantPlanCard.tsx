@@ -58,7 +58,7 @@ export function AssistantPlanCard({
       className={cn(
         "my-2 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]",
         onOpenPlan &&
-          "cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/70",
+          "cursor-pointer keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-offset-2 keyboard:focus-visible:outline-primary/70",
       )}
     >
       <div className="flex min-h-9 items-center justify-between gap-3 px-4 py-1.5 text-text-muted">

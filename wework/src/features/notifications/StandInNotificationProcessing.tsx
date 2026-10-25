@@ -18,7 +18,7 @@ import { StandInIcon } from '@/features/todo/StandInIcon'
 import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 
 const ACTION_CLASS =
-  'inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-7'
+  'inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7'
 
 export function StandInNotificationProcessing({
   notification,
@@ -258,7 +258,7 @@ export function StandInNotificationProcessing({
                 />
               ) : showReplyEditor ? (
                 <form
-                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/20 p-1 focus-within:ring-1 focus-within:ring-focus"
+                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/20 p-1 keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus"
                   onSubmit={event => {
                     event.preventDefault()
                     if (draft.trim()) void send(draft.trim())
@@ -282,7 +282,7 @@ export function StandInNotificationProcessing({
                     data-testid={`notification-stand-in-send-${notification.id}`}
                     aria-label={t('notifications.stand_in_send')}
                     disabled={busy || !draft.trim()}
-                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-text-primary text-background hover:bg-text-primary/90 focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-30 md:h-7 md:w-7"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-text-primary text-background hover:bg-text-primary/90 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-30 md:h-7 md:w-7"
                   >
                     <ArrowUp className="h-4 w-4" />
                   </button>

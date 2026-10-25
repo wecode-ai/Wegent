@@ -455,7 +455,7 @@ function TaskSupervisorDialogContent({
                 data-testid="task-supervisor-frequency"
                 value={intervalSeconds}
                 onChange={event => setIntervalSeconds(Number(event.target.value))}
-                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-primary"
+                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none keyboard:focus:border-primary"
               >
                 {[10, 30, 60, 300].map(seconds => (
                   <option key={seconds} value={seconds}>
@@ -478,7 +478,7 @@ function TaskSupervisorDialogContent({
             value={instructions}
             onChange={event => setInstructions(event.target.value)}
             placeholder={t('workbench.supervisor_instructions_placeholder')}
-            className="mt-1 min-h-24 w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+            className="mt-1 min-h-24 w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-primary"
           />
 
           {supervisor?.lastError && (

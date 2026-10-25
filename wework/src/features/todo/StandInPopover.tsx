@@ -341,7 +341,7 @@ export function StandInPopover({
             (!saved.enabled && saved.version > 0 && !composerValid)
           }
           onClick={toggleAutomatic}
-          className="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
+          className="flex w-full items-center justify-between gap-4 rounded-lg text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-40"
         >
           <span className="min-w-0">
             <span className="text-sm font-medium text-text-primary">{t('standIn.auto_label')}</span>

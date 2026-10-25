@@ -711,7 +711,7 @@ function ConnectedNotificationCenter({
                 <button
                   type="button"
                   data-testid="wework-notifications-back"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus md:h-7 md:w-7"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7"
                   aria-label={t('notifications.back')}
                   onClick={() => {
                     setCategory(null)
@@ -739,7 +739,7 @@ function ConnectedNotificationCenter({
                 <button
                   type="button"
                   data-testid="wework-notifications-read-all"
-                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
+                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
                   disabled={busy || unreadCount === 0}
                   onClick={readAll}
                 >
@@ -751,7 +751,7 @@ function ConnectedNotificationCenter({
                   type="button"
                   data-testid="wework-notifications-refresh"
                   aria-label={t('notifications.refresh')}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border-l border-border text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:h-7 md:w-7"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border-l border-border text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:h-7 md:w-7"
                   disabled={busy || !api}
                   onClick={() => void refresh()}
                 >
@@ -762,7 +762,7 @@ function ConnectedNotificationCenter({
                 <button
                   type="button"
                   data-testid="wework-notifications-settings"
-                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus md:h-7 md:w-7"
+                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7"
                   aria-label={t('notifications.settings')}
                   onClick={openSettings}
                 >
@@ -801,7 +801,7 @@ function ConnectedNotificationCenter({
                     key={row.id}
                     type="button"
                     data-testid={'wework-notifications-category-' + row.id}
-                    className="flex min-h-16 w-full items-center gap-2 border-b border-border/60 px-3 py-2 text-left last:border-b-0 hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus"
+                    className="flex min-h-16 w-full items-center gap-2 border-b border-border/60 px-3 py-2 text-left last:border-b-0 hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
                     onClick={() => setCategory(row.id)}
                   >
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-primary">

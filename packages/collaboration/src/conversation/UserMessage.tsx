@@ -322,7 +322,7 @@ export function UserMessage({
                     <span
                       data-testid="message-code-comment-context-badge"
                       tabIndex={0}
-                      className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                      className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2"
                     >
                       <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
                       <span>
@@ -571,7 +571,7 @@ function MessageTextAttachment({
       <button
         type="button"
         data-testid="message-text-attachment"
-        className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+        className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2`}
         aria-label={preview}
         title={preview}
         onClick={() => {
