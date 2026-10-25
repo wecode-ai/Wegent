@@ -76,7 +76,6 @@ describe('createLocalAppServices', () => {
       userId: 7,
       executionDeviceId: 'old-device',
       version: 0,
-      autoSelect: false,
       roles: [],
     }
     const request = vi.fn().mockResolvedValue(settings)

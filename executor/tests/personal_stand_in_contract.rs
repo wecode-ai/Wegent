@@ -89,7 +89,6 @@ fn reorder_and_unrelated_edits_preserve_enable_time_and_failures_are_atomic() {
     let first = store.save_personal_stand_in(7, "mac", value).unwrap();
     let mut reordered = first.clone();
     reordered["roles"].as_array_mut().unwrap().reverse();
-    reordered["autoSelect"] = json!(true);
     let second = store.save_personal_stand_in(7, "mac", reordered).unwrap();
     assert_eq!(second["roles"][0]["id"], "review");
     assert_eq!(
@@ -209,25 +208,17 @@ fn project_agent_selection_cannot_expand_to_another_project() {
 }
 
 #[test]
-fn failed_selection_is_owner_and_version_scoped_and_retry_invalidates_it() {
+fn obsolete_selection_settings_do_not_control_or_survive_a_save() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
-    let settings = store.personal_stand_in(7, "mac").unwrap();
-    store.save_stand_in_decision("decision", &json!({"userId":7,"version":0,"issueId":"issue","title":"Review","error":"invalid output"})).unwrap();
-    assert_eq!(
-        store.stand_in_selection_errors(7, &json!(0)).unwrap().len(),
-        1
-    );
-    assert!(store
-        .stand_in_selection_errors(8, &json!(0))
-        .unwrap()
-        .is_empty());
-    let updated = store.save_personal_stand_in(7, "mac", settings).unwrap();
-    assert!(store
-        .stand_in_selection_errors(7, &updated["version"])
-        .unwrap()
-        .is_empty());
-    assert!(store.stand_in_decision("decision").unwrap().is_some());
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    assert!(settings.get("autoSelect").is_none());
+    settings["autoSelect"] = json!(true);
+    settings["selectionErrors"] = json!([{"error":"obsolete"}]);
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    assert!(saved.get("autoSelect").is_none());
+    assert!(saved.get("selectionErrors").is_none());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
 }
 
 #[test]

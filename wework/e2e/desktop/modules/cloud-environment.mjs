@@ -498,8 +498,7 @@ class RealCloudEnvironment {
         '127.0.0.1',
         '--port',
         String(this.pythonBackendPort),
-        // Match backend-rs/scripts/start-hybrid-backend.sh: retiring upstream
-        // sockets at Uvicorn's 5s default races the gateway's pooled requests.
+        // Match start-hybrid-backend.sh: the gateway must not reuse expired upstream sockets.
         '--timeout-keep-alive',
         '2400',
       ],
