@@ -171,10 +171,7 @@ mod connection_tool_tests {
                 _: &mut std::task::Context<'_>,
                 _: &mut tokio::io::ReadBuf<'_>,
             ) -> std::task::Poll<std::io::Result<()>> {
-                std::task::Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "untrusted error detail",
-                )))
+                std::task::Poll::Ready(Err(std::io::Error::other("untrusted error detail")))
             }
         }
         let error = read_tool_stdout(Broken, 4).await.unwrap_err();

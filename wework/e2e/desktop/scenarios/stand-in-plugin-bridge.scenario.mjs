@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { withTimeout } from '../modules/shared.mjs'
 
 const PACKAGE = '@test/connection-source'
 const PROVIDER = `${PACKAGE}/records`
@@ -170,7 +171,13 @@ export function createDesktopScenario({
         /Disable connection plugin/
       )
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
+      const readyCount = control.readyCount
       await host(control, 'runtime.restartCoreDsh', {})
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        workbenchReadyTimeoutMs,
+        'Connection plugin restart did not reconnect the workbench'
+      )
       await control.command('waitFor', '[data-testid="plugins-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })

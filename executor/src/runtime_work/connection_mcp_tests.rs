@@ -4,14 +4,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+type RpcReply = (&'static str, Result<Value, AppIpcError>);
+
 #[derive(Clone)]
 struct FakeRpc {
-    replies: Arc<Mutex<VecDeque<(&'static str, Result<Value, AppIpcError>)>>>,
+    replies: Arc<Mutex<VecDeque<RpcReply>>>,
     calls: Arc<Mutex<Vec<(&'static str, Value)>>>,
 }
 
 impl FakeRpc {
-    fn new(replies: Vec<(&'static str, Result<Value, AppIpcError>)>) -> Self {
+    fn new(replies: Vec<RpcReply>) -> Self {
         Self {
             replies: Arc::new(Mutex::new(replies.into())),
             calls: Arc::default(),

@@ -14,7 +14,7 @@ pub(super) fn installed_dependency(
         .or_else(|| plugin.get("version"))
         .unwrap_or(&Value::Null);
     if version != &payload["expectedVersion"]
-        || plugin["name"].as_str().is_none_or(|name| name.is_empty())
+        || !plugin["name"].as_str().is_some_and(|name| !name.is_empty())
     {
         return Err(failure(
             "dependency_unavailable",
