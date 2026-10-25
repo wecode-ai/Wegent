@@ -128,7 +128,7 @@ Collection requires the connection runtime on the bound device. If it is unavail
 
 Sources are collected once per user, provider, account and resource. Each event reaches every connected role whose enable-time cutoff admits it. Deduplication, quoted-message threading and work grouping are role-local; no model selects recipient roles. Settings versions are checked after collection. Events are persisted before advancing the page checkpoint; interrupted pages replay and deduplicate. External calls and database writes are not a distributed exactly-once transaction.
 
-Existing work organization, execution queues and approval flows remain authoritative. New work uses `connection_work`; historical `dingtalk_work` retains the same external-source restrictions and confirmation rules. Provider identity also separates deduplication and memory scopes. Failures retain progress and remain visible as source errors until the user retries or updates settings; login never opens automatically.
+Existing work organization, execution queues and approval flows remain authoritative. New work uses `connection_work`; historical `dingtalk_work` retains the same external-source restrictions and confirmation rules. Provider identity also separates deduplication and memory scopes. An unregistered or restarting host preserves the previous checkpoint and is retried on the next poll without latching a source error. Other collection failures retain progress and remain visible as source errors until the user retries or updates settings; login never opens automatically.
 
 ## DingTalk migration
 

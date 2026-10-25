@@ -69,11 +69,13 @@ export function StandInProposalSources({
           <span className="text-text-secondary">
             {' '}
             ·{' '}
-            {t(
-              row.kind === 'group'
-                ? 'standIn.workspace.group_mentions'
-                : 'standIn.workspace.direct_messages'
-            )}{' '}
+            {row.providerId && row.providerId !== '@wegent/dsh-connection-dingtalk/dingtalk'
+              ? row.kind
+              : t(
+                  row.kind === 'group'
+                    ? 'standIn.workspace.group_mentions'
+                    : 'standIn.workspace.direct_messages'
+                )}{' '}
             · {policyName(row.policy)}
           </span>
         </p>

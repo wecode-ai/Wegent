@@ -83,22 +83,14 @@ impl RuntimeWorkRpcHandler {
                         &settings["version"],
                     )
                     .await;
-                let mut next = match outcome {
-                    Ok(next) => next,
-                    Err(error) => {
-                        let mut next = if state.is_object() {
-                            state.clone()
-                        } else {
-                            json!({})
-                        };
-                        next["error"] = json!({"code":error.code,"message":error.message});
-                        next
-                    }
-                };
-                next["version"] = settings["version"].clone();
-                store
-                    .save_stand_in_source(user, source, &next)
-                    .map_err(settings_error)?;
+                save_collection_result(
+                    &store,
+                    user,
+                    source,
+                    &settings["version"],
+                    &state,
+                    outcome,
+                )?;
             }
             for mut work in store
                 .list_stand_in_work(user, None)
@@ -364,6 +356,35 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn save_collection_result(
+    store: &LocalTaskStore,
+    user: i64,
+    source: &Value,
+    version: &Value,
+    state: &Value,
+    outcome: Result<Value, AppIpcError>,
+) -> Result<(), AppIpcError> {
+    let mut next = match outcome {
+        Ok(next) => next,
+        // Startup and host restarts must not latch a source error until settings change.
+        Err(error) if error.code == "connection_host_unavailable" => return Ok(()),
+        Err(error) => {
+            let mut next = if state.is_object() {
+                state.clone()
+            } else {
+                json!({})
+            };
+            next["error"] = json!({"code":error.code,"message":error.message});
+            next
+        }
+    };
+    next["version"] = version.clone();
+    store
+        .save_stand_in_source(user, source, &next)
+        .map_err(settings_error)?;
+    Ok(())
+}
+
 fn validate_collection_version(
     store: &LocalTaskStore,
     user: i64,
@@ -402,6 +423,63 @@ fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_host_restart_preserves_progress_and_allows_collection_to_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({"id":"inbox","kind":"folder","profile":"account","providerId":"@test/mail/inbox"});
+        let version = json!(3);
+        for checkpoint in [
+            Value::Null,
+            json!({"checkpoint":{"cursor":"page2"},"version":3}),
+        ] {
+            store.save_stand_in_source(7, &source, &checkpoint).unwrap();
+            let previous = store.stand_in_source(7, &source).unwrap();
+            save_collection_result(
+                &store,
+                7,
+                &source,
+                &version,
+                &previous,
+                Err(AppIpcError::new(
+                    "connection_host_unavailable",
+                    "Host is restarting",
+                )),
+            )
+            .unwrap();
+            assert_eq!(store.stand_in_source(7, &source).unwrap(), previous);
+        }
+        let previous = store.stand_in_source(7, &source).unwrap();
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &previous,
+            Ok(json!({"checkpoint":{"cursor":"page3"}})),
+        )
+        .unwrap();
+        let resumed = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(resumed["checkpoint"]["cursor"], "page3");
+        assert!(resumed["error"].is_null());
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &resumed,
+            Err(AppIpcError::new(
+                "connector_auth_required",
+                "Authorize the account",
+            )),
+        )
+        .unwrap();
+        let failed = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(failed["checkpoint"], resumed["checkpoint"]);
+        assert_eq!(failed["error"]["code"], "connector_auth_required");
+        assert_eq!(failed["version"], version);
+    }
 
     #[test]
     fn stand_in_collection_uses_the_stored_settings_version_without_role_selection_metadata() {

@@ -73,3 +73,21 @@ it('blocks a stale proposal while keeping the reject action available', async ()
   await userEvent.click(screen.getByTestId('stand-in-proposal-reject'))
   expect(props.onResolve).toHaveBeenCalledWith(false)
 })
+
+it('shows the resource kind of other providers while preserving legacy DingTalk labels', () => {
+  const props = fixture()
+  props.proposal.settings.roles[0].connections = [
+    {
+      providerId: '@test/mail/inbox',
+      id: 'inbox',
+      profile: 'account',
+      kind: 'folder',
+      name: 'Mail inbox',
+    },
+    props.current.primary!.connections![0],
+  ]
+  render(<StandInProposalCard {...props} />)
+  expect(screen.getByText(/folder/)).toBeInTheDocument()
+  expect(screen.getByText(/群聊.*我/)).toBeInTheDocument()
+  expect(screen.queryByText(/私聊消息/)).not.toBeInTheDocument()
+})
