@@ -307,7 +307,16 @@ milestone screenshots, and every run retains logs, state snapshots, and other
 useful diagnostics. Before upload, CI removes only transient Chromium caches
 that cannot help reproduce a failure. Uploads disable redundant compression for
 PNG and other already-compressed evidence so artifact archiving does not extend
-the pipeline tail. Merge queue validates
+the pipeline tail.
+
+CI sets `SCCACHE_IDLE_TIMEOUT=0` during installation, daemon startup, and subsequent
+Cargo invocations. In sccache 0.16, ten minutes without a new request triggers
+shutdown even while a compile is running; the daemon then waits only ten seconds
+before exiting. This can interrupt large Windows Rust compiles with a connection
+reset. Disabling the request-idle timer keeps the daemon alive for the compilation
+without retrying builds or ignoring failures.
+
+Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new

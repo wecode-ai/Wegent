@@ -253,6 +253,12 @@ ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存
 路径保留关键里程碑截图，每次运行仍保留日志、状态快照和其他有效诊断；上传前只清理
 无法帮助复现问题的 Chromium 临时缓存。PNG 等已压缩文件上传时禁用二次压缩，避免
 诊断归档延长流水线尾部。
+
+CI 在安装、启动和后续 Cargo 调用中统一设置 `SCCACHE_IDLE_TIMEOUT=0`。
+sccache 0.16 默认在十分钟没有新请求后关闭服务，即使已有编译仍在执行；
+随后只等待十秒就退出，可能中断 Windows 上的大型 Rust 编译并返回连接重置。
+禁用该请求空闲计时器让服务覆盖完整编译过程，不通过重试构建或忽略错误取得通过。
+
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。
