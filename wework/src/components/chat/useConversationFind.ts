@@ -479,8 +479,8 @@ export function useConversationFind(
     !queryPending &&
     !failure &&
     (remotePending ||
-      currentHydration?.status === 'pending' ||
-      (currentHydration?.status === 'done' && !resolvedMatch))
+      (publishedSnapshot.request === completedRequest && match?.cursor && !resolvedMatch) ||
+      currentHydration?.status === 'pending')
   )
   const isLoading = enabled && (queryPending || historyLoading || Boolean(props.loading))
   useEffect(() => {

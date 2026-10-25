@@ -843,8 +843,10 @@ describe('persisted conversation find', () => {
     await act(async () => vi.advanceTimersByTime(150))
     expect(result.current.historyFailed).toBe(true)
     expect(result.current.failure).toBe('load')
+    expect(result.current.isLoading).toBe(false)
     await act(async () => result.current.retry())
     expect(hydrate).toHaveBeenCalledTimes(2)
+    expect(result.current.isLoading).toBe(true)
     rerender({
       ...props,
       messages: [
