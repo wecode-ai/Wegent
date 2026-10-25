@@ -301,15 +301,22 @@ async def test_background_plugin_sync_closes_its_session_when_dispatch_fails(
         finally:
             db.close()
 
-    dispatch = AsyncMock(side_effect=RuntimeError("device unavailable"))
+    enumerate_devices = AsyncMock(side_effect=RuntimeError("device unavailable"))
     monkeypatch.setattr(plugin_device_sync, "get_db_session", session)
-    monkeypatch.setattr(plugin_device_sync, "sync_global_capabilities", dispatch)
+    monkeypatch.setattr(
+        plugin_device_sync.device_service, "get_online_devices", enumerate_devices
+    )
+    schedule = Mock()
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", schedule)
 
-    await plugin_device_sync.sync_global_capabilities_after_plugin_change(7)
+    await plugin_device_sync.sync_plugin_to_other_devices_after_change(7, 17, "desktop")
 
-    dispatch.assert_awaited_once_with(db, 7, require_device_success=False)
+    enumerate_devices.assert_awaited_once_with(db, 7)
+    schedule.assert_not_called()
     db.close.assert_called_once_with()
-    assert "Background global capability sync failed: user_id=7" in caplog.text
+    assert (
+        "Background plugin sync failed: user_id=7 installed_plugin_id=17" in caplog.text
+    )
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ import hashlib
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -861,25 +861,19 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
         visibility="workspace",
         featured=True,
     )
-    sync_response = DeviceCapabilitySyncResponse(
-        success=True,
-        device_id="",
-        mode="replace",
-        synced=0,
-        results=[],
-    )
 
-    syncs = []
-
-    async def fake_sync(db, *, user_id):
+    async def online_devices(db, user_id):
         assert db is not test_db
         assert user_id == test_user.id
-        syncs.append(user_id)
-        return sync_response
+        return [{"device_id": "online-device"}]
 
+    schedule = Mock()
     monkeypatch.setattr(
-        "app.services.plugin_device_sync.device_capability_sync_service.sync_user_global_capabilities",
-        fake_sync,
+        "app.services.plugin_device_sync.device_service.get_online_devices",
+        online_devices,
+    )
+    monkeypatch.setattr(
+        "app.services.plugin_device_sync.schedule_other_devices", schedule
     )
     monkeypatch.setattr(
         "app.services.plugin_device_sync.get_db_session",
@@ -897,12 +891,16 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
 
     assert response.plugin.spec.source.pluginKey == BUILTIN_SITES_PLUGIN_NAME
     assert response.sync is None
-    assert syncs == []
+    schedule.assert_not_called()
     assert len(background.tasks) == 1
 
     await background()
 
-    assert syncs == [test_user.id]
+    assert schedule.call_args.kwargs == {
+        "user_id": test_user.id,
+        "device_ids": ["online-device"],
+        "installed_plugin_ids": [int(response.plugin.metadata["labels"]["id"])],
+    }
 
 
 @pytest.mark.asyncio

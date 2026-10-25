@@ -15,6 +15,8 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
+from app.services.device.plugin_change_sync import schedule_other_devices
+from app.services.device_service import device_service
 from app.services.plugin_device_identity import plugin_device_id, plugin_device_rows
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
@@ -140,14 +142,40 @@ async def sync_plugin_after_change(
 
 
 @trace_async(span_name="plugins.sync_other_devices", tracer_name="backend.plugins")
-async def sync_global_capabilities_after_plugin_change(user_id: int) -> None:
-    """Converge online devices after the account transaction and HTTP response."""
+async def sync_plugin_to_other_devices_after_change(
+    user_id: int, installed_plugin_id: int, current_device_id: str | None
+) -> None:
+    """Converge the changed plugin without resending the initiating device."""
     try:
         with get_db_session() as db:
-            await sync_global_capabilities(db, user_id, require_device_success=False)
+            devices = await device_service.get_online_devices(db, user_id)
+            current = (
+                plugin_device_id(db, user_id, current_device_id)
+                if current_device_id
+                else None
+            )
+            targets = list(
+                dict.fromkeys(
+                    plugin_device_id(db, user_id, target)
+                    for device in devices
+                    if (
+                        target := device_capability_sync_service._extract_device_id(
+                            device
+                        )
+                    )
+                )
+            )
+        schedule_other_devices(
+            device_capability_sync_service,
+            user_id=user_id,
+            device_ids=[target for target in targets if target != current],
+            installed_plugin_ids=[installed_plugin_id],
+        )
     except Exception:
         logger.exception(
-            "Background global capability sync failed: user_id=%s", user_id
+            "Background plugin sync failed: user_id=%s installed_plugin_id=%s",
+            user_id,
+            installed_plugin_id,
         )
 
 

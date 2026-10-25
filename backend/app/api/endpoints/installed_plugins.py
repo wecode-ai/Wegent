@@ -68,8 +68,8 @@ from app.services.plugin_device_installation_service import (
 )
 from app.services.plugin_device_sync import (
     sync_global_capabilities,
-    sync_global_capabilities_after_plugin_change,
     sync_plugin_after_change,
+    sync_plugin_to_other_devices_after_change,
 )
 from app.services.plugin_installation_operations import (
     install_builtin_account_plugin,
@@ -571,7 +571,12 @@ async def install_marketplace_plugin(
         device_id=device_id,
         sync_current_device_only=True,
     )
-    background_tasks.add_task(sync_global_capabilities_after_plugin_change, user_id)
+    background_tasks.add_task(
+        sync_plugin_to_other_devices_after_change,
+        user_id,
+        int(plugin.metadata["labels"]["id"]),
+        device_id,
+    )
     enriched = await run_plugin_operation(
         plugin_marketplace_service.enrich_installed_list,
         response=InstalledPluginListResponse(items=[plugin]),
@@ -605,7 +610,12 @@ async def ensure_builtin_plugin_installed(
         sync_current_device_only=True,
         require_device_success=plugin.spec.source.providerKey == "wegent-marketplace",
     )
-    background_tasks.add_task(sync_global_capabilities_after_plugin_change, user_id)
+    background_tasks.add_task(
+        sync_plugin_to_other_devices_after_change,
+        user_id,
+        int(plugin.metadata["labels"]["id"]),
+        request.device_id,
+    )
     enriched = await run_plugin_operation(
         plugin_marketplace_service.enrich_installed_list,
         response=InstalledPluginListResponse(items=[plugin]),
@@ -689,7 +699,9 @@ async def update_installed_plugin(
         reset_failures=request.releaseId is not None,
         sync_current_device_only=True,
     )
-    background_tasks.add_task(sync_global_capabilities_after_plugin_change, user_id)
+    background_tasks.add_task(
+        sync_plugin_to_other_devices_after_change, user_id, installed_id, device_id
+    )
     enriched = await run_plugin_operation(
         plugin_marketplace_service.enrich_installed_list,
         response=InstalledPluginListResponse(items=[installed]),

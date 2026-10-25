@@ -20,7 +20,7 @@ Selecting a plugin and sending a message do not check login in advance. When act
 
 For cloud-managed plugins, uninstall completes when the account removal is committed; local cleanup synchronizes asynchronously. The backend retains pending cleanup for disconnected devices or failed cleanup and resumes it on later connections, rather than keeping the marketplace button waiting for a device response. Update the backend, desktop, and executor together for these behaviors; no new database migration is required.
 
-Installing a cloud-managed plugin is judged by the current device's result: the request waits only for that device, other online devices converge in the background, and offline devices catch up on their next connection. Devices are addressed by the record route id assigned during registration, so historical device records for the same computer no longer make sync results ambiguous. While online, the Runtime also checks for plugin drift on a jittered low-frequency cycle as a fallback for missed notifications.
+Installing a cloud-managed plugin is judged by the current device's result: the request waits only for that device, other online devices receive the change in the background without synchronizing the current device again, and offline devices catch up on their next connection. Runtimes supporting targeted synchronization update only the affected plugin and preserve other plugin installations. Devices are addressed by the record route id assigned during registration, so historical device records for the same computer no longer make sync results ambiguous. While online, the Runtime also checks for plugin drift on a jittered low-frequency cycle as a fallback for missed notifications.
 
 ## Refresh and repair installation state
 

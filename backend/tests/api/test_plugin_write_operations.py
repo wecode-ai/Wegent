@@ -1,5 +1,6 @@
 """Account writes remain authoritative when later device coordination is busy."""
 
+import asyncio
 import io
 import json
 import time
@@ -33,6 +34,7 @@ from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyn
 from app.services import plugin_device_sync
 from app.services import plugin_write_coordination as coordination
 from app.services.builtin_plugin_registry import BUILTIN_PLUGIN_OWNER_ID
+from app.services.device import plugin_change_sync
 from app.services.device_service import device_service
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_device_installation_service import (
@@ -75,8 +77,13 @@ class PluginRequests:
     def run_background(self) -> None:
         tasks = self.background_tasks[:]
         self.background_tasks.clear()
-        for task in tasks:
-            anyio.run(task)
+
+        async def complete():
+            for task in tasks:
+                await task()
+            await asyncio.gather(*list(plugin_change_sync._background))
+
+        anyio.run(complete)
 
     def seed_update(self) -> None:
         with self.sessions() as db:
@@ -222,13 +229,6 @@ def plugin_requests(tmp_path, monkeypatch):
             ),
         )
 
-    async def global_sync(db, **_kwargs):
-        remote_calls.append("global")
-        result = device_result(db, report_plugins=False)
-        return DeviceCapabilitySyncResponse(
-            mode="replace", success=True, results=[result], synced=1
-        )
-
     async def plugin_sync(db, *, user_id, installed_plugin_id, device_id):
         assert user_id == user.id
         assert device_id == DEVICE_ID
@@ -248,14 +248,35 @@ def plugin_requests(tmp_path, monkeypatch):
         with sessions() as db:
             return device_result(db, report_plugins=True)
 
+    async def changed_sync(*, user_id, device_id, installed_plugin_ids):
+        assert user_id == user.id
+        assert device_id == DEVICE_ID
+        assert len(installed_plugin_ids) == 1
+        targeted_calls.extend(installed_plugin_ids)
+        remote_calls.append("background-plugin")
+        with sessions() as db:
+            return device_result(db, report_plugins=True)
+
     monkeypatch.setattr(
         device_service,
         "get_all_devices",
         AsyncMock(return_value=[{"device_id": DEVICE_ID}]),
     )
+    monkeypatch.setattr(
+        device_service,
+        "get_online_devices",
+        AsyncMock(return_value=[{"device_id": DEVICE_ID}]),
+    )
     sync_service = endpoints.device_capability_sync_service
-    monkeypatch.setattr(sync_service, "sync_user_global_capabilities", global_sync)
+    monkeypatch.setattr(
+        sync_service,
+        "sync_user_global_capabilities",
+        AsyncMock(
+            side_effect=AssertionError("Plugin changes must not replace inventory")
+        ),
+    )
     monkeypatch.setattr(sync_service, "sync_installed_plugin_to_device", plugin_sync)
+    monkeypatch.setattr(sync_service, "sync_plugin_change", changed_sync)
     monkeypatch.setattr(sync_service, "sync_current_device_capabilities", current_sync)
     monkeypatch.setattr(
         "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices",
@@ -327,7 +348,8 @@ def test_normal_account_write_materializes_the_device(plugin_requests, entry):
             assert device.state == "installed"
             assert device.actual_release_id == account.json["spec"]["releaseId"]
     context.run_background()
-    assert context.remote_calls == ["plugin", "global"]
+    assert context.remote_calls == ["plugin"]
+    assert context.targeted_calls == [account.id]
 
 
 def test_uploaded_plugin_update_targets_the_changed_plugin(plugin_requests):
@@ -349,7 +371,26 @@ def test_uploaded_plugin_update_targets_the_changed_plugin(plugin_requests):
     assert context.remote_calls == ["plugin"]
     assert len(context.background_tasks) == 1
     context.run_background()
-    assert context.remote_calls == ["plugin", "global"]
+    assert context.remote_calls == ["plugin"]
+    assert context.targeted_calls == [context.installed_id]
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_account_write_without_device_converges_only_the_changed_plugin(
+    plugin_requests, entry
+):
+    context = plugin_requests
+    if entry in {"release", "state"}:
+        context.seed_update()
+
+    response = context.write(entry, device_id=None)
+
+    assert response.status_code == 200, response.text
+    account = assert_account_write(context, entry)
+    assert context.remote_calls == []
+    context.run_background()
+    assert context.remote_calls == ["background-plugin"]
+    assert context.targeted_calls == [account.id]
 
 
 @pytest.mark.parametrize("entry", ENTRIES)
@@ -392,10 +433,9 @@ def test_coordination_failure_before_account_commit_is_fail_closed(
     [
         (entry, stage, DEVICE_ID)
         for entry in ENTRIES
-        for stage in ("prepare", "global_ack", "plugin_ack")
+        for stage in ("prepare", "plugin_ack")
         if entry != "legacy" or stage == "plugin_ack"
-    ]
-    + [("legacy", "global_ack", None)],
+    ],
 )
 @pytest.mark.parametrize("code", FAULT_CODES)
 def test_device_coordination_failure_preserves_account_commit_and_recovers(
@@ -406,7 +446,6 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
         context.seed_update()
     observed: list[str] = []
     prepare = installations._ensure_pending_for_devices
-    record = installations.record_sync_response
     record_plugin = installations.record_plugin_sync_response
     deferred = Mock(wraps=plugin_device_sync.deferred_plugin_sync)
 
@@ -420,11 +459,6 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
             fail_committed_stage()
         return prepare(*args, **kwargs)
 
-    def record_write(*args: Any, **kwargs: Any):
-        if stage == "global_ack":
-            fail_committed_stage()
-        return record(*args, **kwargs)
-
     def record_plugin_write(*args: Any, **kwargs: Any):
         if stage == "plugin_ack":
             fail_committed_stage()
@@ -432,7 +466,6 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
 
     with monkeypatch.context() as fault:
         fault.setattr(installations, "_ensure_pending_for_devices", prepare_write)
-        fault.setattr(installations, "record_sync_response", record_write)
         fault.setattr(installations, "record_plugin_sync_response", record_plugin_write)
         fault.setattr(plugin_device_sync, "deferred_plugin_sync", deferred)
 
@@ -440,24 +473,14 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
 
         assert response.status_code == 200, response.text
         assert len(context.background_tasks) == 1
-        if stage == "global_ack":
-            assert observed == []
-            if entry in {"marketplace", "builtin", "legacy"}:
-                sync = response.json()["sync"]
-                if device_id is None:
-                    assert sync is None
-                else:
-                    assert sync["success"] is True
-            context.run_background()
-
     assert observed == [stage]
     deferred.assert_called_once()
     assert deferred.call_args.args[0].code == code
     assert deferred.call_args.kwargs["stage"] == stage
     account = assert_account_write(context, entry)
     if entry == "legacy":
-        assert context.remote_calls == ["plugin" if device_id else "global"]
-    if stage != "global_ack" and entry in {"marketplace", "builtin", "legacy"}:
+        assert context.remote_calls == ["plugin"]
+    if entry in {"marketplace", "builtin", "legacy"}:
         sync = response.json()["sync"]
         assert sync["success"] is False
         assert sync["failed"] >= 1
@@ -489,7 +512,7 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
 
 @pytest.mark.parametrize(
     ("entry", "device_id"),
-    [(entry, DEVICE_ID) for entry in ENTRIES] + [("legacy", None)],
+    [(entry, DEVICE_ID) for entry in ENTRIES],
 )
 @pytest.mark.parametrize(
     "code", (*FAULT_CODES, "plugin_write_lease_lost", "plugin_write_conflict")
@@ -542,12 +565,6 @@ def test_snapshot_coordination_failure_preserves_commit_without_retrying_device(
         "sync_installed_plugin_to_device",
         snapshot,
     )
-    if device_id is None:
-        monkeypatch.setattr(
-            endpoints.device_capability_sync_service,
-            "sync_user_global_capabilities",
-            snapshot,
-        )
     monkeypatch.setattr(installations, "record_sync_response", record)
     monkeypatch.setattr(installations, "record_plugin_sync_response", record_plugin)
     monkeypatch.setattr(plugin_device_sync, "deferred_plugin_sync", deferred)
@@ -557,10 +574,6 @@ def test_snapshot_coordination_failure_preserves_commit_without_retrying_device(
     assert response.status_code == 200, response.text
     assert_account_write(context, entry)
     assert len(context.background_tasks) == 1
-    if device_id is None:
-        assert response.json()["sync"] is None
-        snapshot.assert_not_awaited()
-        context.run_background()
     snapshot.assert_awaited_once()
     deferred.assert_called_once()
     assert deferred.call_args.args[0].code == code
@@ -581,3 +594,52 @@ def test_snapshot_coordination_failure_preserves_commit_without_retrying_device(
         assert pending.desired_release_id == context.release_id
         assert pending.attempt_count == 2
         assert pending.error_message == "previous removal failed"
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+@pytest.mark.parametrize("stage", ["snapshot", "ack"])
+@pytest.mark.parametrize(
+    "code", (*FAULT_CODES, "plugin_write_lease_lost", "plugin_write_conflict")
+)
+def test_background_coordination_failure_preserves_account_and_recovery(
+    plugin_requests, monkeypatch, caplog, entry, stage, code
+):
+    context = plugin_requests
+    if entry in {"release", "state"}:
+        context.seed_update()
+    deferred = Mock(wraps=plugin_device_sync.deferred_plugin_sync)
+    operation = AsyncMock(side_effect=PluginWriteError(code))
+
+    with monkeypatch.context() as fault:
+        fault.setattr(plugin_device_sync, "deferred_plugin_sync", deferred)
+        if stage == "snapshot":
+            fault.setattr(
+                endpoints.device_capability_sync_service,
+                "sync_plugin_change",
+                operation,
+            )
+        else:
+            fault.setattr(
+                installations,
+                "record_device_sync_result",
+                Mock(side_effect=PluginWriteError(code)),
+            )
+        response = context.write(entry, device_id=None)
+
+        assert response.status_code == 200, response.text
+        account = assert_account_write(context, entry)
+        assert context.remote_calls == []
+        assert len(context.background_tasks) == 1
+        if entry in {"marketplace", "builtin", "legacy"}:
+            assert response.json()["sync"] is None
+        context.run_background()
+
+    assert f"Plugin change remains pending: user_id={context.user_id}" in caplog.text
+    deferred.assert_not_called()
+    assert assert_account_write(context, entry).json == account.json
+    recovered = context.client.post(
+        "/plugins/installed/sync-device", params={"device_id": DEVICE_ID}
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["sync"]["success"] is True
+    assert assert_account_write(context, entry).json == account.json

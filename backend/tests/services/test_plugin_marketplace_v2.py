@@ -3172,7 +3172,7 @@ async def test_release_update_syncs_current_device_before_background_convergence
             ],
         )
     )
-    sync_others = AsyncMock(return_value=DeviceCapabilitySyncResponse())
+    sync_others = Mock()
     monkeypatch.setattr(
         plugin_device_installation_service, "ensure_pending_for_all_devices", prepare
     )
@@ -3181,8 +3181,15 @@ async def test_release_update_syncs_current_device_before_background_convergence
         "sync_installed_plugin_to_device",
         sync_current,
     )
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", sync_others)
     monkeypatch.setattr(
-        device_capability_sync_service, "sync_user_global_capabilities", sync_others
+        "app.services.device_service.device_service.get_online_devices",
+        AsyncMock(
+            return_value=[
+                {"device_id": "current-device"},
+                {"device_id": "other-device"},
+            ]
+        ),
     )
     monkeypatch.setattr(
         plugin_device_sync, "get_db_session", plugin_write_operations.get_db_session
@@ -3212,14 +3219,17 @@ async def test_release_update_syncs_current_device_before_background_convergence
         device_id="current-device",
         installed_plugin_id=installed_id,
     )
-    sync_others.assert_not_awaited()
+    sync_others.assert_not_called()
     assert len(background.tasks) == 1
 
     await background()
 
-    sync_others.assert_awaited_once()
-    assert sync_others.call_args.args[0] is not test_db
-    assert sync_others.call_args.kwargs == {"user_id": user_id}
+    sync_others.assert_called_once_with(
+        device_capability_sync_service,
+        user_id=user_id,
+        device_ids=["other-device"],
+        installed_plugin_ids=[installed_id],
+    )
 
 
 @pytest.mark.asyncio
