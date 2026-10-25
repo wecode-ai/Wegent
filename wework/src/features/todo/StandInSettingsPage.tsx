@@ -37,6 +37,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { findStandInProject } from './standInProjects'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -395,8 +396,7 @@ export function StandInSettingsPage({
           <p data-testid="stand-in-project-agent-scope" className="mt-2 text-xs text-text-muted">
             {t('standIn.personal.project_agent_scope', {
               project:
-                projects.find(project => project.id === role.agentProject?.id)?.name ??
-                role.agentProject.id,
+                findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
             })}
           </p>
         )}
@@ -701,7 +701,7 @@ export function StandInSettingsPage({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   role={role}
-                  projects={availableProjects}
+                  projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
                   onChange={changeRole}
