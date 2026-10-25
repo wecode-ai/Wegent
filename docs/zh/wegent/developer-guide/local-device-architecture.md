@@ -70,6 +70,8 @@ App 自己启动的 executor 和 DSH 归 Electron 主进程管理：macOS/Linux 
 
 Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 协议的进程 stdin，否则子命令读取标准输入时会窃取请求字节并破坏后续协议帧。Executor 按字节读取并以换行符划分 App IPC 帧，再单独验证每一帧的 UTF-8；非法帧只记录长度和错误偏移后丢弃，不能终止整个 executor 或中断其他正在运行的任务。检测到 executor runtime instance 变化后，Wework 会重新获取受影响任务的列表和 transcript；已被 transcript 确认接收的排队消息会从队列移除，断线时尚未确认的发送会恢复为可重试的排队状态。
 
+大体积 transcript 使用版本化的无损 gzip 快照分块传输，客户端收齐分块后一次性恢复会话条目。JSON 序列化通过有界写缓冲进入压缩器，避免逐个字符串片段调用压缩。桌面验证使用 debug Executor 时，Cargo 仅对 `miniz_oxide` 开启 `opt-level = 3`，以保持压缩热路径的执行效率；Executor 自身保留 debug 配置，调试断言与溢出检查保持启用。debug 构建沿用相同的协议格式、压缩级别和分块契约。
+
 本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
 
 工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。同一工具块的空历史输出不能覆盖已收到的实时结果；此规则同时适用于命令、Node REPL 和其他 MCP 工具，并保留输出截断与加载引用信息。
