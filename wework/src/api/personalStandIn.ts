@@ -10,11 +10,12 @@ export interface StandInHandlingPolicy {
   askBeforeAct: boolean
 }
 
-export interface StandInDingTalkConnection {
+export interface StandInSourceConnection {
+  providerId: string
   id: string
   profile: string
   name: string
-  kind: 'group' | 'direct'
+  kind: string
   policy: StandInHandlingPolicy
 }
 
@@ -28,7 +29,7 @@ export interface StandInIdentity extends Partial<
   enabled: boolean
   prompt: string
   preferences: string
-  dingtalk?: StandInDingTalkConnection[]
+  connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
 }
 
@@ -37,7 +38,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   name: string
   agentResourceId?: number | null
   agentProject?: StandInProjectRef
-  dingtalk?: StandInDingTalkConnection[]
+  connections?: StandInSourceConnection[]
   collaboration: {
     enabled: boolean
     allProjects: boolean
