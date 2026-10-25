@@ -332,6 +332,22 @@ export class RuntimeTaskLifecycleStore {
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
     })
+    const recoveredTurn = this.getTask(address)?.turn
+    const completedRecoveredTurn =
+      transcript.running === false && recoveredTurn?.phase === 'streaming'
+        ? transcript.turns.find(
+            turn => turn.id === recoveredTurn.id && isTerminalTurnStatus(turn.status)
+          )
+        : undefined
+    if (completedRecoveredTurn) {
+      // Canonical history can settle a recovered turn even when a newer turn was observed first.
+      this.executorSettled(address)
+      this.turnSettled(
+        address,
+        completedRecoveredTurn.id,
+        terminalTurnOutcome(completedRecoveredTurn.status)
+      )
+    }
     const currentTurn = this.getTask(address)?.turn
     const terminalTurn = transcript.turns.findLast(turn => isTerminalTurnStatus(turn.status))
     const ignoreStaleIdleTranscript =
