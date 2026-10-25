@@ -156,8 +156,13 @@ export function createDesktopScenario({
   workspacePath,
   captureScreenshot,
 }) {
+  let restartDesktopApp
   return {
     appEnvironment: { WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '5' },
+
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
 
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
@@ -204,10 +209,17 @@ export function createDesktopScenario({
       const address = initial.workbench.currentRuntimeTask
       const { task } = await requestExecutor(control, 'runtime.tasks.get', { address }, uiTimeoutMs)
       assert.ok(task.threadId, 'The native conversation must have a thread ID')
-      seedHistory(codexSqliteHome, task.threadId)
       const row = `[data-testid="runtime-local-task-row-${address.taskId}"]`
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('click', row)
+      assert.equal(
+        typeof restartDesktopApp,
+        'function',
+        'The history fixture cannot restart Wework'
+      )
+      // A terminal reconciliation may still read history after the task becomes idle.
+      // Seed only after shutdown so the first page starts with an empty renderer cache.
+      await restartDesktopApp(() => seedHistory(codexSqliteHome, task.threadId))
+      await control.command('waitFor', row)
+      await control.command('clickWhenEnabled', row)
       await waitForPane(
         control,
         snapshot => !snapshot.pane?.transcript?.loading,
