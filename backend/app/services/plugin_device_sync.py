@@ -65,6 +65,7 @@ async def sync_plugin_after_change(
     reset_failures: bool = False,
     sync_current_device_only: bool = False,
     require_device_success: bool = False,
+    runtime_state_changed: bool = False,
 ) -> DeviceCapabilitySyncResponse | None:
     installed_id = int(installed.metadata["labels"]["id"])
     if require_device_success and device_id is not None:
@@ -112,6 +113,13 @@ async def sync_plugin_after_change(
         finally:
             db.close()
     if sync_current_device_only:
+        if runtime_state_changed:
+            return await sync_installed_plugin_on_device(
+                db,
+                user_id=user_id,
+                device_id=device_id,
+                installed_id=installed_id,
+            )
         return await ensure_installed_plugin_on_device(
             db,
             user_id=user_id,
@@ -241,6 +249,27 @@ async def ensure_installed_plugin_on_device(
             previous=previous,
             stage="snapshot",
         )
+    return await sync_installed_plugin_on_device(
+        db,
+        user_id=user_id,
+        device_id=device_id,
+        installed_id=installed_id,
+        previous=previous,
+    )
+
+
+@trace_async(span_name="plugins.sync_device_plugin", tracer_name="backend.plugins")
+async def sync_installed_plugin_on_device(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str | None,
+    installed_id: int,
+    previous: DeviceCapabilitySyncResponse | None = None,
+) -> DeviceCapabilitySyncResponse | None:
+    """Send current plugin state even when its package is already installed."""
+    if not device_id:
+        return previous
     try:
         merge_sync = (
             await device_capability_sync_service.sync_installed_plugin_to_device(
@@ -260,7 +289,7 @@ async def ensure_installed_plugin_on_device(
         )
     except Exception:
         logger.exception(
-            "Single-plugin device sync failed after install: "
+            "Single-plugin device sync failed after account change: "
             "user_id=%s device_id=%s installed_id=%s",
             user_id,
             device_id,

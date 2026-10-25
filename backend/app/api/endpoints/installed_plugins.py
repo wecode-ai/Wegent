@@ -698,6 +698,9 @@ async def update_installed_plugin(
         device_id=device_id,
         reset_failures=request.releaseId is not None,
         sync_current_device_only=True,
+        runtime_state_changed=(
+            request.enabled is not None or request.componentStates is not None
+        ),
     )
     background_tasks.add_task(
         sync_plugin_to_other_devices_after_change, user_id, installed_id, device_id
