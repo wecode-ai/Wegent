@@ -13,29 +13,40 @@ import type {
   ProjectManageUser,
 } from './types'
 
-type MemberApi<Member extends ProjectManageMember, User extends ProjectManageUser> = Pick<
-  ProjectManageApi<ProjectManageProject, Member, ProjectManageItem, User>,
-  'listMembers' | 'searchUsers' | 'addMember' | 'updateMember' | 'removeMember'
+type MemberApi<
+  Project extends ProjectManageProject,
+  Member extends ProjectManageMember,
+  User extends ProjectManageUser,
+> = Pick<
+  ProjectManageApi<Project, Member, ProjectManageItem, User>,
+  'getProject' | 'listMembers' | 'searchUsers' | 'addMember' | 'updateMember' | 'removeMember'
 >
 
 export function useProjectMembers<
+  Project extends ProjectManageProject,
   Member extends ProjectManageMember,
   User extends ProjectManageUser,
 >({
   api,
   host,
   projectId,
+  currentUserId,
+  onProjectUpdated,
   projectScopeRef,
   canManage,
+  enabled = true,
   reportError,
   openMembersRequestId,
   onOpenMembersRequestConsumed,
 }: {
-  api: MemberApi<Member, User>
+  api: MemberApi<Project, Member, User>
   host: ProjectManageHost
   projectId: string
+  currentUserId?: number
+  onProjectUpdated?(project: Project): void
   projectScopeRef: RefObject<{ projectId: string }>
   canManage: boolean
+  enabled?: boolean
   reportError(cause: unknown, fallback: string): void
   openMembersRequestId?: number
   onOpenMembersRequestConsumed?(requestId: number): void
@@ -67,7 +78,9 @@ export function useProjectMembers<
   }
 
   useEffect(() => {
+    if (!enabled) return
     let active = true
+    setLoading(true)
     void api.listMembers(projectId).then(
       next => {
         if (!active) return
@@ -83,7 +96,7 @@ export function useProjectMembers<
     return () => {
       active = false
     }
-  }, [api, host, projectId, reportError])
+  }, [api, enabled, host, projectId, reportError])
 
   useEffect(() => {
     if (!membersOpen || typeof document === 'undefined') return
@@ -135,6 +148,28 @@ export function useProjectMembers<
     }
   }, [api, host, memberQuery, members, reportError])
 
+  async function refreshMemberState(
+    scope: { projectId: string },
+    options: { refreshProject?: boolean; reloadMembers?: boolean }
+  ) {
+    try {
+      if (options.refreshProject) {
+        const project = await api.getProject(scope.projectId)
+        if (projectScopeRef.current !== scope) return
+        onProjectUpdated?.(project)
+        if (project.access_role !== 'Owner' && project.access_role !== 'Maintainer') return
+      }
+      if (options.reloadMembers) {
+        const next = await api.listMembers(scope.projectId)
+        if (projectScopeRef.current === scope) setMembers(next)
+      }
+    } catch (cause) {
+      if (projectScopeRef.current === scope) {
+        reportError(cause, host.translate('todo.load_project_failed', '加载项目失败'))
+      }
+    }
+  }
+
   async function addMember(user: User) {
     if (!canManage || savingUserId !== null) return
     const scope = projectScopeRef.current
@@ -145,14 +180,7 @@ export function useProjectMembers<
       setMembers(current => [...current, member])
       setMemberQuery('')
       host.trackCompleted('member_invite')
-      try {
-        const next = await api.listMembers(scope.projectId)
-        if (projectScopeRef.current === scope) setMembers(next)
-      } catch (cause) {
-        if (projectScopeRef.current === scope) {
-          reportError(cause, host.translate('todo.load_project_failed', '加载项目失败'))
-        }
-      }
+      await refreshMemberState(scope, { reloadMembers: true })
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
@@ -177,6 +205,9 @@ export function useProjectMembers<
       if (projectScopeRef.current !== scope) return
       setMembers(current => current.map(row => (row.user_id === next.user_id ? next : row)))
       if (values.role) host.trackCompleted('member_role_change')
+      if (values.role && member.user_id === currentUserId) {
+        await refreshMemberState(scope, { refreshProject: true })
+      }
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
@@ -196,9 +227,15 @@ export function useProjectMembers<
     if (!canManage || savingUserId !== null) return
     if (
       !host.confirm(
-        host.translate('todo.remove_member_confirm', '从项目中移除“{{name}}”？', {
-          name: member.user_name,
-        })
+        member.inherited_role
+          ? host.translate(
+              'todo.reset_member_role_confirm',
+              '移除“{{name}}”的项目角色，恢复空间角色？',
+              { name: member.user_name }
+            )
+          : host.translate('todo.remove_member_confirm', '从项目中移除“{{name}}”？', {
+              name: member.user_name,
+            })
       )
     )
       return
@@ -207,8 +244,11 @@ export function useProjectMembers<
     try {
       await api.removeMember(scope.projectId, member.user_id)
       if (projectScopeRef.current !== scope) return
-      setMembers(current => current.filter(row => row.user_id !== member.user_id))
       host.trackCompleted('member_remove')
+      await refreshMemberState(scope, {
+        refreshProject: member.user_id === currentUserId,
+        reloadMembers: true,
+      })
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()

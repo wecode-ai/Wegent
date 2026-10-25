@@ -281,7 +281,8 @@ Executor Manager、Knowledge Engine、Shared 和 CLI 测试；修改
 在 PR 上添加 `ci:all` 标签可以跳过路径分类，强制运行全部模块测试、平台 E2E、
 Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径分类可能遗漏
 影响面的改动。三个测试 workflow 都会响应标签事件；没有 `ci:all` 标签时仍按
-改动路径决定测试范围。`ci:memory` 仍然只触发 Wework macOS 内存门禁。
+改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+普通 PR、定时任务和手动任务均不触发内存 E2E。
 
 功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
@@ -384,6 +385,24 @@ Draft PR 跳过昂贵的 E2E，转为 Ready for review 后再运行。
 
 完整的平台 E2E 每天 UTC 02:00 定时运行；完整 Wework E2E 每天 UTC 04:00 定时
 运行。定时任务与 PR、merge queue 使用不同的 concurrency group，互相不会取消。
+
+### Wework 共享 Release 回归
+
+`.github/workflows/wework-release-e2e.yml` 在相关仓库内 PR 中运行真实 GitHub
+回归，也支持手动触发。测试使用仅有 `Contents: write` 的 Actions token，创建
+独立标签和草稿 Release，执行发版工作流中的实际共享 Release 初始化命令，
+验证传入较旧的 `RELEASE_SHA` 时，已有 Release 的目标、元数据和附件不变，
+并在成功或失败后清理测试资源。Fork PR 不运行需要写权限的这项测试。
+
+共享 `wework-updater` 的标题和说明只在首次创建时设置。后续发版上传依赖和
+更新清单，不重新指定该 Release 的目标提交；否则旧提交与 main 的 workflow
+差异可能触发额外的 `Workflows: write` 权限检查并返回 403。
+
+可在已登录 GitHub CLI 的环境中运行：
+
+```bash
+GH_REPO=wecode-ai/Wegent bash .github/scripts/test-wework-shared-release.sh
+```
 
 ### 覆盖率报告
 

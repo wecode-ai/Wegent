@@ -37,9 +37,16 @@ export async function verifyCollaborationIssueHome(
   }
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
   assert.equal(
-    Number(await control.command('getElementCount', `${projectRow} svg`)),
+    Number(await control.command('getElementCount', `${projectRow} svg:not(.stand-in-icon)`)),
     0,
     'Project names must not have folder icons'
+  )
+  assert.equal(
+    Number(
+      await control.command('getElementCount', `${projectRow} .collaboration-project-sidebar-badge`)
+    ),
+    0,
+    'Projects without an enabled stand-in must not show a sidebar badge'
   )
   await control.command('hover', projectRow)
   assert.equal(
@@ -145,7 +152,10 @@ export async function verifyCollaborationIssueHome(
 
   await openComposer()
   await control.command('fill', input, { value: '手动修改负责人 @' })
-  await control.command('click', `[data-testid="collaboration-home-mention-member-${owner.id}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="collaboration-home-mention-member-${owner.id}"]`
+  )
   await control.command('click', ownerButton)
   await control.command('click', `[data-testid="collaboration-issue-owner-group:${group.id}"]`)
   await control.command('waitFor', ownerButton, { text: group.name })

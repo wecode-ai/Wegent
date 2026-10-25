@@ -7,17 +7,36 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
+#[path = "native_history_test_support.rs"]
+mod native_history_test_support;
+use native_history_test_support::install_native_history;
+
+#[path = "native_timeline_tests.rs"]
+mod native_timeline_tests;
+
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 
+#[path = "mcp_elicitation_tests.rs"]
+mod mcp_elicitation_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
 
+#[path = "task_title_tests.rs"]
+mod task_title_tests;
+
 #[path = "task_lookup_tests.rs"]
 mod task_lookup_tests;
+
+#[path = "task_rename_tests.rs"]
+mod task_rename_tests;
+
+#[path = "transcript_status_tests.rs"]
+mod transcript_status_tests;
 
 /// Restores one environment variable when a test finishes.
 struct ScalarEnv {
@@ -915,15 +934,11 @@ async fn automatic_prune_removes_old_archived_worktree_and_preserves_snapshot() 
 
 #[tokio::test]
 async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime() {
-    let root =
-        temp_runtime_work_index_path("restart-worktree-reconciliation").with_extension("directory");
+    let (handler, root) = isolated_runtime_work_handler("restart-worktree-reconciliation");
     let source = root.join("source");
     let managed_root = root.join("workspace").join("worktrees");
     let state_path = root.join("runtime-work").join("worktrees.json");
     initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work").join("index.json"));
-    handler.worktrees = WorktreeManager::new(state_path.clone());
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -979,14 +994,11 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 
 #[tokio::test]
 async fn restart_reconciliation_leaves_active_history_unchanged() {
-    let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
+    let (mut handler, root) = isolated_runtime_work_handler("restart-active-worktree");
     let source = root.join("source");
     let managed_root = root.join("workspace").join("worktrees");
     initialize_test_repository(&source);
     let index_path = root.join("runtime-work").join("index.json");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -1027,16 +1039,12 @@ async fn restart_reconciliation_leaves_active_history_unchanged() {
 
 #[tokio::test]
 async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
-    let root = temp_runtime_work_index_path("restart-queued-worktree").with_extension("directory");
+    let (mut handler, root) = isolated_runtime_work_handler("restart-queued-worktree");
     let source = root.join("source");
     let managed_root = root.join("workspace").join("worktrees");
     let index_path = root.join("runtime-work").join("index.json");
     let queue_path = root.join("runtime-work").join("turn-queue.json");
     initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(root.join("runtime-work").join("worktrees.json"));
-    handler.turn_queue_path = Arc::new(queue_path.clone());
     handler
         .worktrees
         .update_settings(WorktreeSettingsPatch {
@@ -1107,12 +1115,10 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
 
 #[tokio::test]
 async fn failed_worktree_reconciliation_remains_retryable() {
-    let root =
-        temp_runtime_work_index_path("restart-reconciliation-retry").with_extension("directory");
+    let (mut handler, root) = isolated_runtime_work_handler("restart-reconciliation-retry");
     fs::create_dir_all(&root).unwrap();
     let blocked_parent = root.join("blocked");
     fs::write(&blocked_parent, "not a directory").unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.worktrees = WorktreeManager::new(blocked_parent.join("worktrees.json"));
 
     assert!(!handler.reconcile_worktrees_once().await);
@@ -1159,6 +1165,9 @@ fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf
 
 #[path = "background_terminal_tests.rs"]
 mod background_terminal_tests;
+
+#[path = "streaming_transcript_tests.rs"]
+mod streaming_transcript_tests;
 
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
@@ -1705,8 +1714,8 @@ fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
 }
 
 #[tokio::test]
-async fn running_codex_transcript_uses_live_cache_without_provider_read() {
-    let (handler, root) = isolated_runtime_work_handler("running-live-cache");
+async fn running_codex_transcript_reads_native_order_with_provisional_live_output() {
+    let (mut handler, root) = isolated_runtime_work_handler("running-live-cache");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -1806,6 +1815,24 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         }),
     );
 
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![
+            json!({"id":"historical-turn","status":"completed","items":[
+              {"id":"historical-user","type":"userMessage","content":[{"type":"inputText","text":"Explain the approach"}]},
+              {"id":"historical-assistant","type":"agentMessage","phase":"final_answer","text":"Use divide and conquer"}
+            ]}),
+            json!({"id":"turn-completed","status":"completed","items":[
+              {"id":"user-1","type":"userMessage","content":[{"type":"inputText","text":"Implement quicksort"}]},
+              {"id":"message-completed","type":"agentMessage","phase":"final_answer","text":"Initial implementation complete"}
+            ]}),
+            json!({"id":"turn-live","status":"inProgress","items":[
+              {"id":"message-live","type":"agentMessage","phase":"commentary","text":"Writing quicksort"}
+            ]}),
+        ],
+        Some("native-before"),
+    );
     let transcript = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
@@ -1819,7 +1846,14 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
 
     assert_eq!(transcript["running"], true);
     assert_eq!(transcript["hasMoreBefore"], true);
-    assert_eq!(transcript["beforeCursor"], "native-before");
+    assert!(transcript["beforeCursor"]
+        .as_str()
+        .unwrap()
+        .starts_with("wework-codex-timeline:"));
+    assert!(transcript["beforeCursor"]
+        .as_str()
+        .unwrap()
+        .contains("native-before"));
     assert_eq!(transcript["messages"].as_array().unwrap().len(), 5);
     assert_eq!(transcript["messages"][0]["content"], "Explain the approach");
     assert_eq!(
@@ -1841,19 +1875,24 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         .iter()
         .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
         .find(|block| block["id"] == "plan-plan-live")
-        .expect("running transcript should include the active plan");
+        .expect("the live view should retain its active plan without replaying cached history");
     assert_eq!(plan["type"], "plan");
     assert_eq!(
         plan["content"],
         "# Quicksort plan\n\n- Partition the input."
     );
     assert_eq!(plan["status"], "streaming");
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
     let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn running_codex_transcript_deduplicates_cached_and_live_user_aliases() {
-    let (handler, root) = isolated_runtime_work_handler("running-user-alias");
+    let (mut handler, root) = isolated_runtime_work_handler("running-user-alias");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -1905,6 +1944,14 @@ async fn running_codex_transcript_deduplicates_cached_and_live_user_aliases() {
         }),
     );
 
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![json!({"id":"turn-1","status":"inProgress","items":[
+          {"id":"provider-user","clientId":"client-user-1","type":"userMessage","content":[{"type":"inputText","text":"Create the verification file"}]}
+        ]})],
+        None,
+    );
     let transcript = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
@@ -1927,6 +1974,11 @@ async fn running_codex_transcript_deduplicates_cached_and_live_user_aliases() {
     assert_eq!(user_messages[0]["clientUserMessageId"], "client-user-1");
     assert_eq!(user_messages[0]["turnId"], "turn-1");
     assert_eq!(transcript["turns"][0]["items"].as_array().unwrap().len(), 1);
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1935,7 +1987,7 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
     const PROVIDER_SECOND: i64 = 1_780_000_000;
     const PRESENTATION_MS: i64 = PROVIDER_SECOND * 1_000 + 900;
 
-    let (handler, root) = isolated_runtime_work_handler("same-second-presentations");
+    let (mut handler, root) = isolated_runtime_work_handler("same-second-presentations");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -2019,6 +2071,10 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
         }
     }
 
+    install_native_history(&mut handler, &root, (0..3).map(|index| json!({
+      "id":format!("turn-{}",index+1),"status":if index<2 {"completed"} else {"inProgress"},"startedAt":PROVIDER_SECOND,
+      "items":[{"id":format!("assistant-{}",index+1),"type":"agentMessage","text":format!("Response {}",index+1),"phase":if index<2 {"final_answer"} else {"commentary"}}]
+    })).collect(), None);
     let transcript = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
@@ -2053,12 +2109,17 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
             if index < 2 { "assistant_text" } else { "block" }
         );
     }
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
     let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes() {
-    let (handler, root) = isolated_runtime_work_handler("automatic-continuation-cache");
+    let (mut handler, root) = isolated_runtime_work_handler("automatic-continuation-cache");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -2116,6 +2177,24 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         }),
     );
 
+    let cached = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert!(cached
+        .iter()
+        .any(|message| message["content"] == "Initial goal turn complete"));
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![
+            json!({"id":"turn-initial","status":"completed","items":[
+                {"id":"user-1","type":"userMessage","content":[{"type":"inputText","text":"Keep the goal active"}]},
+                {"id":"message-initial","type":"agentMessage","phase":"final_answer","text":"Initial goal turn complete"}
+            ]}),
+            json!({"id":"turn-continuation","status":"inProgress","items":[
+                {"id":"message-continuation","type":"agentMessage","phase":"commentary","text":"Automatic continuation running"}
+            ]}),
+        ],
+        None,
+    );
     let transcript = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
@@ -2138,6 +2217,11 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         transcript["messages"][2]["blocks"][0]["content"],
         "Automatic continuation running"
     );
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
     let _ = fs::remove_dir_all(root);
 }
 
@@ -3262,6 +3346,95 @@ fn failed_responses_emit_runtime_turn_duration() {
     let _ = fs::remove_file(index_path);
 }
 
+#[test]
+fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
+    async fn cleanup_event(receiver: &mut broadcast::Receiver<Value>) -> Value {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = receiver.recv().await.unwrap();
+                if event["payload"]["data"]["archiveCleanup"].is_object() {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("archive cleanup must publish its result")
+    }
+
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let source = root.path().join("source");
+            initialize_test_repository(&source);
+            let (event_tx, mut event_rx) = broadcast::channel(16);
+            let mut handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+                "device-1",
+                "/bin/false",
+                event_tx.clone(),
+            );
+            handler.store = RuntimeWorkStore::new(root.path().join("fixture-runtime/index.json"));
+            handler.worktrees =
+                WorktreeManager::new(root.path().join("fixture-runtime/worktrees.json"));
+            handler
+                .worktrees
+                .update_settings(WorktreeSettingsPatch {
+                    worktree_root: Some(root.path().join("managed").display().to_string()),
+                    ..WorktreeSettingsPatch::default()
+                })
+                .unwrap();
+            let record = handler
+                .worktrees
+                .prepare(&source, "task-1", None, false)
+                .unwrap();
+            let path = Path::new(&record.path);
+            handler.worktrees.delete(path, true).unwrap();
+            handler.worktrees.restore(path).unwrap();
+            let marker = fs::read(path.join(".git")).unwrap();
+            fs::write(path.join(".git"), "gitdir: /missing/git/worktrees/task-1\n").unwrap();
+            let mut link = RuntimeTaskLink::new_pending(
+                "task-1".to_owned(),
+                record.path.clone(),
+                "Task".to_owned(),
+            );
+            link.status = "archived".to_owned();
+            handler.upsert_local_task(link.clone());
+            handler.mark_archived_link_deleted(&link);
+            event_tx
+                .send(json!({"event": "runtime.work.changed", "payload": {"taskId": "unrelated"}}))
+                .unwrap();
+
+            handler.delete_archived_link_background(link.clone()).await;
+
+            assert!(path.exists());
+            assert!(handler.local_task_link("task-1").is_some());
+            assert!(!handler.archived_link_is_deleted(&link));
+            assert!(handler.worktrees.snapshot_source_for(path).is_some());
+            let event = cleanup_event(&mut event_rx).await;
+            assert_eq!(event["event"], "runtime.work.changed");
+            assert_eq!(event["payload"]["deviceId"], "device-1");
+            assert!(!event["payload"]["data"]["archiveCleanup"]["errors"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+
+            fs::write(path.join(".git"), marker).unwrap();
+            handler.delete_archived_link_background(link).await;
+            assert!(!path.exists());
+            assert!(handler.local_task_link("task-1").is_none());
+            assert!(handler.worktrees.snapshot_source_for(path).is_none());
+            let event = cleanup_event(&mut event_rx).await;
+            assert_eq!(
+                event["payload"]["data"]["archiveCleanup"]["errors"],
+                json!([])
+            );
+        });
+}
+
 #[tokio::test]
 async fn archived_delete_falls_back_inline_when_enqueue_fails() {
     let index_path = temp_runtime_work_index_path("delete-enqueue-fallback");
@@ -4064,10 +4237,16 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             CodexTranscriptNavigationTurn {
                 turn_id: "turn-old".to_owned(),
                 cursor: Some("opaque-old".to_owned()),
+                user_message_id: Some("user-old".to_owned()),
+                prompt_preview: "Old request".to_owned(),
+                response_preview: "Old response".to_owned(),
             },
             CodexTranscriptNavigationTurn {
                 turn_id: "turn-new".to_owned(),
                 cursor: Some("opaque-new".to_owned()),
+                user_message_id: Some("user-new".to_owned()),
+                prompt_preview: "New request".to_owned(),
+                response_preview: "New response".to_owned(),
             },
         ],
         complete: true,
@@ -4079,19 +4258,21 @@ fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
             {
                 "id": "turn-old",
                 "turnId": "turn-old",
+                "userMessageId": "user-old",
                 "turnIndex": 0,
                 "messageIndex": 0,
-                "promptPreview": "",
-                "responsePreview": "",
+                "promptPreview": "Old request",
+                "responsePreview": "Old response",
                 "cursor": "opaque-old",
             },
             {
                 "id": "turn-new",
                 "turnId": "turn-new",
+                "userMessageId": "user-new",
                 "turnIndex": 1,
                 "messageIndex": 1,
-                "promptPreview": "",
-                "responsePreview": "",
+                "promptPreview": "New request",
+                "responsePreview": "New response",
                 "cursor": "opaque-new",
             },
         ])
@@ -4104,6 +4285,9 @@ fn incomplete_codex_transcript_navigation_is_hidden() {
         turns: vec![CodexTranscriptNavigationTurn {
             turn_id: "turn-1".to_owned(),
             cursor: Some("opaque".to_owned()),
+            user_message_id: None,
+            prompt_preview: String::new(),
+            response_preview: String::new(),
         }],
         complete: false,
     });
@@ -4142,6 +4326,7 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
     let turn_navigation = transcript_turn_navigation(&messages);
 
     let response = transcript_response(TranscriptResponseInput {
+        canonical_turns: None,
         local_task_id: "task-1".to_owned(),
         workspace_path: "/tmp/project".to_owned(),
         runtime: "claude_code".to_owned(),
@@ -4200,6 +4385,7 @@ fn conversation_context_transcript_omits_process_payloads() {
         },
         full_content: true,
         conversation_context_only: true,
+        canonical_turns: None,
         turn_item_source: TranscriptTurnItemSource::CodexItems,
         turn_navigation: Vec::new(),
     });
@@ -4545,7 +4731,7 @@ async fn transcript_without_session_preserves_known_terminal_state() {
 }
 
 #[tokio::test]
-async fn completed_transcript_uses_persisted_snapshot_when_provider_session_is_not_ready() {
+async fn native_transcript_reports_provider_failure_without_serving_an_unordered_cache() {
     let index_path = temp_runtime_work_index_path("completed-transcript-provider-not-ready");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -4581,15 +4767,10 @@ async fn completed_transcript_uses_persisted_snapshot_when_provider_session_is_n
             }
         }))
         .await
-        .expect("completed transcript should remain readable before the provider session is ready");
-
-    assert_eq!(result["success"], true);
-    assert_eq!(result["running"], false);
-    assert_eq!(result["messages"][0]["content"], "Persisted final answer");
-    assert_eq!(
-        result["turns"][0]["items"][0]["content"],
-        "Persisted final answer"
-    );
+        .expect_err("native history must not be replaced by an unordered cache");
+    assert_eq!(result.code, "codex_error");
+    let saved = completed_transcript_messages(&handler.local_task_link("completed-task").unwrap());
+    assert_eq!(saved[0]["content"], "Persisted final answer");
     let _ = std::fs::remove_file(index_path);
 }
 
@@ -5219,7 +5400,7 @@ fn child_notifications_remain_ordered_while_pending_notifications_replay() {
             route_generations: HashMap::from([("thread-child".to_owned(), generation)]),
             notifications: vec![PendingCodexNotification {
                 thread_id: "thread-child".to_owned(),
-                message: child_started,
+                message: child_started.into(),
             }],
         })
     };
@@ -5303,7 +5484,8 @@ fn pending_notifications_do_not_cross_thread_route_generations() {
                         "itemId": "child-message",
                         "delta": "stale child output"
                     }
-                }),
+                })
+                .into(),
             }],
         })
     };
@@ -5951,6 +6133,23 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
 
 #[tokio::test]
 async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn() {
+    assert_queued_notification_routing(false, false).await;
+}
+
+#[tokio::test]
+async fn execution_mapper_keeps_notification_when_router_observed_previous_active_turn() {
+    assert_queued_notification_routing(true, false).await;
+}
+
+#[tokio::test]
+async fn execution_mapper_delivers_before_lagged_global_router_exactly_once() {
+    assert_queued_notification_routing(false, true).await;
+}
+
+async fn assert_queued_notification_routing(
+    router_before_continuation: bool,
+    execution_before_router: bool,
+) {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-turn-race");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -5985,7 +6184,7 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
     let active_turn = handler
         .active_codex_turn(local_task_id)
         .expect("continuation turn should be active");
-    let message = json!({
+    let message = CodexNotification::from(json!({
         "method": "item/completed",
         "params": {
             "threadId": "thread-1",
@@ -5997,9 +6196,25 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
                 "text": "Initial goal turn complete"
             }
         }
-    });
+    }));
 
-    handler.route_codex_notification(message.clone());
+    if router_before_continuation {
+        handler.record_active_codex_turn(
+            local_task_id,
+            execution_id,
+            "thread-1".to_owned(),
+            "turn-initial".to_owned(),
+        );
+    }
+    if !execution_before_router {
+        handler.route_codex_notification(message.clone());
+    }
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-continuation".to_owned(),
+    );
     let mut execution_mapper = CodexNotificationEventMapper::default();
     handler
         .map_execution_codex_notification(
@@ -6008,13 +6223,16 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
             &request,
             Some(active_turn),
             &mut execution_mapper,
-            message,
+            message.clone(),
         )
         .await;
+    if execution_before_router {
+        handler.route_codex_notification(message);
+    }
 
     let event = event_rx
         .try_recv()
-        .expect("the global router should emit the historical turn once");
+        .expect("one notification path must emit the historical turn");
     assert_eq!(event["event"], "response.output_text.done");
     assert_eq!(event["payload"]["subtaskId"], "turn-initial");
     assert_eq!(
@@ -6032,7 +6250,7 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
         "the historical item must not pollute the continuation transcript"
     );
 
-    let continuation_message = json!({
+    let continuation_message = CodexNotification::from(json!({
         "method": "item/completed",
         "params": {
             "threadId": "thread-1",
@@ -6043,7 +6261,7 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
                 "text": "Automatic continuation running"
             }
         }
-    });
+    }));
     handler.route_codex_notification(continuation_message.clone());
     assert!(
         event_rx.try_recv().is_err(),
@@ -6079,8 +6297,15 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
     let active_messages = handler.active_codex_transcript_messages(local_task_id);
     assert_eq!(active_messages.len(), 1);
     assert_eq!(active_messages[0]["subtaskId"], "turn-continuation");
+    assert_eq!(active_messages[0]["content"], "");
+    assert_eq!(active_messages[0]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(active_messages[0]["blocks"][0]["type"], "text");
     assert_eq!(
-        active_messages[0]["content"],
+        active_messages[0]["blocks"][0]["id"],
+        "message-continuation"
+    );
+    assert_eq!(
+        active_messages[0]["blocks"][0]["content"],
         "Automatic continuation running"
     );
 
@@ -6116,6 +6341,7 @@ async fn execution_mapper_persists_request_user_input_without_settling_execution
     let active_turn = handler
         .active_codex_turn(local_task_id)
         .expect("request user input turn should be active");
+    handler.begin_active_codex_transcript(local_task_id, "thread-waiting", "turn-waiting");
     let message = json!({
         "id": 42,
         "method": "item/tool/requestUserInput",

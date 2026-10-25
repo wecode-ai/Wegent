@@ -114,6 +114,22 @@ Custom instructions from Settings → Context are read and written through Codex
 
 The interaction style uses the same `config.toml` as its single source of truth. Selecting Friendly or Pragmatic updates personality through `config/batchWrite`; Wework no longer stores personality in localStorage or repeats it as an override on every thread or turn request.
 
+## Managed Plugin Directory Recovery
+
+The Executor runs its dedicated directory migration check only at startup, after manifest initialization and before starting Codex or backend connections, using the current Home and stable plugin identity. Unchanged paths with complete runtime directories skip package reads and content verification. Existing v2 manifests and manifests imported from v1 use the same flow. Historical absolute paths are migration hints, never authority to claim or remove native user directories. Shared packages must pass the existing checksum, package-record, and content checks before any actual cache or marketplace registration rebuild.
+
+Recovery preserves enablement, component settings, cloud installation IDs, and authorization associations, including current, previous, and retained cache ownership. Missing packages and unrelated occupied destinations affect only their installation: the manifest record remains visible as “Repair required,” and normal synchronization can retry once a verified package is available. Retained ownership or caches cannot resurrect an explicitly uninstalled plugin.
+
+Normal installation, updates, and retries process only the requested plugins, using the current Home and the verified package to update installation records. `apply_sync` does not recover all plugins; Skills and MCP synchronization do not trigger migration checks for unrelated plugins.
+
+Recovery uses the manifest lock, atomic publication, and a journal per plugin. Restart recovery distinguishes committed publication from incomplete work. Unproven ownership or later user changes preserve snapshots and report a conflict instead of overwriting unknown files. Recovery does not run before each message submission.
+
+The Wework managed Executor environment fixes `WEGENT_PLUGIN_RUNTIME_TARGET=codex`, registering only Codex plugin runtimes. Generic Executors without this variable retain dual-runtime plugin support. This switch does not clean up Skills, native Homes, or credentials. Codex-only mode never creates Claude-side state for plugins, but uninstalling or reconciling stale plugins still removes Claude registrations left by earlier dual-runtime installations (`installed_plugins.json`, `settings.json` enablement, and recorded runtime caches), so a removed plugin cannot stay enabled in later Claude conversations.
+
+The Executor implements recovery, Electron selects the runtime target, and the plugin UI displays recovery errors; ship them together as one desktop version. Updating only the frontend does not add recovery to an older Executor. The manifest remains v2 and preserves unrelated fields, Skills, and MCP records. Pending recovery journals must be resumed by the matching updated Executor.
+
+The `plugin-runtime-path-recovery` desktop checkpoint belongs to existing Cloud shard 14. It installs and invokes a real plugin before stopping the app and relocating isolated Homes, then checks offline recovery, isolated failures, settings, updates, uninstall without resurrection, and reinstall invocation. Actual execution must be reported separately; static contract checks do not establish desktop verification.
+
 ## Runtime Permission Modes
 
 The Wework composer provides three permission modes for local Codex tasks and persists the selection in `modelSelection.options.permissionMode`. New tasks and historical tasks without this field default to Full access. When a user explicitly switches from another mode to Full access, the UI displays a risk confirmation:
@@ -173,3 +189,25 @@ When the user clicks "Try in chat" from plugin detail or marketplace rows, Wewor
 Backend accepts both Codex and Claude Code plugin packages for upload, cloud marketplace publication, installation, and device synchronization. It normalizes each stored package with manifests for both runtimes. Backend installation records are the source of truth for the Wegent cloud marketplace; local custom marketplaces and the OpenAI official marketplace still use the local Codex app-server.
 
 After catalog rebuilds or migrations, Backend reconciles installed Kinds by checking `pluginId`, `releaseId`, `source.catalogItemId`, and `source.marketplace`. Even when the Plugin and Release IDs are unchanged, a `source.marketplace` value that no longer matches the plugin's current visibility-derived marketplace must update the installed record and reset failed device installation state. This keeps installed rows moving from `wework` to `wegent` when visibility changes from `public` to `workspace` instead of incorrectly treating the row as a no-op.
+
+## Project-space Issue comments
+
+Plugins such as PR Review read Issue activity discussions with `wework_space.list_board_item_comments` and publish visible comments with `add_board_item_comment`. Both tools reuse project/Issue permissions and the activity message store. The returned comment ID is the activity message ID. Existing Socket.IO pushes refresh the UI, and comments remain available after reload.
+
+To mention a member, resolve their ID and name with `get_assignment_candidates`, then pass `mentions` to `add_board_item_comment`, for example `{"body":"@qindi please review","mentions":[{"type":"user","id":"52","label":"qindi"}]}`, together with explicit `space_id` and `item_id`. Plain `@name` text does not notify. MCP comments in shared Backend projects use the page's recipient authorization, transaction and notification flow: duplicate mentions create one notification, self-mentions create none, and an unauthorized recipient rolls back both the comment and notifications. Do not also call `send_notification` for the same mention. Pure local projects have no shared member inbox and reject structured mentions explicitly.
+
+```mermaid
+flowchart LR
+    MCP[Backend or native Executor MCP] --> Activity[Issue comment entry]
+    UI[Page comment] --> Send[ProjectChatSend with structured mentions]
+    Activity --> Send
+    Send --> Auth[Existing sender and recipient authorization]
+    Auth --> Tx[Save comment and unique notifications in one transaction]
+    Tx --> Delivery[Post-commit activity push and member notifications]
+```
+
+The native Executor uses `GET/POST /api/v1/cloud-projects/{project_id}/loop-items/{item_id}/activity-comments`. Reads return the latest 200 messages by default, up to 500, ordered by ascending sequence number; use `after_sequence` to page forward. Read-only members can read but cannot post, and messages from other Issues are excluded.
+
+The legacy `/loop-items/{item_id}/comments` endpoint still handles provider comments and historical assignment events. Its underlying data must not be deleted wholesale, and historical records are not automatically migrated into Issue activity. Plugins should use project-space tools instead of treating an ID returned by the old endpoint as evidence of a visible activity comment.
+
+Desktop CI Core shard 15 includes `collaboration-issue-mcp-comments`: MCP writes appear in the UI, survive reload, native HTTP writes appear live, both entries notify an inherited member exactly once, plain text does not notify, MCP reads back mentions and the PR link, Issues remain isolated, and the page has no collaboration loading error. Cleanup closes Electron before stopping cloud test services so an open page cannot display a service-shutdown error.

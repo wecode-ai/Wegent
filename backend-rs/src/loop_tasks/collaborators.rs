@@ -25,8 +25,9 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 use serde::Serialize;
 
-use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow, role_for_priority};
-use crate::cloud_projects_members::access_project;
+use crate::cloud_projects::{
+    LOOP_ITEMS_COLUMNS, ProjectListRow, project_access, role_for_priority,
+};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::user_reader::users_projection;
@@ -90,7 +91,7 @@ where
 
     // `project_access_query` point form: the project row and the caller's
     // aggregated role priority in one statement.
-    let Some((project, priority)) = access_project(mysql, project_number, user_id)
+    let Some((project, priority)) = project_access(mysql, project_number, user_id)
         .await
         .map_err(internal)?
     else {

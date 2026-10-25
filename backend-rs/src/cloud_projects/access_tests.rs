@@ -1,9 +1,10 @@
 //! Shape guards for the shared `project_access_query` rendering.
 //!
-//! The point form's full recorded text is asserted in
-//! `board_snapshot::repository`; these tests pin the list form and the
-//! relationship between the two modes, so a lost predicate, a reordered union
-//! branch, or a changed inlined grant value fails here.
+//! The list form is the unified collaboration catalog CTE; the point form is
+//! the same permission contract rendered with the caller and project ids
+//! inlined for `require_cloud_project_role`. These tests pin both shapes so a
+//! lost predicate, a reordered union branch, or a changed inlined grant value
+//! fails here.
 
 use super::*;
 
@@ -111,7 +112,7 @@ fn list_and_point_filters_keep_their_recorded_contracts() {
     let list = list_sql(None);
     let point = point_sql();
     // The list read keeps the unified catalog CTE; the point read keeps the
-    // recorded union with the project id pushed into every branch.
+    // unified permission union with the project id pushed into each branch.
     assert!(list.contains("WITH parents AS ("));
     assert!(list.contains("ORDER BY loop_items.updated_at DESC, loop_items.id"));
     assert!(list_sql(Some(1200)).contains("AND access.workspace_id = 1200"));
@@ -120,37 +121,46 @@ fn list_and_point_filters_keep_their_recorded_contracts() {
     assert!(point.ends_with("LIMIT 1"));
 }
 
-/// The point form renders the recorded `union_all(direct, inherited, public,
-/// owned)` statement: every branch in source order, the creator grant at
-/// Owner priority 0, and the workspace-inherited grant at Viewer priority 4.
-/// A reordered branch or a lost predicate stops matching the recorded
-/// dependency during replay and fails the whole request.
+/// The point form renders the unified permission contract: the direct grant,
+/// the workspace-inherited grant (admins keep `Maintainer`; inherited members
+/// only apply in `inherit` mode), and the public grant, reduced to
+/// `min(priority)` and joined to the active project row plus its active parent
+/// workspace. Creators are no longer implicit administrators. A reordered
+/// branch or a lost predicate stops matching the recorded dependency during
+/// replay and fails the whole request.
 #[test]
-fn point_form_renders_the_recorded_union_with_the_creator_grant() {
+fn point_form_renders_the_unified_permission_contract() {
     let sql = point_sql();
     let branches: Vec<&str> = sql.matches("UNION ALL").collect();
-    assert_eq!(branches.len(), 3);
+    assert_eq!(branches.len(), 2);
     let direct = sql.find("FROM resource_members").expect("direct branch");
     let inherited = sql
-        .find("AS anon_3 ON CAST(resource_members.entity_id AS SIGNED INTEGER)")
+        .find("CASE WHEN (kinds.user_id = 52 OR anon_5.`role` = 'Maintainer')")
         .expect("inherited branch");
     let public = sql
         .find("entity_type = 'authenticated_users'")
         .expect("public branch");
-    let owned = sql
-        .find("SELECT loop_items.id AS project_id, 0 AS priority")
-        .expect("creator branch");
-    assert!(direct < inherited && inherited < public && public < owned);
+    assert!(direct < inherited && inherited < public);
     assert!(sql.contains("resource_members.entity_id = '52'"));
-    assert!(sql.contains("loop_items.created_by_user_id = 52"));
+    assert!(!sql.contains("loop_items.created_by_user_id = 52"));
+    assert!(!sql.contains("WITH parents AS ("));
+    assert!(sql.contains("kinds.kind = 'CollaborationWorkspace'"));
     assert!(sql.contains("kinds.is_active IS true"));
-    assert!(sql.contains("GROUP BY anon_2.project_id"));
-    assert!(sql.contains("min(anon_2.priority)"));
-    assert!(
-        sql.contains(
-            "AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer')"
-        )
-    );
+    assert!(sql.contains("GROUP BY anon_4.project_id"));
+    assert!(sql.contains("min(anon_4.priority)"));
+    assert!(sql.contains(
+        "AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer', 'Reporter')"
+    ));
+    // The unified contract applies the collaboration aliases and the
+    // `membership_mode` inheritance predicate.
+    assert!(sql.contains("WHEN 'Owner' THEN 'Maintainer' WHEN 'Reporter' THEN 'Viewer'"));
+    assert!(sql.contains("'$.\"membership_mode\"'"));
+    // The project row carries its parent workspace id and effective role.
+    assert!(sql.contains(") AS anon_1,"));
+    assert!(sql.contains("anon_3.priority AS anon_3_priority"));
+    assert!(sql.contains("EXISTS (SELECT users.id"));
+    assert!(sql.contains("users.id = 52 AND users.is_active IS true"));
+    assert!(sql.contains("AND loop_items.id = '8308220868516891581'"));
 }
 
 /// `ROLES_BY_PRIORITY` maps the aggregated priorities and nothing else.

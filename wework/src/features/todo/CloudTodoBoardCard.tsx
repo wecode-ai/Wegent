@@ -6,7 +6,15 @@ import {
   createIssueBoardCardLabels,
   createCollaborationTranslator,
 } from '@wegent/collaboration'
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
@@ -16,11 +24,17 @@ import { TemporaryChatPanel } from '@/components/layout/workspace-panels/Tempora
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   getRuntimeConversationTurns,
+  runtimeConversationKey,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeLiveActivity } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelSelectionConfig, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
+import type {
+  ModelSelectionConfig,
+  RuntimeGoal,
+  RuntimeTaskAddress,
+  RuntimeTaskSummary,
+} from '@/types/api'
 import type { RuntimeConversationTurn } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
@@ -30,7 +44,12 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
+import {
+  useBoardRuntimeConversations,
+  type UseBoardRuntimeConversationsOptions,
+} from './useBoardRuntimeConversations'
 import { Archive, CircleCheck } from 'lucide-react'
+import { IssueBadges } from './IssueBadges'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -99,10 +118,13 @@ export interface CloudTodoBoardTaskBinding {
   } | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
+  runtimeAddress?: RuntimeTaskAddress
+  runtimeTask?: RuntimeTaskSummary | null
 }
 
 interface CloudTodoBoardCardProps {
   item: CloudLoopItem
+  columnKey?: string
   unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
@@ -112,6 +134,7 @@ interface CloudTodoBoardCardProps {
   onMarkRead?: (item: CloudLoopItem) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  getRuntimeTranscript?: UseBoardRuntimeConversationsOptions['getRuntimeTranscript']
   display: BoardCardDisplaySettings
   agentNames?: Record<string, string>
   dragDisabled?: boolean
@@ -128,6 +151,7 @@ interface CloudTodoBoardCardProps {
   }
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
+  renderBadges?: (badges: CollaborationIssueBadge[]) => ReactNode
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -136,6 +160,7 @@ interface CloudTodoBoardCardProps {
 
 export function CloudTodoBoardCard({
   item,
+  columnKey,
   unread,
   taskBindings = [],
   onClick,
@@ -145,6 +170,7 @@ export function CloudTodoBoardCard({
   onMarkRead,
   onLoadRuntimeGoal,
   onOpenRuntimeTask,
+  getRuntimeTranscript,
   display,
   agentNames,
   dragDisabled = false,
@@ -155,13 +181,37 @@ export function CloudTodoBoardCard({
   cardAction,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
+  renderBadges,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const t = useBoardTranslate()
   const editable = canEditProjectSpaceIssue(item)
   const hasActiveTask = isLoopItemExecutionActive(item)
-  const runningTaskBindings = taskBindings.filter(binding => binding.running)
-  const currentTaskBinding = runningTaskBindings[0] ?? taskBindings[0]
+  const taskBindingsByConversation = new Map<string, CloudTodoBoardTaskBinding>()
+  for (const binding of taskBindings) {
+    const key = runtimeConversationKey({
+      deviceId: binding.device_id,
+      taskId: binding.task_id,
+    })
+    const existing = taskBindingsByConversation.get(key)
+    if (!existing) {
+      taskBindingsByConversation.set(key, binding)
+    } else if (binding.running && !existing.running) {
+      taskBindingsByConversation.set(key, { ...existing, running: true })
+    }
+  }
+  const conversationTaskBindings = [...taskBindingsByConversation.values()]
+  useBoardRuntimeConversations({
+    item,
+    conversations: conversationTaskBindings.map(binding => ({
+      address: boardTaskAddress(item, binding),
+      task: binding.runtimeTask,
+    })),
+    enabled: hasActiveTask || item.status === 'in_review',
+    getRuntimeTranscript,
+  })
+  const runningTaskBindings = conversationTaskBindings.filter(binding => binding.running)
+  const currentTaskBinding = runningTaskBindings[0] ?? conversationTaskBindings[0]
   const changeRequestSnapshot = useTaskChangeRequest(
     changeRequestMonitor,
     currentTaskBinding?.changeRequestTarget ?? null
@@ -182,6 +232,7 @@ export function CloudTodoBoardCard({
         : []
   return (
     <IssueBoardCard
+      columnKey={columnKey}
       item={item}
       unread={unread}
       reference={item.id}
@@ -208,6 +259,19 @@ export function CloudTodoBoardCard({
       dragEnabled={editable && !dragDisabled}
       cardClassName="group/cloud-todo-card"
       onOpen={onClick}
+      summary={
+        item.can_view_detail !== false && item.badges?.length ? (
+          renderBadges ? (
+            renderBadges(item.badges)
+          ) : (
+            <IssueBadges
+              badges={item.badges}
+              compact
+              testId={`cloud-todo-card-badges-${item.id}`}
+            />
+          )
+        ) : null
+      }
       childrenAction={
         cardAction ? (
           <span className="absolute right-2 top-2 z-20">
@@ -272,6 +336,23 @@ export function CloudTodoBoardCard({
   )
 }
 
+function boardTaskAddress(
+  item: CloudLoopItem,
+  binding: CloudTodoBoardTaskBinding
+): RuntimeTaskAddress {
+  const address = { ...runtimeTaskBindingAddress(binding), ...binding.runtimeAddress }
+  return {
+    ...address,
+    ...(binding.modelSelection
+      ? { runtimeHandle: { ...address.runtimeHandle, modelSelection: binding.modelSelection } }
+      : {}),
+    projectSession: binding.runtimeAddress?.projectSession ?? {
+      projectId: String(item.cloud_project_id),
+      issueId: String(item.id),
+    },
+  }
+}
+
 function RuntimeTaskProgressSummary({
   item,
   binding,
@@ -298,26 +379,8 @@ function RuntimeTaskProgressSummary({
   const t = useBoardTranslate()
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
-    () => ({
-      ...runtimeTaskBindingAddress({
-        device_id: binding.device_id,
-        task_id: binding.task_id,
-        modelSelection: binding.modelSelection,
-        executionContext: binding.executionContext,
-      }),
-      projectSession: {
-        projectId: String(item.cloud_project_id),
-        issueId: String(item.id),
-      },
-    }),
-    [
-      binding.device_id,
-      binding.executionContext,
-      binding.modelSelection,
-      binding.task_id,
-      item.cloud_project_id,
-      item.id,
-    ]
+    () => boardTaskAddress(item, binding),
+    [binding, item]
   )
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return

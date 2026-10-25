@@ -384,24 +384,6 @@ class PluginDeviceReportResponse(BaseModel):
     acknowledgedInstalledPluginIds: List[int] = Field(default_factory=list)
 
 
-class PluginAutoUpdateItem(BaseModel):
-    """One account installation advanced to a newer marketplace release."""
-
-    installedPluginId: int
-    pluginId: int
-    fromReleaseId: int
-    toReleaseId: int
-    version: str
-
-
-class PluginAutoUpdateBatchResponse(BaseModel):
-    """One bounded batch of automatic marketplace plugin updates."""
-
-    updated: List[PluginAutoUpdateItem] = Field(default_factory=list)
-    updatedCount: int = 0
-    remainingCount: int = 0
-
-
 class PluginReleaseItem(BaseModel):
     """Published immutable release exposed by the marketplace API."""
 

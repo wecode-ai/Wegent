@@ -275,6 +275,22 @@ mod tests {
         }
     }
 
+    /// The pet endpoint is registered exactly once by the router that
+    /// `Application` builds; the route table selects the same method and path.
+    #[test]
+    fn the_pet_route_is_registered_once() {
+        // `method_bit`: GET.
+        const GET: u16 = 1 << 1;
+        let methods: Vec<u16> =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .filter(|route| route.path == "/api/users/me/pet")
+                .map(|route| route.methods)
+                .collect();
+        assert_eq!(methods, [GET], "the pet endpoint is registered once");
+    }
+
     #[test]
     fn response_matches_recorded_body() {
         let body = pet_response(&pet_row());

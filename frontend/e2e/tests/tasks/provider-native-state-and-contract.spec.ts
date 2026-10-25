@@ -92,6 +92,22 @@ test.describe('Provider-native binding state and contracts', () => {
       modalLink
     )
 
+    await page.getByRole('link', { name: '打开钉钉文档 MCP 配置弹窗' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(page.getByTestId('dingtalk-docs-auth-mode-oauth')).toBeVisible()
+    const oauthInput = page.getByTestId('dingtalk-mcp-dialog-url-input')
+    await expect(oauthInput).toBeVisible()
+    await expect(oauthInput).toHaveValue('')
+    await expect(page.getByTestId('dingtalk-docs-oauth-connect')).toBeDisabled()
+    await expect(page.getByTestId('save-dingtalk-mcp-dialog-button')).toBeDisabled()
+
+    await oauthInput.fill(`${PROVIDER_NATIVE_MOCK_URL}/oauth/server/docs`)
+    await expect(page.getByTestId('dingtalk-docs-oauth-connect')).toBeEnabled()
+    await expect(page.getByTestId('save-dingtalk-mcp-dialog-button')).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+
     await configureDingTalkService(request, resources.token, 'docs', true)
     const retryPrompt = makePrompt('012-retry', '输出唯一断言标记。')
     await scenario(request, retryPrompt, [

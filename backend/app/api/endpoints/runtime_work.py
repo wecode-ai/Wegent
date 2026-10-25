@@ -457,26 +457,6 @@ async def bind_runtime_task_im_sessions_endpoint(
     )
 
 
-# MIGRATION-CANDIDATE(api="GET /api/runtime-work/im-notifications"): remove after final confirmation.
-# @router.get(
-#     "/im-notifications",
-#     response_model=RuntimeIMNotificationSettingsResponse,
-#     response_model_by_alias=True,
-# )
-@trace_async("runtime_work.im_notifications.get", "runtime_work.api")
-async def get_im_notification_settings_endpoint(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Read global and task-level IM notification settings."""
-
-    set_span_attribute("user.id", current_user.id)
-    return await runtime_work_service.get_im_notification_settings(
-        db=db,
-        user_id=current_user.id,
-    )
-
-
 @router.put(
     "/im-notifications/global",
     response_model=RuntimeIMNotificationSettingsResponse,
@@ -831,7 +811,8 @@ async def materialize_runtime_task_endpoint(
     )
 
 
-@router.post("/llm-responses-proxy/responses")
+# MIGRATION-CANDIDATE(api="POST /api/runtime-work/llm-responses-proxy/responses"): remove after final confirmation.
+# @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
 @router.post("/llm-responses-proxy/v1/messages")

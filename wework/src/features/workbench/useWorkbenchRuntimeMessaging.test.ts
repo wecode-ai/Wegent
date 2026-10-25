@@ -1,3 +1,4 @@
+import { renderHook } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import i18n from '@/i18n'
@@ -12,7 +13,119 @@ import {
   resolveTemporaryChatSource,
   runtimeThreadId,
   titleModelForGeneration,
+  useWorkbenchRuntimeMessaging,
 } from './useWorkbenchRuntimeMessaging'
+import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import { initialWorkbenchState } from './workbenchReducer'
+
+function messagingFixture(
+  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {}
+) {
+  const address = { deviceId: 'cancel-device', taskId: 'cancel-task' }
+  const store = new RuntimeTaskLifecycleStore('messaging-cancellation-test')
+  store.syncRuntimeTask(address, {
+    taskId: address.taskId,
+    title: 'Cancellation test',
+    runtime: 'codex',
+    running: true,
+    continuable: true,
+  })
+  const cancel = vi.fn().mockResolvedValue({ accepted: true })
+  const send = vi.fn().mockResolvedValue({ accepted: true })
+  const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+  type Options = Parameters<typeof useWorkbenchRuntimeMessaging>[0]
+  const options: Options = {
+    state: { ...initialWorkbenchState, currentRuntimeTask: address },
+    dispatch: vi.fn(),
+    executorClient: {
+      runtime: { cancelRuntimeTask: cancel, sendRuntimeMessage: send },
+    } as unknown as Options['executorClient'],
+    services: { taskApi: {} } as unknown as Options['services'],
+    runtimeTasks: {} as Options['runtimeTasks'],
+    lifecycleStore: store,
+    projectExecutionMode: 'default',
+    projectWorktreeBranch: null,
+    isOptionsLocked: false,
+    attachmentSelection: { attachments: [], resetAttachments: vi.fn() },
+    modelSelection: { models: [], selectedModel: null, selectedModelOptions: {}, ...modelState },
+    skillSelection: { selectedSkills: [] },
+    refreshWorkLists: refresh,
+  }
+  const { result } = renderHook(() => useWorkbenchRuntimeMessaging(options))
+  return { address, store, cancel, send, refresh, messaging: result.current }
+}
+
+describe('runtime pane cancellation', () => {
+  test.each(['accepted', 'refresh-failed', 'rejected', 'transport-failed'] as const)(
+    'returns the executor cancellation outcome when %s',
+    async outcome => {
+      const { address, store, cancel, refresh, messaging } = messagingFixture()
+      const onError = vi.fn()
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const accepted = outcome === 'accepted' || outcome === 'refresh-failed'
+      if (outcome === 'refresh-failed') refresh.mockRejectedValue(new Error('Refresh unavailable'))
+      if (outcome === 'rejected') {
+        cancel.mockResolvedValue({ accepted: false, error: 'Cancellation rejected' })
+      }
+      if (outcome === 'transport-failed')
+        cancel.mockRejectedValue(new Error('Transport unavailable'))
+
+      try {
+        await expect(messaging.cancelRuntimePaneTask(address, { onError })).resolves.toBe(accepted)
+        expect(cancel).toHaveBeenCalledWith(address)
+        expect(store.getTask(address)?.execution.phase).toBe(accepted ? 'stopping' : 'running')
+        expect(refresh).toHaveBeenCalledTimes(accepted ? 1 : 0)
+        expect(onError).toHaveBeenCalledTimes(accepted ? 0 : 1)
+        expect(warning).toHaveBeenCalledTimes(outcome === 'refresh-failed' ? 1 : 0)
+      } finally {
+        warning.mockRestore()
+        store.remove(address)
+      }
+    }
+  )
+})
+
+describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true }])(
+  'runtime question responses with unavailable composer model %j',
+  modelState => {
+    test.each(['requestUserInputResponse', 'request_user_input_response'] as const)(
+      'delivers %s to the existing runtime request without resolving a model',
+      async field => {
+        const { address, store, send, messaging } = messagingFixture(modelState)
+        const onError = vi.fn()
+        const response = {
+          requestId: 2,
+          itemId: 'mcp_server_elicitation',
+          interactionScope: 'running-turn',
+          answers: { audience: { answers: ['owner'] } },
+        }
+        const request = { address, message: 'owner', [field]: response }
+        try {
+          await expect(messaging.sendRuntimePaneMessage(request, { onError })).resolves.toBe(true)
+          expect(send).toHaveBeenCalledExactlyOnceWith(request)
+          expect(onError).not.toHaveBeenCalled()
+          expect(store.getTask(address)?.execution.phase).toBe('running')
+        } finally {
+          store.remove(address)
+        }
+      }
+    )
+
+    test('still blocks an ordinary message until its model is available', async () => {
+      const { address, store, send, messaging } = messagingFixture(modelState)
+      const onError = vi.fn()
+      try {
+        await expect(
+          messaging.sendRuntimePaneMessage({ address, message: 'Continue' }, { onError })
+        ).resolves.toBe(false)
+        expect(send).not.toHaveBeenCalled()
+        expect(onError).toHaveBeenCalledWith(i18n.t('workbench.harness_model_required'))
+      } finally {
+        store.remove(address)
+      }
+    })
+  }
+)
 
 describe('runtimeSendError', () => {
   test('localizes an unsupported remote Team backend', () => {

@@ -22,6 +22,13 @@
 //! `/chat/completions`, `/messages`) on one handler; only `/responses` has
 //! recorded contract cases, so this module registers only that route until the
 //! siblings are recorded.
+//!
+//! Unlike every other migrated API, this route is a hand-written `Handler`
+//! rather than a `#[brz_http_server::post]` function: the source forwards every
+//! inbound `x-wegent-upstream-header-*` header with its prefix stripped, and the
+//! function API can only bind named header parameters. The handler therefore
+//! reads the complete request header list, matching
+//! `_extract_custom_upstream_headers` and `_extract_runtime_metadata_headers`.
 
 use std::pin::Pin;
 use std::time::Duration;
@@ -31,11 +38,18 @@ use brz_http_server::{Bytes, HttpResponse, StatusCode};
 use futures_util::Stream;
 use serde_json::Value;
 
-use crate::auth::{SessionUser, UserRow};
+use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
 pub(crate) mod model_config;
+mod route;
+
+pub use route::LlmResponsesProxyRoute;
+#[cfg(test)]
+pub(crate) use route::ROUTE_PATH;
+
+use route::InboundHeaders;
 
 use model_config::{resolve_llm_proxy_protocol, resolve_upstream_target, validate_model_access};
 
@@ -45,32 +59,13 @@ const MODEL_TYPE_HEADER: &str = "x-wegent-model-type";
 const MODEL_NAMESPACE_HEADER: &str = "x-wegent-model-namespace";
 /// `MODEL_USER_ID_HEADER`.
 const MODEL_USER_ID_HEADER: &str = "x-wegent-model-user-id";
-/// `UPSTREAM_HEADER_PREFIX`.
-const UPSTREAM_HEADER_PREFIX: &str = "x-wegent-upstream-header-";
 /// `SUPPORTED_MODEL_TYPES`.
 const SUPPORTED_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
-/// `PROTECTED_UPSTREAM_HEADERS` (normalized) plus the source's marker list.
-const PROTECTED_UPSTREAM_HEADERS: [&str; 14] = [
-    "accept",
-    "authorization",
-    "connection",
-    "content-length",
-    "content-type",
-    "cookie",
-    "host",
-    "proxy-authorization",
-    "set-cookie",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-    MODEL_TYPE_HEADER,
-];
-/// `PROTECTED_UPSTREAM_HEADER_MARKERS`.
-const PROTECTED_UPSTREAM_HEADER_MARKERS: [&str; 4] = ["api-key", "apikey", "credential", "token"];
 
 /// `httpx.AsyncClient(timeout=600.0)`.
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(600);
+/// `MODEL_API_KEY_RESOLUTION_TIMEOUT` around the deployment resolver.
+const CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The source `Kind` filter of `resolve_llm_proxy_model_config`
 /// (`db.query(Kind).filter(user_id, kind='Model', namespace, name, is_active)`).
@@ -121,21 +116,32 @@ type ProxyStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Se
 
 /// Resolves the provider API key before forwarding an LLM proxy request.
 ///
-/// Mirrors `app.services.llm_proxy_service.resolve_llm_proxy_provider_api_key`.
+/// Mirrors `app.services.llm_proxy_service.resolve_model_provider_api_key`.
 /// The open-source default returns the processed Model CRD value unchanged; an
 /// internal deployment whose Model CRDs carry user-scoped placeholders
 /// registers its own resolver before route construction.
+///
+/// A resolver error becomes the source's `ModelCredentialError` (503
+/// `Model credentials unavailable`); implementations must validate a claimed
+/// key themselves before returning it.
 #[async_trait]
 pub trait LlmProxyCredentials: Send + Sync {
     /// Resolve the credential for `request`.
     ///
     /// # Errors
-    /// Returns the source's `HTTPException` mapping when a deployment cannot
-    /// resolve the credential it promised.
+    /// Returns an error when the deployment cannot resolve a usable credential.
     async fn provider_api_key(
         &self,
         request: CredentialRequest<'_>,
     ) -> Result<String, FastApiError>;
+
+    /// Rewrites a deployment-owned API-key placeholder in execution-request
+    /// sections assembled from raw CRD values.
+    ///
+    /// Deployments may resolve placeholders in the Bot agent configuration
+    /// after resolving the flat model configuration. The default leaves
+    /// values unchanged.
+    fn replace_api_key_placeholder(&self, _value: &mut Value, _resolved_api_key: &str) {}
 }
 
 /// The credential-resolution inputs shared with the registered resolver.
@@ -151,7 +157,9 @@ pub struct CredentialRequest<'a> {
     pub user_name: &'a str,
 }
 
-/// The open-source credential resolver: the processed Model CRD value.
+/// The open-source credential resolver: the processed Model CRD value,
+/// validated like the source's core path (`required=False`, so an empty key is
+/// allowed and simply omits the provider authorization header).
 pub struct StoredLlmProxyCredentials;
 
 #[async_trait]
@@ -160,102 +168,22 @@ impl LlmProxyCredentials for StoredLlmProxyCredentials {
         &self,
         request: CredentialRequest<'_>,
     ) -> Result<String, FastApiError> {
-        Ok(request.api_key.to_string())
+        validate_model_api_key(request.api_key, false).ok_or_else(model_credentials_unavailable)
     }
 }
 
-/// The inbound request headers the proxy consumes.
-struct InboundHeaders<'a> {
-    model_type: Option<&'a str>,
-    namespace: Option<&'a str>,
-    model_user_id: Option<&'a str>,
-    content_type: Option<&'a str>,
-    accept: Option<&'a str>,
-    wecode_action: Option<&'a str>,
-    wecode_executor: Option<&'a str>,
-    wecode_source: Option<&'a str>,
-}
-
-impl<'a> InboundHeaders<'a> {
-    /// `_extract_custom_upstream_headers`: the Wework Runtime's forwarded
-    /// identity headers with the `x-wegent-upstream-header-` prefix stripped,
-    /// rejecting protected names.
-    ///
-    /// The source iterates every header carrying the prefix. The platform
-    /// handler binds headers by name, so this forwards the prefix's declared
-    /// members: `wecode-action` (set by the Wework Runtime) and
-    /// `wecode-executor` / `wecode-source`
-    /// (`app/services/chat/trigger/request_preparation.py`). The protected-name
-    /// rejection and empty-name validation are preserved.
-    fn custom_upstream_headers(&self) -> Result<Vec<(String, String)>, FastApiError> {
-        let mut custom = Vec::new();
-        for (name, value) in [
-            ("x-wegent-upstream-header-wecode-action", self.wecode_action),
-            (
-                "x-wegent-upstream-header-wecode-executor",
-                self.wecode_executor,
-            ),
-            ("x-wegent-upstream-header-wecode-source", self.wecode_source),
-        ] {
-            let Some(value) = value else { continue };
-            let target_name = name[UPSTREAM_HEADER_PREFIX.len()..].trim();
-            if target_name.is_empty() || target_name.starts_with('-') {
-                return Err(FastApiError::detail(
-                    StatusCode::BAD_REQUEST,
-                    "Invalid custom upstream header name",
-                ));
-            }
-            if is_protected_upstream_header(target_name) {
-                return Err(FastApiError::detail(
-                    StatusCode::BAD_REQUEST,
-                    format!("Custom upstream header is protected: {target_name}"),
-                ));
-            }
-            custom.push((target_name.to_string(), value.to_string()));
-        }
-        Ok(custom)
+/// `validate_model_api_key`: reject unresolved placeholders and header-splitting
+/// characters; `required` also rejects an empty key.
+pub fn validate_model_api_key(value: &str, required: bool) -> Option<String> {
+    let key = value.trim();
+    if key.contains("${")
+        || value.contains('\r')
+        || value.contains('\n')
+        || (required && key.is_empty())
+    {
+        return None;
     }
-}
-
-/// `_is_protected_upstream_header`.
-fn is_protected_upstream_header(name: &str) -> bool {
-    let normalized = name.trim().to_lowercase().replace('_', "-");
-    let parts: Vec<&str> = normalized.split('-').collect();
-    PROTECTED_UPSTREAM_HEADERS.contains(&normalized.as_str())
-        || parts.contains(&"auth")
-        || parts.contains(&"authentication")
-        || PROTECTED_UPSTREAM_HEADER_MARKERS
-            .iter()
-            .any(|marker| normalized.contains(marker))
-}
-
-/// `POST /api/runtime-work/llm-responses-proxy/responses`.
-#[brz_http_server::post("/api/runtime-work/llm-responses-proxy/responses")]
-#[allow(clippy::too_many_arguments)]
-async fn llm_responses_proxy(
-    #[inject(state)] state: &AppState,
-    #[auth] user: SessionUser,
-    #[header("x-wegent-model-type")] model_type: Option<&str>,
-    #[header("x-wegent-model-namespace")] namespace: Option<&str>,
-    #[header("x-wegent-model-user-id")] model_user_id: Option<&str>,
-    #[header("content-type")] content_type: Option<&str>,
-    #[header("accept")] accept: Option<&str>,
-    #[header("x-wegent-upstream-header-wecode-action")] wecode_action: Option<&str>,
-    #[header("x-wegent-upstream-header-wecode-executor")] wecode_executor: Option<&str>,
-    #[header("x-wegent-upstream-header-wecode-source")] wecode_source: Option<&str>,
-    body: &[u8],
-) -> Result<HttpResponse<ProxyStream>, FastApiError> {
-    let headers = InboundHeaders {
-        model_type,
-        namespace,
-        model_user_id,
-        content_type,
-        accept,
-        wecode_action,
-        wecode_executor,
-        wecode_source,
-    };
-    proxy_llm_responses(state, &user.0, &headers, body).await
+    Some(key.to_string())
 }
 
 /// `proxy_llm_responses`.
@@ -266,9 +194,12 @@ async fn proxy_llm_responses(
     body: &[u8],
 ) -> Result<HttpResponse<ProxyStream>, FastApiError> {
     let (mut body_json, model_name) = parse_request_body(body)?;
-    let model_type = required_header(headers.model_type, MODEL_TYPE_HEADER)?;
-    let namespace = required_header(headers.namespace, MODEL_NAMESPACE_HEADER)?;
-    let resource_user_id = resource_user_id(headers.model_user_id)?;
+    let model_type = required_header(headers.first(MODEL_TYPE_HEADER), MODEL_TYPE_HEADER)?;
+    let namespace = required_header(
+        headers.first(MODEL_NAMESPACE_HEADER),
+        MODEL_NAMESPACE_HEADER,
+    )?;
+    let resource_user_id = resource_user_id(headers.first(MODEL_USER_ID_HEADER))?;
     let model_config = resolve_model_config(
         state,
         user,
@@ -280,15 +211,6 @@ async fn proxy_llm_responses(
     .await?;
 
     let provider_base_url = model_config.base_url.trim().to_string();
-    let provider_api_key = state
-        .llm_proxy_credentials
-        .provider_api_key(CredentialRequest {
-            api_key: &model_config.api_key,
-            api_key_template: model_config.api_key_template.as_deref(),
-            user_id: i64::from(user.id),
-            user_name: &user.user_name,
-        })
-        .await?;
     let provider_model_id = model_config.model_id.trim().to_string();
     if provider_base_url.is_empty() || provider_model_id.is_empty() {
         tracing::error!(
@@ -311,32 +233,76 @@ async fn proxy_llm_responses(
     // would change both the byte length and the escaped content.
     let body_bytes = crate::json_compat::python_json_value(&body_json).into_bytes();
 
+    // The source validates the endpoint before invoking the deployment
+    // credential service (`resolve_llm_proxy_protocol` precedes
+    // `resolve_model_provider_api_key`).
     let protocol = resolve_llm_proxy_protocol(&model_name, &model_config)?;
+    let provider_api_key = resolve_provider_api_key(state, user, &model_config).await?;
     let (upstream_path, auth_headers) = resolve_upstream_target(protocol, &provider_api_key);
     let upstream_url = model_config::join_upstream_url(&provider_base_url, &upstream_path);
 
+    // `_extract_custom_upstream_headers` runs after credential resolution in the
+    // source, so a rejected custom header never suppresses a credential error.
     let custom = headers.custom_upstream_headers()?;
     let configured = model_config.default_headers.clone();
-    // The deployed source builds the provider headers from the configured Model
-    // CRD headers, the `x-wegent-upstream-header-` custom headers and the
-    // protocol headers only. `RUNTIME_METADATA_HEADERS` forwarding landed in
-    // Wegent-intra f577f2377 (2026-09-27), after the source revision pinned by
-    // `.traffic-e2e/source-traffic-policy.yaml` (image build 1.0.538,
-    // 2026-09-24), so it is not part of the recorded contract: forwarding those
-    // headers adds five request headers the source never sent.
-    let mut provider_headers =
-        merge_headers_case_insensitive([configured.as_slice(), custom.as_slice()]);
+    let runtime = headers.runtime_metadata_headers();
+    let mut provider_headers = merge_headers_case_insensitive([
+        configured.as_slice(),
+        custom.as_slice(),
+        runtime.as_slice(),
+    ]);
     let mut protocol_headers = auth_headers;
-    if let Some(content_type) = headers.content_type {
-        protocol_headers.push(("content-type".to_string(), content_type.to_string()));
+    if let Some(content_type) = headers.first("content-type") {
+        protocol_headers.push(("content-type".to_string(), content_type));
     }
-    if let Some(accept) = headers.accept {
-        protocol_headers.push(("accept".to_string(), accept.to_string()));
+    if let Some(accept) = headers.first("accept") {
+        protocol_headers.push(("accept".to_string(), accept));
     }
     provider_headers =
         merge_headers_case_insensitive([provider_headers.as_slice(), protocol_headers.as_slice()]);
 
     forward_upstream(state, &upstream_url, &provider_headers, &body_bytes).await
+}
+
+/// `resolve_model_provider_api_key`: resolve for the caller, never the owner of
+/// a shared Model, and map every resolver failure to the source's
+/// `ModelCredentialError` response.
+async fn resolve_provider_api_key(
+    state: &AppState,
+    user: &UserRow,
+    model_config: &model_config::ModelConfig,
+) -> Result<String, FastApiError> {
+    let resolution = tokio::time::timeout(
+        CREDENTIAL_TIMEOUT,
+        state
+            .llm_proxy_credentials
+            .provider_api_key(CredentialRequest {
+                api_key: &model_config.api_key,
+                api_key_template: model_config.api_key_template.as_deref(),
+                user_id: i64::from(user.id),
+                user_name: &user.user_name,
+            }),
+    )
+    .await;
+    match resolution {
+        Ok(Ok(api_key)) => Ok(api_key),
+        Ok(Err(error)) => {
+            tracing::error!(status = %error.status(), "LLM proxy credential resolution failed");
+            Err(model_credentials_unavailable())
+        }
+        Err(_) => {
+            tracing::error!("LLM proxy credential resolution timed out");
+            Err(model_credentials_unavailable())
+        }
+    }
+}
+
+/// `HTTPException(503, "Model credentials unavailable")`.
+fn model_credentials_unavailable() -> FastApiError {
+    FastApiError::detail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Model credentials unavailable",
+    )
 }
 
 /// `resolve_llm_proxy_model_config`.
@@ -370,7 +336,10 @@ async fn resolve_model_config(
         .get("spec")
         .cloned()
         .unwrap_or(Value::Null);
-    model_config::extract_and_process_model_config(&spec, i64::from(user.id), &user.user_name)
+    let config =
+        model_config::extract_and_process_model_config(&spec, i64::from(user.id), &user.user_name)?;
+    model_config::validate_wework_model_config_options(&spec, model_name, &config)?;
+    Ok(config)
 }
 
 /// `forward_upstream`: send the native request and stream the upstream response.
@@ -480,8 +449,9 @@ fn parse_request_body(body: &[u8]) -> Result<(Value, String), FastApiError> {
 }
 
 /// `_required_header`.
-fn required_header(value: Option<&str>, name: &str) -> Result<String, FastApiError> {
-    let value = value.unwrap_or("").trim();
+fn required_header(value: Option<String>, name: &str) -> Result<String, FastApiError> {
+    let value = value.unwrap_or_default();
+    let value = value.trim();
     if value.is_empty() {
         return Err(FastApiError::detail(
             StatusCode::BAD_REQUEST,
@@ -492,7 +462,7 @@ fn required_header(value: Option<&str>, name: &str) -> Result<String, FastApiErr
 }
 
 /// `_resource_user_id`.
-fn resource_user_id(value: Option<&str>) -> Result<i64, FastApiError> {
+fn resource_user_id(value: Option<String>) -> Result<i64, FastApiError> {
     let raw = required_header(value, MODEL_USER_ID_HEADER)?;
     let parsed: i64 = raw.parse().map_err(|_| {
         FastApiError::detail(
@@ -594,24 +564,30 @@ mod tests {
     }
 
     #[test]
-    fn protected_upstream_headers_match_source_rules() {
-        assert!(is_protected_upstream_header("Authorization"));
-        assert!(is_protected_upstream_header("x_api_key"));
-        assert!(is_protected_upstream_header(MODEL_TYPE_HEADER));
-        assert!(is_protected_upstream_header("x-my-auth-header"));
-        assert!(!is_protected_upstream_header("wecode-action"));
+    fn required_header_and_resource_user_id_validate() {
+        assert_eq!(required_header(Some(" x ".to_string()), "h").unwrap(), "x");
+        assert_eq!(
+            required_header(Some("  ".to_string()), "h")
+                .unwrap_err()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(resource_user_id(Some("0".to_string())).unwrap(), 0);
+        assert!(resource_user_id(Some("-1".to_string())).is_err());
+        assert!(resource_user_id(Some("abc".to_string())).is_err());
     }
 
     #[test]
-    fn required_header_and_resource_user_id_validate() {
-        assert_eq!(required_header(Some(" x "), "h").unwrap(), "x");
+    fn model_api_key_validation_matches_source() {
         assert_eq!(
-            required_header(Some("  "), "h").unwrap_err().status(),
-            StatusCode::BAD_REQUEST
+            validate_model_api_key(" sk-1 ", false).as_deref(),
+            Some("sk-1")
         );
-        assert_eq!(resource_user_id(Some("0")).unwrap(), 0);
-        assert!(resource_user_id(Some("-1")).is_err());
-        assert!(resource_user_id(Some("abc")).is_err());
+        assert_eq!(validate_model_api_key("", false).as_deref(), Some(""));
+        assert!(validate_model_api_key("", true).is_none());
+        assert!(validate_model_api_key("${DEPLOYMENT_USER_API_KEY}", true).is_none());
+        assert!(validate_model_api_key("a\nb", false).is_none());
+        assert!(validate_model_api_key("a\rb", false).is_none());
     }
 
     #[test]

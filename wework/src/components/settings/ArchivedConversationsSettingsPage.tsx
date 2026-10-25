@@ -8,6 +8,10 @@ import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/wor
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getArchivedBulkDeleteProgress,
+  getArchivedCleanupError,
+  beginArchivedCleanup,
+  hasArchivedCleanupFailedKey,
+  subscribeArchivedCleanupError,
   hasArchivedBulkDeletedKey,
   notifyArchivedBulkDeleteDeleted,
   setArchivedBulkDeleteProgress,
@@ -25,6 +29,7 @@ import {
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import type { ArchivedConversationItem } from '@/types/api'
 import { track } from '@/telemetry/client'
+import { deleteReplyPredictions } from '@/features/reply-predictions/replyPredictionService'
 import {
   deleteArchivedLocalHarnessSession,
   listArchivedLocalHarnessSessions,
@@ -322,6 +327,7 @@ export function ArchivedConversationsSettingsPage({
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [cleanupError, setCleanupError] = useState(getArchivedCleanupError)
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<ArchivedBulkDeleteProgress | null>(
     getArchivedBulkDeleteProgress()
   )
@@ -343,7 +349,6 @@ export function ArchivedConversationsSettingsPage({
     try {
       const archivedItems = await fetchArchivedConversations()
       setItems(archivedItems.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
-      setOperationError(null)
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : ''
       setError(
@@ -377,6 +382,15 @@ export function ArchivedConversationsSettingsPage({
   }, [loadArchivedConversations])
 
   useEffect(() => subscribeArchivedBulkDeleteProgress(setBulkDeleteProgress), [])
+
+  useEffect(
+    () =>
+      subscribeArchivedCleanupError(error => {
+        setCleanupError(error)
+        if (error) void loadArchivedConversations()
+      }),
+    [loadArchivedConversations]
+  )
 
   useEffect(
     () =>
@@ -506,6 +520,12 @@ export function ArchivedConversationsSettingsPage({
   const confirmDelete = async () => {
     if (!pendingDelete) return
     if (pendingDelete.type !== 'single' && pendingDelete.items.length === 0) return
+    setOperationError(null)
+    beginArchivedCleanup(
+      (pendingDelete.type === 'single' ? [pendingDelete.item] : pendingDelete.items).map(
+        itemAddressKey
+      )
+    )
 
     if (pendingDelete.type !== 'single') {
       let deleteItems = pendingDelete.items
@@ -517,6 +537,7 @@ export function ArchivedConversationsSettingsPage({
         const harnessItems = deleteItems.filter(item => localHarnessSessionId(item))
         for (const item of harnessItems) {
           await deleteArchivedLocalHarnessSession(localHarnessSessionId(item)!)
+          deleteReplyPredictions(archivedConversationAddress(item))
         }
         const deletedHarnessKeys = new Set(harnessItems.map(itemAddressKey))
         notifyArchivedBulkDeleteDeleted(deletedHarnessKeys)
@@ -526,26 +547,36 @@ export function ArchivedConversationsSettingsPage({
         total += harnessItems.length
         setArchivedBulkDeleteProgress({ completed, total, running: true })
         for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
-          const localItems = deleteItems.filter(item => item.source === 'local')
-          const cloudItems = deleteItems.filter(item => item.source === 'cloud')
-          const batches = [
-            ...chunkItems(localItems, ARCHIVED_DELETE_BATCH_SIZE),
-            ...chunkItems(cloudItems, ARCHIVED_DELETE_BATCH_SIZE),
-          ]
+          const deviceItems = new Map<string, ArchivedConversationItem[]>()
+          for (const item of deleteItems) {
+            const key = JSON.stringify([item.source, item.deviceId])
+            const group = deviceItems.get(key) ?? []
+            group.push(item)
+            deviceItems.set(key, group)
+          }
+          const batches = [...deviceItems.values()].flatMap(group =>
+            chunkItems(group, ARCHIVED_DELETE_BATCH_SIZE)
+          )
           for (const batch of batches) {
             const response = await api.deleteArchivedConversationsBulk({
               items: batch.map(archivedConversationAddress),
             })
-            const cleanupText = cleanupErrorsFromResults(response.results)
+            // The cloud API wraps each executor's per-task results in a device result.
+            const results = response.results.flatMap(result =>
+              Array.isArray(result.results)
+                ? (result.results as Record<string, unknown>[])
+                : [result]
+            )
+            const cleanupText = cleanupErrorsFromResults(results)
             if (cleanupText) cleanupErrors.push(cleanupText)
             const deletedTaskIds = new Set(
-              response.results
+              results
                 .filter(result => result.deleted === true)
                 .map(result => String(result.taskId || ''))
             )
-            const batchDeletedKeys = new Set(
-              batch.filter(item => deletedTaskIds.has(item.taskId)).map(itemAddressKey)
-            )
+            const deletedItems = batch.filter(item => deletedTaskIds.has(item.taskId))
+            deletedItems.forEach(item => deleteReplyPredictions(archivedConversationAddress(item)))
+            const batchDeletedKeys = new Set(deletedItems.map(itemAddressKey))
             notifyArchivedBulkDeleteDeleted(batchDeletedKeys)
             completed += batch.length
             setArchivedBulkDeleteProgress({
@@ -560,8 +591,10 @@ export function ArchivedConversationsSettingsPage({
             item => !hasArchivedBulkDeletedKey(itemAddressKey(item))
           )
           setItems(remainingItems)
-          const remainingTargetItems = remainingItems.filter(item =>
-            targetKeys.has(itemAddressKey(item))
+          const remainingTargetItems = remainingItems.filter(
+            item =>
+              targetKeys.has(itemAddressKey(item)) &&
+              !hasArchivedCleanupFailedKey(itemAddressKey(item))
           )
           if (remainingTargetItems.length === 0) break
           deleteItems = remainingTargetItems
@@ -614,8 +647,10 @@ export function ArchivedConversationsSettingsPage({
       const harnessSessionId = localHarnessSessionId(item)
       if (harnessSessionId) {
         await deleteArchivedLocalHarnessSession(harnessSessionId)
+        deleteReplyPredictions(archivedConversationAddress(item))
       } else {
         const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
+        if (response.accepted) deleteReplyPredictions(archivedConversationAddress(item))
         const cleanupText = cleanupErrorsFromResults([
           response as unknown as Record<string, unknown>,
         ])
@@ -627,7 +662,9 @@ export function ArchivedConversationsSettingsPage({
           )
         }
       }
-      setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
+      if (!hasArchivedCleanupFailedKey(itemAddressKey(item))) {
+        setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
+      }
       setPendingDelete(null)
       track('feature_action_completed', {
         domain: 'archived_conversation',
@@ -735,12 +772,14 @@ export function ArchivedConversationsSettingsPage({
         </div>
       )}
 
-      {operationError && (
+      {(cleanupError || operationError) && (
         <div
           data-testid="archived-operation-error"
+          role="alert"
           className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-600"
         >
-          {operationError}
+          {cleanupError && <div>{cleanupError}</div>}
+          {operationError && <div>{operationError}</div>}
         </div>
       )}
 

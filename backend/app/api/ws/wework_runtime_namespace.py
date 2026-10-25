@@ -478,6 +478,11 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             )
         for message in result:
             await emit_project_chat_message(self, message)
+        if result:
+            from app.core.async_utils import schedule_async_task
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            schedule_async_task(consume_queues_background)
         return {"ok": True, "result": result}
 
 

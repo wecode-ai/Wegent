@@ -16,7 +16,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod code_projects;
-mod execution_workspace;
+pub(crate) mod execution_workspace;
+mod issue_badges;
+mod ordering;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -45,6 +47,21 @@ use local_execution_activity::{
 
 #[path = "collaboration_dispatch.rs"]
 mod collaboration_dispatch;
+
+#[path = "stand_in.rs"]
+mod stand_in;
+
+#[path = "personal_stand_in.rs"]
+pub mod personal_stand_in;
+
+#[path = "stand_in_proposals.rs"]
+mod stand_in_proposals;
+
+#[path = "stand_in_memories.rs"]
+mod stand_in_memories;
+
+#[path = "stand_in_inbox.rs"]
+mod stand_in_inbox;
 
 const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
@@ -419,7 +436,7 @@ impl LocalTaskStore {
              FROM loop_items
              WHERE resource_type = 'task' AND cloud_project_id = ?1
                AND deleted_at IS NULL
-             ORDER BY sort_order, updated_at DESC",
+             ORDER BY sort_order, updated_at DESC, id",
         )?;
         let rows = statement.query_map([project_id], |row| map_loop_item(&connection, row))?;
         let mut items = collect_items(rows)?;
@@ -545,6 +562,11 @@ impl LocalTaskStore {
         };
         let completed_at = (status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
+        issue_badges::update_source(
+            &mut metadata,
+            "issue",
+            &format!("{}\n{}", input.title, input.description),
+        );
         if let Some(start_at) = start_at {
             metadata["start_at"] = json!(start_at);
         }
@@ -709,6 +731,7 @@ impl LocalTaskStore {
             })
             .unwrap_or_default();
         let previous_parent_id = current.parent_id.clone();
+        let content_updated = input.title.is_some() || input.description.is_some();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
         let mut status = input.status.or_else(|| current.status.clone());
@@ -729,6 +752,13 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
+        if content_updated {
+            issue_badges::update_source(
+                &mut metadata,
+                "issue",
+                &format!("{}\n{}", title.as_deref().unwrap_or_default(), description),
+            );
+        }
         if let Some(group_id) = &input.assignee_group_id {
             metadata["collaboration_group"] = if group_id.is_some() {
                 selected_collaboration_group
@@ -884,6 +914,15 @@ impl LocalTaskStore {
         )?;
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if let Some(position) = input.position.as_ref() {
+            ordering::move_task(
+                &transaction,
+                project_id,
+                task_id,
+                parent_id.as_deref(),
+                position,
+            )?;
         }
         refresh_runtime_projection_additional_context(&transaction, task_id)?;
         if previous_parent_id != parent_id {
@@ -1244,8 +1283,11 @@ impl LocalTaskStore {
         &self,
         create: &LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
-        let connection = self.connection()?;
-        insert_comment(&connection, create, "completed")
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let comment = insert_comment(&transaction, create, "completed")?;
+        transaction.commit()?;
+        Ok(comment)
     }
 
     pub fn start_runtime_comment(
@@ -1379,7 +1421,14 @@ impl LocalTaskStore {
             params![execution_id],
             |row| row.get::<_, String>(0),
         )?;
-        Ok(Some(comment_row(&connection, &message_id)?))
+        let comment = comment_row(&connection, &message_id)?;
+        issue_badges::update_stored_source(
+            &connection,
+            &comment.task_id,
+            &format!("comment:{message_id}"),
+            &comment.content,
+        )?;
+        Ok(Some(comment))
     }
 
     // ------------------------------------------------------------------
@@ -2628,7 +2677,9 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskReorder,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        validate_status(&input.status)?;
+        if let Some(status) = &input.status {
+            validate_status(status)?;
+        }
         if input.item_ids.is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "item_ids must contain at least one task".to_owned(),
@@ -2641,49 +2692,39 @@ impl LocalTaskStore {
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
-        let mut statement = transaction.prepare(
-            "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
-                    public_id, project_key, name, title, description, sequence_number,
-                    next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at,
-                    assignee_agent_id, created_by_user_id, assignee_user_id
-             FROM loop_items
-             WHERE resource_type = 'task' AND cloud_project_id = ?1 AND status = ?2
-               AND ((?3 IS NULL AND (parent_id IS NULL OR parent_id = '')) OR parent_id = ?3)
-               AND deleted_at IS NULL
-             ORDER BY sort_order, updated_at DESC",
-        )?;
-        let lane = collect_items(
-            statement.query_map(params![project_id, input.status, input.parent_id], |row| {
-                map_loop_item(&transaction, row)
-            })?,
-        )?;
-        drop(statement);
+        let siblings = ordering::siblings(&transaction, project_id, input.parent_id.as_deref())?;
+        let lane = siblings
+            .iter()
+            .filter(|(_, status)| input.status.as_ref().map_or(true, |scope| scope == status))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
         let mut ordered_ids = input
             .item_ids
             .into_iter()
-            .filter(|id| lane.iter().any(|item| item.id == *id))
+            .filter(|id| lane.contains(id) && seen.insert(id.clone()))
             .collect::<Vec<_>>();
         if ordered_ids.is_empty() {
             return Err(TaskRuntimeError::Invalid(
                 "task not found in lane".to_owned(),
             ));
         }
-        let remaining_ids = lane
-            .iter()
-            .filter(|item| !ordered_ids.contains(&item.id))
-            .map(|item| item.id.clone())
+        ordered_ids.extend(lane.iter().filter(|id| !seen.contains(*id)).cloned());
+        let mut ordered_lane = ordered_ids.iter();
+        let global_ids = siblings
+            .into_iter()
+            .map(|(id, _)| {
+                if lane.contains(&id) {
+                    ordered_lane
+                        .next()
+                        .expect("all lane positions are present")
+                        .clone()
+                } else {
+                    id
+                }
+            })
             .collect::<Vec<_>>();
-        ordered_ids.extend(remaining_ids);
-        let updated_at = now();
-        for (position, item_id) in ordered_ids.iter().enumerate() {
-            transaction.execute(
-                "UPDATE loop_items
-                 SET sort_order = ?1, version = version + 1, updated_at = ?2
-                 WHERE id = ?3 AND sort_order != ?1",
-                params![position as i64, updated_at, item_id],
-            )?;
-        }
+        ordering::persist(&transaction, &global_ids, None)?;
         transaction.commit()?;
         drop(connection);
         let by_id = self
@@ -4700,6 +4741,12 @@ fn insert_comment(
         ],
     )?;
     refresh_runtime_projection_additional_context(connection, &create.task_id)?;
+    issue_badges::update_stored_source(
+        connection,
+        &create.task_id,
+        &format!("comment:{message_id}"),
+        &create.content,
+    )?;
     comment_row(connection, &message_id)
 }
 
@@ -5220,6 +5267,19 @@ fn update_agent_comment(
            AND json_extract(metadata, '$.execution_id') = ?4",
         params![status, content, updated_at, execution_id],
     )?;
+    let mut statement = connection.prepare("SELECT task_id, message_id FROM loop_item_comments WHERE deleted_at IS NULL AND json_extract(metadata, '$.execution_id') = ?1")?;
+    let comments = statement.query_map([execution_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for comment in comments {
+        let (task_id, message_id) = comment?;
+        issue_badges::update_stored_source(
+            connection,
+            &task_id,
+            &format!("comment:{message_id}"),
+            content,
+        )?;
+    }
     Ok(())
 }
 
@@ -5644,6 +5704,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6033,6 +6094,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6303,6 +6365,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6423,6 +6486,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6540,6 +6604,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -6604,6 +6669,7 @@ mod tests {
                 &project.id,
                 &second.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: second.version,
@@ -7537,6 +7603,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -7608,6 +7675,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -7761,6 +7829,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -8014,6 +8083,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
                         version: task.version,
@@ -8131,6 +8201,7 @@ mod tests {
                     &project.id,
                     &task.id,
                     TaskUpdate {
+                        position: None,
                         assignee_group_id: None,
                         assignee_user_id: None,
                         version: task.version,
@@ -8220,6 +8291,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -8489,6 +8561,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -9246,6 +9319,7 @@ mod tests {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    position: None,
                     assignee_group_id: None,
                     assignee_user_id: None,
                     version: task.version,
@@ -9974,7 +10048,7 @@ mod tests {
                 &project.id,
                 TaskReorder {
                     parent_id: None,
-                    status: "inbox".to_owned(),
+                    status: Some("inbox".to_owned()),
                     item_ids: vec![second.id.clone(), first.id.clone()],
                 },
             )
@@ -9989,6 +10063,54 @@ mod tests {
         );
         assert_eq!(reordered[0].sort_order, 0);
         assert_eq!(reordered[1].sort_order, 1);
+    }
+
+    #[test]
+    fn reorders_local_siblings_across_statuses_without_touching_children() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let create = |title: &str, status: &str, parent_id: Option<String>| {
+            store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value::<TaskCreate>(serde_json::json!({
+                        "title": title, "status": status, "parent_id": parent_id
+                    }))
+                    .unwrap(),
+                )
+                .unwrap()
+        };
+        let first = create("First", "inbox", None);
+        let second = create("Second", "completed", None);
+        let child = create("Child", "inbox", Some(first.id.clone()));
+        let reordered = store
+            .reorder_tasks(
+                &project.id,
+                TaskReorder {
+                    parent_id: None,
+                    status: None,
+                    item_ids: vec![second.id.clone(), first.id.clone(), child.id.clone()],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![second.id.as_str(), first.id.as_str()]
+        );
+        assert_eq!(reordered[0].status.as_deref(), Some("completed"));
+        assert_eq!(reordered[0].sort_order, 0);
+        assert_eq!(reordered[1].sort_order, 1);
+        assert_eq!(
+            store.get_task(&project.id, &child.id).unwrap().sort_order,
+            child.sort_order
+        );
+        assert_eq!(
+            store.get_task(&project.id, &child.id).unwrap().version,
+            child.version
+        );
     }
 
     #[test]

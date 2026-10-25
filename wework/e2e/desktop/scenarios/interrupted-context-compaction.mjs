@@ -1,4 +1,6 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const COMPOSER =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]'
@@ -98,9 +100,8 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         !['/v1/responses', '/responses'].includes(url.pathname)
       )
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const kind = JSON.parse(body.client_metadata?.['x-codex-turn-metadata'] ?? '{}').request_kind
       const id = `interrupted-compaction-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })

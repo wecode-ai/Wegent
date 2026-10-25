@@ -7,6 +7,29 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 
+export async function refreshPluginInventory(control, timeoutMs = 10_000) {
+  const refresh = testId('plugins-refresh-button')
+  await control.command('waitFor', `${refresh}:not(:disabled)`, { timeoutMs })
+  const value = await control.command('getAttribute', refresh, {
+    value: 'data-reconciliation-revision',
+  })
+  const revision = Number(value)
+  assert.ok(
+    typeof value === 'string' &&
+      /^\d+$/.test(value) &&
+      Number.isSafeInteger(revision) &&
+      revision >= 0 &&
+      Number.isSafeInteger(revision + 1),
+    'Plugin refresh must expose a valid non-negative reconciliation revision'
+  )
+  await control.command('clickWhenEnabled', refresh, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${refresh}[data-reconciliation-revision="${revision + 1}"]:not(:disabled)`,
+    { timeoutMs }
+  )
+}
+
 export async function verifyPluginEnabledState(control, fixture, enabled, timeoutMs) {
   // A fresh renderer loads the composer catalog only when the real picker is
   // requested, so trigger that path before comparing its projection.
@@ -73,10 +96,7 @@ export async function verifyPluginTogglePersistence({
     await verifyPluginEnabledState(control, fixture, false, timeoutMs)
     // A fresh catalog read must not resurrect the previous enabled state.
     await openPlugin(control, fixture)
-    await control.command('click', testId('plugins-refresh-button'))
-    await control.command('waitFor', testId('plugins-refresh-button') + ':not(:disabled)', {
-      timeoutMs,
-    })
+    await refreshPluginInventory(control, timeoutMs)
     await verifyPluginEnabledState(control, fixture, false, timeoutMs)
     await openManager(false)
     await control.command('click', toggle)

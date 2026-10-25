@@ -287,7 +287,8 @@ module test, the platform E2E suite, Wework browser and desktop E2E, and the
 Wework macOS memory gate. This is useful when changed paths might not capture
 the full blast radius of a change. All three test workflows respond to label
 events; without `ci:all`, test selection still follows the changed paths.
-`ci:memory` continues to trigger only the Wework macOS memory gate.
+The Wework macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`;
+Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
@@ -413,6 +414,27 @@ become ready for review.
 The full platform E2E suite runs daily at 02:00 UTC, and the full Wework E2E
 suite runs daily at 04:00 UTC. Scheduled runs use a different concurrency group
 from PR and merge-queue runs, so they do not cancel each other.
+
+### Wework Shared Release Regression
+
+`.github/workflows/wework-release-e2e.yml` runs a real GitHub regression for
+related same-repository PRs and supports manual dispatch. Using an Actions token
+with only `Contents: write`, it creates an isolated tag and draft release,
+executes the release workflow's actual shared-release provisioning commands,
+and verifies that an older `RELEASE_SHA` does not change an existing release's
+target, metadata, or assets. It cleans up test resources on success or failure.
+Fork PRs do not run this test because their tokens cannot write repository contents.
+
+The shared `wework-updater` title and notes are set only when it is first
+created. Later releases upload dependencies and update manifests without
+resubmitting its target commit. Workflow differences between an old target and
+main can otherwise require `Workflows: write` and cause a 403 response.
+
+Run it with an authenticated GitHub CLI:
+
+```bash
+GH_REPO=wecode-ai/Wegent bash .github/scripts/test-wework-shared-release.sh
+```
 
 ### Coverage Reports
 

@@ -22,12 +22,15 @@ use super::models::{
 };
 use super::repository::{ContextRow, SubtaskRow};
 use super::repository::{
-    TaskRow, count_approved_members, get_accessible_task_owner, get_active_non_deleted_task,
-    get_task_by_id_with_owner, get_workspace_by_ref, is_approved_member, list_contexts,
-    list_subtasks_by_task,
+    TaskRow, accessible_task_ids, count_approved_members, get_accessible_task_owner,
+    get_active_non_deleted_task, get_task_by_id_with_owner, get_workspace_by_ref,
+    is_approved_member, list_contexts, list_subtasks_by_task,
 };
 use super::team_access_policy::team_usage_summary;
-use super::views::{CachedUserResponse, build_team_response, cached_user, subtask_responses};
+use super::views::{
+    CachedUserResponse, build_team_response, cached_user, conversation_task_id,
+    retain_accessible_conversation_contexts, subtask_responses,
+};
 use crate::remote_workspace_tree::kinds::KindStore;
 use crate::resource_refs::{EmptyNamespace, RequestedSkillRef, parse_requested_skill_refs};
 use crate::state::AppState;
@@ -415,6 +418,23 @@ pub(crate) async fn build_task_detail(
     // store left the contexts out is loaded here, one batch for all of them.
     if !contexts_pending.is_empty() {
         contexts.extend(list_contexts(mysql, &contexts_pending).await?);
+    }
+
+    // `filter_conversation_contexts_for_viewer`: a member or public viewer must
+    // not learn the title of a private task another member referenced.
+    let referenced_task_ids: Vec<i64> = contexts
+        .iter()
+        .filter_map(conversation_task_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    if !referenced_task_ids.is_empty() {
+        let accessible: std::collections::HashSet<i64> =
+            accessible_task_ids(mysql, &referenced_task_ids, user_id)
+                .await?
+                .into_iter()
+                .collect();
+        retain_accessible_conversation_contexts(&mut contexts, &accessible);
     }
 
     // `resolve_for_task` sorts by (message_id, created_at, id) and keeps the

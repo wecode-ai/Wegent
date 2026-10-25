@@ -1,3 +1,4 @@
+import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { useEffect, useMemo } from 'react'
 import {
@@ -8,13 +9,11 @@ import {
   beginRuntimeGoalSnapshot,
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
-  reconcileRuntimeConversationSnapshot,
-  replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
+import { isRuntimePaneTranscriptConfirmedIdle } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
@@ -126,15 +125,16 @@ export function RuntimeTaskLifecycleStreamCoordinator({
             for (const address of runtimeRecoveryAddresses(store, recoveryAddresses)) {
               if (disposed) break
               try {
-                const transcriptResponse = await executorClient.runtime.getRuntimeTranscript({
-                  ...address,
-                  limit: 50,
-                  refresh: true,
-                })
+                const transcript = await synchronizeRuntimeConversation(
+                  request => executorClient.runtime.getRuntimeTranscript(request),
+                  address,
+                  {
+                    limit: 50,
+                    refresh: true,
+                  }
+                )
                 if (disposed) break
-                const transcript = projectRuntimePaneTranscript(transcriptResponse)
                 const turns = transcript.turns
-                reconcileRuntimeConversationSnapshot(address, turns)
                 if (reason === 'runtime_replaced') {
                   reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns)
                 }
@@ -202,23 +202,24 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     ) => {
       const expectedSnapshot = store.getTask(address)
       try {
-        const transcriptResponse = await executorClient.runtime.getRuntimeTranscript({
-          ...address,
-          limit: 50,
-          refresh: true,
-          includeFullContent: true,
-        })
+        const transcript = await synchronizeRuntimeConversation(
+          request => executorClient.runtime.getRuntimeTranscript(request),
+          address,
+          {
+            limit: 50,
+            refresh: true,
+            includeFullContent: true,
+          }
+        )
         if (disposed) return
-        const transcript = projectRuntimePaneTranscript(transcriptResponse)
         const currentSnapshot = store.getTask(address)
-        if (didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId)) {
-          reconcileRuntimeConversationSnapshot(address, transcript.turns)
+        if (
+          didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId) ||
+          (currentSnapshot?.turn.active &&
+            terminalTurnId &&
+            store.isPriorTurn(address, terminalTurnId))
+        ) {
           return
-        }
-        if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
-          replaceRuntimeConversationSnapshot(address, transcript.turns)
-        } else {
-          reconcileRuntimeConversationSnapshot(address, transcript.turns)
         }
         store.syncTranscript(address, transcript)
         if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {

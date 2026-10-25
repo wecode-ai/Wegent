@@ -9,6 +9,24 @@ export function findRuntimeWorkTask(runtimeWork, taskId) {
   return matches[0]
 }
 
+export async function waitForForkTaskRow(control, sourceTaskId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let activeTaskId = null
+  while (Date.now() < deadline) {
+    const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    activeTaskId = debug.workbench?.currentRuntimeTask?.taskId ?? null
+    if (activeTaskId && activeTaskId !== sourceTaskId) {
+      const rowTestId = `runtime-local-task-row-${activeTaskId}`
+      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+      if (snapshot.testIds.includes(rowTestId)) return rowTestId
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())))
+  }
+  throw new Error(
+    `The fork of ${sourceTaskId} did not open a task with a sidebar row within ${timeoutMs}ms; active task: ${activeTaskId}`
+  )
+}
+
 export async function waitForCompletedRuntimeTaskThread(control, taskId, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let observedTask = null

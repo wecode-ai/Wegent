@@ -1,17 +1,218 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
+import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
+import * as desktopHost from '@/api/dsh/desktopHost'
 import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
   runDesktopControlClient,
+  seedDesktopE2ELocalModels,
+  seedDesktopE2ERuntime,
 } from './automation'
+import {
+  clearLocalModelConfigs,
+  listLegacyLocalModelConfigs,
+} from '@/features/model-settings/localModelSettings'
+import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
+  clearLocalModelConfigs()
+  replaceProviderModelConfigs([])
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
+function providerModel(id: string, enabled = true) {
+  return {
+    id,
+    displayName: id,
+    modelId: id,
+    baseUrl: 'https://provider.example/v1',
+    apiFormat: 'openai-chat-completions' as const,
+    toolProfile: 'function' as const,
+    webSearchMode: 'disabled' as const,
+    imageGenerationEnabled: false,
+    catalogReady: true,
+    enabled,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+}
+
 describe('Electron desktop E2E automation', () => {
+  test('acknowledges refresh before activating the native menu that unloads the renderer', async () => {
+    const activate = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(true)
+    let acknowledgeResult!: (value: Response) => void
+    const acknowledgement = new Promise<Response>(resolve => {
+      acknowledgeResult = resolve
+    })
+    let polls = 0
+    const fetch = vi.fn((url: string) => {
+      if (url.includes('/commands?')) {
+        polls += 1
+        if (polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'menu-refresh',
+              action: 'refreshFromApplicationMenu',
+              selector: 'body',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) return acknowledgement
+      return Promise.resolve(new Response('{}'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const client = runDesktopControlClient('http://127.0.0.1:43111', 'main')
+
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:43111/results', expect.anything())
+    )
+    expect(activate).not.toHaveBeenCalled()
+    acknowledgeResult(new Response('{}'))
+    await client
+    expect(activate).toHaveBeenCalledExactlyOnceWith('e2e.activateApplicationMenu', {
+      id: 'view.refresh',
+    })
+    expect(polls).toBe(1)
+  })
+
+  test.each([false, true])(
+    'expands processing without a cross-command read/click race (initially expanded: %s)',
+    async initiallyExpanded => {
+      const root = document.createElement('div')
+      root.dataset.testid = 'desktop-workbench-main'
+      root.dataset.activeWorkbenchPane = 'true'
+      const final = document.createElement('button')
+      final.dataset.testid = 'final-processing-toggle'
+      final.setAttribute('aria-expanded', String(initiallyExpanded))
+      final.disabled = true
+      const summary = document.createElement('button')
+      summary.dataset.testid = 'processing-summary-toggle'
+      summary.setAttribute('aria-expanded', 'false')
+      const finalClicked = vi.fn(() => {
+        final.setAttribute('aria-expanded', 'true')
+        root.append(summary)
+      })
+      const summaryClicked = vi.fn(() => summary.setAttribute('aria-expanded', 'true'))
+      final.onclick = finalClicked
+      summary.onclick = summaryClicked
+      root.append(final)
+      if (initiallyExpanded) root.append(summary)
+      document.body.append(root)
+
+      const queued: DesktopControlCommand[] = []
+      const pending = new Map<
+        string,
+        {
+          command: DesktopControlCommand
+          resolve: (value: string) => void
+          reject: (error: Error) => void
+        }
+      >()
+      let deliver: ((response: Response) => void) | undefined
+      let sequence = 0
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          const next = queued.shift()
+          if (next) return Promise.resolve(new Response(JSON.stringify(next)))
+          return new Promise<Response>(resolve => {
+            deliver = resolve
+          })
+        }
+        if (url.endsWith('/results')) {
+          const result = JSON.parse(String(options?.body)) as {
+            id: string
+            ok: boolean
+            value?: string
+            error?: string
+          }
+          const operation = pending.get(result.id)!
+          pending.delete(result.id)
+          // Reproduce native recovery between the attribute response and the next click.
+          if (
+            operation.command.action === 'getAttribute' &&
+            operation.command.selector.includes('final-processing-toggle')
+          ) {
+            final.remove()
+          }
+          if (!result.ok) root.append(final)
+          if (result.ok) operation.resolve(result.value ?? '')
+          else operation.reject(new Error(result.error))
+        }
+        return Promise.resolve(new Response('{}'))
+      })
+      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      const control = {
+        command: (action: string, selector: string, options: Partial<DesktopControlCommand> = {}) =>
+          new Promise<string>((resolve, reject) => {
+            const command = { id: String(++sequence), action, selector, ...options }
+            pending.set(command.id, { command, resolve, reject })
+            if (deliver) {
+              const send = deliver
+              deliver = undefined
+              send(new Response(JSON.stringify(command)))
+            } else queued.push(command)
+          }),
+      }
+      const enableFinal = window.setTimeout(() => {
+        final.disabled = false
+      }, 50)
+      try {
+        await expandCompletedProcessing(control, 1000)
+        expect(final).toBeInTheDocument()
+        expect(summary).toBeInTheDocument()
+        expect(final).toHaveAttribute('aria-expanded', 'true')
+        expect(summary).toHaveAttribute('aria-expanded', 'true')
+        expect(finalClicked).toHaveBeenCalledTimes(initiallyExpanded ? 0 : 1)
+        expect(summaryClicked).toHaveBeenCalledOnce()
+      } finally {
+        window.clearTimeout(enableFinal)
+        root.remove()
+      }
+    }
+  )
+
+  test('stops frame sampling explicitly after the observed action completes', async () => {
+    const root = document.createElement('div')
+    root.dataset.testid = 'metrics-sampling-root'
+    document.body.append(root)
+    const commands = [
+      { id: 'start-metrics', action: 'startElementMetricsSampling', value: '10000' },
+      { id: 'stop-metrics', action: 'stopElementMetricsSampling' },
+    ]
+    const results: Array<{ ok: boolean; value?: string }> = []
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        const command = commands.shift()
+        if (!command) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ...command,
+              selector: '[data-testid="metrics-sampling-root"]',
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    try {
+      await vi.waitFor(() => expect(results).toHaveLength(2))
+      expect(results.every(result => result.ok)).toBe(true)
+      const sample = JSON.parse(results[1].value!)
+      expect(sample.done).toBe(true)
+      expect(sample.frames.length).toBeGreaterThan(0)
+      expect(sample.frames.at(-1).time).toBeLessThan(10000)
+    } finally {
+      root.remove()
+    }
+  })
+
   test('does not turn an acknowledgement failure into a failed UI action', async () => {
     const button = document.createElement('button')
     button.dataset.testid = 'control-acknowledgement-button'
@@ -49,8 +250,16 @@ describe('Electron desktop E2E automation', () => {
       expect(results[0].ok).toBe(true)
       expect(console.error).toHaveBeenCalledWith(
         '[Wework] Desktop E2E result acknowledgement failed:',
-        expect.objectContaining({ action: 'click', actionSucceeded: true })
+        expect.any(String)
       )
+      const diagnostic = vi
+        .mocked(console.error)
+        .mock.calls.find(call => call[0] === '[Wework] Desktop E2E result acknowledgement failed:')
+      expect(JSON.parse(String(diagnostic?.[1]))).toMatchObject({
+        action: 'click',
+        actionSucceeded: true,
+        error: 'Failed to fetch',
+      })
     } finally {
       button.remove()
     }
@@ -137,5 +346,62 @@ describe('Electron desktop E2E automation', () => {
     await fillDesktopControlElement(editor, 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
 
     expect(updateApplicationState).toHaveBeenCalledWith('WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
+  })
+
+  test('seeds local model fixtures without configuring a cloud connection', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+
+    await seedDesktopE2ERuntime()
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(listLegacyLocalModelConfigs().map(model => model.id)).toEqual(
+      expect.arrayContaining([
+        'desktop-e2e-responses',
+        'desktop-e2e-vision',
+        'desktop-e2e-vision-main',
+      ])
+    )
+  })
+
+  test('propagates cloud identity failures after seeding local models', async () => {
+    const fetch = vi.fn().mockRejectedValue(new Error('identity unavailable'))
+    vi.stubGlobal('fetch', fetch)
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      cloudBackendUrl: 'https://cloud.example.com',
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+
+    await expect(seedDesktopE2ERuntime()).rejects.toThrow('identity unavailable')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(listLegacyLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
+  })
+
+  test('treats non-successful cloud identity responses as failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })))
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      cloudBackendUrl: 'https://cloud.example.com',
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+
+    await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
+  })
+
+  test('skips a dependent model when Provider owns its vision proxy', () => {
+    replaceProviderModelConfigs([providerModel('desktop-e2e-vision')])
+
+    seedDesktopE2ELocalModels({ seedLocalModels: true }, 'http://127.0.0.1:43111')
+
+    const standaloneIds = listLegacyLocalModelConfigs().map(model => model.id)
+    expect(standaloneIds).toContain('desktop-e2e-responses')
+    expect(standaloneIds).not.toContain('desktop-e2e-vision')
+    expect(standaloneIds).not.toContain('desktop-e2e-vision-main')
   })
 })

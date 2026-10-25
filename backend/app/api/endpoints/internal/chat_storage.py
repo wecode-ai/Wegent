@@ -14,7 +14,6 @@ Authentication:
 
 import json
 import logging
-from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,12 +38,10 @@ from app.schemas.subtask_history import (
 )
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.compaction_checkpoint import resolve_history_subtasks
-from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.subtask_history import (
     list_subtask_summaries,
     read_subtask_record,
 )
-from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_async, trace_sync
@@ -186,18 +183,6 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str = "internal-chat-storage"
-
-
-class GuidanceConsumeResponse(BaseModel):
-    """Response for guidance consume endpoint."""
-
-    item: Optional[dict] = None
-
-
-class GuidanceExpireResponse(BaseModel):
-    """Response for guidance expire endpoint."""
-
-    expired_ids: list[str] = Field(default_factory=list)
 
 
 # ==================== Helper Functions ====================
@@ -405,7 +390,6 @@ def _build_user_message_content(
 
     Returns either a string or a list of content blocks (for multimodal messages).
     """
-    import base64
 
     from app.services.context import context_service
 
@@ -432,7 +416,11 @@ def _build_user_message_content(
             SubtaskContext.subtask_id == subtask.id,
             SubtaskContext.status == ContextStatus.READY.value,
             SubtaskContext.context_type.in_(
-                [ContextType.ATTACHMENT.value, ContextType.KNOWLEDGE_BASE.value]
+                [
+                    ContextType.ATTACHMENT.value,
+                    ContextType.KNOWLEDGE_BASE.value,
+                    ContextType.CONVERSATION.value,
+                ]
             ),
         )
         .order_by(SubtaskContext.created_at)
@@ -452,6 +440,9 @@ def _build_user_message_content(
     ]
     kb_contexts = [
         c for c in all_contexts if c.context_type == ContextType.KNOWLEDGE_BASE.value
+    ]
+    conversation_contexts = [
+        c for c in all_contexts if c.context_type == ContextType.CONVERSATION.value
     ]
 
     # Process attachments first (they have priority)
@@ -599,14 +590,37 @@ def _build_user_message_content(
     #
     # When extra_blocks is empty (old format), rebuild a system-reminder
     # from the DB context records.
+    reference_blocks: list[dict[str, Any]] = []
+    if conversation_contexts:
+        from app.services.chat.preprocessing.conversation_references import (
+            build_conversation_references_prompt,
+        )
+
+        # Replay with the identity that sent the message: in a group chat the
+        # task owner and the sender can differ in their reference access.
+        reference_user_id = subtask.sender_user_id or subtask.user_id
+        reference_prompt = build_conversation_references_prompt(
+            db,
+            contexts=conversation_contexts,
+            user_id=reference_user_id,
+            focus="history",
+        )
+        if reference_prompt:
+            reference_blocks.append({"type": "text", "text": reference_prompt})
+
     if extra_blocks:
         if vision_parts:
             return [
+                *reference_blocks,
                 {"type": "text", "text": text_content},
                 *vision_parts,
                 *extra_blocks,
             ]
-        return [{"type": "text", "text": text_content}, *extra_blocks]
+        return [
+            *reference_blocks,
+            {"type": "text", "text": text_content},
+            *extra_blocks,
+        ]
 
     # Old format fallback: rebuild system-reminder from DB context records.
     context_parts: list[str] = []
@@ -627,15 +641,26 @@ def _build_user_message_content(
         }
         if vision_parts:
             return [
+                *reference_blocks,
                 {"type": "text", "text": text_content},
                 *vision_parts,
                 reminder_block,
             ]
-        return [{"type": "text", "text": text_content}, reminder_block]
+        return [
+            *reference_blocks,
+            {"type": "text", "text": text_content},
+            reminder_block,
+        ]
 
     # No context at all
     if vision_parts:
-        return [{"type": "text", "text": text_content}, *vision_parts]
+        return [
+            *reference_blocks,
+            {"type": "text", "text": text_content},
+            *vision_parts,
+        ]
+    if reference_blocks:
+        return [*reference_blocks, {"type": "text", "text": text_content}]
     if is_structured_prompt:
         return [{"type": "text", "text": text_content}]
     return text_content
@@ -830,71 +855,8 @@ async def health_check():
     return HealthResponse(status="ok")
 
 
-# MIGRATION-CANDIDATE(api="POST /api/internal/chat/guidance/:task_id/:subtask_id/consume"): remove after final confirmation.
-# @router.post(
-#     "/guidance/{task_id}/{subtask_id}/consume",
-#     response_model=GuidanceConsumeResponse,
-# )
-async def consume_guidance(task_id: int, subtask_id: int):
-    """Consume the next queued Chat Shell guidance item."""
-    logger.info(
-        "[guidance] consume request: task_id=%s subtask_id=%s", task_id, subtask_id
-    )
-    item = await guidance_queue.consume(task_id=task_id, subtask_id=subtask_id)
-    if item is None:
-        logger.info(
-            "[guidance] consume: no item in queue task_id=%s subtask_id=%s",
-            task_id,
-            subtask_id,
-        )
-        return GuidanceConsumeResponse(item=None)
-
-    item_data = item.to_dict()
-    applied_at = datetime.now().isoformat()
-    ws_emitter = get_webpage_ws_emitter()
-    logger.info(
-        "[guidance] consumed item: task_id=%s subtask_id=%s guidance_id=%s ws_emitter=%s",
-        task_id,
-        subtask_id,
-        item.guidance_id,
-        ws_emitter is not None,
-    )
-    if ws_emitter:
-        await ws_emitter.emit_guidance_applied(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            guidance_id=item.guidance_id,
-            applied_at=applied_at,
-        )
-    return GuidanceConsumeResponse(item=item_data)
-
-
-# MIGRATION-CANDIDATE(api="POST /api/internal/chat/guidance/:task_id/:subtask_id/expire"): remove after final confirmation.
-# @router.post(
-#     "/guidance/{task_id}/{subtask_id}/expire",
-#     response_model=GuidanceExpireResponse,
-# )
-async def expire_guidance(task_id: int, subtask_id: int):
-    """Expire all queued Chat Shell guidance items."""
-    expired_ids = await guidance_queue.expire(task_id=task_id, subtask_id=subtask_id)
-    logger.info(
-        "[guidance] expire: task_id=%s subtask_id=%s expired_ids=%s",
-        task_id,
-        subtask_id,
-        expired_ids,
-    )
-    if expired_ids:
-        ws_emitter = get_webpage_ws_emitter()
-        if ws_emitter:
-            await ws_emitter.emit_guidance_expired(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                guidance_ids=expired_ids,
-            )
-    return GuidanceExpireResponse(expired_ids=expired_ids)
-
-
-@router.get("/history/{session_id}", response_model=HistoryResponse)
+# MIGRATION-CANDIDATE(api="GET /api/internal/chat/history/*"): remove after final confirmation.
+# @router.get("/history/{session_id}", response_model=HistoryResponse)
 @trace_async(
     "internal.chat_storage.get_history",
     "internal.chat_storage",
@@ -1074,95 +1036,6 @@ async def read_history_subtask(
     return SubtaskRecordResponse(**record)
 
 
-class AttachmentTextResponse(BaseModel):
-    """A character slice of an attachment's extracted text."""
-
-    attachment_id: int
-    name: str
-    mime_type: str
-    total_chars: int
-    offset: int
-    text: str
-    has_more: bool
-    # Whether extracted_text itself was parse-truncated. When True, paging to
-    # has_more=False means "end of the extract", NOT "end of the original file".
-    source_truncated: bool
-
-
-# MIGRATION-CANDIDATE(api="GET /api/internal/chat/attachments/:attachment_id/text"): remove after final confirmation.
-# @router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
-async def get_attachment_text(
-    attachment_id: int,
-    session_id: str = Query(..., description="Conversation session, e.g. task-123"),
-    offset: int = Query(0, ge=0, description="Start character offset (codepoint)"),
-    limit: int = Query(
-        ...,
-        gt=0,
-        le=MAX_ATTACHMENT_TEXT_SLICE,
-        description="Max characters to return (codepoint)",
-    ),
-    db: Session = Depends(get_db),
-):
-    """Return a character slice of an attachment's extracted text.
-
-    Scoped to the conversation: the attachment must belong to a subtask of the
-    session's task, or be unlinked *and owned by the task's user*. This mirrors
-    the visibility of attachments already injected into the chat history, so
-    group-chat members can read each other's attachments while cross-task access
-    is denied. Unlinked attachments (subtask_id == 0, e.g. a just-uploaded or
-    quick-launch preset attachment not yet bound to a subtask) are restricted to
-    the same user, so the model cannot probe arbitrary ids across users.
-    Pagination/token budgeting is done by the caller (chat_shell); this endpoint
-    only slices.
-    """
-    session_type, task_id = parse_session_id(session_id)
-    if session_type != "task":
-        raise HTTPException(
-            status_code=400, detail="Only task-based sessions are supported"
-        )
-
-    task = task_store.get_by_id(db, task_id=task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    context = (
-        db.query(SubtaskContext)
-        .filter(
-            SubtaskContext.id == attachment_id,
-            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-            SubtaskContext.status == ContextStatus.READY.value,
-        )
-        .first()
-    )
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Task scoping: a linked attachment must belong to this task; an unlinked
-    # one (subtask_id == 0) must at least belong to this task's user, so the
-    # model cannot read arbitrary unlinked attachments across users.
-    task_subtask_ids = set(subtask_store.list_ids_by_task(db, task_id=task_id))
-    is_in_task = context.subtask_id in task_subtask_ids
-    is_unlinked_same_user = context.subtask_id == 0 and context.user_id == task.user_id
-    if not (is_in_task or is_unlinked_same_user):
-        # Return 404 (not 403) so callers cannot distinguish "exists but
-        # forbidden" from "missing" and probe valid ids across conversations.
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    full_text = context.extracted_text or ""
-    total_chars = len(full_text)
-    chunk = full_text[offset : offset + limit]
-    return AttachmentTextResponse(
-        attachment_id=attachment_id,
-        name=context.name or "",
-        mime_type=context.mime_type or "",
-        total_chars=total_chars,
-        offset=offset,
-        text=chunk,
-        has_more=offset + len(chunk) < total_chars,
-        source_truncated=context.is_truncated,
-    )
-
-
 def _build_subtask_content_fields(
     role: SubtaskRole,
     message: MessageCreate | MessageUpdate,
@@ -1323,45 +1196,6 @@ async def append_messages_batch(
     )
 
     return BatchMessageIdsResponse(message_ids=message_ids)
-
-
-# MIGRATION-CANDIDATE(api="PATCH /api/internal/chat/history/:session_id/messages/:message_id"): remove after final confirmation.
-# @router.patch(
-#     "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
-# )
-async def update_message(
-    session_id: str,
-    message_id: str,
-    update: MessageUpdate,
-    db: Session = Depends(get_db),
-):
-    """
-    Update message content (typically for streaming scenarios).
-    """
-    try:
-        subtask_id = int(message_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid message_id")
-
-    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-    if not subtask:
-        raise HTTPException(status_code=404, detail="Message not found")
-
-    subtask_store.update_fields(
-        db,
-        subtask=subtask,
-        **_build_subtask_content_fields(subtask.role, update),
-    )
-
-    db.commit()
-
-    logger.debug(
-        "update_message: session_id=%s, message_id=%s",
-        session_id,
-        message_id,
-    )
-
-    return SuccessResponse(success=True)
 
 
 @router.delete(

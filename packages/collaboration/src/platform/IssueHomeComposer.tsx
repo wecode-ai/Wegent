@@ -50,7 +50,11 @@ export interface IssueHomeTaskComposerProps {
   onDraftChange?(value: string): void;
   ownerControl?: ReactNode;
   environmentNotice?: ReactNode;
-  onSubmit(value: string): Promise<boolean>;
+  onSubmit(
+    value: string,
+    standInDeviceId?: string,
+    standInId?: string,
+  ): Promise<boolean>;
   disabled: boolean;
   placeholder: string;
   error: string | null;
@@ -102,6 +106,8 @@ export function IssueHomeComposer({
     content: string,
     owner: IssueHomeOwner | null,
     files: File[],
+    standInDeviceId?: string,
+    standInId?: string,
   ): Promise<boolean>;
   pending: boolean;
   members: CollaborationMember[];
@@ -198,7 +204,11 @@ export function IssueHomeComposer({
   useEffect(() => {
     setAutomaticOwner(firstMentionedMember(value));
   }, [value, projectId, candidates]);
-  const submit = async (draft: string) => {
+  const submit = async (
+    draft: string,
+    standInDeviceId?: string,
+    standInId?: string,
+  ) => {
     const mentions = parseComposerMentions(draft);
     if (
       mentions.some(
@@ -240,6 +250,9 @@ export function IssueHomeComposer({
       candidates.find((candidate) => candidate.id === selectedOwner)?.owner ??
         null,
       files.map((item) => item.file),
+      ...(standInDeviceId
+        ? [standInDeviceId, ...(standInId ? [standInId] : [])]
+        : []),
     );
   };
   const projectSelector = (
@@ -314,7 +327,7 @@ export function IssueHomeComposer({
           draftChanged(draft);
           onChange(draft);
         }}
-        onSubmit={submit}
+        onSubmit={(value) => submit(value)}
         disabled={pending}
         requireText
         isModelSelectionReady

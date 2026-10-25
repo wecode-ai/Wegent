@@ -11,10 +11,11 @@
 //! kind`, `_clear_device_installations`, and `_reset_failed_device_
 //! installations` helpers of `app/services/plugin_marketplace_service.py`.
 
-use brz_mysql::{Mysql, MysqlResult};
+use brz_mysql::MysqlResult;
 use serde_json::Value;
 
 use crate::plugins_marketplace::db::{InstalledKindRow, PluginReleaseRow, PluginRow};
+use crate::plugins_marketplace::query::PluginQuery;
 
 use super::auto_update::{
     component_states, kind_name, marketplace_name_for_visibility, source_label, source_provider,
@@ -29,8 +30,8 @@ fn now_literal() -> String {
         .to_string()
 }
 
-pub(super) async fn write_kind<M: Mysql>(
-    mysql: &M,
+pub(super) async fn write_kind<Q: PluginQuery>(
+    mysql: &mut Q,
     id: i64,
     json: &Value,
     name: Option<&str>,
@@ -68,8 +69,8 @@ pub(super) async fn write_kind<M: Mysql>(
 }
 
 /// `_apply_catalog_ref_to_installed_kind`.
-pub(super) async fn apply_catalog_ref_to_installed_kind<M: Mysql>(
-    mysql: &M,
+pub(super) async fn apply_catalog_ref_to_installed_kind<Q: PluginQuery>(
+    mysql: &mut Q,
     row: &InstalledKindRow,
     plugin: &PluginRow,
     release: &PluginReleaseRow,
@@ -215,8 +216,8 @@ pub(super) fn detach_stale_catalog_ref(document: &mut Value) {
 }
 
 /// `_deactivate_orphaned_catalog_install`.
-pub(super) async fn deactivate_orphaned_catalog_install<M: Mysql>(
-    mysql: &M,
+pub(super) async fn deactivate_orphaned_catalog_install<Q: PluginQuery>(
+    mysql: &mut Q,
     row: &InstalledKindRow,
 ) -> MysqlResult<()> {
     let mut document = row.json.0.to_value();
@@ -232,8 +233,8 @@ pub(super) async fn deactivate_orphaned_catalog_install<M: Mysql>(
 }
 
 /// `_deactivate_duplicate_installed_kind`. Returns whether the row changed.
-pub(super) async fn deactivate_duplicate_installed_kind<M: Mysql>(
-    mysql: &M,
+pub(super) async fn deactivate_duplicate_installed_kind<Q: PluginQuery>(
+    mysql: &mut Q,
     row: &InstalledKindRow,
 ) -> MysqlResult<bool> {
     let mut document = row.json.0.to_value();
@@ -254,8 +255,8 @@ pub(super) async fn deactivate_duplicate_installed_kind<M: Mysql>(
 }
 
 /// `_clear_device_installations`.
-pub(super) async fn clear_device_installations<M: Mysql>(
-    mysql: &M,
+pub(super) async fn clear_device_installations<Q: PluginQuery>(
+    mysql: &mut Q,
     installed_kind_id: i64,
 ) -> MysqlResult<()> {
     mysql
@@ -265,8 +266,8 @@ pub(super) async fn clear_device_installations<M: Mysql>(
 }
 
 /// `_reset_failed_device_installations`.
-pub(super) async fn reset_failed_device_installations<M: Mysql>(
-    mysql: &M,
+pub(super) async fn reset_failed_device_installations<Q: PluginQuery>(
+    mysql: &mut Q,
     installed_kind_id: i64,
     release_id: i64,
 ) -> MysqlResult<()> {

@@ -1,6 +1,16 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
 import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
+import {
+  resolveWorkspaceTabKind,
+  type WorkspaceTabKind,
+} from '@/features/workspace-tabs/workspaceTabs'
+
+export const WORKSPACE_NAVIGATION_EVENT = 'wework:workspace-navigation'
+export interface WorkspaceNavigationDetail {
+  kind: WorkspaceTabKind
+  contentRoute: string
+}
 
 function joinBrowserPath(basePath: string | undefined, path: string): string {
   const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
@@ -16,6 +26,15 @@ export function toBrowserPath(path: string): string {
 }
 
 export function navigateTo(path: string) {
+  const [pathname, search] = path.split('?')
+  const kind = isSettingsRoute(pathname) ? null : resolveWorkspaceTabKind(pathname)
+  if (kind && !new URLSearchParams(search).has('workspaceTab')) {
+    const event = new CustomEvent(WORKSPACE_NAVIGATION_EVENT, {
+      cancelable: true,
+      detail: { kind, contentRoute: path },
+    })
+    if (!window.dispatchEvent(event)) return
+  }
   const browserPath = toBrowserPath(path)
   const currentPath = `${window.location.pathname}${window.location.search}`
   if (currentPath === browserPath) return

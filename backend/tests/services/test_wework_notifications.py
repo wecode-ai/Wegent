@@ -21,6 +21,7 @@ from app.services.cloud_project_visibility import (
     AUTHENTICATED_ENTITY_TYPE,
 )
 from app.services.loop_items.service import loop_item_service
+from app.services.wework_notification_preferences import get_notification_preferences
 from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
@@ -466,6 +467,79 @@ def test_explicit_click_target_overrides_source_link(test_db, test_user):
     assert row.url == "wework://boards"
 
 
+def test_project_sourced_message_carries_board_context(test_db, test_user):
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.name = "QUEUE-12"
+    item.assignee_user_id = test_user.id
+    test_db.commit()
+
+    row = send_wework_notification(
+        test_db,
+        user_id=test_user.id,
+        values=NotificationCreate(
+            project_id=project.id,
+            item_id=item.id,
+            title="Review",
+            body="Please review",
+        ),
+    )
+
+    assert row.payload == {
+        "projectId": str(project.id),
+        "projectName": project.name,
+        "itemId": item.id,
+        "itemKey": "QUEUE-12",
+        "itemTitle": item.title,
+        "itemStatus": "收集箱",
+        "assigneeName": test_user.user_name,
+    }
+
+
+def test_external_project_message_carries_provider_context(
+    test_db, test_user, monkeypatch
+):
+    from app.services.loop_items.external_provider import external_loop_item_provider
+
+    project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        "task_provider": "gitlab",
+        "provider_config": {"repository": "group/project"},
+    }
+    test_db.commit()
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "get",
+        lambda _db, _item_id, _user_id: {
+            "cloud_project_id": str(project.id),
+            "title": "Provider issue",
+            "status": "in_review",
+            "assignee_name": "负责人",
+        },
+    )
+
+    row = send_wework_notification(
+        test_db,
+        user_id=test_user.id,
+        values=NotificationCreate(
+            project_id=project.id,
+            item_id="GL-7",
+            title="Review",
+            body="Please review",
+        ),
+    )
+
+    assert row.payload == {
+        "projectId": str(project.id),
+        "projectName": project.name,
+        "itemId": "GL-7",
+        "itemKey": "GL-7",
+        "itemTitle": "Provider issue",
+        "itemStatus": "待确认",
+        "assigneeName": "负责人",
+    }
+
+
 def test_click_target_can_point_at_one_comment(test_client, test_db, test_token):
     url = "wework://boards/12/issues/WEG-12/comments/c-1"
     response = test_client.post(
@@ -527,14 +601,6 @@ def test_notification_preferences_are_account_scoped_and_clear_category_unread(
     headers = {"Authorization": f"Bearer {test_token}"}
     path = "/api/v1/wework-notifications/preferences"
 
-    defaults = test_client.get(path, headers=headers)
-    assert defaults.status_code == 200
-    assert defaults.json()["tasks"] == {
-        "in_app": True,
-        "system": False,
-        "im": None,
-    }
-
     updated = test_client.put(
         path,
         headers=headers,
@@ -572,18 +638,14 @@ def test_malformed_notification_preferences_fall_back_without_blocking_delivery(
     test_db.commit()
     headers = {"Authorization": f"Bearer {test_token}"}
 
-    preferences = test_client.get(
-        "/api/v1/wework-notifications/preferences",
-        headers=headers,
-    )
+    preferences = get_notification_preferences(test_user)
     notification = test_client.post(
         "/api/v1/wework-notifications",
         headers=headers,
         json={"title": "Available", "body": "Delivery still works"},
     )
 
-    assert preferences.status_code == 200
-    assert preferences.json()["collaboration"] == {
+    assert preferences.collaboration.model_dump() == {
         "in_app": True,
         "system": True,
         "im": False,
@@ -717,19 +779,3 @@ def test_all_disabled_channels_drop_general_notification(
     assert response.status_code == 201
     assert test_db.query(WeworkNotification).count() == 0
     no_external_delivery.assert_not_called()
-
-
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    from app.api.endpoints import wework_notifications
-    from tests.legacy_python_routes import legacy_python_handlers
-
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/v1/wework-notifications/preferences",
-            wework_notifications.read_notification_preferences,
-            wework_notifications.router,
-            methods=["GET"],
-            response_model=wework_notifications.NotificationPreferences,
-        )
-        yield

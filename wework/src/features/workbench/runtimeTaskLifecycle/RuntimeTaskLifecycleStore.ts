@@ -8,7 +8,7 @@ import type {
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
-import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
@@ -19,6 +19,7 @@ import { RuntimeTaskMachine, getRuntimeTaskLifecycleKey } from './RuntimeTaskMac
 import type {
   RuntimeTaskLifecycleEvent,
   RuntimeTaskLifecycleSnapshot,
+  RuntimeTaskLifecycleState,
   RuntimeTaskLifecycleStoreSnapshot,
 } from './types'
 
@@ -26,6 +27,11 @@ type Listener = () => void
 
 interface SyncTranscriptOptions {
   preserveActiveTurn?: boolean
+}
+
+interface TaskUnreadState {
+  unread: boolean
+  revision: number
 }
 
 const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
@@ -42,12 +48,14 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getCurrentTask',
   'getTask',
   'getTaskRevision',
+  'isPriorTurn',
   'selectTask',
 ])
 
 export class RuntimeTaskLifecycleStore {
   private readonly machines = new Map<string, RuntimeTaskMachine>()
   private readonly deviceAliases = new Map<string, string>()
+  private readonly unreadStateByTask: Map<string, TaskUnreadState>
   private readonly previousRunningTaskKeys: Set<string>
   private readonly deferredGoalUnreadTaskKeys = new Set<string>()
   private readonly listeners = new Set<Listener>()
@@ -56,6 +64,7 @@ export class RuntimeTaskLifecycleStore {
   private currentTaskKey: string | null = null
   private persistedUnreadSerialized: string | null = null
   private persistedRunningSerialized: string | null = null
+  private unreadRevision = 0
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
 
@@ -63,6 +72,12 @@ export class RuntimeTaskLifecycleStore {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
     this.unreadStorageKey = `${storageScope}.unread.v2`
     this.runningStorageKey = `${storageScope}.running.v2`
+    // Task snapshots may arrive separately, after device aliases and other events.
+    const unreadKeys = readStoredTaskKeys(this.unreadStorageKey)
+    this.unreadStateByTask = new Map(
+      [...unreadKeys].map(key => [key, { unread: true, revision: 0 }])
+    )
+    this.persistedUnreadSerialized = serializeTaskKeys(unreadKeys)
     this.previousRunningTaskKeys = readStoredTaskKeys(this.runningStorageKey)
     this.persistedRunningSerialized = serializeTaskKeys(this.previousRunningTaskKeys)
   }
@@ -89,6 +104,13 @@ export class RuntimeTaskLifecycleStore {
     if (!address) return 0
     const canonicalAddress = this.canonicalizeAddress(address)
     return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getRevision() ?? 0
+  }
+
+  isPriorTurn(address: RuntimeTaskAddress, turnId: string): boolean {
+    const canonicalAddress = this.canonicalizeAddress(address)
+    return (
+      this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.isPriorTurn(turnId) ?? false
+    )
   }
 
   selectTask(
@@ -119,13 +141,14 @@ export class RuntimeTaskLifecycleStore {
 
   syncDevices(devices: DeviceInfo[]): void {
     let changed = false
-    for (const device of devices) {
-      const canonicalDeviceId = device.device_id.trim()
-      if (!canonicalDeviceId) continue
-      for (const alias of getWorkbenchDeviceIds(device)) {
-        if (alias === canonicalDeviceId) continue
-        changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
-      }
+    const aliases = getUnambiguousWorkbenchDeviceAliases(devices)
+    for (const [alias, canonicalDeviceId] of aliases) {
+      if (alias !== canonicalDeviceId) continue
+      changed = this.deviceAliases.delete(alias) || changed
+    }
+    for (const [alias, canonicalDeviceId] of aliases) {
+      if (alias === canonicalDeviceId) continue
+      changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
     }
     if (changed) this.publish()
   }
@@ -179,6 +202,12 @@ export class RuntimeTaskLifecycleStore {
     if (completedAt == null) return
 
     const currentLifecycle = this.getTask(address)
+    if (
+      currentLifecycle?.turn.active &&
+      terminalTurn?.id &&
+      this.isPriorTurn(address, terminalTurn.id)
+    )
+      return
     const currentTask = currentLifecycle?.task
     if (!currentTask) {
       this.executorSettled(address)
@@ -199,6 +228,9 @@ export class RuntimeTaskLifecycleStore {
     const outcome = terminalTurnOutcome(terminalTurn?.status)
     this.syncRuntimeTask(address, {
       ...currentTask,
+      ...(terminalTurn?.id
+        ? { runtimeHandle: { ...currentTask.runtimeHandle, lastTurnId: terminalTurn.id } }
+        : {}),
       running: false,
       completedAt,
       interactionStatus: outcome === 'succeeded' ? currentLifecycle.interactionStatus : null,
@@ -300,10 +332,15 @@ export class RuntimeTaskLifecycleStore {
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
     })
+    const currentTurn = this.getTask(address)?.turn
+    const terminalTurn = transcript.turns.findLast(turn => isTerminalTurnStatus(turn.status))
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
-      options.preserveActiveTurn === true &&
-      (this.getTask(address)?.derived.isRunning ?? false)
+      ((options.preserveActiveTurn === true &&
+        (this.getTask(address)?.derived.isRunning ?? false)) ||
+        Boolean(
+          currentTurn?.active && terminalTurn?.id && this.isPriorTurn(address, terminalTurn.id)
+        ))
     if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
@@ -312,7 +349,16 @@ export class RuntimeTaskLifecycleStore {
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     if (hasStreamingTurn) {
-      if (ignoreStaleRunningTranscript) return
+      if (
+        ignoreStaleRunningTranscript ||
+        (currentTurn?.active &&
+          streamingTurn?.id &&
+          (this.isPriorTurn(address, streamingTurn.id) ||
+            (transcript.running === false &&
+              currentTurn.id &&
+              streamingTurn.id !== currentTurn.id)))
+      )
+        return
       this.executorStarted(address)
       this.dispatch(address, {
         type: 'turn_recovered',
@@ -342,10 +388,13 @@ export class RuntimeTaskLifecycleStore {
   remove(address: RuntimeTaskAddress): void {
     const canonicalAddress = this.canonicalizeAddress(address)
     const key = getRuntimeTaskLifecycleKey(canonicalAddress)
-    const deleted = this.machines.delete(key)
-    this.previousRunningTaskKeys.delete(key)
-    this.deferredGoalUnreadTaskKeys.delete(key)
-    if (deleted) this.publish()
+    const changes = [
+      this.machines.delete(key),
+      this.unreadStateByTask.delete(key),
+      this.previousRunningTaskKeys.delete(key),
+      this.deferredGoalUnreadTaskKeys.delete(key),
+    ]
+    if (changes.some(Boolean)) this.publish()
   }
 
   rename(previous: RuntimeTaskAddress, next: RuntimeTaskAddress): void {
@@ -356,9 +405,14 @@ export class RuntimeTaskLifecycleStore {
     if (previousKey === nextKey) return
 
     const previousMachine = this.machines.get(previousKey)
-    if (!previousMachine) return
-    this.mergeMachineIntoAddress(previousKey, previousMachine, canonicalNext)
-    this.publish()
+    if (previousMachine) {
+      this.mergeMachineIntoAddress(previousKey, previousMachine, canonicalNext)
+      this.publish()
+    } else if (this.movePersistedTaskState(previousKey, nextKey)) {
+      const nextMachine = this.machines.get(nextKey)
+      if (nextMachine) this.restoreMachineUnread(nextKey, nextMachine)
+      this.publish()
+    }
   }
 
   private dispatch(address: RuntimeTaskAddress, event: RuntimeTaskLifecycleEvent): void {
@@ -371,6 +425,14 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    if (
+      canonicalEvent.type === 'executor_snapshot_received' &&
+      previous.turn.active &&
+      typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
+      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+      previous.task?.completedAt != null
+    )
+      return false
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (
@@ -444,6 +506,14 @@ export class RuntimeTaskLifecycleStore {
       this.deferredGoalUnreadTaskKeys.delete(key)
       changed = machine.dispatch({ type: 'marked_read' }) || changed
     }
+    if (canonicalEvent.type === 'marked_read' || next.key === this.currentTaskKey) {
+      this.recordUnreadState(key, false)
+    } else if (next.derived.isRunning) {
+      // An old running projection must not acknowledge a newer completion on another alias.
+      this.unreadStateByTask.delete(key)
+    } else if (previous.unread !== machine.getState().unread) {
+      this.recordUnreadState(key, machine.getState().unread)
+    }
     return changed
   }
 
@@ -453,7 +523,10 @@ export class RuntimeTaskLifecycleStore {
     const existing = this.machines.get(key)
     if (existing) return existing
 
-    const machine = new RuntimeTaskMachine(canonicalAddress, this.readUnreadKeys().has(key))
+    const machine = new RuntimeTaskMachine(
+      canonicalAddress,
+      this.unreadStateByTask.get(key)?.unread ?? false
+    )
     this.machines.set(key, machine)
     return machine
   }
@@ -491,15 +564,30 @@ export class RuntimeTaskLifecycleStore {
     if (this.resolveDeviceId(alias) === canonical) return false
 
     this.deviceAliases.set(alias, canonical)
-    let changed = false
+    const prefix = `${alias}\0`
+    const storedKeys = new Set([
+      ...this.unreadStateByTask.keys(),
+      ...this.previousRunningTaskKeys,
+      ...this.deferredGoalUnreadTaskKeys,
+    ])
+    const migratedKeys = new Set<string>()
+    for (const key of storedKeys) {
+      if (!key.startsWith(prefix)) continue
+      const nextKey = `${canonical}\0${key.slice(prefix.length)}`
+      this.movePersistedTaskState(key, nextKey)
+      migratedKeys.add(nextKey)
+    }
     for (const [key, machine] of [...this.machines]) {
       const address = machine.getState().address
       if (address.deviceId !== alias) continue
       const nextAddress = { ...address, deviceId: canonical }
       this.mergeMachineIntoAddress(key, machine, nextAddress)
-      changed = true
     }
-    return changed
+    for (const key of migratedKeys) {
+      const machine = this.machines.get(key)
+      if (machine) this.restoreMachineUnread(key, machine)
+    }
+    return true
   }
 
   private mergeMachineIntoAddress(
@@ -509,16 +597,79 @@ export class RuntimeTaskLifecycleStore {
   ): void {
     const previousState = previousMachine.getState()
     const nextKey = getRuntimeTaskLifecycleKey(nextAddress)
+    this.movePersistedTaskState(previousKey, nextKey)
     const nextMachine = this.ensureMachine(nextAddress)
+    nextMachine.mergeTurnHistory(previousMachine)
     const nextTask = nextMachine.getState().task
     const previousTask = previousState.task
-    if (!nextTask || (previousTask && shouldReplaceRuntimeTaskProjection(nextTask, previousTask))) {
+    const preferPreviousTask = Boolean(
+      !nextTask || (previousTask && shouldReplaceRuntimeTaskProjection(nextTask, previousTask))
+    )
+    if (preferPreviousTask) {
       nextMachine.dispatch({
         type: 'executor_snapshot_received',
         address: nextAddress,
         task: previousTask ?? emptyRuntimeTaskSummary(nextAddress),
       })
     }
+    if (preferPreviousTask || !previousTask) {
+      this.mergeMachineState(previousState, nextMachine)
+    }
+    this.restoreMachineUnread(nextKey, nextMachine)
+    if (!nextMachine.getSnapshot().derived.isRunning) this.previousRunningTaskKeys.delete(nextKey)
+    this.machines.delete(previousKey)
+    if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
+  }
+
+  private movePersistedTaskState(previousKey: string, nextKey: string): boolean {
+    const previousUnread = this.unreadStateByTask.get(previousKey)
+    const nextUnread = this.unreadStateByTask.get(nextKey)
+    let changed = this.unreadStateByTask.delete(previousKey)
+    if (previousUnread && (!nextUnread || previousUnread.revision > nextUnread.revision)) {
+      this.unreadStateByTask.set(nextKey, previousUnread)
+    }
+    for (const keys of [this.previousRunningTaskKeys, this.deferredGoalUnreadTaskKeys]) {
+      if (!keys.delete(previousKey)) continue
+      keys.add(nextKey)
+      changed = true
+    }
+    return changed
+  }
+
+  private restoreMachineUnread(key: string, machine: RuntimeTaskMachine): void {
+    const snapshot = machine.getSnapshot()
+    const isCurrent = key === this.currentTaskKey
+    if (snapshot.execution.known && !snapshot.derived.isRunning) {
+      const wasRunning = this.previousRunningTaskKeys.delete(key)
+      if (
+        wasRunning &&
+        !snapshot.derived.isQueued &&
+        !isCurrent &&
+        !this.unreadStateByTask.has(key)
+      ) {
+        if (snapshot.goalStatus === 'active') this.deferredGoalUnreadTaskKeys.add(key)
+        else this.recordUnreadState(key, true)
+      }
+    }
+    if (snapshot.derived.isRunning || isCurrent) {
+      machine.dispatch({ type: 'marked_read' })
+      if (isCurrent) this.recordUnreadState(key, false)
+      else this.unreadStateByTask.delete(key)
+      this.deferredGoalUnreadTaskKeys.delete(key)
+    } else {
+      const unread = this.unreadStateByTask.get(key)
+      if (unread) machine.dispatch({ type: unread.unread ? 'marked_unread' : 'marked_read' })
+    }
+  }
+
+  private recordUnreadState(key: string, unread: boolean): void {
+    this.unreadStateByTask.set(key, { unread, revision: ++this.unreadRevision })
+  }
+
+  private mergeMachineState(
+    previousState: RuntimeTaskLifecycleState,
+    nextMachine: RuntimeTaskMachine
+  ): void {
     if (previousState.hasAuthoritativeGoalStatus) {
       nextMachine.dispatch({
         type: 'goal_status_received',
@@ -553,15 +704,6 @@ export class RuntimeTaskLifecycleStore {
         turnId: previousState.latestTurnId,
       })
     }
-    if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
-    if (this.previousRunningTaskKeys.delete(previousKey)) {
-      this.previousRunningTaskKeys.add(nextKey)
-    }
-    if (this.deferredGoalUnreadTaskKeys.delete(previousKey)) {
-      this.deferredGoalUnreadTaskKeys.add(nextKey)
-    }
-    this.machines.delete(previousKey)
-    if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
 
   private publish(): void {
@@ -584,19 +726,19 @@ export class RuntimeTaskLifecycleStore {
       queuedTaskKeys,
       unreadTaskKeys,
     }
-    this.persistUnreadKeys(unreadTaskKeys)
+    this.persistUnreadKeys()
     this.persistRunningKeys()
     this.listeners.forEach(listener => listener())
   }
 
-  private readUnreadKeys(): Set<string> {
-    const keys = readStoredTaskKeys(this.unreadStorageKey)
-    this.persistedUnreadSerialized = serializeTaskKeys(keys)
-    return keys
-  }
-
-  private persistUnreadKeys(keys: ReadonlySet<string>): void {
+  private persistUnreadKeys(): void {
     if (typeof window === 'undefined') return
+    const keys = new Set(
+      [...this.unreadStateByTask].filter(([, state]) => state.unread).map(([key]) => key)
+    )
+    for (const [key, machine] of this.machines) {
+      if (!machine.getSnapshot().derived.shouldShowUnread) keys.delete(key)
+    }
     const serialized = serializeTaskKeys(keys)
     if (serialized === this.persistedUnreadSerialized) return
     try {

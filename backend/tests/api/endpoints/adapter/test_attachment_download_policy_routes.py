@@ -190,27 +190,6 @@ def test_playback_allowed_but_download_rejected_for_protected_video(
     _assert_download_disabled(download_response)
 
 
-def test_executor_download_rejected_for_protected_kb_document(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-) -> None:
-    _, attachment_id = _create_kb_document_attachment(
-        test_db,
-        user_id=test_user.id,
-        filename="protected.txt",
-        allow_document_download=False,
-    )
-
-    response = test_client.get(
-        f"/api/attachments/{attachment_id}/executor-download",
-        headers={"Authorization": f"Bearer {test_token}"},
-    )
-
-    _assert_download_disabled(response)
-
-
 def test_public_share_creation_rejected_for_protected_kb_document(
     test_client: TestClient,
     test_db: Session,
@@ -255,16 +234,12 @@ def test_shared_download_rechecks_policy_after_share_token_issued(
     _assert_download_disabled(response)
 
 
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.adapter.attachments as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
 
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/attachments/{attachment_id}/executor-download",
-            endpoint_0.executor_download_attachment,
-            endpoint_0.router,
-            methods=["GET"],
-        )
-        yield
+    with component_client(
+        test_client, ("attachment_detail", "attachment_download")
+    ) as client:
+        yield client

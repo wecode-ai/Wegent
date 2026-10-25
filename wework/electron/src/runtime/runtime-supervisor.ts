@@ -4,6 +4,7 @@ import {
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
+import { readdir, readFile } from 'node:fs/promises'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
@@ -308,22 +309,47 @@ async function waitForProcessGroupExit(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (!processGroupExists(processGroupId)) return true
+    if (!(await processGroupHasLiveMembers(processGroupId))) return true
     await new Promise(resolve => setTimeout(resolve, 25))
   }
-  return !processGroupExists(processGroupId)
+  return !(await processGroupHasLiveMembers(processGroupId))
 }
 
-function processGroupExists(processGroupId: number): boolean {
+async function processGroupHasLiveMembers(processGroupId: number): Promise<boolean> {
   try {
     process.kill(-processGroupId, 0)
-    return true
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ESRCH') return false
     if (code === 'EPERM') return true
     throw error
   }
+  if (process.platform !== 'linux') return true
+
+  // Container PID 1 may leave exited descendants unreaped. kill(-pgid, 0)
+  // still sees their group, but zombies cannot run or respond to SIGKILL.
+  for (const pid of await readdir('/proc')) {
+    if (!/^\d+$/.test(pid)) continue
+    let value: string
+    try {
+      value = await readFile(`/proc/${pid}/stat`, 'utf8')
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ESRCH') continue
+      throw error
+    }
+    // comm is parenthesized and may itself contain spaces or parentheses.
+    const endOfName = value.lastIndexOf(')')
+    const [state, , group] = value
+      .slice(endOfName + 2)
+      .trim()
+      .split(/\s+/)
+    if (endOfName < 0 || !state || !group || !Number.isSafeInteger(Number(group))) {
+      throw new Error(`Invalid process stat for PID ${pid}`)
+    }
+    if (Number(group) === processGroupId && !['Z', 'X', 'x'].includes(state)) return true
+  }
+  return false
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {

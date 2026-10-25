@@ -51,7 +51,9 @@ export function defaultContentRoute(kind: WorkspaceTabKind): string {
   }
 }
 
-export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
+export function resolveWorkspaceTabKind(pathname: string): WorkspaceTabKind | null {
+  const route = resolveDshRoute(pathname)
+  if (route?.workspaceTabKind) return route.workspaceTabKind
   if (pathname === '/todo') return 'board'
   if (pathname === '/app/wegent') return 'agent'
   if (
@@ -62,7 +64,15 @@ export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
   ) {
     return 'task'
   }
-  return 'auxiliary'
+  const app = getDshApps().find(app => {
+    const prefix = `/app/${encodeURIComponent(app.id)}`
+    return app.path === pathname || pathname === prefix || pathname.startsWith(`${prefix}/`)
+  })
+  return route || app ? 'auxiliary' : null
+}
+
+export function inferWorkspaceTabKind(pathname: string): WorkspaceTabKind {
+  return resolveWorkspaceTabKind(pathname) ?? 'auxiliary'
 }
 
 export function workspaceTabTitle(
@@ -165,3 +175,5 @@ export const workspaceTabParams = {
   id: WORKSPACE_TAB_PARAM,
   title: WORKSPACE_TAB_TITLE_PARAM,
 }
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import { getDshApps } from '@/features/dsh-runtime/dshApps'

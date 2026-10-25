@@ -32,7 +32,6 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   | "menu"
   | "titleTrailing"
   | "afterContent"
-  | "summary"
   | "detailFlushBottom"
   | "renderAssigneeTooltip"
   | "item"
@@ -46,6 +45,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   previewDisabled?: boolean;
   showOpenTaskAction?: boolean;
   dragEnabled?: boolean;
+  columnKey?: string;
   unread?: boolean;
   onMarkRead?: () => void;
   progressTaskBindings?: T[];
@@ -72,10 +72,12 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   progressTaskBindings = [],
   goal,
   renderTaskSummary,
+  summary,
   cardStyle,
   cardClassName,
   dragging: draggingOverride = false,
   dragEnabled = false,
+  columnKey,
   dropTarget,
   articleProps,
   articleTestId,
@@ -84,7 +86,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   onOpen,
   childrenAction,
 }: IssueBoardCardProps<T>) {
-  const drag = useIssueBoardCardDrag(item.id, dragEnabled);
+  const drag = useIssueBoardCardDrag(item.id, dragEnabled, columnKey);
   const dragging = draggingOverride || drag.dragging;
   const portalTheme = useCollaborationPortalTheme();
   const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item);
@@ -165,17 +167,22 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         ) : null
       }
       summary={
-        hasProgress ? (
-          <div
-            data-testid={`cloud-todo-card-tasks-${item.id}`}
-            className="min-w-0"
-          >
-            {progressTaskBindings.map((binding) => (
-              <Fragment key={binding.id}>
-                {renderTaskSummary?.(binding, true)}
-              </Fragment>
-            ))}
-          </div>
+        summary || hasProgress ? (
+          <>
+            {summary}
+            {hasProgress ? (
+              <div
+                data-testid={`cloud-todo-card-tasks-${item.id}`}
+                className="min-w-0"
+              >
+                {progressTaskBindings.map((binding) => (
+                  <Fragment key={binding.id}>
+                    {renderTaskSummary?.(binding, true)}
+                  </Fragment>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null
       }
       cardRef={drag.setNodeRef}

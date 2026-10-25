@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import CloudProject, LoopItem
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
-from app.services.human_issue_work import HumanIssueWorkService
+from app.services.collaboration_human_assignments import _round_human_task_binding
 from tests.services.test_project_chat_execution_snapshot import run
 
 
@@ -34,7 +34,7 @@ def test_unstructured_metadata_has_no_round_binding(
     _, item, row = run
     row.metadata_json = metadata
     test_db.commit()
-    assert HumanIssueWorkService._round_task_binding(test_db, item) is None
+    assert _round_human_task_binding(test_db, item) is None
 
 
 @pytest.mark.parametrize(
@@ -73,7 +73,7 @@ def test_round_binding_requires_complete_human_identity(
         metadata.pop(missing)
     row.metadata_json = metadata
     test_db.commit()
-    binding = HumanIssueWorkService._round_task_binding(test_db, item)
+    binding = _round_human_task_binding(test_db, item)
     assert binding == (
         None
         if missing

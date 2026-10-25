@@ -1,17 +1,14 @@
 import { act, render, screen } from '@testing-library/react'
-import { useEffect, useRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
-import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
-import {
-  useOptionalWorkspaceTabActivity,
-  useWorkspaceTabs,
-  type WorkspaceTabActivity,
-  type WorkspaceTabsContextValue,
-} from './workspaceTabsContextValue'
+import { RoutingHarness } from './workspaceTabsTestHarness'
+import { labels } from './workspaceTabsTestLabels'
+import type { WorkspaceTabActivity, WorkspaceTabsContextValue } from './workspaceTabsContextValue'
 import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { installDshUiTestContributions } from '@/test/setup'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 const preferencesApi = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn() }))
 vi.mock('@/desktop/appPreferences', async importOriginal => ({
@@ -19,164 +16,6 @@ vi.mock('@/desktop/appPreferences', async importOriginal => ({
   getAppPreferences: preferencesApi.get,
   updateAppPreferences: preferencesApi.update,
 }))
-
-const labels = {
-  task: '任务',
-  board: '协作',
-  agent: '智能体',
-  auxiliary: '工作区',
-  auxiliaryRoutes: {
-    '/plugins': '插件',
-    '/sites': '站点',
-    '/automations': '已安排',
-    '/cloud-work': '云端工作',
-  },
-}
-
-function TabsState() {
-  const { activeTab, closeTab, openTab, selectTab, tabs, updateActiveTab } = useWorkspaceTabs()
-  const boardTab = tabs.find(tab => tab.kind === 'board')
-  const backgroundTabIdRef = useRef<string | null>(null)
-  const capturedCloseTabRef = useRef<typeof closeTab | null>(null)
-
-  return (
-    <>
-      <div data-testid="tab-count">{tabs.length}</div>
-      <div data-testid="active-tab-id">{activeTab.id}</div>
-      <div data-testid="active-tab-kind">{activeTab.kind}</div>
-      <div data-testid="active-tab-title">{activeTab.title}</div>
-      <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
-      <div data-testid="board-tab-title">{boardTab?.title}</div>
-      <div data-testid="tab-ids">{tabs.map(tab => tab.id).join(',')}</div>
-      <div data-testid="fixed-tab-count">{tabs.filter(tab => tab.fixed).length}</div>
-      <button type="button" onClick={() => openTab('board')}>
-        新建项目空间标签
-      </button>
-      <button type="button" onClick={() => closeTab(activeTab.id)}>
-        关闭当前标签
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          boardTab &&
-          selectTab(boardTab.id, {
-            title: 'Wegent V4',
-            contentRoute: '/todo?projectId=project-1&itemId=WEG-1',
-          })
-        }
-      >
-        打开项目任务
-      </button>
-      <button
-        type="button"
-        onClick={() => updateActiveTab({ contentRoute: '/sites?app_type=smart_app' })}
-      >
-        打开智能工作台市场
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const tab = openTab('auxiliary', {
-            title: '后台智能工作台',
-            contentRoute: '/app/harness-background',
-          })
-          backgroundTabIdRef.current = tab.id
-        }}
-      >
-        打开后台智能工作台
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const applicationsTab = tabs.find(tab => tab.contentRoute.startsWith('/sites?'))
-          if (applicationsTab) selectTab(applicationsTab.id)
-        }}
-      >
-        返回智能工作台列表
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          capturedCloseTabRef.current = closeTab
-        }}
-      >
-        开始异步关闭
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          if (backgroundTabIdRef.current) {
-            capturedCloseTabRef.current?.(backgroundTabIdRef.current)
-          }
-        }}
-      >
-        完成异步关闭
-      </button>
-    </>
-  )
-}
-
-function ContextValueProbe({ onChange }: { onChange: (value: WorkspaceTabsContextValue) => void }) {
-  const value = useWorkspaceTabs()
-  useEffect(() => onChange(value), [onChange, value])
-  return null
-}
-
-function ActivityProbe({ onRead }: { onRead: (isActive: WorkspaceTabActivity | null) => void }) {
-  const isActive = useOptionalWorkspaceTabActivity()
-  useEffect(() => onRead(isActive), [isActive, onRead])
-  return null
-}
-
-function RoutingHarness({
-  startupTabKind,
-  startupTabId,
-  fixedTabs,
-  restoreSessionTabs,
-  labels: routingLabels = labels,
-  onContextValue,
-  onActivity,
-}: {
-  startupTabKind?: 'task' | 'board' | 'agent'
-  startupTabId?: string
-  fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
-  restoreSessionTabs?: boolean
-  labels?: Parameters<typeof WorkspaceTabsProvider>[0]['labels']
-  onContextValue?: (value: WorkspaceTabsContextValue) => void
-  onActivity?: (isActive: WorkspaceTabActivity | null) => void
-} = {}) {
-  const [location, setLocation] = useState(() => ({
-    pathname: window.location.pathname,
-    search: window.location.search,
-  }))
-
-  useEffect(() => {
-    const updateLocation = () =>
-      setLocation({
-        pathname: window.location.pathname,
-        search: window.location.search,
-      })
-    window.addEventListener('popstate', updateLocation)
-    return () => window.removeEventListener('popstate', updateLocation)
-  }, [])
-
-  return (
-    <WorkspaceTabsProvider
-      pathname={location.pathname}
-      search={location.search}
-      storageScope="context-test"
-      labels={routingLabels}
-      fixedTabs={fixedTabs}
-      startupTabId={startupTabId}
-      startupTabKind={startupTabKind}
-      restoreSessionTabs={restoreSessionTabs}
-    >
-      <TabsState />
-      {onContextValue && <ContextValueProbe onChange={onContextValue} />}
-      {onActivity && <ActivityProbe onRead={onActivity} />}
-    </WorkspaceTabsProvider>
-  )
-}
 
 describe('WorkspaceTabsProvider routing', () => {
   beforeEach(() => {
@@ -200,6 +39,60 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
   })
+
+  test.each([true, false])(
+    'opens plugin routes in a task tab and preserves collaboration (task exists: %s)',
+    async hasTask => {
+      await installDshUiTestContributions(
+        {
+          [WEWORK_DSH_SLOTS.route]: [
+            {
+              id: 'plugin-center.catalog',
+              path: '/plugins',
+              workspaceTabKind: 'task',
+              telemetryFeature: 'plugins',
+            },
+          ],
+        },
+        {}
+      )
+      window.history.replaceState({}, '', '/todo?projectId=one')
+      let current!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          fixedTabs={
+            hasTask
+              ? undefined
+              : [
+                  {
+                    id: 'only-board',
+                    kind: 'board',
+                    title: '协作',
+                    contentRoute: '/todo?projectId=one',
+                    fixed: true,
+                  },
+                ]
+          }
+          onContextValue={value => {
+            current = value
+          }}
+        />
+      )
+      const board = { ...current.activeTab }
+      const expectedCount = current.tabs.length + (hasTask ? 0 : 1)
+      act(() => navigateTo('/plugins?plugin=tool'))
+      expect(current.activeTab.kind).toBe('task')
+      expect(current.activeTab.contentRoute).toBe('/plugins?plugin=tool')
+      expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+      expect(current.tabs).toHaveLength(expectedCount)
+      const taskId = current.activeTabId
+      act(() => current.selectTab(board.id))
+      act(() => navigateTo('/plugins?plugin=other'))
+      expect(current.activeTabId).toBe(taskId)
+      expect(current.tabs).toHaveLength(expectedCount)
+      expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+    }
+  )
 
   test('accepts a returned tab, preserves its identity and acknowledges after navigation', () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron', desktopWindowLabel: 'main' }
@@ -362,6 +255,38 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
 
+  test('keeps the workspace tab route and kind while settings replaces its surface', () => {
+    window.history.replaceState({}, '', '/todo?projectId=project-1')
+    render(<RoutingHarness />)
+    const tabId = screen.getByTestId('active-tab-id').textContent
+
+    act(() => navigateTo('/settings/connections'))
+
+    expect(screen.getByTestId('active-tab-id').textContent).toBe(tabId)
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(screen.getByTestId('active-tab-route').textContent).toBe('/todo?projectId=project-1')
+  })
+
+  test.each([false, true])(
+    'restores a workspace route after loading settings (restore session tabs: %s)',
+    restoreSessionTabs => {
+      window.history.replaceState({}, '', '/settings')
+      let context!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          restoreSessionTabs={restoreSessionTabs}
+          onContextValue={value => {
+            context = value
+          }}
+        />
+      )
+
+      expect(screen.getByTestId('active-tab-route').textContent).toBe('/')
+      act(() => context.selectTab(context.activeTabId))
+      expect(window.location.pathname).toBe('/')
+    }
+  )
+
   test('does not replace the return route with a settings route', () => {
     sessionStorage.setItem('wework.settingsReturnPath', '/cloud-work')
     window.history.replaceState({}, '', '/settings')
@@ -372,6 +297,34 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(sessionStorage.getItem('wework.settingsReturnPath')).toBe('/cloud-work')
   })
+
+  test.each(['/settings', '/settings/connections?addDevice=1'])(
+    'ignores an invalid persisted settings tab (%s) while retaining a workspace tab',
+    contentRoute => {
+      localStorage.setItem(
+        'wework.workspaceTabs.v3:context-test',
+        JSON.stringify({
+          activeTabId: 'invalid-settings',
+          tabs: [
+            { id: 'invalid-settings', kind: 'task', title: '任务', contentRoute },
+            {
+              id: 'kept-board',
+              kind: 'board',
+              title: '协作',
+              contentRoute: '/todo?projectId=kept',
+            },
+          ],
+        })
+      )
+      window.history.replaceState({}, '', '/settings')
+
+      render(<RoutingHarness />)
+
+      expect(screen.getByTestId('tab-ids')).not.toHaveTextContent('invalid-settings')
+      expect(screen.getByTestId('active-tab-id')).toHaveTextContent('kept-board')
+      expect(screen.getByTestId('active-tab-route').textContent).toBe('/todo?projectId=kept')
+    }
+  )
 
   test('notifies resource owners when a workspace tab closes', () => {
     const onTabsClosed = vi.fn()

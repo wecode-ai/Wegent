@@ -30,7 +30,6 @@ from app.schemas.project import (
     ProjectResponse,
     ProjectTaskCreate,
     ProjectTaskListResponse,
-    ProjectUpdate,
     ProjectWithTasksResponse,
     ProjectWorktreeDeleteResponse,
     ProjectWorktreeListResponse,
@@ -54,7 +53,8 @@ ClientOriginQuery = Annotated[
 ]
 
 
-@router.get("", response_model=ProjectListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/projects"): remove after final confirmation.
+# @router.get("", response_model=ProjectListResponse)
 def list_projects(
     include_tasks: bool = Query(
         True, description="Whether to include tasks in response"
@@ -225,35 +225,6 @@ def get_project_endpoint(
         )
 
     return project
-
-
-# MIGRATION-CANDIDATE(api="PUT /api/projects/:project_id"): remove after final confirmation.
-# @router.put("/{project_id}", response_model=ProjectResponse)
-def update_project_endpoint(
-    project_id: int = Path(..., description="Project ID"),
-    project_update: ProjectUpdate = Body(...),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Update project information.
-    """
-    try:
-        return project_service.update_project(
-            db=db,
-            project_id=project_id,
-            update_data=project_update,
-            user_id=current_user.id,
-            client_origin=client_origin,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update project: {str(e)}",
-        )
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

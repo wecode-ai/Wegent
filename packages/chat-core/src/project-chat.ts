@@ -323,9 +323,26 @@ export function createProjectChatClient(
       )
     },
     async subscribeLoopItemChanges(onChange) {
-      await client.ensureConnected()
-      client.socket.on(LOOP_ITEM_CHANGED_EVENT, onChange)
-      return () => client.socket.off(LOOP_ITEM_CHANGED_EVENT, onChange)
+      const handler = (event: LoopItemChangedEvent) => {
+        console.debug('[Wework] Loop-item change received', {
+          projectId: event.projectId,
+          itemId: event.itemId,
+          version: event.version,
+          reason: event.reason,
+        })
+        onChange(event)
+      }
+      client.socket.on(LOOP_ITEM_CHANGED_EVENT, handler)
+      const unsubscribe = () => {
+        client.socket.off(LOOP_ITEM_CHANGED_EVENT, handler)
+      }
+      try {
+        await client.ensureConnected()
+      } catch (error) {
+        unsubscribe()
+        throw error
+      }
+      return unsubscribe
     },
     onReconnect(callback) {
       return client.onReconnect(callback)

@@ -401,3 +401,12 @@ def test_transfer_ownership_to_entity_member_creates_user_record(
     )
     assert new_owner_member is not None
     assert new_owner_member.role == "Owner"
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("groups",)) as client:
+        yield client

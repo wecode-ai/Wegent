@@ -62,7 +62,7 @@ export function MarkdownCodeBlock({
   compact = false,
   isStreaming = false,
 }: MarkdownCodeBlockProps) {
-  const { onCopy, translate: t } = useMarkdownServices();
+  const { copyText, onCopy, translate: t } = useMarkdownServices()
   const [copied, setCopied] = useState(false);
   const text = String(children).replace(/\n$/, "");
   const language = normalizeLanguage(lang);
@@ -95,7 +95,7 @@ export function MarkdownCodeBlock({
       : null;
 
   const handleCopy = async () => {
-    await copyCodeText(text);
+    await copyText(text)
     onCopy?.();
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
@@ -391,20 +391,4 @@ function getCodeTagProps(wrapLines: boolean): HTMLProps<HTMLElement> {
       overflowWrap: wrapLines ? "anywhere" : "normal",
     },
   };
-}
-
-async function copyCodeText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
 }

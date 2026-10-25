@@ -1806,6 +1806,50 @@ def test_loop_item_ai_assignee_is_project_scoped_and_exclusive(
     assert reassigned.json()["assignee_agent_id"] is None
 
 
+def test_loop_item_clears_all_assignee_fields(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "unassigned", "name": "Unassigned lane"},
+    ).json()
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Move to unassigned", "status": "pending"},
+    )
+    assert created.status_code == 201
+    item = created.json()
+    assert item["assignee_user_id"] == test_user.id
+
+    cleared = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": item["version"],
+            "assignee_user_id": None,
+            "assignee_agent_id": None,
+            "assignee_team_id": None,
+        },
+    )
+
+    assert cleared.status_code == 200
+    assert cleared.json()["version"] == item["version"] + 1
+    assert cleared.json()["status"] == "pending"
+    assert cleared.json()["assignee_user_id"] is None
+    assert cleared.json()["assignee_agent_id"] is None
+    assert cleared.json()["assignee_team_id"] is None
+    test_db.expire_all()
+    stored = test_db.get(LoopItem, item["id"])
+    assert stored.assignee_user_id is None
+    assert stored.assignee_agent_id == ""
+    assert stored.assignee_team_id is None
+
+
 def test_cloud_project_robot_binds_default_runtime_profile(
     test_client: TestClient,
     test_db: Session,
@@ -2687,3 +2731,14 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
 
     # The project row must be unlocked while the device prepares the environment.
     assert open_transactions == [False, False]
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(
+        test_client, ("project_members", "issue_assignments", "issue_tasks")
+    ) as client:
+        yield client

@@ -526,6 +526,7 @@ def enqueue_execution_batch(
                 issue=item,
                 human=human,
                 actor_user_id=current_user.id,
+                actor_name=manager.title or manager.name,
                 human_assignment_id=human_assignment_id,
                 dispatch_id=values.dispatch_id,
                 round_id=values.round_id,
@@ -695,7 +696,8 @@ def decide_collaboration_issue_status(
     }
 
 
-@router.post("/{project_id}/executions/statuses")
+# MIGRATION-CANDIDATE(api="POST /api/v1/cloud-projects/*/executions/statuses"): remove after final confirmation.
+# @router.post("/{project_id}/executions/statuses")
 def execution_statuses(
     project_id: int,
     values: LoopItemExecutionStatusQuery,

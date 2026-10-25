@@ -100,6 +100,25 @@ describe('application menu workspace actions', () => {
     expect(context.openTab).not.toHaveBeenCalled()
   })
 
+  test.each(['task', 'board'] as const)(
+    'restores the active %s tab when settings replaces its surface',
+    kind => {
+      const { context, send, view } = setup({
+        kind,
+        tabs: [tab({ id: 'active', kind })],
+      })
+      view.rerender(
+        <WorkspaceTabsContext.Provider value={context}>
+          <ApplicationMenuWorkspaceBridge pathname="/settings/general" />
+        </WorkspaceTabsContext.Provider>
+      )
+      send(kind === 'task' ? 'open-tasks' : 'open-project-spaces')
+      expect(context.selectTab).toHaveBeenCalledExactlyOnceWith('active')
+      expect(context.openTab).not.toHaveBeenCalled()
+      expect(mocks.subscribe).toHaveBeenCalledOnce()
+    }
+  )
+
   test('opens a work tab when none of that kind exists yet', () => {
     const { context, send } = setup()
     send('open-project-spaces')

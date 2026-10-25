@@ -23,10 +23,13 @@ import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 interface ComposerToolbarProps {
+  composerScopeKey?: string
+  captureInsertion?(): { insertText(text: string): boolean } | null
   className?: string
   canSend: boolean
   disabled?: boolean
   pluginPickerIconOnly?: boolean
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -62,6 +65,8 @@ interface ComposerToolbarProps {
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
   sendButtonLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   workspaceTarget?: WorkspaceTarget | null
@@ -107,7 +112,13 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
             <div className="contents" data-testid="composer-extension-actions">
               <DshContributionSlotSurface
                 attachedClassName="contents"
-                props={{ compact, disabled, workspaceTarget }}
+                props={{
+                  compact,
+                  disabled,
+                  workspaceTarget,
+                  captureInsertion: props.captureInsertion,
+                  sessionId: props.composerScopeKey,
+                }}
                 slot={WEWORK_DSH_SLOTS.composerAction}
               />
             </div>

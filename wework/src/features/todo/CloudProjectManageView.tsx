@@ -225,6 +225,7 @@ export function CloudProjectManageView({
       boardCardDisplay={boardCardDisplay}
       section={section}
       renderProviderSettings={renderProviderSettings}
+      providerSettingsSection="overview"
       onProjectUpdated={onProjectUpdated}
     />
   )

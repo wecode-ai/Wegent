@@ -1,0 +1,164 @@
+import { describe, expect, it } from 'vitest'
+import { runtimeMessagesToWorkbenchMessages } from '@wegent/chat-core/runtime-transcript'
+import {
+  buildUserTurnsForNavigation,
+  findLoadedNavigationMessageId,
+  getTurnVisibilityBounds,
+} from '../../../../packages/collaboration/src/conversation/turnNavigationUtils'
+
+describe('paginated turn navigation identity', () => {
+  const navigation = Array.from({ length: 25 }, (_, index) => ({
+    id: `turn-${index}`,
+    turnId: `turn-${index}`,
+    turnIndex: index,
+    messageIndex: index,
+    promptPreview: `Request ${index}`,
+    cursor: `cursor-${index}`,
+  }))
+  const messages = [
+    { id: 'user-24', turnId: 'turn-24', role: 'user', content: 'Request 24' },
+    { id: 'reply-24', turnId: 'turn-24', role: 'assistant', content: 'Latest reply' },
+  ]
+
+  it('matches the client identity selected by the actual transcript projection', () => {
+    const projected = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'user-native',
+        clientUserMessageId: 'user-client',
+        turnId: 'turn-24',
+        role: 'user',
+        content: 'Request 24',
+        status: 'done',
+      },
+    ])
+    expect(projected[0].id).toBe('user-client')
+    const indexed = navigation.map(item =>
+      item.turnId === 'turn-24' ? { ...item, userMessageId: 'user-client' } : item
+    )
+    const turns = buildUserTurnsForNavigation(projected, indexed)
+    expect(turns).toHaveLength(25)
+    expect(turns[24]).toMatchObject({ id: 'user-client', loaded: true })
+    expect(
+      findLoadedNavigationMessageId(projected, {
+        navigationId: 'turn-24',
+        userMessageId: 'user-client',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBe('user-client')
+  })
+
+  it('does not bind the first historical turn to the first message of the loaded page', () => {
+    const turns = buildUserTurnsForNavigation(messages, navigation)
+    expect(turns).toHaveLength(25)
+    expect(turns[0]).toMatchObject({ id: 'turn-0', loaded: false, promptPreview: 'Request 0' })
+    expect(turns[24]).toMatchObject({ id: 'user-24', loaded: true, turnIndex: 24 })
+    expect(new Set(turns.map(turn => turn.id)).size).toBe(25)
+  })
+
+  it('associates a visible reply with its owning turn when page indexes restart at zero', () => {
+    const turns = buildUserTurnsForNavigation(messages, navigation)
+    const scroller = document.createElement('div')
+    const reply = document.createElement('div')
+    const bounds = getTurnVisibilityBounds(
+      turns,
+      messages,
+      new Map([['reply-24', reply]]),
+      scroller
+    )
+    expect([...bounds.keys()]).toEqual(['user-24'])
+  })
+
+  it('does not resolve an unloaded turn through a colliding message index', () => {
+    expect(
+      findLoadedNavigationMessageId([{ ...messages[0], runtimeMessageIndex: 0 }], {
+        navigationId: 'turn-0',
+        turnId: 'turn-0',
+        messageIndex: 0,
+      })
+    ).toBeNull()
+  })
+
+  it('keeps guidance next to its owning turn without replacing the original request', () => {
+    const loaded = [
+      ...messages,
+      { id: 'guidance-24', turnId: 'turn-24', role: 'user', content: 'Continue' },
+      { id: 'continued-24', turnId: 'turn-24', role: 'assistant', content: 'Continued reply' },
+    ]
+    const turns = buildUserTurnsForNavigation(loaded, navigation)
+    expect(turns).toHaveLength(26)
+    expect(turns.slice(-2).map(turn => turn.id)).toEqual(['user-24', 'guidance-24'])
+    const reply = document.createElement('div')
+    const bounds = getTurnVisibilityBounds(
+      turns,
+      loaded,
+      new Map([['reply-24', reply]]),
+      document.createElement('div')
+    )
+    expect([...bounds.keys()]).toEqual(['user-24'])
+  })
+
+  it('uses the canonical turn when the loaded page contains only assistant items', () => {
+    const reply = document.createElement('div')
+    const loaded = [messages[1]]
+    const turns = buildUserTurnsForNavigation(loaded, navigation)
+    const bounds = getTurnVisibilityBounds(
+      turns,
+      loaded,
+      new Map([['reply-24', reply]]),
+      document.createElement('div')
+    )
+    expect([...bounds.keys()]).toEqual(['turn-24'])
+  })
+
+  it('keeps the original summary and a separate marker when only guidance is loaded', () => {
+    const guidance = {
+      id: 'guidance-24',
+      turnId: 'turn-24',
+      role: 'user',
+      content: 'Continue',
+      runtimeGuidance: true,
+    }
+    const turns = buildUserTurnsForNavigation([guidance, messages[1]], navigation)
+    expect(turns).toHaveLength(26)
+    expect(turns[24]).toMatchObject({ id: 'turn-24', promptPreview: 'Request 24', loaded: false })
+    expect(turns[25]).toMatchObject({ id: 'guidance-24', promptPreview: 'Continue', loaded: true })
+    expect(
+      findLoadedNavigationMessageId([guidance], {
+        navigationId: 'turn-24',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBeNull()
+    expect(
+      findLoadedNavigationMessageId([guidance], {
+        navigationId: 'guidance-24',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBe('guidance-24')
+  })
+
+  it('uses the original user identity when a page begins at an unclassified guidance message', () => {
+    const guidance = { id: 'guidance-24', turnId: 'turn-24', role: 'user', content: 'Continue' }
+    const indexedNavigation = navigation.map(item => ({
+      ...item,
+      userMessageId: `user-${item.turnIndex}`,
+    }))
+    const turns = buildUserTurnsForNavigation([guidance, messages[1]], indexedNavigation)
+    expect(turns.slice(-2).map(turn => turn.id)).toEqual(['turn-24', 'guidance-24'])
+    expect(
+      findLoadedNavigationMessageId([guidance], {
+        navigationId: 'turn-24',
+        userMessageId: 'user-24',
+        turnId: 'turn-24',
+        messageIndex: 24,
+      })
+    ).toBeNull()
+    const complete = buildUserTurnsForNavigation(
+      [messages[0], messages[1], guidance],
+      indexedNavigation
+    )
+    expect(complete.slice(-2).map(turn => turn.id)).toEqual(['user-24', 'guidance-24'])
+  })
+})

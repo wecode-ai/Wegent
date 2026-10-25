@@ -2,18 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared plugin device identity and runtime-route resolution.
+//! Shared owned-device identity and runtime-route resolution.
 //!
 //! Source: `app/services/device/identity.py`,
 //! `app/services/device/runtime_route.py`, and
 //! `app/services/plugin_device_identity.py`. Resolves a submitted device id to
 //! its canonical identity and coalesces `plugin_device_installations` rows.
-//! Used by both the marketplace listing and installed-plugin APIs.
+//! Used by plugin APIs and project session bindings.
 
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use std::collections::HashMap;
+
+use crate::plugins_marketplace::query::PluginQuery;
 
 /// Prefix for the App device transport route
 /// (`app/services/device/identity.py::RECORD_ROUTE_PREFIX`).
@@ -52,6 +54,8 @@ struct DeviceSpec {
     device_id: Option<String>,
     #[serde(default, rename = "appDeviceId")]
     app_device_id: Option<String>,
+    #[serde(default, rename = "runtimeInstanceId")]
+    runtime_instance_id: Option<String>,
     #[serde(default, rename = "cloudConfig")]
     cloud_config: Option<CloudConfig>,
 }
@@ -153,22 +157,32 @@ fn device_identity_ids(device: &DeviceKindRow) -> Vec<String> {
     candidates
 }
 
-/// Source `app/services/device/identity.py::_unambiguous_device`.
-fn unambiguous_device(matches: Vec<DeviceKindRow>) -> Option<DeviceKindRow> {
-    if matches.is_empty() {
+/// Resolve aliases inside the already owner-scoped set of active devices.
+fn resolve_device_alias<'a>(
+    devices: &'a [DeviceKindRow],
+    device_id: &str,
+) -> Option<&'a DeviceKindRow> {
+    let submitted = device_id.trim();
+    if submitted.is_empty() {
         return None;
     }
-    if matches.len() == 1 {
-        return Some(matches.into_iter().next().expect("one"));
+    if let Some(record_id) = record_id_from_route(submitted) {
+        return devices.iter().find(|device| {
+            device.id == record_id && DeviceType::from_spec(&device.spec()) == DeviceType::App
+        });
     }
-    let app_matches: Vec<DeviceKindRow> = matches
-        .into_iter()
-        .filter(|d| DeviceType::from_spec(&d.spec()) == DeviceType::App)
+    let matches: Vec<_> = devices
+        .iter()
+        .filter(|device| device_identity_ids(device).iter().any(|id| id == submitted))
         .collect();
-    if app_matches.len() == 1 {
-        return Some(app_matches.into_iter().next().expect("one"));
+    if matches.len() == 1 {
+        return Some(matches[0]);
     }
-    None
+    let app_matches: Vec<_> = matches
+        .into_iter()
+        .filter(|device| DeviceType::from_spec(&device.spec()) == DeviceType::App)
+        .collect();
+    (app_matches.len() == 1).then(|| app_matches[0])
 }
 
 /// Source `app/services/device/identity.py::resolve_owned_device_alias`.
@@ -184,6 +198,21 @@ pub(crate) async fn resolve_owned_device_alias<M>(
 where
     M: Mysql,
 {
+    let mut query = mysql;
+    resolve_owned_device_alias_on(&mut query, user_id, device_id).await
+}
+
+/// `resolve_owned_device_alias` on a borrowed session handle: the shared pool
+/// for read-only callers, or the handler's pinned transaction when the source
+/// session carries a lock or write.
+pub(crate) async fn resolve_owned_device_alias_on<Q>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<Option<DeviceKindRow>>
+where
+    Q: PluginQuery,
+{
     let submitted = device_id.trim();
     if submitted.is_empty() {
         return Ok(None);
@@ -192,25 +221,47 @@ where
         // Source `query.filter_by(id=record_id).one_or_none()`; the SQLAlchemy
         // filter appends `AND kinds.id = ?` to the base filter.
         let sql = format!("{KINDS_DEVICE_QUERY} AND kinds.id = ?");
-        let row: Option<DeviceKindRow> = mysql.fetch_optional(sql, (user_id, record_id)).await?;
+        let row: Option<DeviceKindRow> = query.fetch_optional(sql, (user_id, record_id)).await?;
         return Ok(
             row.and_then(|d| (DeviceType::from_spec(&d.spec()) == DeviceType::App).then_some(d))
         );
     }
-    let all: Vec<DeviceKindRow> = mysql.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
-    let matches: Vec<DeviceKindRow> = all
-        .into_iter()
-        .filter(|d| device_identity_ids(d).iter().any(|id| id == submitted))
-        .collect();
-    Ok(unambiguous_device(matches))
+    let all: Vec<DeviceKindRow> = query.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(resolve_device_alias(&all, submitted).cloned())
 }
 
-/// Source `app/services/device/runtime_route.py::RuntimeRouteIdentity`,
-/// reduced to the members the migrated device session endpoints consume.
-///
-/// The source identity also carries `runtime_device_id`,
-/// `runtime_instance_id`, and `app_device_id`; a consumer that needs those must
-/// extend this projection rather than re-derive the row lookup.
+/// Return aliases that unambiguously identify the same user-owned device.
+/// Unknown or ambiguous input retains its existing exact-address semantics.
+pub(crate) async fn owned_device_identity_ids<M>(
+    mysql: &M,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<Vec<String>>
+where
+    M: Mysql,
+{
+    let devices: Vec<DeviceKindRow> = mysql.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(unambiguous_device_identity_ids(&devices, device_id))
+}
+
+fn unambiguous_device_identity_ids(devices: &[DeviceKindRow], device_id: &str) -> Vec<String> {
+    let mut aliases = vec![device_id.to_owned()];
+    let Some(device) = resolve_device_alias(devices, device_id) else {
+        return aliases;
+    };
+    for alias in device_identity_ids(device) {
+        if resolve_device_alias(devices, &alias).map(|resolved| resolved.id) == Some(device.id)
+            && !aliases.contains(&alias)
+        {
+            aliases.push(alias);
+        }
+    }
+    aliases
+}
+
+/// Source `app/services/device/runtime_route.py::RuntimeRouteIdentity`, the
+/// database-owned mapping between a logical device identity and its Runtime
+/// route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeRouteIdentity {
     /// `logical_device_id`: the Kind `name`, or `app-record-<id>` for App
@@ -218,6 +269,12 @@ pub struct RuntimeRouteIdentity {
     pub logical_device_id: String,
     /// `device_type`: the normalized `spec.deviceType`.
     pub device_type: DeviceType,
+    /// `runtime_device_id`: the transport identity used for the Redis online
+    /// key and the Socket.IO room (`_runtime_device_id`).
+    pub runtime_device_id: String,
+    /// `runtime_instance_id`: the pinned installation identity, when the
+    /// device registered one.
+    pub runtime_instance_id: Option<String>,
 }
 
 /// Source `app/services/device/runtime_route.py::resolve_runtime_route_identity`:
@@ -244,14 +301,28 @@ where
 
 /// Source `app/services/device/runtime_route.py::_identity_from_device`.
 fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> {
+    let runtime_device_id = runtime_device_id(device);
     // `if not runtime_device_id: return None`.
-    if runtime_device_id(device).is_empty() {
+    if runtime_device_id.is_empty() {
         return None;
     }
     Some(RuntimeRouteIdentity {
         logical_device_id: record_route_id(device),
         device_type: DeviceType::from_spec(&device.spec()),
+        runtime_device_id,
+        runtime_instance_id: runtime_instance_id(device),
     })
+}
+
+/// Source `app/services/device/runtime_route.py::_runtime_instance_id`.
+fn runtime_instance_id(device: &DeviceKindRow) -> Option<String> {
+    device
+        .spec()
+        .runtime_instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 /// Source `app/services/device/runtime_route.py::_runtime_device_id`.
@@ -298,8 +369,21 @@ pub async fn plugin_device_id<M>(mysql: &M, user_id: i64, device_id: &str) -> My
 where
     M: Mysql,
 {
+    let mut query = mysql;
+    plugin_device_id_on(&mut query, user_id, device_id).await
+}
+
+/// `plugin_device_id` on a borrowed session handle.
+pub(crate) async fn plugin_device_id_on<Q>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<String>
+where
+    Q: PluginQuery,
+{
     Ok(
-        match resolve_owned_device_alias(mysql, user_id, device_id).await? {
+        match resolve_owned_device_alias_on(query, user_id, device_id).await? {
             Some(device) => canonical_device_id(&device),
             None => device_id.trim().to_string(),
         },
@@ -343,13 +427,26 @@ where
     M: Mysql,
     R: DeviceRow + Clone,
 {
+    let mut query = mysql;
+    coalesce_plugin_device_rows_on(&mut query, rows).await
+}
+
+/// `coalesce_plugin_device_rows` on a borrowed session handle.
+pub(crate) async fn coalesce_plugin_device_rows_on<Q, R>(
+    query: &mut Q,
+    rows: Vec<R>,
+) -> MysqlResult<Vec<((i64, String), R)>>
+where
+    Q: PluginQuery,
+    R: DeviceRow + Clone,
+{
     let mut identities: HashMap<(i64, String), String> = HashMap::new();
     let mut selected: Vec<((i64, String), R)> = Vec::new();
     let mut seen: HashMap<(i64, String), usize> = HashMap::new();
     for row in &rows {
         let identity_key = (row.user_id(), row.device_id().to_string());
         if !identities.contains_key(&identity_key) {
-            let canonical = plugin_device_id(mysql, row.user_id(), row.device_id()).await?;
+            let canonical = plugin_device_id_on(query, row.user_id(), row.device_id()).await?;
             identities.insert(identity_key.clone(), canonical);
         }
         let canonical_id = identities.get(&identity_key).expect("populated").clone();
@@ -473,7 +570,7 @@ const UPDATE_DEVICE_ID_QUERY: &str =
 /// emits its UPDATE statements in this order, not in the caller's iteration
 /// order.
 pub async fn reconcile_plugin_device_rows<T, M, R>(
-    transaction: &mut T,
+    mut transaction: &mut T,
     mysql: &M,
     user_id: i64,
 ) -> MysqlResult<Vec<R>>
@@ -486,27 +583,58 @@ where
         .fetch_all(RECONCILE_SELECT_QUERY, (user_id,))
         .await?;
     let selected = coalesce_plugin_device_rows(mysql, rows.clone()).await?;
+    converge_plugin_device_rows(&mut transaction, rows, &selected).await
+}
+
+/// `reconcile_plugin_device_rows` on one borrowed session handle.
+///
+/// The source locks, resolves, and rewrites the rows inside one request
+/// session; callers that already own that session's transaction pass it here
+/// so the identity reads stay on the pinned connection.
+pub(crate) async fn reconcile_plugin_device_rows_on<Q, R>(
+    query: &mut Q,
+    user_id: i64,
+) -> MysqlResult<Vec<R>>
+where
+    Q: PluginQuery,
+    R: ReconcileRow + Clone + FromMysqlRow + Send,
+{
+    let rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
+    let selected = coalesce_plugin_device_rows_on(query, rows.clone()).await?;
+    converge_plugin_device_rows(query, rows, &selected).await
+}
+
+/// Delete the superseded alias rows and rewrite each retained row's
+/// `device_id`, then return the retained rows in `FOR UPDATE` load order.
+async fn converge_plugin_device_rows<Q, R>(
+    query: &mut Q,
+    rows: Vec<R>,
+    selected: &[((i64, String), R)],
+) -> MysqlResult<Vec<R>>
+where
+    Q: PluginQuery,
+    R: ReconcileRow + Clone + Send,
+{
     let retained: std::collections::HashSet<i64> =
         selected.iter().map(|(_, row)| row.id()).collect();
     for row in &rows {
         if !retained.contains(&row.id()) {
-            transaction.execute(DELETE_ROW_QUERY, (row.id(),)).await?;
+            query.execute(DELETE_ROW_QUERY, (row.id(),)).await?;
         }
     }
-    for ((_, canonical_id), row) in &selected {
+    for ((_, canonical_id), row) in selected {
         if row.device_id() != canonical_id {
-            transaction
+            query
                 .execute(UPDATE_DEVICE_ID_QUERY, (canonical_id.as_str(), row.id()))
                 .await?;
         }
     }
     // Identity-map order after the deletes and rewrites: the retained rows in
     // `FOR UPDATE` load order (primary key ascending).
-    let retained_rows: Vec<R> = rows
+    Ok(rows
         .into_iter()
         .filter(|row| retained.contains(&row.id()))
-        .collect();
-    Ok(retained_rows)
+        .collect())
 }
 
 #[cfg(test)]
@@ -556,6 +684,115 @@ mod tests {
             }),
         };
         assert_eq!(canonical_device_id(&row), "8afb8635");
+    }
+
+    fn app_device(id: i64, app_id: &str) -> DeviceKindRow {
+        DeviceKindRow {
+            id,
+            name: "logical-device".to_owned(),
+            json: serde_json::json!({
+                "spec": {
+                    "deviceType": "app",
+                    "deviceId": "runtime-device",
+                    "appDeviceId": app_id,
+                }
+            }),
+        }
+    }
+
+    #[test]
+    fn session_aliases_resolve_both_app_and_record_addresses() {
+        let devices = [app_device(7, "electron-app")];
+        for submitted in ["electron-app", "app-record-7", "logical-device"] {
+            let aliases = unambiguous_device_identity_ids(&devices, submitted);
+            assert_eq!(aliases.first().map(String::as_str), Some(submitted));
+            for expected in [
+                "electron-app",
+                "app-record-7",
+                "logical-device",
+                "runtime-device",
+            ] {
+                assert!(aliases.iter().any(|alias| alias == expected));
+            }
+            assert_eq!(aliases.len(), 4);
+        }
+    }
+
+    #[test]
+    fn session_aliases_exclude_shared_names_of_distinct_app_installations() {
+        let devices = [
+            app_device(7, "electron-first"),
+            app_device(8, "electron-second"),
+        ];
+        assert_eq!(
+            unambiguous_device_identity_ids(&devices, "app-record-7"),
+            ["app-record-7", "electron-first"]
+        );
+        assert_eq!(
+            unambiguous_device_identity_ids(&devices, "electron-second"),
+            ["electron-second", "app-record-8"]
+        );
+        for ambiguous in ["logical-device", "runtime-device"] {
+            assert_eq!(
+                unambiguous_device_identity_ids(&devices, ambiguous),
+                [ambiguous]
+            );
+        }
+    }
+
+    #[test]
+    fn session_aliases_preserve_the_existing_unique_app_preference() {
+        let devices = [
+            app_device(7, "electron-app"),
+            DeviceKindRow {
+                id: 8,
+                name: "logical-device".to_owned(),
+                json: serde_json::json!({"spec": {"deviceType": "local"}}),
+            },
+        ];
+        assert_eq!(
+            resolve_device_alias(&devices, "logical-device").unwrap().id,
+            7
+        );
+        assert!(
+            unambiguous_device_identity_ids(&devices, "app-record-7")
+                .iter()
+                .any(|alias| alias == "logical-device")
+        );
+    }
+
+    #[test]
+    fn session_aliases_keep_unknown_and_foreign_record_addresses_exact() {
+        let devices = [app_device(7, "electron-app")];
+        for submitted in ["app-record-8", " unknown-device ", ""] {
+            assert_eq!(
+                unambiguous_device_identity_ids(&devices, submitted),
+                [submitted]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn session_aliases_load_only_the_owners_active_default_devices() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        assert_eq!(
+            owned_device_identity_ids(&mysql, 19, "electron-app")
+                .await
+                .unwrap(),
+            ["electron-app"]
+        );
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].first_integer, Some(19));
+        assert_eq!(queries[0].args, 1);
+        for filter in [
+            "kinds.user_id = ?",
+            "kinds.kind = 'Device'",
+            "kinds.namespace = 'default'",
+            "kinds.is_active = true",
+        ] {
+            assert!(queries[0].sql.contains(filter));
+        }
     }
 
     #[test]

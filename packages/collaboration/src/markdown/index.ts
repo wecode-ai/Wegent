@@ -11,3 +11,4 @@ export {
   type MarkdownServices,
   type MarkdownFileOpenOptions,
 } from "./MarkdownServices";
+export { extractAssistantFileCitations } from "./assistantAnnotations";

@@ -6,6 +6,7 @@ import hashlib
 import os
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Tuple
 
@@ -36,6 +37,17 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+
+
+@pytest.fixture(autouse=True)
+def plugin_write_backend(monkeypatch: pytest.MonkeyPatch):
+    """Mock external coordination services while exercising transaction hooks."""
+    from app.services import plugin_write_coordination as coordination
+    from tests.plugin_write_fakes import FakePluginRedis
+
+    redis = FakePluginRedis()
+    monkeypatch.setattr(coordination, "_redis_client", lambda: redis)
+    return redis
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -283,6 +295,21 @@ def test_db(
         # Rollback the transaction to restore database state
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(scope="function")
+def plugin_write_sessions(test_db: Session, monkeypatch: pytest.MonkeyPatch):
+    """Give plugin workers independent sessions inside the test transaction."""
+    from app.services import plugin_write_operations
+
+    connection = test_db.get_bind()
+
+    @contextmanager
+    def session() -> Generator[Session, None, None]:
+        with Session(bind=connection, join_transaction_mode="create_savepoint") as db:
+            yield db
+
+    monkeypatch.setattr(plugin_write_operations, "get_db_session", session)
 
 
 @pytest.fixture(scope="function")

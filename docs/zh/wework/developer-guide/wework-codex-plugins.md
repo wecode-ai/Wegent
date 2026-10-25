@@ -114,6 +114,22 @@ executor 在启动 Codex app-server 前会解析并规范化 Wework Codex home �
 
 交互风格也以同一份 `config.toml` 为唯一来源。设置页修改 Friendly 或 Pragmatic 时通过 `config/batchWrite` 更新 personality，不再把 personality 保存在 localStorage，也不再在每个 thread/turn 请求中重复覆盖。
 
+## 受管插件目录恢复
+
+Executor 仅在启动时执行专门的目录迁移检查：在清单初始化完成后、启动 Codex 和后台连接前，按当前 Home 与插件的稳定身份检查受管安装。路径未变且运行目录完整时直接跳过，不读取并校验整包内容。已有 v2 清单和从 v1 导入的清单共用这条流程；旧绝对路径仅作为迁移线索，不能用来接管或删除原生用户目录。实际重建缓存与市场注册前，共享包必须通过已有 checksum、包记录和内容校验。
+
+恢复保留启用状态、组件开关、云端安装 ID 和授权关联，并处理当前、上一版本与保留缓存的所有权。缺包或无关目录占用只影响对应插件：清单记录仍保留，管理页显示“需要修复”，正常同步可在取得可信包后重试。已经卸载的插件不会因为残留所有权或缓存而重新安装。
+
+正常安装、更新和重试只处理本次请求的插件，使用当前 Home 与本次校验通过的包更新安装记录；`apply_sync` 不执行全量插件恢复，Skills 和 MCP 同步不会触发无关插件的迁移检查。
+
+恢复采用清单锁、原子写入和逐插件操作日志。进程中断后的恢复必须区分本次已发布状态与未完成操作；无法证明归属或发现用户后来改动时保留快照并报告冲突，不覆盖未知文件。恢复不接入每条消息的发送前置流程。
+
+Wework 的受管 Executor 环境固定设置 `WEGENT_PLUGIN_RUNTIME_TARGET=codex`，仅为插件注册 Codex 运行目录。未设置该变量的通用 Executor 保留原有双运行时插件支持，Skills、原生 Home 和凭据不随这个开关清理。Codex-only 模式不会为插件创建 Claude 侧状态，但卸载或清理失效插件时仍会移除早期双运行时安装留下的 Claude 注册信息（installed_plugins.json、settings.json 的启用项与记录的运行缓存），避免插件在卸载后仍出现在 Claude 会话中。
+
+恢复实现位于 Executor，运行目标由 Electron 注入，错误状态由插件界面展示，三者应作为同一桌面版本发布。仅更新前端不会给旧 Executor 增加恢复能力。清单保持 v2 并保留其他字段，不删除 Skills、MCP 或整个清单；未完成的恢复日志应由配套的新 Executor 继续处理。
+
+桌面回归 checkpoint `plugin-runtime-path-recovery` 归入现有 Cloud 分片 14：先实际安装并调用插件，再停机迁移隔离 Home，验证离线恢复、局部失败、开关、更新、卸载不复活及重装调用。运行结果以该次测试报告为准，静态契约检查不能代替桌面实跑。
+
 ## 运行时权限模式
 
 Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“完整访问”；用户从其它模式主动切换到“完整访问”时，界面会显示明确的风险确认：
@@ -173,3 +189,25 @@ Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型�
 Backend 同时接受 Codex 与 Claude Code 插件包，支持上传、云端市场发布、安装与设备同步，并为每个存储包标准化生成两个运行时的清单。Wegent 云端市场以 Backend 的安装记录为准；本地自定义市场和 OpenAI 官方市场仍以本机 Codex app-server 为准。
 
 Backend 重建或迁移市场目录后，会核对已安装 Kind 的 `pluginId`、`releaseId`、`source.catalogItemId` 和 `source.marketplace`。即使插件和 Release ID 都没有变化，只要 `source.marketplace` 与插件当前 visibility 推导出的市场名不一致，也必须更新安装记录并重置失败的设备安装状态。这样 visibility 从 `public` 调整到 `workspace` 时，已安装记录会从 `wework` 修复到 `wegent`，不会因为其他引用字段相同而被误判为 no-op。
+
+## 项目空间 Issue 评论
+
+PR Review 等插件通过 `wework_space.list_board_item_comments` 读取 Issue 动态中的讨论，通过 `add_board_item_comment` 发布可见评论。两个工具使用相同的项目、Issue 权限和动态消息存储；返回的评论 ID 就是动态消息 ID。写入后通过现有 Socket.IO 推送刷新界面，重载后仍可读取。
+
+评论中 @ 成员时，先用 `get_assignment_candidates` 获取成员 ID 和名称，再给 `add_board_item_comment` 传入 `mentions`，例如 `{"body":"@qindi 请 review","mentions":[{"type":"user","id":"52","label":"qindi"}]}`，并显式传入目标 `space_id`、`item_id`。仅在正文写 `@姓名` 不会触发通知。共享 Backend 项目的 MCP 评论和页面共用提及权限校验、事务与通知链路：重复提及同一人只生成一条通知，自我提及不通知，无权接收的提及导致评论和通知一起回滚。不要再调用 `send_notification` 重复提醒。纯本地项目没有共享成员收件箱，结构化提及会明确报错。
+
+```mermaid
+flowchart LR
+    MCP[Backend 或原生 Executor MCP] --> Activity[Issue 评论入口]
+    UI[页面评论] --> Send[ProjectChatSend 与结构化 mentions]
+    Activity --> Send
+    Send --> Auth[已有的作者与接收人权限校验]
+    Auth --> Tx[同一事务保存评论与去重通知]
+    Tx --> Delivery[提交后推送动态与成员通知]
+```
+
+原生 Executor 对应的 HTTP 接口是 `GET/POST /api/v1/cloud-projects/{project_id}/loop-items/{item_id}/activity-comments`。读取默认返回最近 200 条，最多 500 条，按序号升序排列；使用 `after_sequence` 向后分页。只读成员可以读取，不能写入；其它 Issue 的消息不会出现在结果中。
+
+旧的 `/loop-items/{item_id}/comments` 仍承载 provider 评论和历史分配事件，不能直接删除底层数据；这些历史记录不会自动迁入 Issue 动态。插件应使用项目空间工具，不再把旧接口返回 ID 视为 Issue 动态已发布的证据。
+
+桌面 CI 的 Core 分片 15 包含 `collaboration-issue-mcp-comments`：验证 MCP 写入后可见、重载后持久化、原生 HTTP 写入实时可见、两种入口 @ 继承成员后仅一条收件箱通知、普通文本不通知、MCP 读回提及与 PR 链接、跨 Issue 隔离以及页面没有协作加载错误。测试清理先退出 Electron，再关闭云端测试服务，避免仍打开的页面因服务关闭而显示错误。

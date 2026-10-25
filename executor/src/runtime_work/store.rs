@@ -460,6 +460,18 @@ impl RuntimeWorkStore {
         self.persist_current_index();
     }
 
+    pub fn unmark_deleted_archived_task_ids(&self, task_ids: &[String]) {
+        self.refresh_index_from_disk_if_changed();
+        let Some(mut index) = self.index.lock().ok() else {
+            return;
+        };
+        for task_id in task_ids {
+            index.deleted_archived_task_ids.remove(task_id);
+        }
+        drop(index);
+        self.persist_current_index();
+    }
+
     pub fn upsert_task(&self, link: RuntimeTaskLink) {
         self.refresh_index_from_disk_if_changed();
         let Some(mut index) = self.index.lock().ok() else {

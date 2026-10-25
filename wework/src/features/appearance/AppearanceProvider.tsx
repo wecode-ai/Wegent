@@ -25,20 +25,41 @@ function getInitialState(): {
   }
 }
 
-export function AppearanceProvider({ children }: { children: React.ReactNode }) {
+export function AppearanceProvider({
+  children,
+  persist = true,
+}: {
+  children: React.ReactNode
+  /** Auxiliary windows apply appearance but must not own or overwrite it. */
+  persist?: boolean
+}) {
   const [state, setState] = useState(getInitialState)
 
   useEffect(() => {
     applyAppearance(state.appearance, state.resolvedMode)
-    writeStoredAppearance(state.appearance)
-  }, [state])
+    if (persist) writeStoredAppearance(state.appearance)
+  }, [persist, state])
 
   useEffect(() => {
-    if (!isElectronRuntime()) return
+    if (!persist || !isElectronRuntime()) return
     void updateAppPreferences({ appearanceMode: state.appearance.mode }).catch(error => {
       console.error('[Wework] Failed to persist the startup appearance mode:', error)
     })
-  }, [state.appearance.mode])
+  }, [persist, state.appearance.mode])
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== 'wework.appearance') return
+      const appearance = readStoredAppearance()
+      setState({
+        appearance,
+        resolvedMode: resolveAppearanceMode(appearance.mode),
+      })
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return

@@ -28,6 +28,9 @@ pub(crate) const SUPPORTED_PROTOCOL_VERSIONS: [&str; 4] =
     ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 /// `mcp.types.LATEST_PROTOCOL_VERSION`.
 pub(crate) const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+/// `InitializationOptions.server_version`: the installed `mcp` package
+/// version every FastMCP server reports in `serverInfo`.
+pub(crate) const SERVER_VERSION: &str = "1.27.2";
 /// `mcp.types.DEFAULT_NEGOTIATED_VERSION`, assumed when the header is absent.
 pub(crate) const DEFAULT_NEGOTIATED_VERSION: &str = "2025-03-26";
 

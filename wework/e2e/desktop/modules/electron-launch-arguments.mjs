@@ -25,5 +25,17 @@ export function resolveElectronLaunchArguments({
       '--disable-dev-shm-usage'
     )
   }
+  if (platform === 'win32') {
+    // crbug.com/572515601: Windows random allocation can fail despite free loopback ports.
+    const disabledFeatures = new Set(['TcpPortRandomizationWin'])
+    const scenarioArguments = extraArguments.filter(argument => {
+      if (!argument.startsWith('--disable-features=')) return true
+      for (const feature of argument.slice('--disable-features='.length).split(',')) {
+        if (feature) disabledFeatures.add(feature)
+      }
+      return false
+    })
+    return ['--disable-features=' + [...disabledFeatures].join(','), ...scenarioArguments]
+  }
   return [...argumentsForPlatform, ...extraArguments]
 }

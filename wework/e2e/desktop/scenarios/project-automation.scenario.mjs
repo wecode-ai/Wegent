@@ -2,13 +2,20 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  inProjectCreateDialog,
   openDirectProjectCreation,
   openProjectAgentCreator,
-  inProjectCreateDialog,
-  selectCloudAgentModel,
   selectCollaborationDomain,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+import { verifyWorkspaceAgentDisplayNames } from '../modules/workspace-agent-setup.mjs'
+import {
+  assertSavedCloudRouting,
+  readBasicCloudDefault,
+  verifyCloudSaveDuringNativeFaults,
+  verifyLocalBasicDefaultSave,
+} from '../modules/agent-catalog-regressions.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -17,6 +24,8 @@ const WORKSPACE_GROUP_NAME = '空间交付协作组'
 const PROJECT_GROUP_NAME = '项目响应协作组'
 const DELETABLE_GROUP_NAME = '待删除协作小组'
 const PROJECT_AGENT_NAME = '项目 Codex 负责人'
+const WORKSPACE_AGENT_DISPLAY_NAME = '123'
+const WORKSPACE_AGENT_RENAMED_NAME = '代码评审'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -28,13 +37,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
   assert.equal(
     response.ok,
     true,
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
-  return body
+  return text ? JSON.parse(text) : null
 }
 
 function scoped(selector) {
@@ -53,24 +61,33 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
-async function createGroup(control, { name, leader }) {
+async function createGroup(control, { name, leader, autoSelectedLeader = false }) {
   const separatorIndex = leader.indexOf(':')
   const leaderKind = leader.slice(0, separatorIndex)
   const leaderId = leader.slice(separatorIndex + 1)
   await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
     value: name,
   })
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
-  )
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
-  )
+  if (autoSelectedLeader) {
+    // Workspace groups automatically include the authenticated creator as leader.
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`),
+      { visible: true }
+    )
+  } else {
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-create-member-${leaderKind}-${leaderId}"]`)
+    )
+    await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+    await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
+    await control.command(
+      'click',
+      scoped(`[data-testid="collaboration-group-leader-${leaderKind}-${leaderId}"]`)
+    )
+  }
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: 10_000,
   })
@@ -79,9 +96,12 @@ async function createGroup(control, { name, leader }) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let backendUrl = ''
   let authToken = ''
+  let cloudEnvironment
   let workspace = null
   let project = null
   let fixtureArchived = false
+  let proxy
+  const appEnvironment = {}
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -112,11 +132,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   return {
     requiresCloudEnvironment: true,
+    appEnvironment,
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/api/admin/setup-complete', { method: 'POST' })
+      proxy = await new TransportFaultProxy(backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
+    },
+
+    setCloudEnvironment(value) {
+      cloudEnvironment = value
     },
 
     async verify(control) {
@@ -204,6 +231,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await createGroup(control, {
           name: WORKSPACE_GROUP_NAME,
           leader: `human:${workspace.created_by_user_id}`,
+          autoSelectedLeader: true,
         })
         const workspaceGroup = await waitForApiValue(
           () => request(`/api/v1/workspaces/${workspace.id}/collaboration-groups`),
@@ -362,7 +390,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           selectableModels.length > 0,
           'No executable model is available for Agent creation'
         )
-        await selectCloudAgentModel(control, request, selectableModels[0].name, uiTimeoutMs)
+        const defaultModel = await readBasicCloudDefault(
+          control,
+          'wework-agent',
+          'wework-agent-resource-creator',
+          uiTimeoutMs
+        )
         await control.command('fill', '[data-testid="wework-agent-system-prompt"]', {
           value: '负责 Issue 分解、委派与交付验收。按项目约束完成任务并给出可验证证据。',
         })
@@ -382,6 +415,51 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           uiTimeoutMs
         )
         assert.ok(projectAgent.wegentTeamId, 'The project Agent must retain its Team binding')
+        await assertSavedCloudRouting(request, projectAgent, defaultModel, { mode: 'project_pool' })
+        assert.equal(projectAgent.canUse, true, 'A newly created Agent must be usable')
+        const membersPath = `/api/share/Team/${projectAgent.wegentTeamId}/members`
+        const members = await request(membersPath)
+        const workspaceGrant = members.members.find(
+          member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
+        )
+        assert.ok(workspaceGrant, 'Agent creation must persist its space authorization')
+        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="project-agent-archive-${projectAgent.id}"]`)
+        )
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="project-agent-reactivate-${projectAgent.id}"]`)
+        )
+        await request(`${membersPath}/${workspaceGrant.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ role: 'Reporter' }),
+        })
+        const unavailable = await request(
+          `/api/v1/cloud-projects/${project.id}/chat-agents?include_archived=true`
+        )
+        assert.equal(unavailable.find(agent => agent.id === projectAgent.id)?.canUse, false)
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="project-agent-reactivate-${projectAgent.id}"]`)
+        )
+        await waitForApiValue(
+          () => request(`/api/v1/cloud-projects/${project.id}/chat-agents`),
+          agents => agents.find(agent => agent.id === projectAgent.id && agent.canUse),
+          'Explicit Agent reauthorization did not restore project use',
+          uiTimeoutMs
+        )
+        const restoredMembers = await request(membersPath)
+        const restoredGrants = restoredMembers.members.filter(
+          member => member.entity_type === 'workspace' && member.entity_id === String(workspace.id)
+        )
+        assert.equal(restoredGrants.length, 1, 'Reauthorization must update the existing grant')
+        assert.equal(restoredGrants[0].id, workspaceGrant.id)
+        assert.equal(restoredGrants[0].role, 'Developer')
         const localDevice = await waitForApiValue(
           () => request('/api/devices/online'),
           devices => devices.items.find(device => device.device_type === 'app') ?? null,
@@ -417,10 +495,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           compiled.payload.executionRequest.model_config.model_id,
           'The assigned Team model was lost during local task materialization'
         )
-        await control.command('waitFor', '[data-testid="wework-agent-resource-creator"]', {
-          visible: false,
-          timeoutMs: uiTimeoutMs,
-        })
         await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
           text: PROJECT_AGENT_NAME,
           timeoutMs: uiTimeoutMs,
@@ -568,6 +642,42 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           { visible: false, timeoutMs: uiTimeoutMs }
         )
         await capture(control, 'project-automation-07-group-deleted.png')
+        // A separate App reads the authorized HTTP catalog instead of local IPC.
+        const catalogDeviceId = `catalog-recovery-app-${process.pid}`
+        await cloudEnvironment.startGeneratedRemoteDevice({
+          deviceId: catalogDeviceId,
+          deviceName: 'Catalog recovery App',
+          deviceType: 'app',
+        })
+        const catalogDevice = await cloudEnvironment.waitForDeviceType(catalogDeviceId, 'app')
+        assert.notEqual(catalogDevice.id, localDevice.id)
+        for (const resourcePath of [
+          `/api/v1/workspaces/${workspace.id}`,
+          `/api/v1/cloud-projects/${project.id}`,
+        ]) {
+          await request(`${resourcePath}/execution-environments`, {
+            method: 'POST',
+            body: JSON.stringify({ device_id: catalogDevice.id }),
+          })
+        }
+        await verifyCloudSaveDuringNativeFaults(control, {
+          projectId: project.id,
+          device: catalogDevice,
+          request,
+          proxy,
+          waitForApiValue,
+          timeoutMs: uiTimeoutMs,
+        })
+        await verifyLocalBasicDefaultSave(control, uiTimeoutMs, proxy)
+
+        await verifyWorkspaceAgentDisplayNames(control, request, {
+          contentSelector: ACTIVE_WORKBENCH_SELECTOR,
+          workspaceId: workspace.id,
+          displayName: WORKSPACE_AGENT_DISPLAY_NAME,
+          renamedDisplayName: WORKSPACE_AGENT_RENAMED_NAME,
+          modelName: selectableModels[0].name,
+          timeoutMs: uiTimeoutMs,
+        })
       } finally {
         try {
           await archiveFixture()
@@ -582,7 +692,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     },
 
     async cleanup() {
-      await archiveFixture()
+      try {
+        await archiveFixture()
+      } finally {
+        await proxy?.stop()
+      }
     },
+    diagnostics: () => ({ catalogRequests: proxy?.requests }),
   }
 }

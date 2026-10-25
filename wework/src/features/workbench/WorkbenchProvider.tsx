@@ -1,3 +1,4 @@
+import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
@@ -15,7 +16,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
+import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
@@ -109,14 +110,15 @@ import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
+import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { reportArchivedCleanupFailure } from '@/components/settings/archivedConversationsSettingsState'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
-import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumePluginTrial,
   dismissTrialGuide,
@@ -154,7 +156,6 @@ import {
   getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
-  publishRuntimeTransportReplaced,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationTaskPlan,
@@ -163,6 +164,7 @@ import {
   settleRuntimeConversationGuidance,
   syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
+import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -236,6 +238,7 @@ export function WorkbenchProvider({
   syncCoreDshModels = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
+  workspaceTabRevealRevision = 0,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -293,7 +296,6 @@ export function WorkbenchProvider({
     [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-  const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const runtimeTaskSettleSyncActiveRef = useRef(true)
@@ -372,6 +374,8 @@ export function WorkbenchProvider({
     runtimeWork: state.runtimeWork,
     lifecycleStore,
     lifecycleSnapshot,
+    standInApi: resolvedServices.standInApi,
+    runtimeApi: resolvedServices.runtimeWorkApi,
   })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
@@ -899,6 +903,7 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
+  const taskComposerCatalogsRequired = loadTaskComposerCatalogs || taskComposerCatalogsRequested
   const taskComposerCatalogsEnabled =
     taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
@@ -1050,7 +1055,9 @@ export function WorkbenchProvider({
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
-    isWorkbenchShellReady && modelSelection.isSelectionReady && !skillSelection.isLoading
+    isWorkbenchShellReady &&
+    (!taskComposerCatalogsRequired || modelSelection.isSelectionReady) &&
+    !skillSelection.isLoading
 
   useEffect(() => {
     onStartupReadyChange?.(isWorkbenchShellReady)
@@ -1318,55 +1325,27 @@ export function WorkbenchProvider({
     state.devices,
   ])
 
-  useEffect(() => {
-    if (!debugSnapshotEnabled || !publishDebugSnapshots) return
-
-    let timeout: number | null = null
-    const schedule = () => {
-      if (timeout !== null) return
-      timeout = window.setTimeout(() => {
-        timeout = null
-        updateWorkbenchDebugSnapshot({
-          state,
-          lifecycle: lifecycleSnapshot,
-          taskReminders: runtimeTaskReminders,
-          cloudWorkStatus,
-          composer: {
-            scopeKey: projectChatScopeKey,
-            standaloneChatKey: state.standaloneChatKey,
-            availableModelNames: modelSelection.models.map(model => model.name),
-            currentInputLength: draftInput.length,
-            scopedInputLengths: Object.fromEntries(
-              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-            ),
-            attachmentCount: attachmentSelection.attachments.length,
-            contextUsagePercent: currentContextUsage
-              ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
-              : undefined,
-          },
-        })
-      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
-    }
-    schedule()
-    return () => {
-      if (timeout !== null) {
-        clearTimeout(timeout)
-      }
-    }
-  }, [
-    attachmentSelection.attachments.length,
-    cloudWorkStatus,
-    currentContextUsage,
-    debugSnapshotEnabled,
-    draftInput.length,
-    lifecycleSnapshot,
-    draftInputByScope,
-    modelSelection.models,
-    publishDebugSnapshots,
-    projectChatScopeKey,
-    runtimeTaskReminders,
-    state,
-  ])
+  useDebugSnapshotPublisher(debugSnapshotEnabled && publishDebugSnapshots, () => {
+    updateWorkbenchDebugSnapshot({
+      state,
+      lifecycle: lifecycleSnapshot,
+      taskReminders: runtimeTaskReminders,
+      cloudWorkStatus,
+      composer: {
+        scopeKey: projectChatScopeKey,
+        standaloneChatKey: state.standaloneChatKey,
+        availableModelNames: modelSelection.models.map(model => model.name),
+        currentInputLength: draftInput.length,
+        scopedInputLengths: Object.fromEntries(
+          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+        ),
+        attachmentCount: attachmentSelection.attachments.length,
+        contextUsagePercent: currentContextUsage
+          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
+          : undefined,
+      },
+    })
+  })
 
   const { upgradingDevices, upgradeDevice } = useWorkbenchDeviceUpgrades({
     state,
@@ -1984,7 +1963,7 @@ export function WorkbenchProvider({
       options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
     ) => {
       const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
-      if (transcript.contextUsage) {
+      if (!options?.threadOnly && transcript.contextUsage) {
         const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,
@@ -2039,14 +2018,29 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const appliedRevealRevisionRef = useRef(workspaceTabRevealRevision)
+  useEffect(() => {
+    if (workspaceTabRevealRevision === appliedRevealRevisionRef.current) return
+    appliedRevealRevisionRef.current = workspaceTabRevealRevision
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
+    })
+  }, [stableRefreshWorkLists, workspaceTabRevealRevision])
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({
-        onRuntimeWorkChanged: () => {
+        onRuntimeWorkChanged: payload => {
+          if (payload.archiveCleanup?.errors.length) {
+            const { workspacePath, errors } = payload.archiveCleanup
+            reportArchivedCleanupFailure(
+              `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
+              t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
+            )
+          }
           void stableRefreshWorkLists()
         },
       }),
-    [resolvedServices.chatStream, stableRefreshWorkLists]
+    [resolvedServices.chatStream, stableRefreshWorkLists, t]
   )
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
@@ -2156,29 +2150,6 @@ export function WorkbenchProvider({
         })
       })
   })
-  const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
-    const normalizedTitle = title.trim()
-    if (!normalizedTitle) return
-    const trackingApi = projectTaskTrackingApi(resolvedServices, address)
-    if (!trackingApi) return
-    const key = `${address.deviceId}:${address.taskId}`
-    if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
-    trackingTitleSignaturesRef.current.set(key, normalizedTitle)
-    void trackingApi
-      .updateTaskTrackingTitle(address, normalizedTitle)
-      .then(result => {
-        if (result === null) {
-          trackingTitleSignaturesRef.current.delete(key)
-        }
-      })
-      .catch(error => {
-        trackingTitleSignaturesRef.current.delete(key)
-        console.warn('[Wework] Failed to synchronize project task title', {
-          address,
-          error,
-        })
-      })
-  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -2231,7 +2202,6 @@ export function WorkbenchProvider({
               address,
               title: payload.title,
             })
-            syncRuntimeTaskTitle(address, payload.title)
           },
           onRuntimeGoalUpdated: (address, payload) => {
             const goal = payload.goal ?? null
@@ -2250,7 +2220,6 @@ export function WorkbenchProvider({
             syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
-          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
         },
         syncRuntimeTaskLifecycle
       ),
@@ -2263,7 +2232,6 @@ export function WorkbenchProvider({
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,
-      syncRuntimeTaskTitle,
       syncRuntimeTaskLifecycle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,
@@ -2286,12 +2254,26 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    const response = await executorClient.runtime.cancelRuntimeTask(address)
-    if (!response.accepted) {
-      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    logRuntimeQueueStage(address, 'queue-stop-requested', { source: 'execution-action' })
+    const restoreQueue = getRuntimeConversationQueueController(address).pauseForCancellation()
+    let accepted: boolean | null = null
+    try {
+      const response = await executorClient.runtime.cancelRuntimeTask(address)
+      accepted = response.accepted
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+      }
+      await notifyMainRuntimeWorkChanged(address)
+      await refreshWorkLists()
+    } catch (error) {
+      if (accepted !== true) restoreQueue()
+      throw error
+    } finally {
+      logRuntimeQueueStage(address, 'queue-stop-result', {
+        source: 'execution-action',
+        accepted,
+      })
     }
-    await notifyMainRuntimeWorkChanged(address)
-    await refreshWorkLists()
   })
   const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     const response = await executorClient.runtime.forceStartRuntimeTask(address)

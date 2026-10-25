@@ -18,6 +18,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { CHECKPOINT_TASK_PROMPT, MODEL_PROVIDER_ID } from './shared.mjs'
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
+import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 import {
   packagedResourcesRoot,
   verifyWorkbenchSchemaCompatibility,
@@ -28,6 +29,44 @@ const SESSION_PATH = join('sessions', 'workbench-home-e2e', 'session.marker')
 const ATTACHMENT_PATH = join('workspace', 'attachments', 'workbench-home-e2e.bin')
 const ATTACHMENT = Buffer.from([0, 1, 2, 127, 128, 254, 255])
 const NATIVE_SESSION_MARKER = 'WEWORK_MIGRATION_NATIVE_HISTORY_42'
+
+async function recordNativeTurnFailure(fixture, home, resumeId, error, stdout) {
+  try {
+    const configPath = join(home, 'config.toml')
+    const [configResult, homeResult] = await Promise.allSettled([
+      readFile(configPath, 'utf8'),
+      realpath(home),
+    ])
+    const config = configResult.status === 'fulfilled' ? configResult.value : ''
+    const diagnostic = {
+      home,
+      configPath,
+      resolvedHome: homeResult.status === 'fulfilled' ? homeResult.value : undefined,
+      homeError: homeResult.status === 'rejected' ? homeResult.reason.message : undefined,
+      configError: configResult.status === 'rejected' ? configResult.reason.message : undefined,
+      configBytes: Buffer.byteLength(config),
+      providerSection: config
+        .split('\n')
+        .filter(line => line.includes('model_providers') && line.trim().startsWith('[')),
+      selectedProvider: config.match(/^model_provider\s*=\s*(.+)$/m)?.[1],
+      configMarkerPresent: config.includes(CONFIG_MARKER),
+      resumeId,
+      code: error.code,
+      message: error.message,
+      stdout: stdout ?? error.stdout,
+      stderr: error.stderr,
+      sqlite: await collectCodexSqliteDiagnostics(home, resumeId),
+    }
+    await writeFile(
+      join(fixture.resultDir, 'native-migration-turn-failure.json'),
+      JSON.stringify(diagnostic)
+    )
+    console.error('[native-migration-resume]', JSON.stringify(diagnostic))
+  } catch (diagnosticError) {
+    // Observability must not replace the native execution or validation failure.
+    console.error('Native migration diagnostics failed:', diagnosticError.message)
+  }
+}
 
 async function runNativeTurn(fixture, home, resumeId) {
   const args = resumeId
@@ -50,26 +89,37 @@ async function runNativeTurn(fixture, home, resumeId) {
   args.push('-c', `model_provider=${JSON.stringify(MODEL_PROVIDER_ID)}`)
   const execution = promisify(execFile)(fixture.codexBinary, args, {
     cwd: fixture.workspace,
-    env: { ...fixture.environment, CODEX_HOME: home, WEGENT_CODEX_HOME: home },
+    env: {
+      ...fixture.environment,
+      CODEX_HOME: home,
+      WEGENT_CODEX_HOME: home,
+      RUST_LOG: 'error,codex_rollout::state_db=warn,codex_state=warn',
+    },
     timeout: 120_000,
     maxBuffer: 4 * 1024 * 1024,
   })
   execution.child.stdin.end()
-  const { stdout } = await execution
-  const events = stdout
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map(line => JSON.parse(line))
-  const thread = events.find(event => event.type === 'thread.started')?.thread_id
-  assert.equal(typeof thread, 'string', 'Native Codex did not report its persisted thread')
-  assert.ok(
-    events.some(event => event.type === 'turn.completed'),
-    'Native Codex turn did not finish'
-  )
-  if (resumeId)
-    assert.equal(thread, resumeId, 'Native Codex created a new session instead of resuming')
-  return thread
+  let stdout
+  try {
+    stdout = (await execution).stdout
+    const events = stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+    const thread = events.find(event => event.type === 'thread.started')?.thread_id
+    assert.equal(typeof thread, 'string', 'Native Codex did not report its persisted thread')
+    assert.ok(
+      events.some(event => event.type === 'turn.completed'),
+      'Native Codex turn did not finish'
+    )
+    if (resumeId)
+      assert.equal(thread, resumeId, 'Native Codex created a new session instead of resuming')
+    return thread
+  } catch (error) {
+    await recordNativeTurnFailure(fixture, home, resumeId, error, stdout)
+    throw error
+  }
 }
 
 function assertWithin(root, path) {
@@ -127,6 +177,11 @@ export function createWorkbenchHomeMigrationScenario({
   const completed = []
 
   async function assertActiveHome(control, expectedHome) {
+    // Startup catalog reconciliation can restart Codex and close its SQLite files.
+    // Finish that lifecycle change before probing the same Home with a native CLI.
+    await control.command('ensureLocalModelCatalogReady', 'body', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     const config = await requestExecutor(control, 'executor.codex_home.config.read', uiTimeoutMs)
     assert.equal(resolve(config.codexHome), expectedHome, 'Executor selected the wrong Codex Home')
     assert.equal(resolve(config.configPath), join(expectedHome, 'config.toml'))
@@ -291,6 +346,7 @@ export function createWorkbenchHomeMigrationScenario({
       const attachment = await lstat(attachmentPath, { bigint: true })
       const source = await lstat(sourceHome, { bigint: true })
       fixture = {
+        resultDir,
         namespace: namespace || 'default',
         desktopRoot,
         legacyDatabase,

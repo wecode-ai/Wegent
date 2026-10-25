@@ -1,5 +1,7 @@
+import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -68,12 +70,6 @@ function requestKind(body) {
   } catch {
     return null
   }
-}
-
-async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 export function currentSessionContext(body) {
@@ -191,6 +187,7 @@ export function createDesktopScenario({
       }
 
       const body = await readJson(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const kind = requestKind(body)
       const serialized = JSON.stringify(body)
       const responseId = `wework-context-compaction-${Date.now()}`

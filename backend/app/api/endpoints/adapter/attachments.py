@@ -599,7 +599,8 @@ def _validate_share_token_access(
     return True
 
 
-@router.post("/upload", response_model=AttachmentResponse)
+# MIGRATION-CANDIDATE(api="POST /api/attachments/upload"): remove after final confirmation.
+# @router.post("/upload", response_model=AttachmentResponse)
 async def upload_attachment(
     file: UploadFile = File(...),
     overwrite_attachment_id: Optional[int] = None,
@@ -716,7 +717,8 @@ class AttachmentPlaybackResponse(BaseModel):
     cover_url: Optional[str] = None
 
 
-@router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
+# MIGRATION-CANDIDATE(api="GET /api/attachments/*"): remove after final confirmation.
+# @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
 async def get_attachment(
     attachment_id: int,
     share_token: Optional[str] = Query(
@@ -897,7 +899,8 @@ async def get_attachment_preview(
     )
 
 
-@router.get("/{attachment_id}/download")
+# MIGRATION-CANDIDATE(api="GET /api/attachments/*/download"): remove after final confirmation.
+# @router.get("/{attachment_id}/download")
 async def download_attachment(
     attachment_id: int,
     request: Request,
@@ -1024,50 +1027,6 @@ async def create_attachment_download_token(
         "download_token": _create_download_token(attachment_id, current_user),
         "expires_in": DOWNLOAD_TOKEN_EXPIRE_SECONDS,
     }
-
-
-# MIGRATION-CANDIDATE(api="GET /api/attachments/:attachment_id/executor-download"): remove after final confirmation.
-# @router.get("/{attachment_id}/executor-download")
-async def executor_download_attachment(
-    attachment_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-):
-    """
-    Download attachment for executor.
-
-    This endpoint is called by the Executor to download attachments
-    to the workspace. It supports multiple authentication methods.
-
-    Authentication:
-    - JWT Token: Standard Bearer token in Authorization header
-    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
-    - Task Token: JWT token issued for task execution
-
-    Returns:
-        File binary data with appropriate content type
-    """
-    # Get context and verify ownership
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-        user_id=current_user.id,
-    )
-
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    _require_attachment_download_allowed(db, context, "executor")
-
-    external_response = await _stream_external_attachment(context)
-    if external_response is not None:
-        return external_response
-
-    return await _stream_stored_attachment(context)
 
 
 @router.delete("/{attachment_id}")

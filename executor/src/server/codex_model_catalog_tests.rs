@@ -53,25 +53,26 @@ fn native_catalog_can_be_saved_without_obsolete_capability_fields() {
 }
 
 #[cfg(unix)]
-fn catalog_export_fixture(script: &str) -> (tempfile::TempDir, String) {
-    use std::os::unix::fs::PermissionsExt;
+fn catalog_export_fixture(mode: &str) -> (tempfile::TempDir, String) {
+    use std::os::unix::fs::symlink;
 
     let home = tempfile::tempdir().expect("isolated Codex home");
     let binary = home.path().join("codex");
-    fs::write(&binary, format!("#!/bin/sh\n{script}\n")).expect("fake Codex binary");
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
-        .expect("executable Codex fixture");
+    // A parallel fork can inherit the writer of a newly written executable.
+    // Execute a checked-in script; only its non-executable input varies per test.
+    fs::write(home.path().join("catalog-fixture-mode"), mode).expect("fixture mode");
+    symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex-bundled-catalog.sh"),
+        &binary,
+    )
+    .expect("Codex fixture symlink");
     (home, binary.to_string_lossy().into_owned())
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn bundled_catalog_preserves_native_models_and_supports_overrides() {
-    let (home, binary) = catalog_export_fixture(
-        r#"test "$1 $2 $3" = 'debug models --bundled' || exit 2
-test "$CODEX_HOME" = "$(dirname "$0")" || exit 3
-printf '%s' '{"models":[{"slug":"gpt-6.1-sol","context_window":400000,"native_field":{"enabled":true}},{"slug":"gpt-5.6-sol","context_window":500000}]}'"#,
-    );
+    let (home, binary) = catalog_export_fixture("success");
     let mut catalog = export_bundled_catalog(&binary, home.path())
         .await
         .expect("native bundled catalog");
@@ -111,15 +112,12 @@ printf '%s' '{"models":[{"slug":"gpt-6.1-sol","context_window":400000,"native_fi
 #[cfg(unix)]
 #[tokio::test]
 async fn bundled_catalog_export_reports_failures_without_substituting_models() {
-    for (script, expected) in [
-        ("exit 7", "Codex bundled catalog export failed"),
-        (
-            "printf '%s' 'invalid-json'",
-            "Invalid Codex bundled catalog",
-        ),
-        ("printf '%s' '{}'", "must contain a models array"),
+    for (mode, expected) in [
+        ("exit", "Codex bundled catalog export failed"),
+        ("invalid-json", "Invalid Codex bundled catalog"),
+        ("missing-models", "must contain a models array"),
     ] {
-        let (home, binary) = catalog_export_fixture(script);
+        let (home, binary) = catalog_export_fixture(mode);
         let error = export_bundled_catalog(&binary, home.path())
             .await
             .unwrap_err();

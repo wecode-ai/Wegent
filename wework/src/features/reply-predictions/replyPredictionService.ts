@@ -1,5 +1,10 @@
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  readReplyPrediction,
+  removeReplyPredictionCache,
+  writeReplyPrediction,
+} from './replyPredictionCache'
 
 export interface ReplyPredictionSource {
   scope: string
@@ -17,18 +22,38 @@ export interface ReplyPredictionResult {
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
-  return `${source.scope}\u0000${JSON.stringify([
-    source.latestTurnId || source.revision,
-    source.modelSelection,
-  ])}`
+  return `${source.scope}\u0000${JSON.stringify(
+    [source.latestTurnId || source.revision, source.modelSelection],
+    (_key, value: unknown) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map(key => [key, (value as Record<string, unknown>)[key]])
+          )
+        : value
+  )}`
 }
 
 type PredictionApi = NonNullable<WorkbenchServices['replyPredictionApi']>
 interface PredictionEntry {
+  address: RuntimeTaskAddress
   controller: AbortController
   promise: Promise<string | null>
   accepted: boolean
   settled: boolean
+}
+
+// Keep deletion visible to every API instance without retaining obsolete services.
+const liveServices = new Set<WeakRef<ReplyPredictionService>>()
+
+export function deleteReplyPredictions(address: RuntimeTaskAddress) {
+  for (const reference of liveServices) {
+    const service = reference.deref()
+    if (service) service.removeTask(address)
+    else liveServices.delete(reference)
+  }
+  removeReplyPredictionCache(address)
 }
 
 export class ReplyPredictionService {
@@ -41,6 +66,19 @@ export class ReplyPredictionService {
 
   constructor(api: PredictionApi) {
     this.api = api
+    for (const reference of liveServices) {
+      if (!reference.deref()) liveServices.delete(reference)
+    }
+    liveServices.add(new WeakRef(this))
+  }
+
+  removeTask(address: RuntimeTaskAddress) {
+    for (const [key, entry] of this.entries) {
+      if (entry.address.deviceId !== address.deviceId || entry.address.taskId !== address.taskId)
+        continue
+      this.invalidate(key.split('\u0000')[0])
+    }
+    this.notify()
   }
 
   subscribe = (listener: () => void) => {
@@ -101,11 +139,29 @@ export class ReplyPredictionService {
     if (!entry) {
       this.invalidate(source.scope)
       const controller = new AbortController()
-      const promise = this.generate(source, controller.signal)
-      entry = { controller, promise, accepted: false, settled: false }
+      const cached = readReplyPrediction(source.scope, key)
+      if (cached?.failed) this.failedScopes.add(source.scope)
+      const promise = cached
+        ? Promise.resolve(cached.text)
+        : this.generate(source, controller.signal)
+      entry = {
+        address: source.address,
+        controller,
+        promise,
+        accepted: cached?.accepted ?? false,
+        settled: Boolean(cached),
+      }
       const activeEntry = entry
-      void promise.finally(() => {
+      void promise.then(text => {
         activeEntry.settled = true
+        if (!controller.signal.aborted && this.entries.get(key) === activeEntry) {
+          writeReplyPrediction(source.scope, {
+            key,
+            text,
+            accepted: activeEntry.accepted,
+            failed: this.failedScopes.has(source.scope),
+          })
+        }
         this.notify()
       })
       this.entries.set(key, entry)
@@ -130,7 +186,9 @@ export class ReplyPredictionService {
       isCurrent: () =>
         !entry.accepted && !entry.controller.signal.aborted && this.entries.get(key) === entry,
       onAccept: () => {
+        if (entry.controller.signal.aborted || this.entries.get(key) !== entry) return
         entry.accepted = true
+        writeReplyPrediction(source.scope, { key, text, accepted: true, failed: false })
         this.notify()
       },
     }

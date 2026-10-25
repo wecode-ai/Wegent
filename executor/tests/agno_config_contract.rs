@@ -36,7 +36,6 @@ fn agno_options_inject_task_identity_env_without_mutating_request() {
         .get("WEGENT_SKILL_IDENTITY_TOKEN")
         .is_none());
 }
-
 #[test]
 fn agno_options_copy_first_bot_options_for_team_requests() {
     let request = ExecutionRequest {

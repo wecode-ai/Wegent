@@ -34,9 +34,13 @@ function buildFakeMenu(template: MenuItemConstructorOptions[]): Menu {
   } as unknown as Menu
 }
 
-function createMenu(platform: NodeJS.Platform = 'darwin') {
+function createMenu(
+  platform: NodeJS.Platform = 'darwin',
+  closeWindow?: () => BrowserWindow | null
+) {
   let built: Menu | null = null
   const dispatch = vi.fn()
+  const reload = vi.fn()
   const menu = new ApplicationMenu({
     platform,
     appName: 'Wework',
@@ -48,8 +52,9 @@ function createMenu(platform: NodeJS.Platform = 'darwin') {
     targetWindow: () =>
       ({
         isDestroyed: () => false,
-        webContents: { id: 1 },
+        webContents: { id: 1, reload },
       }) as unknown as BrowserWindow,
+    closeWindow,
     dispatch,
     openDevTools: vi.fn(),
     openLogDirectory: vi.fn(async () => undefined),
@@ -59,10 +64,27 @@ function createMenu(platform: NodeJS.Platform = 'darwin') {
     reportError: vi.fn(),
   })
   menu.setLanguage('en')
-  return { menu, built: () => built!, dispatch }
+  return { menu, built: () => built!, dispatch, reload }
 }
 
 describe('application menu model', () => {
+  test.each(['darwin', 'win32', 'linux'] as const)(
+    'refreshes the selected window from the View menu on %s',
+    platform => {
+      const { menu, built, reload, dispatch } = createMenu(platform)
+      menu.setCapabilities({})
+      const item = built().getMenuItemById('view.refresh')!
+      expect(item.label).toBe('Refresh')
+      expect(item.visible).toBe(true)
+      expect(item.accelerator).toBe('CommandOrControl+R')
+      expect(menu.activateForTesting('view.refresh', 'main')).toBe(true)
+      expect(reload).toHaveBeenCalledOnce()
+      expect(dispatch).not.toHaveBeenCalled()
+      menu.setLanguage('zh-CN')
+      expect(built().getMenuItemById('view.refresh')!.label).toBe('刷新')
+    }
+  )
+
   test('exposes every primary workbench surface with a stable id', () => {
     const { built } = createMenu()
     const ids = built().items.map(item => item.id)
@@ -71,6 +93,7 @@ describe('application menu model', () => {
     expect(item('work.tasks')).toBe('Tasks')
     expect(item('work.projectSpaces')).toBe('Project spaces')
     expect(item('file.newTaskTab')).toBe('New task tab')
+    expect(item('developer.processExplorer')).toBe('Process Explorer')
   })
 
   test('hides capability-gated items until the capability is reported', () => {
@@ -134,6 +157,15 @@ describe('application menu model', () => {
     menu.setCapabilities({})
     expect(menu.activateForTesting('view.terminal', 'main')).toBe(false)
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  test('closes the focused window from the window menu', () => {
+    const close = vi.fn()
+    const target = { isDestroyed: () => false, close } as unknown as BrowserWindow
+    const { built } = createMenu('darwin', () => target)
+    const item = built().getMenuItemById('window.close')!
+    item.click!(item, target, {} as never)
+    expect(close).toHaveBeenCalledOnce()
   })
 
   test('localizes the menu without changing item ids', () => {

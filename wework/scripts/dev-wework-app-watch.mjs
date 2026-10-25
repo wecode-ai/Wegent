@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
+import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata.mjs'
 
 const weworkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -17,56 +18,39 @@ await rm(appWebRoot, { recursive: true, force: true })
 process.env.VITE_APP_BASE_PATH = '/wework/app/'
 process.chdir(weworkRoot)
 
-const watcher = await build({
-  root: weworkRoot,
-  configFile: path.join(weworkRoot, 'vite.config.ts'),
-  logLevel: 'warn',
-  build: {
-    outDir: appWebRoot,
-    // Keep the previous hashed assets available until the completed build id
-    // is published. The running renderer may still request them while Vite is
-    // writing the next generation.
-    emptyOutDir: false,
-    watch: {},
-  },
-})
-
-if (!('on' in watcher)) {
-  throw new Error('Vite did not create a Wework application build watcher')
-}
-
 let completedBuilds = 0
-let finalizing = Promise.resolve()
-let pendingResult = null
-
-watcher.on('event', event => {
-  if (event.code === 'BUNDLE_END') {
-    pendingResult = event.result
-    return
-  }
-  if (event.code === 'END') {
-    const result = pendingResult
-    pendingResult = null
-    if (!result) return
-    finalizing = finalizing
-      .then(async () => {
-        await result?.close()
-        await normalizeBuildMetadata(appWebRoot)
-        completedBuilds += 1
-        await writeFile(buildIdFile, `${Date.now()}-${completedBuilds}\n`)
-        await writeFile(readyFile, `${completedBuilds}\n`)
-        console.log(`[wework-app-watch] built original Wework app (${completedBuilds})`)
-      })
-      .catch(fail)
-    return
-  }
-  if (event.code === 'ERROR') {
-    pendingResult = null
-    fail(event.error)
-    if (completedBuilds === 0) {
-      void watcher.close().finally(() => process.exit(1))
-    }
-  }
+const watcher = await watchDevelopmentBuild({
+  directories: ['src', 'dsh', 'vite', 'public', 'wecode']
+    .map(directory => path.join(weworkRoot, directory))
+    .concat(path.join(weworkRoot, '..', 'packages')),
+  files: [
+    'vite.config.ts',
+    'index.html',
+    'package.json',
+    'tsconfig.json',
+    'tailwind.config.js',
+    'postcss.config.js',
+  ].map(file => path.join(weworkRoot, file)),
+  ignored: [appWebRoot],
+  build: async () => {
+    // A fresh Vite instance owns each generation's CSS and emitted asset references.
+    await build({
+      root: weworkRoot,
+      configFile: path.join(weworkRoot, 'vite.config.ts'),
+      logLevel: 'warn',
+      build: {
+        outDir: appWebRoot,
+        // Existing renderers may still request the previous generation's hashed assets.
+        emptyOutDir: false,
+      },
+    })
+    await normalizeBuildMetadata(appWebRoot)
+    completedBuilds += 1
+    await writeFile(buildIdFile, `${Date.now()}-${completedBuilds}\n`)
+    await writeFile(readyFile, `${completedBuilds}\n`)
+    console.log(`[wework-app-watch] built original Wework app (${completedBuilds})`)
+  },
+  onError: fail,
 })
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -98,5 +82,4 @@ function fail(error) {
   console.error(
     `[wework-app-watch] ${error instanceof Error ? (error.stack ?? error.message) : error}`
   )
-  process.exitCode = 1
 }

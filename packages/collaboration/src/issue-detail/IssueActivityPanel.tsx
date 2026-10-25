@@ -45,10 +45,12 @@ import { issueActivityEntries } from './issueActivityEntries'
 import { activityDisplayBody } from './activityDisplayBody'
 
 export function IssueActivityPanel({
+  commentAssignment,
   api,
   issue,
   project,
   onTaskUpdated,
+  onTaskRead,
   members,
   agents,
   assignments,
@@ -64,11 +66,13 @@ export function IssueActivityPanel({
   taskBindings = [],
   onOpenTaskConversation,
 }: {
+  commentAssignment?: import('./useCommentAssignment').CommentAssignment
   api: Pick<SharedWorkspaceApi, 'assignments' | 'comments' | 'activity'> &
     Partial<Pick<SharedWorkspaceApi, 'attachments' | 'runtime' | 'taskBindings' | 'issues'>>
   issue: CollaborationIssue
   project?: CollaborationProject
   onTaskUpdated?(issue: CollaborationIssue): void
+  onTaskRead(issue: CollaborationIssue): void
   members: CollaborationMember[]
   agents: CollaborationAgent[]
   assignments: CollaborationAssignment[]
@@ -102,13 +106,13 @@ export function IssueActivityPanel({
       if (!api.issues) return
       try {
         const updated = await api.issues.markRead(issue.id, sequence)
-        onTaskUpdated?.(updated)
+        onTaskRead(updated)
       } catch (cause) {
         onError()
         throw cause
       }
     },
-    [api.issues, issue.id, onError, onTaskUpdated]
+    [api.issues, issue.id, onError, onTaskRead]
   )
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
@@ -181,6 +185,7 @@ export function IssueActivityPanel({
           api.issues &&
           project ? (
             <BrowserIssueCommentComposer
+              assignment={commentAssignment}
               key={issue.id}
               api={{
                 attachments: api.attachments,
@@ -207,6 +212,7 @@ export function IssueActivityPanel({
             />
           ) : (
             <IssueWebCommentComposer
+              assignment={commentAssignment}
               key={issue.id}
               issueId={issue.id}
               attachmentApi={api.attachments}

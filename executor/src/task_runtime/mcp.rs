@@ -24,6 +24,8 @@ use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 mod assignment_notifications;
+#[cfg(test)]
+mod issue_access_tests;
 
 use assignment_notifications::emit_local_assignment_notifications;
 
@@ -32,8 +34,13 @@ use super::{
     TaskRuntime, TaskSearch, TaskUpdate,
 };
 
+mod comments;
+mod stand_in;
+pub(crate) use stand_in::{stand_in_identity, stand_in_mcp_client_config};
+
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 pub const NOTIFICATIONS_MCP_SERVER_NAME: &str = "wework_notifications";
+pub const STAND_IN_MCP_SERVER_NAME: &str = "wework_stand_in";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
 pub const SPACE_CONTEXT_GRANT_ENV: &str = "WEWORK_SPACE_CONTEXT_GRANT";
 const SPACE_CONTEXT_GRANT_TTL_SECONDS: i64 = 60 * 60;
@@ -115,6 +122,7 @@ pub(crate) struct SpaceMcpRequestContext {
     surface: WeworkMcpSurface,
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
+    stand_in: Option<stand_in::StandInMcpIdentity>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -122,6 +130,7 @@ pub(crate) enum WeworkMcpSurface {
     #[default]
     ProjectSpace,
     Notifications,
+    StandIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +153,7 @@ impl SpaceMcpRequestContext {
             surface: WeworkMcpSurface::ProjectSpace,
             cloud_collaboration_dispatcher: None,
             event_sender: None,
+            stand_in: None,
         }
     }
 
@@ -155,6 +165,7 @@ impl SpaceMcpRequestContext {
             surface: WeworkMcpSurface::Notifications,
             cloud_collaboration_dispatcher: None,
             event_sender: None,
+            stand_in: None,
         }
     }
 
@@ -178,6 +189,7 @@ impl SpaceMcpRequestContext {
         match self.surface {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
         }
     }
 
@@ -631,6 +643,8 @@ pub(crate) fn decode_space_context_grant(encoded: &str) -> Option<SpaceContextGr
 }
 
 fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<String> {
+    // Personal task context supplies defaults; only dispatch roles have delegated scope.
+    let role = grant.role?;
     if let Some(requested_space_id) = arguments.get("space_id").and_then(Value::as_str) {
         if grant.space_id.as_deref().is_some_and(|space_id| {
             !requested_space_id.trim().is_empty() && requested_space_id != space_id
@@ -638,7 +652,7 @@ fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<S
             return Some("The requested project space is outside this Agent session".to_owned());
         }
     }
-    if grant.role != Some(SpaceContextRole::Manager) {
+    if role == SpaceContextRole::Executor {
         if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
             if grant.item_id.as_deref().is_some_and(|item_id| {
                 !requested_item_id.trim().is_empty() && requested_item_id != item_id
@@ -887,6 +901,9 @@ async fn call_tool_with_context(
     arguments: Value,
     context: &SpaceMcpRequestContext,
 ) -> Value {
+    if context.surface == WeworkMcpSurface::StandIn {
+        return stand_in::call(runtime, name, arguments, context).await;
+    }
     if context.surface == WeworkMcpSurface::Notifications && name != "send_notification" {
         return text_result(
             format!("Unknown {NOTIFICATIONS_MCP_SERVER_NAME} tool: {name}"),
@@ -1285,18 +1302,8 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "add_board_item_comment" => {
-            let project_id = string_argument(&arguments, "space_id");
-            let task_id = string_argument(&arguments, "item_id");
-            let body = string_argument(&arguments, "body");
-            match (project_id, task_id, body) {
-                (Ok(project_id), Ok(task_id), Ok(body)) => runtime
-                    .add_comment(project_id, task_id, body)
-                    .await
-                    .and_then(|comment| serde_json::to_value(comment).map_err(invalid_json)),
-                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
-            }
-        }
+        "list_board_item_comments" => comments::list(runtime, &arguments).await,
+        "add_board_item_comment" => comments::add_local(runtime, &arguments).await,
         "list_item_attachments" => {
             let project_id = string_argument(&arguments, "space_id");
             let task_id = string_argument(&arguments, "item_id");
@@ -2245,13 +2252,25 @@ async fn call_backend_tool(
         "update_board_item" => client
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
             .json(arguments.get("item").unwrap_or(arguments)),
+        "list_board_item_comments" => client
+            .get(format!(
+                "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
+                encode_segment(project_id),
+                encode_segment(task_id()?)
+            ))
+            .query(&[
+                ("after_sequence", arguments.get("after_sequence").and_then(Value::as_i64).unwrap_or(0)),
+                ("limit", arguments.get("limit").and_then(Value::as_i64).unwrap_or(200)),
+            ]),
         "add_board_item_comment" => client
             .post(format!(
-                "{base}/loop-items/{}/comments",
+                "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
+                encode_segment(project_id),
                 encode_segment(task_id()?)
             ))
             .json(&json!({
-                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
+                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
+                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
             })),
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
@@ -3154,17 +3173,23 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "add_board_item_comment",
-            "Add a comment to a board item",
+            "list_board_item_comments",
+            "Read the latest Wework Issue activity comments (oldest first), including previous feedback and PR links. Use after_sequence to page forward; limit defaults to 200 (max 500).",
             json!({
                 "type": "object",
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "body": {"type": "string"}
+                    "after_sequence": {"type": "integer", "minimum": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500}
                 },
-                "required": ["space_id", "item_id", "body"]
+                "required": ["space_id", "item_id"]
             }),
+        ),
+        tool(
+            "add_board_item_comment",
+            "Post an Issue comment. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Pass mentions as [{\"type\":\"user\",\"id\":\"52\",\"label\":\"qindi\"}]. Plain @name text does not notify. Do not send a separate notification for the same mention.",
+            comments::create_schema(),
         ),
         tool(
             "list_item_attachments",
@@ -3494,6 +3519,9 @@ fn tools() -> Vec<Value> {
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+    if context.surface == WeworkMcpSurface::StandIn {
+        return stand_in::tools(context);
+    }
     if context.surface == WeworkMcpSurface::Notifications {
         return tools()
             .into_iter()
@@ -3565,6 +3593,7 @@ fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
         | "read_space_file"
         | "search_board_items"
         | "get_board_item"
+        | "list_board_item_comments"
         | "add_board_item_comment"
         | "list_item_attachments"
         | "upload_item_attachment"
@@ -3909,7 +3938,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_arguments_outside_the_context_grant() {
+    fn personal_issue_context_allows_explicit_project_and_issue_targets() {
         let grant = SpaceContextGrant {
             version: 1,
             task_id: "task-1".to_owned(),
@@ -3926,11 +3955,15 @@ mod tests {
 
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-2", "item_id": "item-1"}))
-                .is_some()
+                .is_none()
+        );
+        assert!(
+            context_scope_error(&grant, &json!({"space_id": "space-2", "item_id": "item-2"}))
+                .is_none()
         );
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-2"}))
-                .is_some()
+                .is_none()
         );
         assert!(
             context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-1"}))

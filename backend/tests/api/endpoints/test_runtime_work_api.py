@@ -1035,39 +1035,6 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
 
 
-def test_runtime_im_notification_settings_endpoint_uses_current_user(
-    test_client,
-    test_token,
-    monkeypatch,
-):
-    from app.api.endpoints import runtime_work
-
-    service_mock = AsyncMock(
-        return_value={
-            "global": {
-                "enabled": True,
-                "sessionKey": "session-1",
-                "session": None,
-            },
-            "runtimeTaskSubscriptions": [],
-        }
-    )
-    monkeypatch.setattr(
-        runtime_work.runtime_work_service,
-        "get_im_notification_settings",
-        service_mock,
-    )
-
-    response = test_client.get(
-        "/api/runtime-work/im-notifications",
-        headers=_auth_headers(test_token),
-    )
-
-    assert response.status_code == 200
-    assert response.json()["global"]["enabled"] is True
-    assert service_mock.await_args.kwargs["user_id"] > 0
-
-
 def test_runtime_global_im_notification_endpoint_dispatches_payload(
     test_client,
     test_token,
@@ -1235,18 +1202,10 @@ def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
     assert response.status_code == 401
 
 
-@pytest.fixture(autouse=True)
-def _retained_python_handler_contracts(test_client):
-    import app.api.endpoints.runtime_work as endpoint_0
-    from tests.legacy_python_routes import legacy_python_handlers
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
 
-    with legacy_python_handlers(test_client.app) as register:
-        register(
-            "/api/runtime-work/im-notifications",
-            endpoint_0.get_im_notification_settings_endpoint,
-            endpoint_0.router,
-            methods=["GET"],
-            response_model=endpoint_0.RuntimeIMNotificationSettingsResponse,
-            response_model_by_alias=True,
-        )
-        yield
+    with component_client(test_client, ("llm_responses",)) as client:
+        yield client

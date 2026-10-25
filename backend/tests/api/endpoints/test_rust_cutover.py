@@ -99,15 +99,20 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
         ("DELETE", "/v1/runtime-tasks/cloud-context"),
         ("GET", "/models/names"),
         ("POST", "/v1/cloud-projects"),
+        ("GET", "/v1/projects/{project_id}"),
         ("GET", "/wework-transcripts/{transcript_id}"),
         ("POST", "/v1/responses"),
         ("GET", "/connector-runtime/tools"),
+        ("GET", "/sites/{siteid}/analytics"),
     ],
 )
-def test_unmigrated_sibling_remains_registered_in_python(
-    method: str, path: str
-) -> None:
-    assert any(
+def test_sibling_ownership_matches_active_route_table(method: str, path: str) -> None:
+    python_registered = any(
         isinstance(route, APIRoute) and route.path == path and method in route.methods
         for route in api_router.routes
     )
+    rust_selected = (method, _canonical_route_path(f"/api{path}")) in {
+        (selected_method, _canonical_route_path(selected_path))
+        for selected_method, selected_path in _rust_owned_routes()
+    }
+    assert python_registered is not rust_selected

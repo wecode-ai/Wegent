@@ -1,4 +1,12 @@
-import { KeyRound, Pencil, ShieldCheck, Trash2, Upload, UserRoundPlus } from 'lucide-react'
+import {
+  ChartNoAxesCombined,
+  KeyRound,
+  Pencil,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  UserRoundPlus,
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Site } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
@@ -15,6 +23,8 @@ interface SiteActionsMenuProps {
   canConfigureEnvironment: boolean
   canDelete: boolean
   canManageCollaborators: boolean
+  canViewAnalytics: boolean
+  onViewAnalytics: (site: Site) => void
   canManageAccess: boolean
   onPublish: (site: Site) => void
   onEdit: (site: Site) => void
@@ -35,6 +45,8 @@ export function SiteActionsMenu({
   canConfigureEnvironment,
   canDelete,
   canManageCollaborators,
+  canViewAnalytics,
+  onViewAnalytics,
   canManageAccess,
   onPublish,
   onEdit,
@@ -45,6 +57,17 @@ export function SiteActionsMenu({
 }: SiteActionsMenuProps) {
   const { t } = useTranslation('sites')
   const items = [
+    ...(canViewAnalytics
+      ? [
+          {
+            label: t('view_analytics'),
+            icon: ChartNoAxesCombined,
+            testId: `site-analytics-menu-item-${site.siteid}`,
+            disabled,
+            onSelect: () => onViewAnalytics(site),
+          },
+        ]
+      : []),
     ...(canEdit
       ? [
           {

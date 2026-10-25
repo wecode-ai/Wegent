@@ -1,12 +1,10 @@
-import { ArrowUpRight, Check, ChevronDown, LayoutDashboard, ListChecks, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
-import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
-import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
@@ -56,36 +54,12 @@ function WorkItemComposerGuideContent({
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [refreshedItem, setRefreshedItem] = useState<CloudLoopItem | null>(null)
   const [taskBindings, setTaskBindings] = useState<TaskBinding[] | null>(item ? null : [])
   const canChangeProject = projects.length > 0 && Boolean(onSelectProject)
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => setOpen(false), [])
-  const outsideRefs = useMemo(() => [menuRef], [])
-  const menuLayout = useAnchoredPortalMenu(menuOpen, triggerRef, menuRef, { align: 'end' })
-
-  useOutsideClick(containerRef, menuOpen, closeMenu, outsideRefs)
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const trigger = triggerRef.current
-    const animationFrame = window.requestAnimationFrame(() => {
-      menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-    })
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      closeMenu()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.cancelAnimationFrame(animationFrame)
-      window.removeEventListener('keydown', handleKeyDown)
-      trigger?.focus()
-    }
-  }, [closeMenu, menuOpen])
 
   useEffect(() => {
     if (!api || !item) return
@@ -127,68 +101,18 @@ function WorkItemComposerGuideContent({
     ? `${resolvedItem.title}${taskSummary ? ` · ${taskSummary}` : ''}`
     : (project?.name ?? t('workbench.default_work_item_board', '我的任务'))
 
-  const projectMenu =
-    menuOpen &&
-    typeof document !== 'undefined' &&
-    createPortal(
-      <div
-        ref={menuRef}
-        role="menu"
-        data-testid="work-item-context-menu"
-        style={{
-          left: menuLayout?.left ?? 0,
-          maxHeight: menuLayout?.maxHeight,
-          top: menuLayout?.top ?? 0,
-          visibility: menuLayout ? 'visible' : 'hidden',
-        }}
-        className={[
-          'fixed z-system-popover max-w-[calc(100vw-2rem)] overflow-y-auto border border-border bg-background shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-          toolbar ? 'w-64 rounded-xl p-1.5' : 'w-[22rem] rounded-2xl p-2',
-        ].join(' ')}
-      >
-        <div className="px-2 pb-1 pt-1 text-xs font-medium text-text-muted">
-          {t('workbench.workspace_label', '工作空间')}
-        </div>
-        {projects.map(option => {
-          const selected =
-            option.id === project?.id && option.project_store === project.project_store
-          return (
-            <button
-              key={`${option.project_store}:${option.id}`}
-              type="button"
-              role="menuitemradio"
-              aria-checked={selected}
-              data-testid={`work-item-workspace-option-${String(option.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`}
-              onClick={() => {
-                closeMenu()
-                if (!selected || resolvedItem) onSelectProject?.(option)
-              }}
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
-            >
-              <LayoutDashboard className="h-4 w-4 shrink-0 text-text-secondary" />
-              <span className="min-w-0 flex-1 truncate">{option.name}</span>
-              {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
-            </button>
-          )
-        })}
-        {onRemoveProject ? (
-          <button
-            type="button"
-            role="menuitem"
-            data-testid="clear-project-space-context-button"
-            onClick={() => {
-              closeMenu()
-              onRemoveProject()
-            }}
-            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm text-text-muted hover:bg-muted hover:text-text-primary"
-          >
-            <X className="h-4 w-4 shrink-0" />
-            <span>{t('workbench.clear_extra_project_space', '不加入其他项目空间')}</span>
-          </button>
-        ) : null}
-      </div>,
-      document.body
-    )
+  const projectMenu = menuOpen ? (
+    <ProjectSpacePickerMenu
+      key={project ? projectKey(project) : 'none'}
+      projects={projects}
+      project={project}
+      triggerRef={triggerRef}
+      containerRef={containerRef}
+      onClose={closeMenu}
+      onSelect={option => onSelectProject?.(option)}
+      onRemoveProject={onRemoveProject}
+    />
+  ) : null
 
   if (resolvedItem) {
     return (
@@ -262,7 +186,7 @@ function WorkItemComposerGuideContent({
               title={t('workbench.task_board_change', '更改看板关联')}
               aria-label={t('workbench.task_board_change', '更改看板关联')}
               aria-expanded={open}
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ChevronDown className="h-3.5 w-3.5" />
@@ -326,7 +250,7 @@ function WorkItemComposerGuideContent({
           onClick={() => setOpen(current => !current)}
           className={projectContextClassName}
           aria-expanded={open}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           title={title}
         >
           {projectContextContent}

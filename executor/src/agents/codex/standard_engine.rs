@@ -25,7 +25,7 @@ use crate::{
 use super::{
     mcp_form::{deferred_form, form_item},
     resolve_codex_binary, run_codex_app_server_turn_with_cancel, CodexAppServerTurn,
-    CodexAppServerTurnOptions,
+    CodexAppServerTurnOptions, CodexNotification,
 };
 
 type TurnFuture = Pin<Box<dyn Future<Output = Result<CodexAppServerTurn, String>> + Send>>;
@@ -51,7 +51,7 @@ impl fmt::Debug for CodexAppServerEngine {
 
 struct LiveTurn {
     future: TurnFuture,
-    notifications: mpsc::UnboundedReceiver<Value>,
+    notifications: mpsc::UnboundedReceiver<CodexNotification>,
     answers: mpsc::Sender<Value>,
     mapper: CodexNotificationEventMapper,
     projection: StandardEventProjection,
@@ -296,7 +296,7 @@ impl LiveTurn {
                 biased;
                 notification = self.notifications.recv() => {
                     if let Some(notification) = notification {
-                        if let Some(interaction) = self.project(request, sink, builder, notification).await? {
+                        if let Some(interaction) = self.project(request, sink, builder, notification.into_value()).await? {
                             return Ok(TurnProgress::Waiting(interaction));
                         }
                     } else {
@@ -309,7 +309,7 @@ impl LiveTurn {
                     let turn = result?;
                     // The protocol future can finish while its final notifications remain queued.
                     while let Ok(notification) = self.notifications.try_recv() {
-                        self.project(request, sink, builder, notification).await?;
+                        self.project(request, sink, builder, notification.into_value()).await?;
                     }
                     agent_session::save_codex_thread_id(request, &turn.thread_id);
                     return Ok(TurnProgress::Finished(turn.outcome));
