@@ -8,12 +8,36 @@ import { acquireProcessLock } from './process-lock.mjs'
 import { isolatedGitEnvironment } from './git-environment.mjs'
 
 export const CODEX_SOURCE_COMMIT = 'cf4041fa09238f33cf106e3046801ed23590bae8'
+export const CODEX_SOURCE_VERSION = '0.163.0-alpha.5'
 const NATIVE_TARGET = 'x86_64-pc-windows-msvc'
 const brokerSource = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../third_party/codex/windows-read-broker.rs'
 )
 const upstreamFsHash = '87c12b3f2baff4e9a12e8654c575c5ac5dea533ae44c21431757bb403b271bac'
+
+export function verifyWorkspaceVersionRefresh(original, refreshed) {
+  const before = original.split('[[package]]\n')
+  const after = refreshed.split('[[package]]\n')
+  if (before.length !== after.length) throw new Error('Codex dependency graph changed')
+  let changes = 0
+  for (let index = 0; index < before.length; index++) {
+    if (before[index] === after[index]) continue
+    const normalized = after[index].replace(
+      `version = "${CODEX_SOURCE_VERSION}"\n`,
+      'version = "0.0.0"\n'
+    )
+    if (
+      /^source = /m.test(before[index]) ||
+      !/^version = "0\.0\.0"$/m.test(before[index]) ||
+      normalized !== before[index]
+    ) {
+      throw new Error('Codex dependency graph changed beyond workspace release versions')
+    }
+    changes++
+  }
+  return changes
+}
 
 export function patchWindowsNoFollow(source, kind) {
   const hashes = {
@@ -182,6 +206,13 @@ export async function buildWindowsCodex(cacheRoot) {
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16',
     }
     const rust = join(source, 'codex-rs')
+    // Upstream release tags stamp Cargo.toml but retain 0.0.0 in Cargo.lock.
+    // Follow upstream's workspace-only refresh, then reject any other change.
+    const lockPath = join(rust, 'Cargo.lock')
+    const originalLock = await readFile(lockPath, 'utf8')
+    await run('cargo', ['update', '--workspace'], rust, env)
+    const refreshed = verifyWorkspaceVersionRefresh(originalLock, await readFile(lockPath, 'utf8'))
+    console.log(`Verified ${refreshed} workspace release versions; external dependencies unchanged`)
     // Keep the upstream lockfile and protocol version. Only the trusted file
     // reader changes; command execution keeps native sandbox enforcement.
     const artifacts = await run(

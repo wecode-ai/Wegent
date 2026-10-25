@@ -11,6 +11,8 @@ import {
   patchWindowsNoFollow,
   transferWindowsCodex,
   windowsCodexRecipe,
+  verifyWorkspaceVersionRefresh,
+  CODEX_SOURCE_VERSION,
 } from './codex-windows-source.mjs'
 
 const roots = []
@@ -45,6 +47,32 @@ async function fixture() {
 test('rejects unreviewed upstream source before applying a compatibility patch', () => {
   expect(() => patchWindowsReadBroker('let command = self.sandbox_command(sandbox)?;')).toThrow(
     'does not match the reviewed version'
+  )
+})
+
+const workspaceLock = 'version = 4\n\n[[package]]\nname = "workspace"\nversion = "0.0.0"\n'
+const registryLock =
+  '\n[[package]]\nname = "registry"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "fixed"\n'
+
+test('release stamping refreshes only local workspace versions', () => {
+  const before = workspaceLock + registryLock
+  const after = workspaceLock.replace('0.0.0', CODEX_SOURCE_VERSION) + registryLock
+  expect(verifyWorkspaceVersionRefresh(before, after)).toBe(1)
+})
+
+test.each([
+  'version = "1.0.0"',
+  'checksum = "fixed"',
+  'source = "registry+https://example.test/index"',
+])('rejects an external dependency change to %s', field => {
+  const before = workspaceLock + registryLock
+  const after = before.replace('0.0.0', CODEX_SOURCE_VERSION).replace(field, `${field}-changed`)
+  expect(() => verifyWorkspaceVersionRefresh(before, after)).toThrow('dependency graph changed')
+})
+
+test('rejects newly resolved dependencies', () => {
+  expect(() => verifyWorkspaceVersionRefresh(workspaceLock, workspaceLock + registryLock)).toThrow(
+    'dependency graph changed'
   )
 })
 

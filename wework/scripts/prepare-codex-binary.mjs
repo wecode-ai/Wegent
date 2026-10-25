@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
 import { acquireProcessLock } from './lib/process-lock.mjs'
-import { buildWindowsCodex } from './lib/codex-windows-source.mjs'
+import { buildWindowsCodex, CODEX_SOURCE_VERSION } from './lib/codex-windows-source.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -339,6 +339,9 @@ async function prepareTarget(target, entry) {
   let targetRoot = extractedRoot
   let sourceBuild = null
   if (target === 'x86_64-pc-windows-msvc') {
+    if (entry.version !== `${CODEX_SOURCE_VERSION}-win32-x64`) {
+      throw new Error('Windows Codex package does not match the reviewed source version')
+    }
     if (process.platform !== 'win32') {
       throw new Error('Windows Codex must be prepared on Windows to verify its permission broker')
     }
