@@ -105,7 +105,10 @@ fn active_codex_text_deltas_survive_interruption() {
     let link = handler.local_task_link("task-1").unwrap();
     let messages = completed_transcript_messages(&link);
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0]["blocks"][0]["content"], "Partial answer");
+    assert_eq!(messages[0]["content"], "Partial answer");
+    assert_eq!(messages[0]["runtimeItems"][0]["id"], "message-1");
+    assert_eq!(messages[0]["runtimeItems"][0]["type"], "assistant_text");
+    assert_eq!(messages[0]["runtimeItems"][0]["content"], "Partial answer");
     assert_eq!(messages[0]["status"], "cancelled");
     assert!(handler
         .active_codex_transcript_messages("task-1")

@@ -291,6 +291,9 @@ pub struct CodexAppServerTurn {
 #[path = "codex/interaction.rs"]
 mod interaction;
 
+#[path = "codex/connection_mcp.rs"]
+mod connection_mcp;
+
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
 
@@ -338,6 +341,10 @@ impl CodexAppServerClient {
         let Some(home) = super::instance_home::request_home(request) else {
             return Ok(self.clone());
         };
+        self.for_home(home)
+    }
+
+    pub(crate) fn for_home(&self, home: PathBuf) -> Result<Self, String> {
         if !home.is_absolute() {
             return Err("Named Agent Home identity is incomplete".to_owned());
         }
@@ -7133,3 +7140,6 @@ mod goal_process_exit_tests;
 #[cfg(test)]
 #[path = "codex/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::environment::LaunchEnvironment;

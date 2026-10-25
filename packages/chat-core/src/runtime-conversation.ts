@@ -66,6 +66,7 @@ export type WorkbenchMessage = Omit<
 > & {
   blocks?: ProcessingBlock[];
   runtimeDisplayItems?: RuntimeAssistantDisplayItem[];
+  runtimeItemId?: string;
   runtimeMessageIndex?: number | null;
   turnId?: string | null;
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null;

@@ -339,6 +339,10 @@
     "./activity-execution-turn": {
       "types": "./src/activity-execution-turn.ts",
       "import": "./src/activity-execution-turn.ts"
+    },
+    "./conversation-search": {
+      "types": "./src/conversation-search.ts",
+      "import": "./src/conversation-search.ts"
     }
   },
   "scripts": {

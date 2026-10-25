@@ -129,6 +129,7 @@ mod codex_accounts;
 mod codex_config;
 mod collection;
 mod command_items;
+mod connections;
 mod context_compaction;
 mod fork_transfer;
 mod hooks;
@@ -145,16 +146,17 @@ mod sidebar;
 mod stand_in;
 mod stand_in_agent;
 mod stand_in_conversations;
-mod stand_in_dingtalk_work;
 mod stand_in_events;
 mod stand_in_ingress;
 mod stand_in_memory;
+mod stand_in_work;
 mod stand_in_workspace;
 mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
 mod transcript_overlays;
+mod transcript_search;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -990,7 +992,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Self {
         self.backend_connection = backend_connection;
         self.start_local_stand_in_scheduler();
-        self.start_dingtalk_stand_in_scheduler();
+        self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
@@ -1139,13 +1141,63 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.memory.delete" => self.stand_in_memory(payload, "delete"),
             "runtime.stand_in.proposal.get" => self.stand_in_proposal(payload, false),
             "runtime.stand_in.proposal.resolve" => self.stand_in_proposal(payload, true),
-            "runtime.stand_in.dingtalk.search" => super::dingtalk::search(&payload).await,
-            "runtime.stand_in.work.list" => self.list_dingtalk_stand_in_work(payload),
-            "runtime.stand_in.work.messages" => self.dingtalk_stand_in_messages(payload),
-            "runtime.stand_in.work.run" => self.run_dingtalk_stand_in_work(payload).await,
-            "runtime.stand_in.work.adjust" => self.adjust_dingtalk_stand_in_work(payload),
-            "runtime.stand_in.work.organize" => self.organize_dingtalk_stand_in_work(payload),
-            "runtime.stand_in.source.retry" => self.retry_dingtalk_source(payload),
+            "runtime.connections.host" => self.configure_connection_host(payload),
+            "runtime.connections.catalog" => self.connection_call("catalog", None, payload).await,
+            "runtime.connections.dependencies.inventory" => {
+                self.handle_codex_app_server_rpc(
+                    json!({"method":"plugin/installed","params":{"cwds":[]}}),
+                )
+                .await
+            }
+            "runtime.connections.resources" => {
+                self.connection_call(
+                    "listResources",
+                    payload["providerId"].as_str(),
+                    payload.clone(),
+                )
+                .await
+            }
+            "runtime.connections.dependencies.install" => {
+                self.connection_call(
+                    "installDependencies",
+                    payload["providerId"].as_str(),
+                    payload.clone(),
+                )
+                .await
+            }
+            "runtime.connections.mcp" => {
+                let mut payload = payload;
+                let provider = string_field(&payload, "providerId")
+                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
+                let declaration = super::connection_host::declared_dependency(
+                    &provider,
+                    &payload["source"],
+                    payload["dependencyAlias"].as_str(),
+                )?;
+                payload["readTools"] = declaration["readTools"].clone();
+                super::connection_mcp::request(self.codex_app_server.clone(), payload).await
+            }
+            "runtime.connections.cli" => {
+                let provider = string_field(&payload, "providerId")
+                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
+                let declaration = super::connection_host::declared_dependency(
+                    &provider,
+                    &payload["source"],
+                    payload["dependencyAlias"].as_str(),
+                )?;
+                super::connection_cli::request(
+                    &self.codex_app_server,
+                    payload,
+                    declaration["cliReadTools"].clone(),
+                )
+                .await
+            }
+            "runtime.stand_in.work.list" => self.list_connection_stand_in_work(payload),
+            "runtime.stand_in.work.messages" => self.connection_stand_in_messages(payload),
+            "runtime.stand_in.work.run" => self.run_connection_stand_in_work(payload).await,
+            "runtime.stand_in.work.adjust" => self.adjust_connection_stand_in_work(payload),
+            "runtime.stand_in.work.organize" => self.organize_connection_stand_in_work(payload),
+            "runtime.stand_in.source.retry" => self.retry_connection_source(payload),
             "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
             "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
             "runtime.stand_in.run" => self.run_stand_in(payload).await,
@@ -1158,6 +1210,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.search" => self.search_transcript(payload).await,
             "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
             "runtime.tasks.transcript.export" => self.export_transcript_segment(payload).await,
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
@@ -1337,6 +1390,10 @@ impl RuntimeWorkRpcHandler {
 }
 
 fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
+    // Connection discovery and transport must never resume unrelated model work.
+    if method.starts_with("runtime.connections.") {
+        return false;
+    }
     !matches!(
         method,
         "runtime.tasks.running_count"

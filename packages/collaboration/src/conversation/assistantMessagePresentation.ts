@@ -9,7 +9,11 @@ import type {
   RuntimeAssistantDisplayItem,
   RuntimeConversationTurn,
 } from "@wegent/chat-core/runtime-conversation";
-import { stripPluginWorkspaceResultMarkers } from "@wegent/chat-core/plugin-workspace-result";
+import type { ConversationSearchSource } from "@wegent/chat-core/conversation-search";
+import {
+  projectPluginWorkspaceResultText,
+  stripPluginWorkspaceResultMarkers,
+} from "@wegent/chat-core/plugin-workspace-result";
 import {
   isContextCompactionToolName,
   isGuidanceToolName,
@@ -114,7 +118,7 @@ export function isCancelledAssistantMessage(
   return message.runtimeStatus === "cancelled";
 }
 
-export function isCancelledPlaceholderContent(content: string): boolean {
+function isCancelledPlaceholderContent(content: string): boolean {
   return ["interrupted", "cancelled", "canceled", "aborted"].includes(
     content.trim().toLowerCase(),
   );
@@ -138,6 +142,21 @@ export function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   if (content === error) return true;
 
   return RAW_FAILED_MESSAGE_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+/** Applies the same prose visibility rules to rendering and search projection. */
+export function getAssistantContentPresentation(message: WorkbenchMessage): {
+  content: string;
+  hidden: boolean;
+} {
+  const hidden =
+    shouldHideFailedAssistantContent(message) ||
+    (isCancelledAssistantMessage(message) &&
+      isCancelledPlaceholderContent(message.content));
+  return {
+    content: hidden ? "" : stripPluginWorkspaceResultMarkers(message.content),
+    hidden,
+  };
 }
 
 export function getDisplayProcessingBlocks(
@@ -173,35 +192,106 @@ export function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   );
 }
 
-/** Returns only message prose in the same order as the rendered assistant timeline. */
-export function getAssistantSearchTextSources(
-  message: WorkbenchMessage,
-): string[] {
-  const cancelled = isCancelledAssistantMessage(message);
-  const hidden =
-    shouldHideFailedAssistantContent(message) ||
-    (cancelled && isCancelledPlaceholderContent(message.content));
-  const content = hidden
-    ? ""
-    : stripPluginWorkspaceResultMarkers(message.content);
-  const blocks = getDisplayProcessingBlocks(message.blocks, cancelled, content);
-  const segments = getOrderedRuntimeDisplaySegments(
+export interface AssistantProseRegion {
+  id: string;
+  content: string;
+  sources: ConversationSearchSource[];
+}
+
+/** This is the renderer's prose layout, including the sources used by its index. */
+export function getAssistantRenderProjection(message: WorkbenchMessage) {
+  const presentation = getAssistantContentPresentation(message);
+  const blocks = getDisplayProcessingBlocks(
+    message.blocks,
+    isCancelledAssistantMessage(message),
+    presentation.content,
+  );
+  const ordered = getOrderedRuntimeDisplaySegments(
     message.runtimeDisplayItems,
     blocks,
   );
-  const orderedContent = segments
-    .flatMap((segment) => (segment.kind === "content" ? [segment.content] : []))
+  const contentSegments = ordered.filter(
+    (segment) => segment.kind === "content",
+  );
+  const orderedContent = contentSegments
+    .map((segment) => segment.content)
     .join("\n\n");
-  const narrativeText = (items: ProcessingBlock[]) =>
-    items.flatMap((block) => (block.type === "text" ? [block.content] : []));
-  if (segments.length && orderedContent === content) {
-    return segments.flatMap((segment) =>
-      segment.kind === "content"
-        ? [segment.content]
-        : narrativeText(segment.blocks),
+  const interleaved =
+    Boolean(presentation.content.trim()) &&
+    orderedContent === presentation.content &&
+    ordered.some(
+      (segment, index) =>
+        segment.kind === "content" &&
+        ordered.slice(index + 1).some((next) => next.kind === "processing"),
     );
+  const firstItem = message.runtimeDisplayItems?.find(
+    (item) => item.type === "assistant_text",
+  );
+  const finalRegion: AssistantProseRegion = {
+    id: firstItem?.id ?? message.id,
+    content: presentation.content,
+    sources: [],
+  };
+  if (!firstItem && presentation.content) {
+    finalRegion.sources = projectPluginWorkspaceResultText(
+      message.content,
+    ).sources.map((source) => ({ ...source, itemId: message.id }));
+  } else {
+    let cursor = 0;
+    for (const segment of contentSegments) {
+      const offset = presentation.content.indexOf(segment.content, cursor);
+      if (offset < 0) continue;
+      finalRegion.sources.push(
+        ...segment.sources.map((source) => ({
+          ...source,
+          start: source.start + offset,
+          end: source.end + offset,
+        })),
+      );
+      cursor = offset + segment.content.length;
+    }
   }
-  return [...narrativeText(blocks), content];
+  const segments: RuntimeDisplaySegment[] = interleaved
+    ? ordered
+    : [
+        ...(blocks.length
+          ? [{ id: blocks[0].id, kind: "processing" as const, blocks }]
+          : []),
+        ...(presentation.content
+          ? [{ kind: "content" as const, ...finalRegion }]
+          : []),
+      ];
+  const regions = segments.flatMap<AssistantProseRegion>((segment) =>
+    segment.kind === "content"
+      ? [segment]
+      : segment.blocks.flatMap((block) =>
+          block.type === "text"
+            ? [
+                {
+                  id: block.id,
+                  content: block.content,
+                  sources: [
+                    {
+                      itemId: block.id,
+                      start: 0,
+                      end: block.content.length,
+                      sourceStart: 0,
+                      sourceEnd: block.content.length,
+                    },
+                  ],
+                },
+              ]
+            : [],
+        ),
+  );
+  return {
+    ...presentation,
+    blocks,
+    segments,
+    regions,
+    interleaved,
+    finalRegion,
+  };
 }
 
 export function getMessageDisplayStateKey(
@@ -224,11 +314,12 @@ type ProcessingSegment = {
   blocks: ProcessingBlock[];
 };
 
-type RuntimeDisplaySegment =
+export type RuntimeDisplaySegment =
   | {
       id: string;
       kind: "content";
       content: string;
+      sources: ConversationSearchSource[];
     }
   | {
       id: string;
@@ -255,8 +346,32 @@ export function getOrderedRuntimeDisplaySegments(
 
   items.forEach((item) => {
     if (item.type === "assistant_text") {
-      if (!item.content.trim()) return;
-      segments.push({ id: item.id, kind: "content", content: item.content });
+      const projection = projectPluginWorkspaceResultText(item.content);
+      const content = projection.content;
+      if (!content.trim()) return;
+      const previous = segments.at(-1);
+      if (previous?.kind === "content") {
+        const start = previous.content.length + 2;
+        previous.sources.push(
+          ...projection.sources.map((source) => ({
+            ...source,
+            itemId: item.id,
+            start: source.start + start,
+            end: source.end + start,
+          })),
+        );
+        previous.content = `${previous.content}\n\n${content}`;
+      } else {
+        segments.push({
+          kind: "content",
+          id: item.id,
+          content,
+          sources: projection.sources.map((source) => ({
+            ...source,
+            itemId: item.id,
+          })),
+        });
+      }
       return;
     }
 

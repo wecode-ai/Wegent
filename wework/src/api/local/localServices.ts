@@ -101,6 +101,8 @@ import type {
   RuntimeSendResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeTranscriptSearchRequest,
+  RuntimeTranscriptSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkspaceRemoveRequest,
@@ -2775,6 +2777,11 @@ export function createRuntimeWorkApiFromIpc(
     },
     getRuntimeTranscript(data: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
       return requestWithLocalDevice('runtime.tasks.transcript', data)
+    },
+    searchRuntimeTranscript(
+      data: RuntimeTranscriptSearchRequest
+    ): Promise<RuntimeTranscriptSearchResponse> {
+      return requestWithLocalDevice('runtime.tasks.transcript.search', data)
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return requestWithLocalDevice('runtime.tasks.search', data)

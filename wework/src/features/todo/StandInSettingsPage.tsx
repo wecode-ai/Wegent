@@ -609,7 +609,7 @@ export function StandInSettingsPage({
                         <ChevronRight className="h-4 w-4" />
                       </button>
                     </div>
-                    {role.collaboration.enabled || role.dingtalk?.length ? (
+                    {role.collaboration.enabled || role.connections?.length ? (
                       <div
                         className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-4"
                         data-testid="stand-in-source-summary"
@@ -629,10 +629,10 @@ export function StandInSettingsPage({
                               </p>
                             </>
                           )}
-                          {!!role.dingtalk?.length && (
+                          {!!role.connections?.length && (
                             <p className="mt-1 text-xs text-text-muted">
-                              {t('standIn.workspace.dingtalk_connections', {
-                                count: role.dingtalk.length,
+                              {t('standIn.workspace.source_connections', {
+                                count: role.connections.length,
                               })}
                             </p>
                           )}

@@ -554,6 +554,12 @@ async fn executor_rejects_settings_for_a_different_device() {
 async fn explicit_retry_reuses_failed_task_and_rolls_back_a_rejected_restart() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    // Collection probes app-server state even when task validation rejects the retry.
+    // Keep those probes out of other tests' process-wide default Home fixtures.
+    handler.codex_app_server = handler
+        .codex_app_server
+        .for_home(root.path().join("codex"))
+        .unwrap();
     handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
     handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));

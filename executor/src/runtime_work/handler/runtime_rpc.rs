@@ -47,6 +47,11 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            if method == "plugin/uninstall" {
+                if let Some(id) = params["pluginId"].as_str() {
+                    super::super::connection_host::assert_dependency_unused(id)?;
+                }
+            }
             let response = self
                 .codex_app_server
                 .request(&method, params)

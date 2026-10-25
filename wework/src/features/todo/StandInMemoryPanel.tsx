@@ -40,15 +40,24 @@ export function StandInMemoryPanel({
     })),
   ]
   for (const identity of [settings.primary, ...settings.roles]) {
-    for (const source of identity?.dingtalk ?? []) {
-      const scope: StandInMemoryScope = {
-        kind: 'dingtalk',
-        id: source.id,
-        profile: source.profile,
-        conversationKind: source.kind,
-      }
-      if (!scopes.some(row => dequal(row.scope, scope)))
-        scopes.push({ scope, label: `${t('standIn.memory.dingtalk')} · ${source.name}` })
+    for (const source of identity?.connections ?? []) {
+      const scope: StandInMemoryScope =
+        source.providerId === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+        (source.kind === 'group' || source.kind === 'direct')
+          ? {
+              kind: 'dingtalk',
+              id: source.id,
+              profile: source.profile,
+              conversationKind: source.kind,
+            }
+          : {
+              kind: 'connection',
+              providerId: source.providerId,
+              id: source.id,
+              profile: source.profile,
+              resourceKind: source.kind,
+            }
+      if (!scopes.some(row => dequal(row.scope, scope))) scopes.push({ scope, label: source.name })
     }
     for (const project of identity?.collaboration?.projects ?? []) {
       const scope: StandInMemoryScope = { kind: 'project', id: project.id, store: project.store }
