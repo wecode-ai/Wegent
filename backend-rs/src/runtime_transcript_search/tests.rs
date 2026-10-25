@@ -117,6 +117,20 @@ fn response_preserves_async_reply_question_context() {
 }
 
 #[test]
+fn response_preserves_visible_region_and_original_utf16_range() {
+    let value = json!({
+        "matches": [{"itemId": "source-2", "turnId": "turn-1", "occurrence": 1,
+            "regionId": "source-1", "range": {"start": 10, "end": 16},
+            "cursor": "opaque:cursor"}],
+        "totalMatches": 1, "isCapped": false,
+    });
+    assert_eq!(
+        serde_json::to_value(response(value.clone()).unwrap()).unwrap(),
+        value
+    );
+}
+
+#[test]
 fn invalid_runtime_results_are_explicit_gateway_failures() {
     for result in [
         json!({"success": false, "error": "device lost"}),
@@ -124,6 +138,8 @@ fn invalid_runtime_results_are_explicit_gateway_failures() {
         json!({"matches": [{"cursor": "", "occurrence": 0}], "totalMatches": 1, "isCapped": false}),
         json!({"matches": [{"cursor": "c", "occurrence": -1}], "totalMatches": 1, "isCapped": false}),
         json!({"matches": [{"cursor": "c", "occurrence": 0, "replyQuestions": [false]}], "totalMatches": 1, "isCapped": false}),
+        json!({"matches": [{"cursor": "c", "occurrence": 0, "regionId": "r", "range": {"start": 2, "end": 2}}], "totalMatches": 1, "isCapped": false}),
+        json!({"matches": [{"cursor": "c", "occurrence": 0, "regionId": "r"}], "totalMatches": 1, "isCapped": false}),
     ] {
         assert_eq!(
             response(result).unwrap_err().status(),

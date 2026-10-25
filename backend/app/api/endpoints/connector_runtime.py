@@ -59,7 +59,8 @@ def get_connector_runtime_user(
     return user
 
 
-@router.get("/tools", response_model=ConnectorToolListResponse)
+# MIGRATION-CANDIDATE(api="GET /api/connector-runtime/tools"): remove after final confirmation.
+# @router.get("/tools", response_model=ConnectorToolListResponse)
 async def list_connector_tools(
     db: Session = Depends(get_db), user: User = Depends(get_connector_runtime_user)
 ) -> ConnectorToolListResponse:

@@ -4,6 +4,9 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { mergeStandInNotifications } from './standInNotifications'
+import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import type { TaskSource } from './NotificationTaskSourceContext'
+import * as runtimeEnvironment from '@/lib/runtime-environment'
 
 const { send, transcript, run } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -68,6 +71,112 @@ beforeEach(() => {
   run.mockResolvedValue(runtimeItem.address)
 })
 describe('notification inline handling', () => {
+  it('keeps manual delegation available when automatic handling fails before task creation', async () => {
+    const windowLabel = vi
+      .spyOn(runtimeEnvironment, 'getDesktopWindowLabel')
+      .mockReturnValue('main')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const notifyAssignment = vi.fn().mockRejectedValue(new Error('cloud_unavailable'))
+    const automaticServices = {
+      ...services,
+      standInApi: { ...services.standInApi!, notifyAssignment },
+    }
+    const pending = {
+      ...assignment,
+      payload: { ...assignment.payload, assignmentId: 'active-assignment' },
+    }
+    function PendingAssignment() {
+      useStandInAssignmentNotifications(
+        { items: [pending], unread_count: 1, next_offset: null },
+        { services: automaticServices } as TaskSource,
+        'account',
+        1
+      )
+      return (
+        <StandInNotificationProcessing
+          notification={pending}
+          rowProps={rowProps}
+          services={automaticServices}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+    }
+    try {
+      render(<PendingAssignment />)
+      await waitFor(() => expect(log).toHaveBeenCalled())
+      expect(run).not.toHaveBeenCalled()
+      const delegate = screen.getByTestId('notification-stand-in-start-assignment')
+      expect(delegate).toBeEnabled()
+      fireEvent.click(delegate)
+      await waitFor(() =>
+        expect(run).toHaveBeenCalledExactlyOnceWith(
+          '12',
+          'ISSUE-1',
+          1,
+          'cloud',
+          'device',
+          'default'
+        )
+      )
+      expect(notifyAssignment).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_running'
+      )
+    } finally {
+      windowLabel.mockRestore()
+      log.mockRestore()
+    }
+  })
+
+  it('keeps the completed result under the original title with its handling badge', async () => {
+    transcript.mockResolvedValue({
+      workspacePath: '/project',
+      runtime: 'codex',
+      running: false,
+      messages: [
+        { id: 'prompt', role: 'user', content: 'Review' },
+        { id: 'result', role: 'assistant', content: 'Review completed' },
+      ],
+      turns: [],
+    })
+    render(view())
+    expect(screen.getByTestId('notification-row')).toHaveTextContent('Review')
+    expect(screen.getByText('notifications.stand_in_handling')).toBeVisible()
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_completed'
+    )
+    expect(await screen.findByText('Review completed')).toBeVisible()
+    expect(screen.getByTestId('notification-stand-in-reply-open-assignment')).toBeEnabled()
+  })
+
+  it.each([undefined, 'Alice'])('preserves the assignment layout with assigner %s', actorName => {
+    const original = { ...assignment, payload: { ...assignment.payload, actorName } }
+    const renderRow = (handled: boolean) => (
+      <StandInNotificationProcessing
+        notification={handled ? mergeStandInNotifications([original], [runtimeItem])[0] : original}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    const rendered = render(renderRow(false))
+    const titleClass = screen.getByText(actorName || 'Review').className
+    const avatar = screen.getByTestId('notification-row-container').firstElementChild?.innerHTML
+    rendered.rerender(renderRow(true))
+    expect(screen.getByText(actorName || 'Review')).toHaveClass(titleClass)
+    expect(screen.getByTestId('notification-row-container').firstElementChild?.innerHTML).toBe(
+      avatar
+    )
+    expect(screen.getByText('notifications.stand_in_handling')).toBeVisible()
+    expect(screen.queryByText('notifications.stand_in_identity')).not.toBeInTheDocument()
+    if (actorName) expect(screen.getByTestId('notification-row-body')).toHaveTextContent('Review')
+    else expect(screen.queryByTestId('notification-row-body')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('notification-row'))
+    expect(rowProps.onClick).toHaveBeenCalledOnce()
+  })
+
   it('omits missing assigner information and shows the task directly', () => {
     render(
       <StandInNotificationProcessing

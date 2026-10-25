@@ -24,10 +24,9 @@ export * from './conversationScrollWrite'
 export { ScrollableMessageArea } from './ScrollableMessageArea'
 export type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
 export type { ConversationSearchTarget } from './useConversationSearchTarget'
-export {
-  getAssistantSearchPresentation,
-  getAssistantSearchTextSources,
-} from './assistantMessagePresentation'
+export { readConversationSearchContent } from './useConversationSearchTarget'
+export { getAssistantRenderProjection } from './assistantMessagePresentation'
+export { projectConversationSearchRegion } from './conversationSearchProjection'
 export * from './TemporaryConversationLayout'
 
 export * from './ProcessingDurationLabel'

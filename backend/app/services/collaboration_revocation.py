@@ -69,7 +69,7 @@ def _require_agent_use(
             profile_id = execution.runtime_selection.get("runtime_profile_id") or (
                 agent.metadata_json or {}
             ).get("default_runtime_profile_id")
-            if profile_id:
+            if profile_id and not execution.assignment_pending:
                 from app.models.delivery import RuntimeProfile
 
                 profile = db.get(RuntimeProfile, str(profile_id))
@@ -87,9 +87,10 @@ def _require_agent_use(
         team = collaboration_permission_service.require_project_team(
             db, execution.cloud_project_id, int(team_id)
         )
-        validate_team_execution_readiness(
-            db, team=team, execution_user_id=execution.assigner_user_id
-        )
+        if not execution.assignment_pending:
+            validate_team_execution_readiness(
+                db, team=team, execution_user_id=execution.assigner_user_id
+            )
 
 
 def _members(group: dict) -> list[dict]:

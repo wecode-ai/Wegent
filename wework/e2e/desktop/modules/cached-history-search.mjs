@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { SEARCH_CONTRACT_CASES, SEARCH_CONTRACT_QUERIES } from './conversation-search-contract.mjs'
 import {
   TERMINAL_ANALYSIS_PROJECTION,
   USER_HISTORY_PROJECTION,
@@ -23,8 +24,8 @@ const GROUP_QUESTIONS = [
 ]
 const GROUP_ANSWERS = [`yes ${GROUP_SHARED_QUERY}`, 'no']
 const GROUP_REPLY_TEXT = GROUP_QUESTIONS.map((question, index) =>
-  [question, GROUP_ANSWERS[index]].join('')
-).join('')
+  [question, GROUP_ANSWERS[index]].join('\n')
+).join('\n')
 const GROUP_REPLY_MATCH = {
   name: 'group-reply',
   index: 0,
@@ -37,6 +38,7 @@ const OLD_VISIBLE_MARKERS = [
   USER_HISTORY_PROJECTION.plan.visibleText,
   USER_HISTORY_PROJECTION.commentedReply.query,
   TERMINAL_ANALYSIS_PROJECTION.query,
+  ...SEARCH_CONTRACT_CASES.flatMap(fixture => fixture.regions.map(region => region.text.trim())),
 ]
 const LAST_ANSWER = 'Cached search answer 119'
 const FIND = '[data-testid="conversation-find-input"]'
@@ -82,6 +84,12 @@ const CASES = [
     matches: [
       { name: 'cancelled', index: 6, text: 'interrupted' },
       { name: 'done-cancelled', index: 0, text: 'interrupted' },
+      {
+        name: 'contract-cancelled-narrative-is-visible',
+        index: 0,
+        text: 'interrupted',
+        narrative: true,
+      },
     ],
   },
   {
@@ -111,6 +119,18 @@ const CASES = [
       occurrence: 0,
     })),
   },
+  ...SEARCH_CONTRACT_QUERIES.map(({ query, matches }) => ({
+    query,
+    matches: matches.map(match => ({
+      name: `contract-${match.fixture.id}`,
+      index: match.itemIndex,
+      text: match.region.text.trim(),
+      narrative: match.narrative,
+      userMessage: match.userMessage,
+      expectedHighlight: match.text,
+      occurrence: match.occurrence,
+    })),
+  })),
 ]
 
 /** Persist a non-provider runtime so the real cached transcript reader owns these messages. */
@@ -206,6 +226,35 @@ export function createCachedHistoryTask(source) {
       ],
     })
   }
+  for (const fixture of SEARCH_CONTRACT_CASES) {
+    for (const [index, item] of fixture.items.entries()) {
+      const terminal = index === fixture.items.length - 1
+      const status = terminal ? fixture.status : 'done'
+      const name = `contract-${fixture.id}`
+      const extra = {
+        status,
+        ...(terminal && fixture.error ? { error: fixture.error } : {}),
+      }
+      if (item.kind === 'user') {
+        append(name, index, item.content, { ...extra, role: 'user' })
+      } else if (item.kind === 'narrative' || item.kind === 'tool') {
+        append(name, index, '', {
+          ...extra,
+          blocks: [
+            {
+              id: `${itemId(name, index)}-block`,
+              type: item.kind === 'narrative' ? 'text' : 'tool',
+              ...(item.kind === 'narrative'
+                ? { content: item.content }
+                : { toolName: 'shell', toolInput: { command: 'true' }, toolOutput: item.content }),
+              status: 'done',
+              createdAt: 1_792_454_400_000 + messages.length * 1000,
+            },
+          ],
+        })
+      } else append(name, index, item.content, extra)
+    }
+  }
   question('unpaired-group', 0, 'First unmatched grouped question?')
   tools('unpaired-group', 60)
   question('unpaired-group', 61, `${UNPAIRED_QUESTION_QUERY}?`)
@@ -257,7 +306,7 @@ export async function verifyCachedHistorySearch(
   }
   for (const { query, matches } of CASES) {
     const result = await search(query)
-    assert.equal(result.totalMatches, matches.length)
+    assert.equal(result.totalMatches, matches.length, `Cached contract query: ${query}`)
     assert.deepEqual(
       result.matches.map(match => match.itemId),
       matches.map(match => {
@@ -300,7 +349,8 @@ export async function verifyCachedHistorySearch(
         match.text,
         timeoutMs,
         content,
-        match.occurrence
+        match.occurrence,
+        match.expectedHighlight
       )
       assert.equal(
         Number(

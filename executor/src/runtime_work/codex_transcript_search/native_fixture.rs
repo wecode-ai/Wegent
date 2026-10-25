@@ -529,11 +529,11 @@ async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complet
     }));
     let mut completed_duplicate = vec![
         json!({"id":"answer-head", "type":"agentMessage", "phase":"final_answer", "text":"needle"}),
-        json!({"id":"analysis-match", "type":"agentMessage", "phase":"analysis", "text":"needle"}),
+        json!({"id":"analysis-match", "type":"agentMessage", "phase":"commentary", "text":"needle"}),
     ];
     completed_duplicate.extend((0..110).map(|index| {
         json!({
-            "id":format!("analysis-{index}"), "type":"agentMessage", "phase":"analysis",
+            "id":format!("analysis-{index}"), "type":"agentMessage", "phase":"commentary",
             "text":format!("padding {index}"),
         })
     }));
@@ -565,8 +565,11 @@ async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complet
             "interrupted",
             "interrupted",
             "",
-            // Unphased cancelled output is a visible process block, not final content.
-            vec![json!({"id":"visible", "type":"agentMessage", "text":"interrupted"})],
+            // A later tool keeps this unphased output in the visible process area.
+            vec![
+                json!({"id":"visible", "type":"agentMessage", "text":"interrupted"}),
+                json!({"id":"tool", "type":"commandExecution", "command":"echo padding"}),
+            ],
             vec![("visible", 0)],
         ),
         (
@@ -604,7 +607,7 @@ async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complet
             "needle",
             "",
             vec![
-                json!({"id":"narrative", "type":"agentMessage", "phase":"analysis", "text":"needle analysis"}),
+                json!({"id":"narrative", "type":"agentMessage", "phase":"commentary", "text":"needle analysis"}),
                 json!({"id":"tool", "type":"commandExecution", "command":"echo padding"}),
             ],
             vec![("narrative", 0)],

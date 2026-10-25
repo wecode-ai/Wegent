@@ -91,6 +91,58 @@ const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
 projectTest.setTimeout(120_000)
 
 projectTest(
+  'expands linked task history in a bounded scroll area',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    // Persist historical session references through the real binding API.
+    for (let index = 0; index < 9; index += 1) {
+      await webApi(page, `/api/v1/loop-items/${issueId}/tasks`, {
+        method: 'POST',
+        body: {
+          deviceId: 'archived-history-device',
+          taskId: `${issueId}-history-${index}`,
+          taskTitle: `Historical task ${index + 1}`,
+        },
+      })
+    }
+
+    await page.goto(path)
+    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    const section = page.getByTestId('cloud-todo-tasks')
+    const list = section.getByTestId('cloud-todo-task-list')
+    const toggle = section.getByTestId('cloud-todo-toggle-tasks')
+    await expect(section.getByTestId('cloud-todo-execution-task-count')).toHaveText('9')
+    await expect(list.getByRole('button')).toHaveCount(2)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await toggle.click()
+    await expect(list.getByRole('button')).toHaveCount(9)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    const geometry = () =>
+      list.evaluate(element => ({
+        height: element.clientHeight,
+        contentHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      }))
+    const before = await geometry()
+    expect(before.height).toBeGreaterThan(0)
+    expect(before.height).toBeLessThanOrEqual(280)
+    expect(before.contentHeight).toBeGreaterThan(before.height)
+    const last = list.getByRole('button').last()
+    await list.hover()
+    await page.mouse.wheel(0, before.contentHeight)
+    await expect.poll(async () => (await geometry()).scrollTop).toBeGreaterThan(0)
+    await expect(last).toBeInViewport()
+    expect((await geometry()).height).toBe(before.height)
+    await expect(toggle).toBeInViewport()
+
+    await toggle.click()
+    await expect(list.getByRole('button')).toHaveCount(2)
+    await toggle.click()
+    expect((await geometry()).scrollTop).toBe(0)
+  }
+)
+
+projectTest(
   'sorts lanes independently with compound rules and restores choices after reload',
   async ({ page, scheduledProject: { path, issueId } }) => {
     const projectId = path.split('/').at(-1)!
@@ -534,8 +586,15 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       const expected = canonical
         .filter(item => [first.id, second.id, outside.id].includes(item.id))
         .map(item => item.id)
+      const groupingSaved = page.waitForResponse(
+        response =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/cloud-projects/${projectId}`) &&
+          response.ok()
+      )
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+      expect((await groupingSaved).ok()).toBe(true)
       await assertOrder(expected)
       await page.reload()
       await assertOrder(expected)

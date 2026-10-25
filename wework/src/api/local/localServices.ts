@@ -4620,10 +4620,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
-    standInApi: createStandInExecutorApi(async (method, payload, deviceId) => {
-      if (deviceId !== (await getLocalDeviceId())) throw new Error('executor-not-local')
-      return request(method, payload)
-    }),
+    standInApi: createStandInExecutorApi((method, payload) => request(method, payload)),
     composerCatalogApi: createRuntimeComposerApi(
       {
         request: async (method, params, deviceId) => {

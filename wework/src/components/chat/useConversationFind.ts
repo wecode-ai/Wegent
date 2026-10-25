@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ScrollableMessageAreaProps } from '@wegent/collaboration/conversation'
+import type {
+  ConversationSearchTarget,
+  ScrollableMessageAreaProps,
+} from '@wegent/collaboration/conversation'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import type {
   RuntimeTranscriptSearchMatch,
@@ -14,7 +17,6 @@ import { isImeComposingEvent } from '@/lib/ime'
 import {
   conversationMatchKey,
   conversationReplyQuestions,
-  conversationSearchText,
   deduplicateConversationSearchIndex,
   findConversationMatches,
   mergeConversationMatches,
@@ -38,19 +40,11 @@ type Hydration = {
   request: SearchRequest
   selection: Selection
   key: string
-  status: 'pending' | 'done' | 'failed'
+  status: 'pending' | 'done' | 'failed' | 'unresolved'
 }
+type LocationFailure = { request: SearchRequest; selection: Selection; key: string }
 
 const EMPTY_RESULT: SearchResult = { matches: [], totalMatches: 0, isCapped: false }
-const searchTextByMessage = new WeakMap<WorkbenchMessage, string>()
-
-function cachedSearchText(message: WorkbenchMessage): string {
-  const cached = searchTextByMessage.get(message)
-  if (cached !== undefined) return cached
-  const text = conversationSearchText(message)
-  searchTextByMessage.set(message, text)
-  return text
-}
 
 function sameSearchResult(left: SearchResult, right: SearchResult) {
   return (
@@ -63,6 +57,9 @@ function sameSearchResult(left: SearchResult, right: SearchResult) {
         conversationMatchKey(match) === conversationMatchKey(other) &&
         match.messageId === other.messageId &&
         match.occurrence === other.occurrence &&
+        match.regionId === other.regionId &&
+        match.range?.start === other.range?.start &&
+        match.range?.end === other.range?.end &&
         match.cursor === other.cursor &&
         match.replyQuestions?.length === other.replyQuestions?.length &&
         (match.replyQuestions?.every(
@@ -82,6 +79,9 @@ function sameSearchTarget(left: SearchTarget | null, right: SearchTarget | null)
     left.query === right.query &&
     left.messageId === right.messageId &&
     left.occurrence === right.occurrence &&
+    left.regionId === right.regionId &&
+    left.range?.start === right.range?.start &&
+    left.range?.end === right.range?.end &&
     left.source === right.source &&
     left.matchCounts.size === right.matchCounts.size &&
     [...left.matchCounts].every(([id, count]) => right.matchCounts.get(id) === count)
@@ -123,6 +123,7 @@ export function useConversationFind(
   })
   const [remoteSearch, setRemoteSearch] = useState<RemoteSearch | null>(null)
   const [hydration, setHydration] = useState<Hydration | null>(null)
+  const [locationFailure, setLocationFailure] = useState<LocationFailure | null>(null)
   const [focusRequest, setFocusRequest] = useState(0)
   const [selected, setSelected] = useState<Selection>({ index: 0 })
   const [navigationTarget, setNavigationTarget] = useState<{
@@ -145,6 +146,7 @@ export function useConversationFind(
     setPublishedSnapshot({ request, result: EMPTY_RESULT })
     setRemoteSearch(null)
     setHydration(null)
+    setLocationFailure(null)
     setFocusRequest(0)
     setSelected({ index: 0 })
   }
@@ -172,10 +174,8 @@ export function useConversationFind(
           return {
             messageId: message.id,
             message,
+            replyQuestions,
             ...source,
-            text: replyQuestions?.length
-              ? conversationSearchText(message, replyQuestions)
-              : cachedSearchText(message),
           }
         })
       )
@@ -310,7 +310,9 @@ export function useConversationFind(
   useEffect(() => {
     if (currentHydration?.status !== 'done' || resolvedMatch || !enabled || queryPending) return
     const timer = window.setTimeout(() => {
-      setHydration(state => (state === currentHydration ? { ...state, status: 'failed' } : state))
+      setHydration(state =>
+        state === currentHydration ? { ...state, status: 'unresolved' } : state
+      )
     }, 1500)
     return () => window.clearTimeout(timer)
   }, [currentHydration, resolvedMatch, enabled, queryPending])
@@ -334,13 +336,25 @@ export function useConversationFind(
   }, [matches, props.messages, props.searchMessages, publishedSnapshot.request])
   const candidateTarget = useMemo(() => {
     if (
+      queryPending ||
+      publishedSnapshot.request !== completedRequest ||
       selected.index !== index ||
       !resolvedMatch ||
-      (currentHydration && currentHydration.status !== 'done')
+      currentHydration?.status === 'pending' ||
+      currentHydration?.status === 'failed'
     )
       return null
     return { query: publishedSnapshot.request.query, ...resolvedMatch, matchCounts }
-  }, [resolvedMatch, currentHydration, publishedSnapshot.request, matchCounts, selected, index])
+  }, [
+    queryPending,
+    completedRequest,
+    resolvedMatch,
+    currentHydration,
+    publishedSnapshot.request,
+    matchCounts,
+    selected,
+    index,
+  ])
   // Only a changed hit or an explicit selection should restart navigation.
   if (
     navigationTarget.selection !== selected ||
@@ -348,6 +362,33 @@ export function useConversationFind(
   )
     setNavigationTarget({ selection: selected, target: candidateTarget })
   const searchTarget = navigationTarget.target
+  const reportNavigationFailure = useCallback(
+    (target: ConversationSearchTarget) => {
+      if (
+        !enabled ||
+        queryPending ||
+        publishedSnapshot.request !== completedRequest ||
+        !searchTarget ||
+        target.query !== searchTarget.query ||
+        target.messageId !== searchTarget.messageId ||
+        target.regionId !== searchTarget.regionId ||
+        target.range?.start !== searchTarget.range?.start ||
+        target.range?.end !== searchTarget.range?.end ||
+        target.occurrence !== searchTarget.occurrence
+      )
+        return
+      setLocationFailure({ request: completedRequest, selection: selected, key: matchKey })
+    },
+    [
+      enabled,
+      queryPending,
+      publishedSnapshot.request,
+      searchTarget,
+      completedRequest,
+      selected,
+      matchKey,
+    ]
+  )
   const changeQuery = useCallback((value: string) => {
     const request = { query: value }
     setSearchRequest(request)
@@ -417,8 +458,20 @@ export function useConversationFind(
 
   const searchFailed =
     !queryPending && remoteSearch?.request === completedRequest && remoteSearch.status === 'failed'
-  const historyFailed =
-    enabled && !queryPending && (searchFailed || currentHydration?.status === 'failed')
+  const failure =
+    !enabled || queryPending
+      ? null
+      : searchFailed
+        ? 'request'
+        : currentHydration?.status === 'failed'
+          ? 'load'
+          : (currentHydration?.status === 'unresolved' && !resolvedMatch) ||
+              (locationFailure?.request === completedRequest &&
+                locationFailure.selection === selected &&
+                locationFailure.key === matchKey)
+            ? 'locate'
+            : null
+  const historyFailed = failure === 'load'
   const remotePending = Boolean(
     onSearchTranscript &&
     (remoteSearch?.request !== completedRequest || remoteSearch.status === 'pending')
@@ -426,7 +479,7 @@ export function useConversationFind(
   const historyLoading = Boolean(
     enabled &&
     !queryPending &&
-    !historyFailed &&
+    !failure &&
     (remotePending ||
       currentHydration?.status === 'pending' ||
       (currentHydration?.status === 'done' && !resolvedMatch))
@@ -438,6 +491,8 @@ export function useConversationFind(
       queryPending,
       historyLoading,
       historyFailed,
+      requestFailed: failure === 'request',
+      locationFailed: failure === 'locate',
       loading: Boolean(props.loading),
       messageCount: props.messages.length,
     })
@@ -447,6 +502,7 @@ export function useConversationFind(
     queryPending,
     historyLoading,
     historyFailed,
+    failure,
     props.loading,
     props.messages.length,
   ])
@@ -461,10 +517,12 @@ export function useConversationFind(
     submit,
     navigationRequest: selected,
     searchTarget,
+    reportNavigationFailure,
     result: { matches: totalMatches, active: matches.length ? index + 1 : 0, isCapped },
     isLoading,
     historyLoading,
     historyFailed: Boolean(historyFailed),
+    failure,
     retry: () => {
       if (searchFailed) {
         setRemoteSearch({ request: completedRequest, status: 'pending' })
@@ -472,6 +530,11 @@ export function useConversationFind(
       } else if (currentHydration?.status === 'failed') {
         setHydration({ ...currentHydration, status: 'pending' })
         setHydrationRetry(value => value + 1)
+      } else if (failure === 'locate') {
+        // Rebuild the result and its anchor; reloading the same stale hit cannot repair it.
+        setSearchRequest({ query })
+        setSelected({ index: 0 })
+        setLocationFailure(null)
       }
     },
   }

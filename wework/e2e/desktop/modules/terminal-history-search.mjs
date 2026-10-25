@@ -4,8 +4,18 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from './executor-rpc.mjs'
 import { ACTIVE_WORKBENCH_SELECTOR, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import {
+  SEARCH_CONTRACT_CASES,
+  SEARCH_CONTRACT_QUERIES,
+  SEARCH_CONTRACT_TURN_START,
+  contractTerminal,
+  searchContractCase,
+  searchContractParts,
+} from './conversation-search-contract.mjs'
 
-export const TERMINAL_HISTORY_TURN_COUNT = 80
+// Each ordinary turn contributes four timeline entries; keep cases outside the 500-entry page.
+export const TERMINAL_HISTORY_TURN_COUNT =
+  SEARCH_CONTRACT_TURN_START + SEARCH_CONTRACT_CASES.length + 130
 const ERROR_MARKER = 'WEWORK_E2E_TERMINAL_ERROR_BODY'
 const ERROR_BODY = `API error: ${ERROR_MARKER}`
 const PARTIAL = 'The operation was interrupted after useful output'
@@ -48,8 +58,8 @@ const ASYNC_RAW_ANSWER_QUERY = '**WEWORK_E2E_ASYNC_RAW_ANSWER**'
 const ASYNC_SHARED_QUERY = 'WEWORK_E2E_ASYNC_SHARED'
 const ASYNC_QUESTION = `${ASYNC_QUESTION_QUERY}: which ${ASYNC_SHARED_QUERY} option?`
 const ASYNC_ANSWER = `${ASYNC_RAW_ANSWER_QUERY} ${ASYNC_SHARED_QUERY}`
-// Question and answer are separate spans; their textContent has no separator.
-const ASYNC_REPLY_TEXT = `${ASYNC_QUESTION}${ASYNC_ANSWER}`
+// Searchable prose separates the displayed question and answer spans with a newline.
+const ASYNC_REPLY_TEXT = `${ASYNC_QUESTION}\n${ASYNC_ANSWER}`
 const ASYNC_REPLY_MATCH = {
   index: ASYNC_REPLY_TURN,
   text: ASYNC_REPLY_TEXT,
@@ -89,7 +99,7 @@ export const USER_HISTORY_PROJECTION = {
       ]),
       '</workspace_comment_context>',
     ].join('\n'),
-    visibleText: `${COMMENT_QUESTION}yes`,
+    visibleText: `${COMMENT_QUESTION}\nyes`,
   },
 }
 const PLUGIN_BODY = `${PLUGIN_QUERY} appears before the result. ${PLUGIN_QUERY} appears again.`
@@ -108,7 +118,7 @@ const PLUGIN_MARKER = `[WEGENT_PLUGIN_RESULT]${JSON.stringify({
   status: 'ready',
 })}`
 const TURNS = [
-  { index: 40, status: 'interrupted', text: 'interrupted', phase: 'commentary' },
+  { index: 40, status: 'interrupted', text: 'interrupted', phase: 'final_answer' },
   {
     index: 41,
     status: 'failed',
@@ -117,7 +127,7 @@ const TURNS = [
     error: { message: ERROR_BODY },
   },
   { index: 42, status: 'completed', text: 'interrupted', phase: 'final_answer' },
-  { index: 43, status: 'interrupted', text: PARTIAL, phase: 'commentary' },
+  { index: 43, status: 'interrupted', text: PARTIAL, phase: 'final_answer' },
   { index: 44, status: 'completed', text: ERROR_BODY, phase: 'final_answer' },
   {
     index: 45,
@@ -172,7 +182,22 @@ export const TERMINAL_HISTORY_SEARCH_CASES = [
       occurrence: 0,
     })),
   },
-  { query: 'interrupted', matches: [TURNS[2], TURNS[3]] },
+  {
+    query: 'interrupted',
+    matches: [
+      TURNS[2],
+      TURNS[3],
+      {
+        index:
+          SEARCH_CONTRACT_TURN_START +
+          SEARCH_CONTRACT_CASES.findIndex(
+            fixture => fixture.id === 'cancelled-narrative-is-visible'
+          ),
+        text: 'interrupted',
+        narrative: true,
+      },
+    ],
+  },
   { query: ERROR_MARKER, matches: [TURNS[4]] },
   {
     query: PLUGIN_QUERY,
@@ -187,6 +212,14 @@ export const TERMINAL_HISTORY_SEARCH_CASES = [
     matches: [TURNS[7], { ...TURNS[7], narrative: true }, TURNS[8]],
     browseContext: true,
   },
+  ...SEARCH_CONTRACT_QUERIES.map(({ query, matches }) => ({
+    query,
+    matches: matches.map(match => ({
+      ...match,
+      text: match.region.text.trim(),
+      expectedHighlight: match.text,
+    })),
+  })),
 ]
 const FIND = '[data-testid="conversation-find-input"]'
 const COUNT =
@@ -195,7 +228,10 @@ const ANSWERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-co
 const USERS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`
 const QUESTION_REPLIES = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-question-reply"]`
 
-export const terminalHistoryTurn = index => TURNS.find(turn => turn.index === index)
+export const terminalHistoryTurn = index => {
+  const fixture = searchContractCase(index)
+  return fixture ? contractTerminal(fixture) : TURNS.find(turn => turn.index === index)
+}
 
 export const terminalHistoryUserText = (index, fallbackText) => {
   if (index === ASYNC_REPLY_TURN) return ASYNC_ANSWER
@@ -213,6 +249,7 @@ export async function assertAsyncHistoryUnloaded(control) {
     USER_HISTORY_PROJECTION.plan.visibleText,
     USER_HISTORY_PROJECTION.commentedReply.query,
     ANALYSIS_QUERY,
+    ...SEARCH_CONTRACT_CASES.flatMap(fixture => fixture.regions.map(region => region.text.trim())),
   ]) {
     assert.equal(
       initialText.includes(marker),
@@ -224,11 +261,13 @@ export async function assertAsyncHistoryUnloaded(control) {
 
 /** Keep native and legacy fixtures identical at the user-visible projection boundary. */
 export function terminalHistoryAssistantParts(index, fallbackText) {
+  const fixture = searchContractCase(index)
+  if (fixture) return searchContractParts(fixture)
   const terminal = terminalHistoryTurn(index)
   const text = terminal?.text ?? fallbackText
   if (terminal?.narrativeText) {
     return [
-      { text: terminal.narrativeText, phase: 'analysis' },
+      { text: terminal.narrativeText, phase: 'commentary' },
       { text, phase: terminal.phase },
     ]
   }
@@ -288,12 +327,22 @@ export function terminalHistoryAssistantParts(index, fallbackText) {
   return [{ text, phase: terminal?.phase ?? 'final_answer' }]
 }
 
-export function terminalHistoryAssistantEvents(index, fallbackText) {
-  return terminalHistoryAssistantParts(index, fallbackText).map(({ text, ...item }) => ({
-    type: 'agent_message',
-    message: text,
-    ...item,
-  }))
+export function terminalHistoryAssistantEvents(index, fallbackText, turnId) {
+  return terminalHistoryAssistantParts(index, fallbackText).map(
+    ({ text, kind, ...item }, offset) =>
+      kind === 'user'
+        ? { type: 'user_message', message: text, text_elements: [], local_images: [] }
+        : kind === 'tool'
+          ? {
+              type: 'mcp_tool_call_end',
+              call_id: `search-contract-tool-${index}-${offset}`,
+              turn_id: turnId,
+              invocation: { server: 'fixture', tool: 'inspect', arguments: {} },
+              result: { Ok: { content: [{ type: 'text', text }], isError: false } },
+              duration: { secs: 0, nanos: 0 },
+            }
+          : { type: 'agent_message', message: text, ...item }
+  )
 }
 
 export function terminalHistoryCompletion(turnId, text, terminal) {
@@ -360,11 +409,33 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
             },
           ],
         },
-        ...parts.map((part, offset) => ({
-          ...assistant,
-          id: `${turnId}-assistant-${offset}`,
-          ...part,
-        })),
+        ...parts.map(({ text, kind, ...part }, offset) => {
+          const id = `${turnId}-assistant-${offset}`
+          if (kind === 'user')
+            return {
+              ...user,
+              id,
+              clientId: id,
+              content: [{ type: 'text', text, text_elements: [] }],
+            }
+          if (kind === 'tool')
+            return {
+              type: 'commandExecution',
+              id,
+              command: 'true',
+              cwd: '.',
+              pluginId: null,
+              scriptPath: null,
+              processId: null,
+              source: 'agent',
+              status: 'completed',
+              commandActions: [],
+              aggregatedOutput: text,
+              exitCode: 0,
+              durationMs: 0,
+            }
+          return { ...assistant, id, text, ...part }
+        }),
       ]
       turnItems.forEach((item, offset) =>
         insertItem.run(
@@ -390,9 +461,11 @@ export async function waitForHighlightedHistoryMatch(
   text,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
   content = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="user-message-content"]`,
-  expectedOccurrence
+  expectedOccurrence,
+  expectedHighlight
 ) {
-  await control.command('waitFor', content, { text, timeoutMs })
+  // Annotation controls add DOM labels; the metrics verify only searchable text and ranges.
+  await control.command('waitFor', content, { timeoutMs })
   const scroller = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
   const deadline = Date.now() + timeoutMs
   let actual
@@ -406,7 +479,9 @@ export async function waitForHighlightedHistoryMatch(
       query &&
       actual.ranges.some(
         range =>
-          range.text.toLowerCase() === query &&
+          (expectedHighlight === undefined
+            ? range.text.toLowerCase() === query
+            : range.text === expectedHighlight) &&
           (expectedOccurrence === undefined || range.occurrence === expectedOccurrence) &&
           range.height > 0 &&
           range.top >= viewport.top &&
@@ -510,7 +585,8 @@ export async function verifyTerminalHistorySearch(
             : match.narrative
               ? `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
               : ANSWERS,
-        match.occurrence
+        match.occurrence,
+        match.expectedHighlight
       )
       assert.equal(
         Number(
@@ -603,7 +679,7 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
           { address, query },
           timeoutMs
         )
-    assert.equal(result.totalMatches, matches.length)
+    assert.equal(result.totalMatches, matches.length, `Native contract query: ${query}`)
     assert.deepEqual(
       result.matches.map(match => match.turnId),
       matches.map(match => `native-search-turn-${match.index}`),

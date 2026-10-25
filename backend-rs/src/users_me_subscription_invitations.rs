@@ -510,13 +510,9 @@ mod tests {
         );
     }
 
-    /// The cutover and the handler registration must agree. The hybrid
-    /// gateway sends this route to the Rust listener, whose unmatched-path
-    /// fallback renders FastAPI's `404 {"detail":"Not Found"}`; a missing
-    /// registration therefore reproduces the recorded failure instead of the
-    /// endpoint's body.
+    /// Deferred APIs retain Python ownership and registered Rust implementations.
     #[test]
-    fn registered_route_keeps_python_ownership() {
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
         const PATH: &str = "/api/users/me/subscription-invitations";
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&file).unwrap();
@@ -525,10 +521,19 @@ mod tests {
                 .routes
                 .iter()
                 .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
-            "GET {PATH} must remain on Python until cutover"
+            "GET {PATH} must remain on Python"
         );
         let table = crate::RouteTable::compile(config).unwrap();
         assert!(!table.matches(&http::Method::GET, PATH));
+        // Other methods also retain Python ownership.
+        for method in [
+            http::Method::POST,
+            http::Method::PUT,
+            http::Method::PATCH,
+            http::Method::DELETE,
+        ] {
+            assert!(!table.matches(&method, PATH));
+        }
 
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const GET: u16 = 1 << 1;

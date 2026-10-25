@@ -1,94 +1,25 @@
-import type { Root, RootContent } from 'mdast'
-import { unified } from 'unified'
-import remarkParse from 'remark-parse'
-import remarkGfm from 'remark-gfm'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type { RuntimeTranscriptSearchResponse } from '@wegent/chat-core/runtime'
+import {
+  matchConversationText,
+  type ConversationSearchRegion,
+  type ConversationTextRange,
+} from '@wegent/chat-core/conversation-search'
 import {
   resolveAsyncRequestUserInputReplies,
   type AsyncRequestUserInputReply,
 } from '@wegent/chat-core/runtime-user-input'
-import { stripPluginWorkspaceResultMarkers } from '@wegent/chat-core/plugin-workspace-result'
 import {
-  getAssistantSearchPresentation,
-  getAssistantSearchTextSources,
-  getUserMessageTextContent,
+  getAssistantRenderProjection,
+  getUserMessageTextProjection,
+  projectConversationSearchRegion,
 } from '@wegent/collaboration/conversation'
-import { stripUnsupportedContentReferenceCitations } from '@wegent/collaboration/markdown'
-
-const parser = unified().use(remarkParse).use(remarkGfm)
-const BLOCK_TYPES = new Set(['root', 'blockquote', 'list', 'listItem', 'table', 'tableRow'])
 
 export interface ConversationSearchMatch {
   messageId: string
   occurrence: number
-}
-
-const MAX_NAVIGABLE_MATCHES = 250
-const repliesByMessages = new WeakMap<
-  WorkbenchMessage[],
-  Map<string, AsyncRequestUserInputReply[]>
->()
-
-/** Associate replies within the same reading window that MessageList renders. */
-export function conversationReplyQuestions(messages: WorkbenchMessage[]) {
-  const cached = repliesByMessages.get(messages)
-  if (cached) return cached
-  const replies = resolveAsyncRequestUserInputReplies(messages)
-  repliesByMessages.set(messages, replies)
-  return replies
-}
-
-function nodeText(node: Root | RootContent): string {
-  if (node.type === 'image' || node.type === 'imageReference' || node.type === 'html') return ''
-  if ('value' in node) return node.value
-  if (!('children' in node)) return ''
-  return node.children
-    .map(child => nodeText(child as RootContent))
-    .join(BLOCK_TYPES.has(node.type) ? '\n' : '')
-}
-
-function assistantSearchText(source: string): string {
-  return nodeText(parser.parse(stripUnsupportedContentReferenceCitations(source)))
-}
-
-export function conversationSearchText(
-  message: WorkbenchMessage,
-  replyQuestions?: AsyncRequestUserInputReply[]
-): string {
-  if (message.role === 'system') return ''
-  if (message.role === 'user' && replyQuestions?.length) {
-    return replyQuestions.map(row => `${row.question}\n${row.answer}`).join('\n')
-  }
-  if (message.role === 'user') {
-    return nodeText(parser.parse(getUserMessageTextContent(message.content)))
-  }
-  return getAssistantSearchTextSources(message).filter(Boolean).map(assistantSearchText).join('\n')
-}
-
-export function findConversationMatches(
-  index: Array<{ messageId: string; text: string }>,
-  query: string
-): { matches: ConversationSearchMatch[]; totalMatches: number; isCapped: boolean } {
-  const needle = query.trim().toLowerCase()
-  const matches: ConversationSearchMatch[] = []
-  let totalMatches = 0
-  if (!needle) return { matches, totalMatches, isCapped: false }
-  for (const entry of index) {
-    const text = entry.text.toLowerCase()
-    let occurrence = 0
-    for (
-      let offset = text.indexOf(needle);
-      offset >= 0;
-      offset = text.indexOf(needle, offset + needle.length)
-    ) {
-      if (matches.length < MAX_NAVIGABLE_MATCHES) {
-        matches.push({ messageId: entry.messageId, occurrence })
-      }
-      occurrence += 1
-      totalMatches += 1
-    }
-  }
-  return { matches, totalMatches, isCapped: totalMatches > matches.length }
+  regionId?: string
+  range?: ConversationTextRange
 }
 
 export interface ConversationFindMatch extends ConversationSearchMatch {
@@ -100,152 +31,183 @@ export interface ConversationFindMatch extends ConversationSearchMatch {
   source?: 'page'
 }
 
+const MAX_NAVIGABLE_MATCHES = 250
+const repliesByMessages = new WeakMap<
+  WorkbenchMessage[],
+  Map<string, AsyncRequestUserInputReply[]>
+>()
+const projectionsByMessage = new WeakMap<WorkbenchMessage, ConversationSearchRegion[]>()
+
+/** Associate replies within the same reading window that MessageList renders. */
+export function conversationReplyQuestions(messages: WorkbenchMessage[]) {
+  const cached = repliesByMessages.get(messages)
+  if (cached) return cached
+  const replies = resolveAsyncRequestUserInputReplies(messages)
+  repliesByMessages.set(messages, replies)
+  return replies
+}
+
+/** Each row is one actual Markdown render region, never one independently parsed item. */
+export function getConversationSearchProjection(
+  message: WorkbenchMessage,
+  replyQuestions?: AsyncRequestUserInputReply[]
+): ConversationSearchRegion[] {
+  if (message.role === 'system') return []
+  if (!replyQuestions?.length) {
+    const cached = projectionsByMessage.get(message)
+    if (cached) return cached
+  }
+  let regions: ConversationSearchRegion[]
+  if (message.role === 'assistant') {
+    regions = getAssistantRenderProjection(message).regions.map(region =>
+      projectConversationSearchRegion(region)
+    )
+  } else {
+    const id = message.runtimeItemId ?? message.id
+    const request = getUserMessageTextProjection(message.content)
+    const content = replyQuestions?.length
+      ? replyQuestions.map(row => `${row.question}\n${row.answer}`).join('\n')
+      : request.content
+    let answerOffset = 0
+    const replySources = replyQuestions?.flatMap(row => {
+      const start = answerOffset + row.question.length + 1
+      answerOffset = start + row.answer.length + 1
+      const sourceStart = message.content.indexOf(row.answer)
+      return sourceStart < 0 || !row.answer
+        ? []
+        : [
+            {
+              itemId: id,
+              start,
+              end: start + row.answer.length,
+              sourceStart,
+              sourceEnd: sourceStart + row.answer.length,
+            },
+          ]
+    })
+    const region = {
+      id,
+      content,
+      sources: replySources ?? [
+        {
+          itemId: id,
+          start: 0,
+          end: content.length,
+          sourceStart: request.sourceStart,
+          sourceEnd: request.sourceEnd,
+        },
+      ],
+    }
+    regions = replyQuestions?.length
+      ? [{ id, text: content, sources: region.sources }]
+      : [projectConversationSearchRegion(region, false)]
+  }
+  if (!replyQuestions?.length) projectionsByMessage.set(message, regions)
+  return regions
+}
+
+export function conversationSearchText(
+  message: WorkbenchMessage,
+  replyQuestions?: AsyncRequestUserInputReply[]
+): string {
+  return getConversationSearchProjection(message, replyQuestions)
+    .map(region => region.text)
+    .join('\n')
+}
+
 type SearchIndexEntry = {
   messageId: string
-  text: string
+  text?: string
   message: WorkbenchMessage
   itemId?: string
+  regionId?: string
+  replyQuestions?: AsyncRequestUserInputReply[]
   source?: 'page'
 }
-type SearchUnit = { itemId: string; text: string }
-const searchUnitsByMessage = new WeakMap<WorkbenchMessage, SearchUnit[] | null>()
 
-/** Stable runtime item ids survive projection changes when an older page joins a turn. */
-function searchUnits(message: WorkbenchMessage, text?: string): SearchUnit[] | null {
-  if (!message.runtimeDisplayItems?.length || message.role !== 'assistant') return null
-  const cached = searchUnitsByMessage.get(message)
-  if (cached !== undefined) return cached
-  const { content: visibleContent, blocks: displayBlocks } = getAssistantSearchPresentation(message)
-  const blocks = new Map(displayBlocks.map(block => [block.id, block]))
-  const units = message.runtimeDisplayItems.flatMap<SearchUnit>(item => {
-    const block = blocks.get(item.id)
-    const source =
-      item.type === 'assistant_text'
-        ? visibleContent
-          ? stripPluginWorkspaceResultMarkers(item.content)
-          : ''
-        : block?.type === 'text'
-          ? block.content
-          : ''
-    return source
-      ? [
-          {
-            itemId: item.id,
-            text: assistantSearchText(source),
-          },
-        ]
-      : []
-  })
-  const actual = text ?? conversationSearchText(message)
-  const result = units.map(unit => unit.text).join('\n') === actual ? units : null
-  searchUnitsByMessage.set(message, result)
-  return result
-}
-
-/** Index provider items once even when the reading window overlaps live messages. */
+/** Stable region ids survive overlap between loaded context and live messages. */
 export function deduplicateConversationSearchIndex(
   entries: SearchIndexEntry[]
-): SearchIndexEntry[] {
+): Array<SearchIndexEntry & { text: string }> {
   const seen = new Set<string>()
-  return entries.flatMap(entry => {
-    const units = searchUnits(entry.message, entry.text)
-    const rows = units
-      ? units.map(unit => ({
+  return entries.flatMap(entry =>
+    getConversationSearchProjection(entry.message, entry.replyQuestions).flatMap(region => {
+      if (seen.has(region.id)) return []
+      seen.add(region.id)
+      return [
+        {
           ...entry,
-          messageId: unit.itemId,
-          itemId: unit.itemId,
-          text: unit.text,
-        }))
-      : [entry]
-    return rows.filter(row => {
-      const key = row.itemId ?? row.message.id
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
+          messageId: region.id,
+          itemId: region.id,
+          regionId: region.id,
+          text: region.text,
+        },
+      ]
     })
-  })
-}
-
-function countOccurrences(text: string, query: string): number {
-  const needle = query.trim().toLowerCase()
-  if (!needle) return 0
-  const haystack = text.toLowerCase()
-  let count = 0
-  for (
-    let at = haystack.indexOf(needle);
-    at >= 0;
-    at = haystack.indexOf(needle, at + needle.length)
   )
-    count += 1
-  return count
 }
 
-type UnitMatchCount = { itemId: string; preceding: number; count: number }
-const unitCountsByMessage = new WeakMap<
-  WorkbenchMessage,
-  { query: string; counts: UnitMatchCount[] }
->()
-
-function unitMatchCounts(
-  message: WorkbenchMessage,
-  query: string,
-  text?: string
-): UnitMatchCount[] {
-  const cached = unitCountsByMessage.get(message)
-  if (cached?.query === query) return cached.counts
-  let preceding = 0
-  const counts = (searchUnits(message, text) ?? []).map(unit => {
-    const count = countOccurrences(unit.text, query)
-    const result = { itemId: unit.itemId, preceding, count }
-    preceding += count
-    return result
-  })
-  unitCountsByMessage.set(message, { query, counts })
-  return counts
+export function findConversationMatches(
+  index: Array<{ messageId: string; text: string; regionId?: string }>,
+  query: string
+): { matches: ConversationSearchMatch[]; totalMatches: number; isCapped: boolean } {
+  const matches: ConversationSearchMatch[] = []
+  let totalMatches = 0
+  for (const entry of index) {
+    const ranges = matchConversationText(entry.text, query)
+    ranges.forEach((range, occurrence) => {
+      if (matches.length < MAX_NAVIGABLE_MATCHES) {
+        matches.push({
+          messageId: entry.messageId,
+          occurrence,
+          regionId: entry.regionId ?? entry.messageId,
+          range,
+        })
+      }
+    })
+    totalMatches += ranges.length
+  }
+  return { matches, totalMatches, isCapped: totalMatches > matches.length }
 }
 
 export function conversationMatchKey(match: ConversationFindMatch): string {
-  return `${match.itemId ?? match.messageId}:${match.itemOccurrence ?? match.occurrence}`
+  return `${match.regionId ?? match.itemId ?? match.messageId}:${match.itemOccurrence ?? match.occurrence}`
 }
 
 export function mergeConversationMatches(
   local: ReturnType<typeof findConversationMatches>,
   index: SearchIndexEntry[],
-  query: string,
-  persisted?: import('@wegent/chat-core/runtime').RuntimeTranscriptSearchResponse
+  _query: string,
+  persisted?: RuntimeTranscriptSearchResponse
 ): { matches: ConversationFindMatch[]; totalMatches: number; isCapped: boolean } {
   const byId = new Map(index.map(entry => [entry.messageId, entry]))
   const userItemIds = new Map(
     persisted?.matches.flatMap(match =>
-      match.messageId && match.itemId ? [[match.messageId, match.itemId] as const] : []
+      match.messageId && match.itemId
+        ? [[match.messageId, match.regionId ?? match.itemId] as const]
+        : []
     )
   )
   const loaded = local.matches.map<ConversationFindMatch>(match => {
     const entry = byId.get(match.messageId)
-    if (entry?.itemId)
-      return {
-        messageId: entry.message.id,
-        occurrence: match.occurrence,
-        itemId: entry.itemId,
-        itemOccurrence: match.occurrence,
-      }
-    if (entry?.message.role === 'user' && userItemIds.has(match.messageId))
-      return {
-        ...match,
-        itemId: userItemIds.get(match.messageId),
-        itemOccurrence: match.occurrence,
-      }
-    const units = entry ? unitMatchCounts(entry.message, query, entry.text) : []
-    for (const unit of units) {
-      if (match.occurrence < unit.preceding + unit.count)
-        return { ...match, itemId: unit.itemId, itemOccurrence: match.occurrence - unit.preceding }
+    const regionId =
+      entry?.message.role === 'user'
+        ? (userItemIds.get(entry.message.id) ?? match.regionId)
+        : match.regionId
+    return {
+      ...match,
+      messageId: entry?.message.id ?? match.messageId,
+      regionId,
+      itemId: regionId,
+      itemOccurrence: match.occurrence,
+      source: entry?.source,
     }
-    return entry?.source ? { ...match, messageId: entry.message.id, source: entry.source } : match
   })
   if (!persisted) return { ...local, matches: loaded }
   const matches: ConversationFindMatch[] = persisted.matches.map(match => ({
     ...match,
     messageId: match.messageId ?? '',
+    regionId: match.regionId ?? match.itemId,
     itemOccurrence: match.occurrence,
   }))
   const keys = new Set(matches.map(conversationMatchKey))
@@ -258,7 +220,6 @@ export function mergeConversationMatches(
       matches.push(match)
     }
   }
-  // A capped response cannot identify overlap outside its retained navigation window.
   const totalMatches = persisted.isCapped
     ? Math.max(persisted.totalMatches, local.totalMatches)
     : persisted.totalMatches + local.totalMatches - duplicates
@@ -269,55 +230,59 @@ export function mergeConversationMatches(
   }
 }
 
-const visibleTextByMessage = new WeakMap<WorkbenchMessage, string>()
-function cachedMessageText(
-  message: WorkbenchMessage,
-  replyQuestions?: AsyncRequestUserInputReply[]
-): string {
-  // A reply's presentation can change while its own message object stays unchanged.
-  if (replyQuestions?.length) return conversationSearchText(message, replyQuestions)
-  const cached = visibleTextByMessage.get(message)
-  if (cached !== undefined) return cached
-  const text = conversationSearchText(message)
-  visibleTextByMessage.set(message, text)
-  return text
-}
-
 function resolveMessageMatch(
   match: ConversationFindMatch,
   messages: WorkbenchMessage[],
   query: string
 ): ConversationSearchMatch | null {
-  const message = match.itemId
-    ? messages.find(
-        message =>
-          message.id === match.itemId ||
-          (message.role === 'user' && message.id === match.messageId) ||
-          message.runtimeDisplayItems?.some(item => item.id === match.itemId)
-      )
-    : messages.find(message => message.id === match.messageId)
-  if (!message) return null
-  const replyQuestions = conversationReplyQuestions(messages).get(message.id)
-  if (
-    match.replyQuestions &&
-    (match.replyQuestions.length !== (replyQuestions?.length ?? 0) ||
-      match.replyQuestions.some(
-        (question, index) => question !== replyQuestions?.[index]?.question
-      ))
-  )
-    return null
-  if (!match.itemId || message.role === 'user' || !message.runtimeDisplayItems?.length) {
+  const id = match.regionId ?? match.itemId
+  const replies = conversationReplyQuestions(messages)
+  for (const message of messages) {
     if (
-      match.cursor &&
-      countOccurrences(cachedMessageText(message, replyQuestions), query) <= match.occurrence
+      message.id !== match.messageId &&
+      id &&
+      message.id !== id &&
+      message.runtimeItemId !== id &&
+      !message.runtimeDisplayItems?.some(item => item.id === id) &&
+      !message.blocks?.some(block => block.id === id)
     )
-      return null
-    return { messageId: message.id, occurrence: match.occurrence }
+      continue
+    if (!id && message.id !== match.messageId) continue
+    const replyQuestions = replies.get(message.id)
+    if (
+      match.replyQuestions &&
+      (match.replyQuestions.length !== (replyQuestions?.length ?? 0) ||
+        match.replyQuestions.some(
+          (question, index) => question !== replyQuestions?.[index]?.question
+        ))
+    )
+      continue
+    let preceding = 0
+    for (const region of getConversationSearchProjection(message, replyQuestions)) {
+      const ranges = matchConversationText(region.text, query)
+      const regionMatches =
+        !id ||
+        region.id === id ||
+        region.sources.some(source => source.itemId === id) ||
+        (message.role === 'user' && message.id === match.messageId)
+      if (regionMatches) {
+        const occurrence = match.itemOccurrence ?? match.occurrence
+        const range = ranges[occurrence]
+        if (
+          range &&
+          (!match.range || (range.start === match.range.start && range.end === match.range.end))
+        ) {
+          return {
+            messageId: message.id,
+            occurrence: preceding + occurrence,
+            regionId: region.id,
+            range,
+          }
+        }
+      }
+      preceding += ranges.length
+    }
   }
-  const unit = unitMatchCounts(message, query).find(unit => unit.itemId === match.itemId)
-  const occurrence = match.itemOccurrence ?? match.occurrence
-  if (unit && occurrence < unit.count)
-    return { messageId: message.id, occurrence: unit.preceding + occurrence }
   return null
 }
 
@@ -327,7 +292,10 @@ export function resolveConversationMatch(
   query: string,
   searchMessages?: WorkbenchMessage[]
 ): (ConversationSearchMatch & { source?: 'page' }) | null {
-  if (searchMessages?.length && (match.itemId || match.cursor || match.source === 'page')) {
+  if (
+    searchMessages?.length &&
+    (match.regionId || match.itemId || match.cursor || match.source === 'page')
+  ) {
     const target = resolveMessageMatch(match, searchMessages, query)
     if (target) return { ...target, source: 'page' }
   }

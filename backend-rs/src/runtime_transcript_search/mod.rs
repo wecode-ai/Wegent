@@ -48,8 +48,18 @@ struct SearchMatch {
     turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reply_questions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    range: Option<SearchRange>,
     occurrence: u64,
     cursor: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SearchRange {
+    start: u64,
+    end: u64,
 }
 
 fn response(result: Value) -> Result<SearchResponse, FastApiError> {
@@ -65,7 +75,16 @@ fn response(result: Value) -> Result<SearchResponse, FastApiError> {
     }
     serde_json::from_value::<SearchResponse>(result)
         .ok()
-        .filter(|response| response.matches.iter().all(|item| !item.cursor.is_empty()))
+        .filter(|response| {
+            response.matches.iter().all(|item| {
+                !item.cursor.is_empty()
+                    && match (&item.region_id, &item.range) {
+                        (None, None) => true,
+                        (Some(id), Some(range)) => !id.is_empty() && range.start < range.end,
+                        _ => false,
+                    }
+            })
+        })
         .ok_or_else(|| {
             error(
                 StatusCode::BAD_GATEWAY,

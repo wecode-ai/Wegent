@@ -459,12 +459,11 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("claude");
-        // Execute an immutable fixture so parallel subprocesses cannot retain a writable inode.
-        symlink(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harness-version.sh"),
-            &executable,
-        )
-        .unwrap();
+        // A checked-in executable avoids writer descriptors inherited by other
+        // parallel tests' child processes, which can cause ETXTBSY on Linux.
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/local-harness-version.sh");
+        symlink(fixture, &executable).unwrap();
 
         let descriptors = list_local_harnesses(ListLocalHarnessesRequest {
             executable_overrides: HashMap::from([(

@@ -51,6 +51,9 @@ fn hydrate_reader(
         .ok_or_else(|| "selected turn is missing".to_owned())
 }
 
+#[path = "codex_legacy_search/contract_tests.rs"]
+mod contract_tests;
+
 #[test]
 fn legacy_async_reply_search_keeps_raw_answer_and_complete_distant_question_turn() {
     let mut records = vec![
@@ -411,7 +414,7 @@ fn failed_legacy_turn_keeps_error_like_item_inside_meaningful_joined_answer() {
     ]);
     let response = search(&bytes, "needle");
     assert_eq!(response["totalMatches"], 1);
-    assert_eq!(response["matches"][0]["itemId"], "item-2");
+    assert_eq!(response["matches"][0]["itemId"], "item-1");
 }
 
 #[test]
@@ -685,9 +688,16 @@ fn failed_match_restores_complete_joined_answer_and_keeps_neighbor_pagination() 
     assert_eq!(failed["items"][151]["text"], "needle");
     assert_eq!(failed["error"], "needle");
     let sources = codex_turn_search_sources(failed, &HashMap::new(), None, &mut Default::default());
-    assert!(sources
+    let (_, text) = sources
         .iter()
-        .any(|(id, text)| id == &cursor.item_id && text == "needle"));
+        .find(|(id, _)| id == &cursor.item_id)
+        .unwrap();
+    assert!(text.starts_with("useful output\npartial 0"));
+    assert!(text.ends_with("partial 149\nneedle"));
+    assert_eq!(
+        json!(search_ranges(text, "needle")[0]),
+        matches["matches"][0]["range"]
+    );
     for (direction, boundary, expected_turn) in [
         (
             CodexTranscriptDirection::Descending,
@@ -771,7 +781,8 @@ fn interrupted_match_restores_the_complete_meaningful_partial_answer() {
     assert!(
         codex_turn_search_sources(&turn, &HashMap::new(), None, &mut Default::default())
             .iter()
-            .any(|(_, text)| text == "needle")
+            .any(|(_, text)| text.starts_with("partial 0\npartial 1")
+                && text.ends_with("partial 139\nneedle"))
     );
 }
 
@@ -823,7 +834,6 @@ fn legacy_search_context_includes_adjacent_turns_and_can_browse_both_edges() {
             .collect::<Vec<_>>()
     };
     assert_eq!(turn_ids(&page), ["turn-1", "turn-2", "turn-3"]);
-    assert!(page.prepend_item_turn_ids.is_empty());
 
     let before = parse_legacy_context_cursor(page.before_cursor.as_deref().unwrap())
         .unwrap()
@@ -837,7 +847,6 @@ fn legacy_search_context_includes_adjacent_turns_and_can_browse_both_edges() {
     .unwrap();
     assert_eq!(turn_ids(&older), ["turn-0"]);
     assert!(older.before_cursor.is_none());
-    assert!(older.prepend_item_turn_ids.contains("turn-0"));
 
     let after = parse_legacy_context_cursor(page.after_cursor.as_deref().unwrap())
         .unwrap()
@@ -851,7 +860,6 @@ fn legacy_search_context_includes_adjacent_turns_and_can_browse_both_edges() {
     .unwrap();
     assert_eq!(turn_ids(&newer), ["turn-4", "turn-5"]);
     assert!(newer.after_cursor.is_none());
-    assert!(newer.prepend_item_turn_ids.is_empty());
     assert!(parse_legacy_context_cursor("other-cursor")
         .unwrap()
         .is_none());
@@ -903,10 +911,7 @@ fn long_legacy_neighbor_context_pages_are_bounded_and_never_skip_items() {
             collected.extend(next);
             boundary = match direction {
                 CodexTranscriptDirection::Ascending => page.after_cursor,
-                CodexTranscriptDirection::Descending => {
-                    assert!(page.prepend_item_turn_ids.contains("older"));
-                    page.before_cursor
-                }
+                CodexTranscriptDirection::Descending => page.before_cursor,
             };
         }
     }

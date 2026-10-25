@@ -16,8 +16,8 @@ export function ConversationFindBar({ find }: { find: ReturnType<typeof useConve
       placeholder={t('search.placeholder')}
       testIdPrefix="conversation-find"
       statusLabel={
-        find.historyFailed
-          ? t('search.history_failed')
+        find.failure
+          ? t(`search.${find.failure}_failed`)
           : find.historyLoading
             ? t('search.loading')
             : undefined
@@ -26,7 +26,7 @@ export function ConversationFindBar({ find }: { find: ReturnType<typeof useConve
       onStep={find.step}
       onEnter={find.submit}
       onClose={find.close}
-      onRetry={find.historyFailed ? find.retry : undefined}
+      onRetry={find.failure ? find.retry : undefined}
     />
   )
 }

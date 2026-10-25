@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 
 import {
@@ -133,7 +134,10 @@ import {
 } from './resilience-flows.mjs'
 
 import { matrixCaseId } from './response-protocol.mjs'
-import { collectWindowsNetworkDiagnostics } from './windows-network-diagnostics.mjs'
+import {
+  collectWindowsNetworkDiagnostics,
+  observeWindowsSocketExhaustion,
+} from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 
 import {
@@ -201,8 +205,6 @@ import {
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
   MODEL_API_KEY,
   MODEL_SWITCH_ONLY,
-  MCP_ELICITATION_COMPLETION_TEXT,
-  MCP_ELICITATION_PROMPT,
   PASTED_WORKSPACE_PATHS_ONLY,
   PLUGIN_DISPLAY_NAME,
   PLUGIN_MARKETPLACE_NAME,
@@ -278,6 +280,7 @@ import {
 
 import {
   verifyAsyncRequestUserInput,
+  verifyFreeTextRequestUserInput,
   verifyAsyncQuestionWaitingIndicator,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
@@ -1473,6 +1476,25 @@ async function main() {
         appendProcessOutput(child.stdout, appLogPath),
         appendProcessOutput(child.stderr, appLogPath),
       ])
+      if (process.platform === 'win32') {
+        const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
+          void Promise.resolve()
+            .then(() => {
+              const snapshot = collectWindowsNetworkDiagnostics()
+              return writeFile(
+                join(resultDir, 'windows-network-exhaustion-at-error.json'),
+                JSON.stringify(snapshot, null, 2),
+                { flag: 'wx' }
+              )
+            })
+            .catch(error => {
+              if (error.code !== 'EEXIST') {
+                console.error('[desktop-e2e] Immediate network diagnostics failed:', error.code)
+              }
+            })
+        })
+        child.once('exit', stopObserving)
+      }
       return child
     }
     app = await startDesktopAppProcess()
@@ -2299,6 +2321,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
       phase = 'request-user-input-async'
       await verifyAsyncRequestUserInput({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
+      phase = 'free-text-request-user-input'
+      await verifyFreeTextRequestUserInput({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
         executorHome,
@@ -4836,110 +4864,6 @@ async function verifyPermissionModes(control) {
     /Workspace|工作区/,
     'Restoring workspace mode did not update the permission mode'
   )
-}
-
-async function verifyMcpElicitationInFullAccess(control) {
-  const evidencePath = join(resultDir, 'mcp-elicitation-result.jsonl')
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'The MCP elicitation fixture produced evidence before the scenario started'
-  )
-
-  control.setScenario('mcp_elicitation')
-  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
-  await sendPromptUntilScenarioRequest(
-    control,
-    ACTIVE_COMPOSER_SELECTOR,
-    MCP_ELICITATION_PROMPT,
-    'mcp_elicitation'
-  )
-  await control.command('waitFor', '[data-testid="mcp-url-authorization-card"]', {
-    text: 'example.com',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'The URL elicitation was acknowledged without user consent'
-  )
-  await control.command('click', '[data-testid="mcp-url-authorization-cancel"]')
-  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
-    text: '访问范围',
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const formText = await control.command('getText', '[data-testid="request-user-input-card"]')
-  for (const expectedText of ['访问范围', '所有人', '仅自己']) {
-    assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
-  }
-  const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
-    false,
-    'The MCP tool call displayed an execution approval card instead of the business form'
-  )
-  const urlRecords = (await readFile(evidencePath, 'utf8'))
-    .trim()
-    .split('\n')
-    .map(line => JSON.parse(line))
-  assert.deepEqual(
-    urlRecords,
-    [{ event: 'url_elicitation_result', result: { action: 'cancel' } }],
-    'The real MCP server must receive only cancellation before the business form is answered'
-  )
-  await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
-
-  const runningSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-  const taskId = runningSnapshot.workbench?.currentRuntimeTask?.taskId
-  assert.ok(taskId, 'The MCP elicitation form was not attached to a runtime task')
-
-  await control.command('click', '[data-testid="request-user-input-option-audience-1"]')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: MCP_ELICITATION_COMPLETION_TEXT,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await waitForWorkbenchDebugState(
-    control,
-    snapshot =>
-      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
-      snapshot.pane?.status?.isBusy === false,
-    'The MCP elicitation task did not settle after the accepted form response'
-  )
-  await control.command('click', '[data-testid="final-processing-toggle"]')
-  await control.command('waitFor', '[data-testid="request-user-input-summary"]', {
-    text: '仅自己',
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-
-  const startedAt = Date.now()
-  let evidence = null
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    if (await pathExists(evidencePath)) {
-      const records = (await readFile(evidencePath, 'utf8'))
-        .split('\n')
-        .filter(Boolean)
-        .map(line => JSON.parse(line))
-      evidence = records.find(record => record.event === 'elicitation_result') ?? null
-      if (evidence) break
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  assert.deepEqual(
-    evidence?.result,
-    {
-      action: 'accept',
-      content: { audience: 'owner' },
-    },
-    'The MCP fixture did not receive the accepted stable audience value'
-  )
-  await captureVerificationScreenshot(control, 'permission-08-mcp-elicitation-complete.png')
 }
 
 export { main }

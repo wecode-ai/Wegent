@@ -980,6 +980,26 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"should_trigger_ai={should_trigger_ai}"
             )
 
+            from fastapi import HTTPException
+
+            from app.services.chat.preprocessing.conversation_references import (
+                validate_conversation_references,
+            )
+
+            try:
+                validate_conversation_references(
+                    db,
+                    contexts=payload.contexts,
+                    user_id=user_id,
+                    current_task_id=existing_task.id if existing_task else None,
+                )
+            except HTTPException as exc:
+                logger.warning(
+                    "[WS] chat:send rejected invalid conversation reference: %s",
+                    exc.detail,
+                )
+                return {"error": str(exc.detail), "message": str(exc.detail)}
+
             # Process context metadata and RAG based on chat version
             # Uses service module for RAG processing
             _, rag_prompt = await process_context_and_rag(
@@ -1349,10 +1369,16 @@ class ChatNamespace(socketio.AsyncNamespace):
             skip_sid: Socket ID to skip (sender)
         """
         from app.api.ws.events import ServerEvents
+        from app.models.subtask_context import ContextType
         from app.services.context import context_service
 
         # Build contexts list for the subtask
-        contexts_briefs = context_service.get_briefs_by_subtask(db, user_subtask.id)
+        contexts_briefs = [
+            context
+            for context in context_service.get_briefs_by_subtask(db, user_subtask.id)
+            # Conversation references may point at tasks the recipient cannot access.
+            if context.context_type != ContextType.CONVERSATION.value
+        ]
         # Use Pydantic's model_dump to ensure all fields are serialized correctly
         contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
 
@@ -2216,6 +2242,13 @@ def _fetch_subtasks_for_task_join(
 
                 subtasks_dict.append(subtask_dict)
 
+            from app.services.adapters.task_kinds.task_detail_helpers import (
+                filter_conversation_contexts_for_viewer,
+            )
+
+            filter_conversation_contexts_for_viewer(
+                db, subtasks=subtasks_dict, user_id=user_id
+            )
             return subtasks_dict
         else:
             # Full sync: fetch all messages using existing service

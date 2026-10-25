@@ -30,28 +30,32 @@ export type RequestUserInputBlock = ToolBlock & {
 export function requestUserInputPayloadKey(
   payload: RequestUserInputPayload | null | undefined
 ): string | null {
-  const requestId = payload?.requestId ?? payload?.request_id
-  if (requestId !== undefined && requestId !== null && String(requestId).trim()) {
-    return `request:${String(requestId)}`
-  }
-
-  const itemId = payload?.itemId ?? payload?.item_id
-  if (itemId !== undefined && itemId !== null && String(itemId).trim()) {
-    return `item:${String(itemId)}`
-  }
-
-  return null
+  return requestUserInputIdentityKey(payload)
 }
 
 export function requestUserInputResponseKey(response: RequestUserInputResponse): string | null {
-  const requestId = response.requestId ?? response.request_id
+  return requestUserInputIdentityKey(response)
+}
+
+function requestUserInputIdentityKey(
+  identity:
+    | Pick<
+        RequestUserInputResponse,
+        'requestId' | 'request_id' | 'itemId' | 'item_id' | 'interactionScope'
+      >
+    | null
+    | undefined
+): string | null {
+  const scope = identity?.interactionScope?.trim()
+  const scopedKey = (key: string) => (scope ? `interaction:${JSON.stringify([scope, key])}` : key)
+  const requestId = identity?.requestId ?? identity?.request_id
   if (requestId !== undefined && requestId !== null && String(requestId).trim()) {
-    return `request:${String(requestId)}`
+    return scopedKey(`request:${String(requestId)}`)
   }
 
-  const itemId = response.itemId ?? response.item_id
+  const itemId = identity?.itemId ?? identity?.item_id
   if (itemId !== undefined && itemId !== null && String(itemId).trim()) {
-    return `item:${String(itemId)}`
+    return scopedKey(`item:${String(itemId)}`)
   }
 
   return null
@@ -242,6 +246,7 @@ function asyncRequestUserInputResponse(
   return {
     requestId: payload.requestId ?? payload.request_id,
     itemId: payload.itemId ?? payload.item_id,
+    interactionScope: payload.interactionScope,
     answers: Object.fromEntries(
       (payload.questions ?? []).map((question, index) => [
         question.id?.trim() || `question_${index + 1}`,
@@ -274,13 +279,24 @@ export function isPendingRequestUserInputBlock(
 ): block is RequestUserInputBlock {
   if (!isRequestUserInputBlock(block)) return false
   if (block.status === 'error') return false
-  if (hasRequestUserInputResponse(block.renderPayload)) return false
+  if (isSettledRequestUserInputBlock(block)) return false
   return !isHiddenRequestUserInputBlock(block, hiddenRequestUserInputIds)
 }
 
 export function isAnsweredRequestUserInputBlock(block: ProcessingBlock): boolean {
   if (!isRequestUserInputBlock(block)) return false
   return hasRequestUserInputResponse(block.renderPayload)
+}
+
+export function isSettledRequestUserInputBlock(block: ProcessingBlock): boolean {
+  if (!isRequestUserInputBlock(block)) return false
+  const status = block.renderPayload.interactionStatus
+  const deadline = block.renderPayload.expiresAtUnixMs
+  return (
+    Boolean(status && status !== 'pending') ||
+    hasRequestUserInputResponse(block.renderPayload) ||
+    (typeof deadline === 'number' && Number.isFinite(deadline) && deadline <= Date.now())
+  )
 }
 
 export function isHiddenRequestUserInputBlock(
@@ -345,8 +361,15 @@ function isMatchingRequestUserInputBlock(
   block: ProcessingBlock,
   responseKey: string | null
 ): block is RequestUserInputBlock {
-  if (!isPendingRequestUserInputBlock(block)) return false
-  if (!responseKey) return true
+  if (!isRequestUserInputBlock(block) || block.status === 'error') return false
+  if (hasRequestUserInputResponse(block.renderPayload)) return false
+  if (
+    block.renderPayload.interactionStatus === 'cancelled' ||
+    block.renderPayload.interactionStatus === 'expired'
+  ) {
+    return false
+  }
+  if (!responseKey) return false
   const payloadKey = requestUserInputPayloadKey(block.renderPayload)
   return payloadKey === responseKey
 }

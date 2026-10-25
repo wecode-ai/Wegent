@@ -322,7 +322,7 @@ async def test_new_comment_queues_hidden_agent_once_in_its_own_thread(
 
     enqueue_mock = MagicMock(side_effect=enqueue)
     monkeypatch.setattr(
-        "app.services.loop_item_executions.service.loop_item_execution_service.create_for_assignment",
+        "app.services.loop_item_executions.service.loop_item_execution_service.enqueue_for_assignment",
         enqueue_mock,
     )
     request = comment(s, text="再检查一下", reply=False)
@@ -493,6 +493,14 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
     assert execution.assigner_user_id == s.member.id
     assert execution.status == "queued"
     assert execution.automation_run_id == ""
+    assert execution.assignment_pending
+    assert execution.runtime_request == {}
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    assert loop_item_execution_service.prepare_queued_assignments(s.db) == 1
+    s.db.refresh(execution)
+    assert not execution.assignment_pending
+    assert execution.status == "queued"
     assert execution.runtime_request["message"].endswith(
         "Review this comment independently"
     )
@@ -832,6 +840,10 @@ async def test_routed_reply_queues_offline_and_keeps_the_original_session(
     assert queued.id != original.id
     assert queued.status == "queued"
     assert queued.runtime_task_id == original.runtime_task_id
+    assert queued.assignment_pending
+    assert loop_item_execution_service.prepare_queued_assignments(db) == 1
+    db.refresh(queued)
+    assert queued.status == "queued"
     assert queued.runtime_request["newSession"] is False
     assert rows[0].status == "pending"
     next_request = comment(scenario, text="Another offline reply")

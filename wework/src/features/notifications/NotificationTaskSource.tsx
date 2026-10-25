@@ -36,16 +36,28 @@ export function NotificationTaskSourceBridge({ active, id }: { active: boolean; 
   const { runtimeTaskReminders, services, state } = useWorkbench()
   const currentAddress = state?.currentRuntimeTask
   const userId = state?.user?.id
+  const devices = state?.devices
 
   useEffect(() => {
     if (!registerTaskSource) return
     registerTaskSource(
       id,
-      runtimeTaskReminders ? { ...runtimeTaskReminders, services, currentAddress, userId } : null,
+      runtimeTaskReminders
+        ? { ...runtimeTaskReminders, services, devices, currentAddress, userId }
+        : null,
       active
     )
     return () => registerTaskSource(id, null, active)
-  }, [active, id, registerTaskSource, runtimeTaskReminders, services, currentAddress, userId])
+  }, [
+    active,
+    id,
+    registerTaskSource,
+    runtimeTaskReminders,
+    services,
+    devices,
+    currentAddress,
+    userId,
+  ])
 
   return null
 }

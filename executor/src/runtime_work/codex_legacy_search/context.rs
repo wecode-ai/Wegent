@@ -300,14 +300,10 @@ fn context_page(
     let before_cursor = context_boundary(reducer, window.items.front(), true)?;
     let after_cursor = context_boundary(reducer, window.items.back(), false)?;
     let mut turns = Vec::<Value>::new();
-    let mut prepend_item_turn_ids = HashSet::new();
     for item in window.items {
         let metadata = &reducer.turns[item.turn_index];
         if turns.last().and_then(|turn| turn["id"].as_str()) != Some(metadata.id.as_str()) {
             turns.push(metadata.native_turn(Vec::new()));
-            if window.direction == Some(CodexTranscriptDirection::Descending) {
-                prepend_item_turn_ids.insert(metadata.id.clone());
-            }
         }
         turns.last_mut().expect("context turn exists")["items"]
             .as_array_mut()
@@ -318,7 +314,6 @@ fn context_page(
         thread: json!({"turns": turns}),
         before_cursor,
         after_cursor,
-        prepend_item_turn_ids,
     })
 }
 

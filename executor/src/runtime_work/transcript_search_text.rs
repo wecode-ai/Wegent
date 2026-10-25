@@ -4,12 +4,13 @@
 
 use std::{collections::HashMap, sync::OnceLock};
 
-use pulldown_cmark::{Event, Options, Parser, TagEnd};
 use regex::Regex;
 use serde_json::{json, Value};
 
 use super::{
     transcript::{search_transcript_messages, visible_user_request_content},
+    transcript_search_annotations::assistant_annotation_ranges,
+    transcript_search_projection::{MappedSource, SearchRegion},
     util::{item_type, string_field},
 };
 
@@ -86,6 +87,27 @@ fn ordinary_user_search_text(content: &str) -> String {
         content
     };
     markdown_search_text(content)
+}
+
+fn user_search_region(id: &str, raw: &str, visible: &str) -> SearchRegion {
+    let content = visible_comment_request_content(raw);
+    let request = visible_user_request_content(content);
+    let mut source = MappedSource::new(id, raw);
+    if ordinary_user_search_text(content) != visible {
+        let start = content.as_ptr() as usize - raw.as_ptr() as usize;
+        source.remove([start + content.len()..raw.len(), 0..start]);
+        return source.reply_region(id, visible);
+    }
+    let start = request.as_ptr() as usize - raw.as_ptr() as usize;
+    source.remove([start + request.len()..raw.len(), 0..start]);
+    if request
+        .trim_start()
+        .starts_with("PLEASE IMPLEMENT THIS PLAN:")
+    {
+        source.projected_plain_region(id, visible)
+    } else {
+        source.markdown_region(id)
+    }
 }
 
 /// Match chat-core's parseCodeCommentContexts before associating async answers.
@@ -176,12 +198,12 @@ fn async_question_prompts(message: &Value) -> Vec<String> {
 }
 
 /// Index the same item projection that transcript hydration sends to the renderer.
-pub(super) fn codex_turn_search_sources(
+pub(super) fn codex_turn_search_regions(
     turn: &Value,
     user_content_by_client_id: &HashMap<String, String>,
     root_thread_id: Option<&str>,
     projection: &mut AsyncReplySearchProjection,
-) -> Vec<(String, String)> {
+) -> Vec<SearchRegion> {
     let mut turn = turn.clone();
     restore_search_user_content(&mut turn, user_content_by_client_id);
     let mut messages = search_transcript_messages(&json!({"id": root_thread_id, "turns": [turn]}));
@@ -220,26 +242,67 @@ pub(super) fn codex_turn_search_sources(
         .and_then(Value::as_str)
         .unwrap_or("done");
     let error = terminal.get("error").and_then(Value::as_str);
-    let segment_count = items
-        .iter()
-        .filter(|item| item["type"] == "user_message")
-        .count()
-        + 1;
-    let mut sources = Vec::new();
-    for (index, segment) in items
-        .split_inclusive(|item| item["type"] == "user_message")
-        .enumerate()
-    {
-        // A user item closes the preceding assistant segment, just as the renderer does.
-        let is_last = index + 1 == segment_count;
-        sources.extend(projected_segment_search_sources(
-            segment,
-            if is_last { status } else { "done" },
-            if is_last { error } else { None },
-            &user_texts,
+    canonical_turn_search_regions(
+        &json!({"items":items, "status":status, "error":error}),
+        &user_texts,
+    )
+}
+
+/// Cache and provider adapters share the renderer's user-delimited segments.
+pub(super) fn canonical_turn_search_regions(
+    turn: &Value,
+    user_texts: &HashMap<String, String>,
+) -> Vec<SearchRegion> {
+    let Some(items) = turn["items"].as_array() else {
+        return Vec::new();
+    };
+    let status = turn
+        .get("runtimeStatus")
+        .filter(|value| !value.is_null())
+        .or_else(|| turn.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("done");
+    let error = turn.get("error").and_then(Value::as_str);
+    let mut regions = Vec::new();
+    let mut start = 0;
+    for (index, item) in items.iter().enumerate() {
+        if item["type"] != "user_message" {
+            continue;
+        }
+        regions.extend(projected_segment_search_regions(
+            &items[start..index],
+            "done",
+            None,
         ));
+        if let Some(id) = item["id"].as_str() {
+            let raw = item["message"]["content"].as_str().unwrap_or_default();
+            let text = user_texts
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| ordinary_user_search_text(raw));
+            regions.push(user_search_region(id, raw, &text));
+        }
+        start = index + 1;
     }
-    sources
+    regions.extend(projected_segment_search_regions(
+        &items[start..],
+        status,
+        error,
+    ));
+    regions
+}
+
+#[cfg(test)]
+pub(super) fn codex_turn_search_sources(
+    turn: &Value,
+    user_content_by_client_id: &HashMap<String, String>,
+    root_thread_id: Option<&str>,
+    projection: &mut AsyncReplySearchProjection,
+) -> Vec<(String, String)> {
+    codex_turn_search_regions(turn, user_content_by_client_id, root_thread_id, projection)
+        .into_iter()
+        .map(|region| (region.id, region.text))
+        .collect()
 }
 
 fn restore_search_user_content(turn: &mut Value, content_by_id: &HashMap<String, String>) {
@@ -259,85 +322,148 @@ fn restore_search_user_content(turn: &mut Value, content_by_id: &HashMap<String,
     }
 }
 
-fn projected_segment_search_sources(
+fn projected_segment_search_regions(
     items: &[Value],
     status: &str,
     error: Option<&str>,
-    user_texts: &HashMap<String, String>,
-) -> Vec<(String, String)> {
-    let content = items
+) -> Vec<SearchRegion> {
+    let final_items: Vec<_> = items
         .iter()
         .filter(|item| item["type"] == "assistant_text")
+        .collect();
+    let content = final_items
+        .iter()
         .map(|item| strip_codex_ui_directives(item["content"].as_str().unwrap_or_default()))
         .collect::<Vec<_>>()
         .join("\n\n");
-    let visible_content = visible_assistant_content(&content, status, error);
-    items
+    let visible = visible_assistant_content(&content, status, error);
+    let display_items: Vec<_> = items
         .iter()
-        .filter_map(|item| {
-            let id = string_field(item, "id")?;
-            let text = match item["type"].as_str()? {
-                "user_message" => user_texts.get(&id).cloned().unwrap_or_default(),
-                "assistant_text" if !visible_content.is_empty() => {
-                    assistant_search_text(item["content"].as_str().unwrap_or_default())
-                }
-                "block" if item["block"]["type"] == "text" => {
-                    let text = item["block"]["content"].as_str().unwrap_or_default();
-                    if text.trim().is_empty() || text.trim() == visible_content.trim() {
-                        return None;
-                    }
-                    assistant_block_search_text(text)
-                }
-                _ => return None,
-            };
-            Some((id, text))
+        .filter(|item| {
+            if item["type"] == "assistant_text" {
+                return !item["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty();
+            }
+            let block = &item["block"];
+            let text = block["content"].as_str().unwrap_or_default().trim();
+            item["type"] == "block"
+                && block["type"] != "thinking"
+                && (block["type"] != "text" || (!text.is_empty() && text != visible.trim()))
         })
-        .collect()
-}
-
-/// Mirror the renderer's Markdown text index, excluding image alt text, HTML,
-/// link destinations and code-block language metadata.
-pub(super) fn markdown_search_text(content: &str) -> String {
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-    let mut frames = vec![TextFrame::new(None)];
-    for event in Parser::new_ext(content, options) {
-        match event {
-            Event::Start(tag) => frames.push(TextFrame::new(Some(tag.to_end()))),
-            Event::End(end) => {
-                let text = frames.pop().expect("balanced Markdown events").finish();
-                let parent = frames.last_mut().expect("Markdown root frame");
-                if is_block(end) {
-                    parent.push_child(text);
-                } else {
-                    parent.inline.push_str(&text);
-                }
+        .collect();
+    let ordered_content = display_items
+        .iter()
+        .filter(|item| item["type"] == "assistant_text")
+        .map(|item| {
+            strip_plugin_workspace_results(&strip_codex_ui_directives(
+                item["content"].as_str().unwrap_or_default(),
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let interleaved = !visible.trim().is_empty()
+        && ordered_content == visible
+        && display_items.iter().enumerate().any(|(index, item)| {
+            item["type"] == "assistant_text"
+                && display_items[index + 1..]
+                    .iter()
+                    .any(|later| later["type"] == "block")
+        });
+    let mut regions = Vec::new();
+    let mut pending: Option<(String, MappedSource)> = None;
+    let mut final_source = MappedSource::default();
+    for (index, item) in final_items.iter().enumerate() {
+        let id = item["id"].as_str().unwrap_or_default();
+        let mut source = MappedSource::new(id, item["content"].as_str().unwrap_or_default());
+        remove_codex_ui_directives(&mut source);
+        final_source.append(source, if index == 0 { "" } else { "\n\n" });
+    }
+    remove_plugin_workspace_results(&mut final_source);
+    remove_assistant_annotations(&mut final_source);
+    for item in display_items {
+        let Some(id) = item["id"].as_str() else {
+            continue;
+        };
+        if item["type"] == "assistant_text" {
+            if visible.is_empty() {
+                continue;
             }
-            Event::Text(text) | Event::Code(text) => {
-                frames.last_mut().unwrap().inline.push_str(&text);
+            if !interleaved {
+                continue;
             }
-            Event::SoftBreak => frames.last_mut().unwrap().inline.push('\n'),
-            Event::Rule => frames.last_mut().unwrap().push_child(String::new()),
-            _ => {}
+            let mut source = MappedSource::new(id, item["content"].as_str().unwrap_or_default());
+            remove_codex_ui_directives(&mut source);
+            remove_plugin_workspace_results(&mut source);
+            if let Some((_, content)) = &mut pending {
+                content.append(source, "\n\n");
+            } else {
+                pending = Some((id.to_owned(), source));
+            }
+            continue;
+        }
+        if let Some((id, mut content)) = pending.take() {
+            remove_assistant_annotations(&mut content);
+            regions.push(content.markdown_region(&id));
+        }
+        let block = &item["block"];
+        if block["type"] == "text" {
+            regions.push(
+                assistant_mapped_source(id, block["content"].as_str().unwrap_or_default(), false)
+                    .markdown_region(id),
+            );
         }
     }
-    frames.pop().expect("Markdown root frame").finish()
+    if let Some((id, mut content)) = pending {
+        remove_assistant_annotations(&mut content);
+        regions.push(content.markdown_region(&id));
+    }
+    if !interleaved && !visible.is_empty() {
+        if let Some(id) = final_items
+            .iter()
+            .find(|item| {
+                !item["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+            })
+            .and_then(|item| item["id"].as_str())
+        {
+            regions.push(final_source.markdown_region(id));
+        }
+    }
+    regions
 }
 
-pub(super) fn assistant_search_text(content: &str) -> String {
-    let content = strip_codex_ui_directives(content);
-    assistant_block_search_text(&strip_plugin_workspace_results(&content))
+/// Parse each complete renderer region once, including cross-item references/fences.
+pub(super) fn markdown_search_text(content: &str) -> String {
+    MappedSource::new("", content).markdown_region("").text
+}
+
+pub(super) fn assistant_mapped_source(id: &str, content: &str, directives: bool) -> MappedSource {
+    let mut source = MappedSource::new(id, content);
+    if directives {
+        remove_codex_ui_directives(&mut source);
+        remove_plugin_workspace_results(&mut source);
+    }
+    remove_assistant_annotations(&mut source);
+    source
+}
+
+#[cfg(test)]
+fn assistant_search_text(content: &str) -> String {
+    assistant_mapped_source("", content, true)
+        .markdown_region("")
+        .text
 }
 
 fn strip_plugin_workspace_results(content: &str) -> String {
-    content
-        .split('\n')
-        .map(|line| line.strip_suffix('\r').unwrap_or(line))
-        .filter(|line| !is_plugin_workspace_result_line(line))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_owned()
+    let mut source = MappedSource::new("", content);
+    remove_plugin_workspace_results(&mut source);
+    source.text().to_owned()
 }
 
 // Match assistantMessagePresentation.ts after runtime transcript normalization.
@@ -373,17 +499,25 @@ pub(super) fn visible_assistant_content(
     strip_plugin_workspace_results(content)
 }
 
-pub(super) fn assistant_block_search_text(content: &str) -> String {
-    static CITATIONS: OnceLock<Regex> = OnceLock::new();
-    let citations = CITATIONS.get_or_init(|| {
-        Regex::new("\u{e200}cite\u{e202}[\\s\\S]*?\u{e201}|\u{e200}cite(?:\u{e202}[\\s\\S]*)?$")
-            .expect("valid content citation pattern")
-    });
-    markdown_search_text(&citations.replace_all(content, ""))
+#[cfg(test)]
+fn assistant_block_search_text(content: &str) -> String {
+    let mut source = MappedSource::new("", content);
+    remove_assistant_annotations(&mut source);
+    source.markdown_region("").text
+}
+
+fn remove_assistant_annotations(source: &mut MappedSource) {
+    source.remove(assistant_annotation_ranges(source.text()));
 }
 
 // Keep this projection aligned with chat-core/codex-directives.ts.
 pub(super) fn strip_codex_ui_directives(content: &str) -> String {
+    let mut source = MappedSource::new("", content);
+    remove_codex_ui_directives(&mut source);
+    source.text().to_owned()
+}
+
+fn remove_codex_ui_directives(source: &mut MappedSource) {
     static DIRECTIVES: OnceLock<Regex> = OnceLock::new();
     static EMPTY_LINES: OnceLock<Regex> = OnceLock::new();
     let directives = DIRECTIVES.get_or_init(|| {
@@ -394,30 +528,45 @@ pub(super) fn strip_codex_ui_directives(content: &str) -> String {
         ))
         .expect("valid Codex UI directive pattern")
     });
-    let mut in_code_fence = false;
-    let mut changed = false;
-    let lines = content
-        .split('\n')
-        .map(|line| {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_code_fence = !in_code_fence;
-            } else if !in_code_fence && directives.is_match(line) {
-                changed = true;
-                return "";
-            }
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if !changed {
-        return lines;
+    let mut fenced = false;
+    let mut offset = 0;
+    let mut removals = Vec::new();
+    for line in source.text().split('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+        } else if !fenced && directives.is_match(line) {
+            removals.push(offset..offset + line.len());
+        }
+        offset += line.len() + 1;
     }
-    EMPTY_LINES
-        .get_or_init(|| Regex::new(r"\n{3,}").expect("valid empty line pattern"))
-        .replace_all(&lines, "\n\n")
-        .trim()
-        .to_owned()
+    if removals.is_empty() {
+        return;
+    }
+    source.remove(removals);
+    source.remove(
+        EMPTY_LINES
+            .get_or_init(|| Regex::new(r"\n{3,}").expect("valid empty line pattern"))
+            .find_iter(source.text())
+            .map(|found| found.start() + 2..found.end())
+            .collect::<Vec<_>>(),
+    );
+    source.trim(false);
+}
+
+fn remove_plugin_workspace_results(source: &mut MappedSource) {
+    let mut offset = 0;
+    let mut removals = Vec::new();
+    for line in source.text().split_inclusive('\n') {
+        if is_plugin_workspace_result_line(line.trim_end_matches(['\r', '\n'])) {
+            removals.push(offset..offset + line.len());
+        } else if line.ends_with("\r\n") {
+            removals.push(offset + line.len() - 2..offset + line.len() - 1);
+        }
+        offset += line.len();
+    }
+    source.remove(removals);
+    source.trim(true);
 }
 
 // Invalid model-authored markers stay visible, matching plugin-workspace-result.ts.
@@ -469,72 +618,6 @@ fn is_safe_relative_path(path: &str) -> bool {
             .any(|part| matches!(part, "." | ".."))
 }
 
-struct TextFrame {
-    end: Option<TagEnd>,
-    children: Vec<String>,
-    inline: String,
-}
-
-impl TextFrame {
-    fn new(end: Option<TagEnd>) -> Self {
-        Self {
-            end,
-            children: Vec::new(),
-            inline: String::new(),
-        }
-    }
-
-    fn push_child(&mut self, text: String) {
-        if !self.inline.is_empty() {
-            self.children.push(std::mem::take(&mut self.inline));
-        }
-        self.children.push(text);
-    }
-
-    fn finish(mut self) -> String {
-        if matches!(self.end, Some(TagEnd::Image | TagEnd::HtmlBlock)) {
-            return String::new();
-        }
-        if !self.inline.is_empty() {
-            self.children.push(self.inline);
-        }
-        let separator = match self.end {
-            None
-            | Some(
-                TagEnd::BlockQuote(_)
-                | TagEnd::List(_)
-                | TagEnd::Item
-                | TagEnd::Table
-                | TagEnd::TableHead
-                | TagEnd::TableRow,
-            ) => "\n",
-            _ => "",
-        };
-        let mut text = self.children.join(separator);
-        if self.end == Some(TagEnd::CodeBlock) && text.ends_with('\n') {
-            text.pop();
-        }
-        text
-    }
-}
-
-fn is_block(end: TagEnd) -> bool {
-    matches!(
-        end,
-        TagEnd::Paragraph
-            | TagEnd::Heading(_)
-            | TagEnd::BlockQuote(_)
-            | TagEnd::CodeBlock
-            | TagEnd::HtmlBlock
-            | TagEnd::List(_)
-            | TagEnd::Item
-            | TagEnd::Table
-            | TagEnd::TableHead
-            | TagEnd::TableRow
-            | TagEnd::TableCell
-    )
-}
-
 #[cfg(test)]
 #[path = "transcript_search_text/async_reply_tests.rs"]
 mod async_reply_tests;
@@ -542,6 +625,32 @@ mod async_reply_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interleaved_region_protects_annotations_in_cross_item_reference_links() {
+        let marker = "\u{e200}cite\u{e202}literal\u{e201}";
+        let regions = codex_turn_search_regions(
+            &json!({
+                "id":"reference-turn", "status":"completed", "items":[
+                    {"id":"label", "type":"agentMessage", "phase":"final_answer",
+                     "text":format!("[CORE_LINK {marker}][ref]")},
+                    {"id":"definition", "type":"agentMessage", "phase":"final_answer",
+                     "text":"[ref]: https://example.invalid/reference"},
+                    {"id":"tool", "type":"commandExecution", "command":"echo done"},
+                ],
+            }),
+            &HashMap::new(),
+            None,
+            &mut Default::default(),
+        );
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].id, "label");
+        assert_eq!(regions[0].text, format!("CORE_LINK {marker}"));
+        assert!(regions[0]
+            .sources
+            .iter()
+            .all(|span| span.item_id == "label"));
+    }
 
     fn turn_sources(status: &str, content: &str, error: Option<&str>) -> Vec<(String, String)> {
         codex_turn_search_sources(
@@ -608,10 +717,7 @@ mod tests {
         );
         assert_eq!(
             sources,
-            vec![
-                ("partial".into(), "useful output".into()),
-                ("last".into(), "API error: needle".into())
-            ]
+            vec![("partial".into(), "useful output\nAPI error: needle".into())]
         );
     }
 
@@ -658,7 +764,7 @@ mod tests {
             "`inline needle`\n\n```hidden-language\ncode needle\n```",
         );
         let text = markdown_search_text(source);
-        assert_eq!(text, "visible label  shown\n\ninline needle\ncode needle");
+        assert_eq!(text, "visible label  shown\ninline needle\ncode needle");
         assert_eq!(text.match_indices("needle").count(), 2);
     }
 

@@ -58,8 +58,13 @@ impl InteractionAnswerRouter {
                 };
                 if let Some(sender) = state.pending.remove(&key) {
                     let _ = sender.send(Ok(answer));
-                } else {
+                } else if !state.claimed.contains(&key) {
                     state.buffered.insert(key, answer);
+                } else {
+                    log_executor_event(
+                        "codex interaction late answer discarded",
+                        &[("request_id", key)],
+                    );
                 }
             }
             let mut state = state.lock().await;
@@ -153,5 +158,27 @@ mod tests {
             original.await.unwrap().unwrap().unwrap()["answers"]["choice"],
             "original"
         );
+    }
+
+    #[tokio::test]
+    async fn expired_interaction_drops_late_answers_instead_of_buffering_them() {
+        let (sender, receiver) = mpsc::channel(1);
+        let router = InteractionAnswerRouter::new(receiver);
+        let waiter = {
+            let router = router.clone();
+            tokio::spawn(async move { router.receive("0".to_owned()).await })
+        };
+        while !router.state.lock().await.pending.contains_key("0") {
+            tokio::task::yield_now().await;
+        }
+        router.expire("0").await;
+        assert!(waiter.await.unwrap().is_err());
+        sender
+            .send(serde_json::json!({"requestId": 0, "answers": {}}))
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(router.state.lock().await.buffered.is_empty());
+        assert!(router.receive("0".to_owned()).await.unwrap().is_none());
     }
 }

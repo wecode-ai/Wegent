@@ -54,6 +54,7 @@ from app.services.loop_items.assignment_notification import (
 )
 from app.services.loop_items.change_requests import persist_external_badge_source
 from app.services.notification_copy import NotificationTarget
+from app.services.notification_target import board_status_label
 from app.services.project_automation_domain import runnable_wegent_team
 
 logger = logging.getLogger(__name__)
@@ -237,13 +238,27 @@ class ExternalLoopItemProvider:
         )
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
+        _, _, response = self._visible_issue(db, item_id, user_id)
+        return response
+
+    def get_notification_target(
+        self, db: Session, item_id: str, user_id: int
+    ) -> NotificationTarget:
+        """Build a target from provider data only after recipient authorization."""
+
+        project, issue, _ = self._visible_issue(db, item_id, user_id)
+        return self._notification_target(project, issue, item_id)
+
+    def _visible_issue(
+        self, db: Session, item_id: str, user_id: int
+    ) -> tuple[CloudProject, dict[str, Any], dict[str, object]]:
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
         response = self._response(db, project, issue, access, user_id)
         if not response["can_view_detail"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        return response
+        return project, issue, response
 
     def get_many(
         self,
@@ -1523,6 +1538,7 @@ class ExternalLoopItemProvider:
                     str(issue.get(self._body_key(project)) or "").strip()
                     or str(issue.get("title") or item_id)
                 ),
+                notification_target=self._notification_target(project, issue, item_id),
             )
         db.commit()
         return self._response(db, project, issue, access, user_id)
@@ -2724,15 +2740,16 @@ class ExternalLoopItemProvider:
 
         labels = ExternalLoopItemProvider._labels(issue)
         priority = ExternalLoopItemProvider._priority(labels)
+        item_status = ExternalLoopItemProvider._status(
+            labels, str(issue.get("state") or "")
+        )
         return NotificationTarget(
             project_id=str(project.id),
             project_name=project.name or "",
             item_id=item_id,
             item_key=item_id,
             item_title=str(issue.get("title") or item_id),
-            item_status=ExternalLoopItemProvider._status(
-                labels, str(issue.get("state") or "")
-            ),
+            item_status=board_status_label(project, item_status),
             item_priority=None if priority == "none" else priority,
         )
 

@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
@@ -17,7 +18,7 @@ import {
   createCachedHistoryTask,
   verifyCachedHistorySearch,
 } from '../modules/cached-history-search.mjs'
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   seedNativeTerminalHistory,
@@ -43,7 +44,7 @@ const PAGED_PROMPT = 'WEWORK-DESKTOP-E2E-RUNNING-HISTORY-PAGED'
 const PAGED_SEARCH_TERM = 'foo bar & baz'
 const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
 const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
-const PAGED_ITEM_COUNT = 650
+const PAGED_ITEM_COUNT = 1_250
 const PAGED_ASSISTANT_ITEM = 'paged-history-assistant'
 const PAGED_ASSISTANT_BODY = 'WEWORK_E2E_PAGED_ANCHOR_BODY'
 const LONG_HISTORY_ITEM_COUNT = 1_200
@@ -221,7 +222,7 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
     const turnId = `legacy-search-turn-${index}`
     const terminal = terminalHistoryTurn(index)
     const answer = terminal?.text ?? `Legacy search answer ${index}`
-    const assistantEvents = terminalHistoryAssistantEvents(index, answer)
+    const assistantEvents = terminalHistoryAssistantEvents(index, answer, turnId)
     const prompt = terminalHistoryUserText(
       index,
       LEGACY_MATCH_TURNS.includes(index)
@@ -341,15 +342,35 @@ async function waitForTranscriptState(control, predicate, description, timeoutMs
   throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
 }
 
-async function reloadWorkbench(control, timeoutMs) {
+async function reloadWorkbench(control) {
   const readyCount = control.readyCount
-  await control.command('reloadMainWindow', 'body')
-  await Promise.race([
-    control.awaitReadyAfter(readyCount),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('The reloaded Wework window did not reconnect')), timeoutMs)
-    ),
-  ])
+  // Reload flushes durable storage before replacing the renderer and reconnecting.
+  await control.command('reloadMainWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  let timeout
+  try {
+    await Promise.race([
+      control.awaitReadyAfter(readyCount),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('The reloaded control client did not reconnect')),
+          WORKBENCH_READY_TIMEOUT_MS
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+  // Control registration precedes device discovery and persisted task restoration.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.workbench?.isBootstrapping === false &&
+      snapshot.workbench.runtimeWorkSummary.totalTasks > 0,
+    'The reloaded workbench did not restore its task index',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
 }
 
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
@@ -446,9 +467,7 @@ export function createDesktopScenario({
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = Buffer.concat(chunks).toString('utf8')
+      const body = await readRawRequestBody(request)
       const responseId = `wework-running-history-${Date.now()}`
       response.writeHead(200, {
         'Cache-Control': 'no-cache',
@@ -785,7 +804,7 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
-      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-items:'))
+      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
       assert.ok(
         nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
         'The anchor search must require loading an older native item'
@@ -818,11 +837,20 @@ export function createDesktopScenario({
         'Pagination returned the live cache again'
       )
 
-      await reloadWorkbench(control, uiTimeoutMs)
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
+      const restored = await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The paginated conversation did not finish restoration',
+        WORKBENCH_READY_TIMEOUT_MS
+      )
+      assert.equal(restored.pane.transcript.hasMoreBefore, true)
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
       await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
       for (let page = 0; page < 2; page += 1) {
@@ -831,7 +859,9 @@ export function createDesktopScenario({
           control,
           snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
           'Native item pagination did not finish',
-          uiTimeoutMs
+          // This checkpoint deliberately delays transcript reads and restores 1,250 native
+          // items. Include queued reads and hydration in the existing restoration budget.
+          WORKBENCH_READY_TIMEOUT_MS
         )
       }
       const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
@@ -840,7 +870,7 @@ export function createDesktopScenario({
         'The UI did not restore the middle of the running native turn'
       )
       // Restore a partially loaded live view before testing isolated search pages.
-      await reloadWorkbench(control, uiTimeoutMs)
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
       await control.command('click', `[data-testid="${pagedRowId}"]`)
       await control.command('waitFor', loadOlder)
@@ -953,7 +983,7 @@ export function createDesktopScenario({
       })
       await control.command('click', taskRow)
 
-      await reloadWorkbench(control, uiTimeoutMs)
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })

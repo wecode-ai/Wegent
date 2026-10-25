@@ -278,3 +278,134 @@ for (const fault of ['drop-response', 'hold-response']) {
     assert.equal(hasScopedNativeFault([{ ...scoped[0], method: 'OPTIONS' }], fault), false)
   })
 }
+
+function websocketFrame(text, { opcode = 1, final = true, masked = false, wide = false } = {}) {
+  const payload = Buffer.from(text)
+  const extended = wide ? 8 : payload.length >= 126 ? 2 : 0
+  const header = Buffer.alloc(2 + extended + (masked ? 4 : 0))
+  header[0] = (final ? 128 : 0) | opcode
+  header[1] = (masked ? 128 : 0) | (wide ? 127 : extended ? 126 : payload.length)
+  if (wide) header.writeBigUInt64BE(BigInt(payload.length), 2)
+  else if (extended) header.writeUInt16BE(payload.length, 2)
+  if (masked) {
+    const offset = 2 + extended
+    header.set([17, 29, 31, 43], offset)
+    for (let index = 0; index < payload.length; index += 1)
+      payload[index] ^= header[offset + (index % 4)]
+  }
+  return Buffer.concat([header, payload])
+}
+
+for (const encoding of ['ordinary', 'wide', 'fragmented']) {
+  test(
+    `capability gate reorders real ${encoding} frames and observes only the matching ACK without changing bytes`,
+    { timeout: 5000 },
+    async t => {
+      const { proxy, server } = await fixture(t)
+      const gate = proxy.holdNextCapabilitySync(payload => !payload.scope)
+      let upstream
+      server.on('upgrade', (_request, socket) => {
+        upstream = socket
+        socket.write(
+          'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'
+        )
+      })
+      const client = connect(new URL(proxy.url).port, '127.0.0.1')
+      t.onTestFinished(() => client.destroy())
+      await once(client, 'connect')
+      const handshake = once(client, 'data')
+      client.write(
+        'GET /socket.io/?transport=websocket HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'
+      )
+      await handshake
+      const chunks = []
+      client.on('data', chunk => chunks.push(chunk))
+      const metadata = { version: 2, generation: 7, complete: true }
+      const registration = `42/local-executor,17${JSON.stringify([
+        'device:sync_capabilities',
+        {
+          plugin_sync: metadata,
+          plugins: [],
+          skills: [{ name: 'fixture' }],
+          private: 'must-not-record'.repeat(12),
+        },
+      ])}`
+      const frames =
+        encoding === 'fragmented'
+          ? [
+              websocketFrame(registration.slice(0, 51), { final: false }),
+              websocketFrame(registration.slice(51), { opcode: 0 }),
+            ]
+          : [websocketFrame(registration, { wide: encoding === 'wide' })]
+      const ping = websocketFrame('keepalive', { opcode: 9 })
+      const later = websocketFrame(
+        '42/local-executor,18["device:sync_capabilities",{"scope":"plugins"}]'
+      )
+      // Split a frame header across TCP chunks, then coalesce its tail with later frames.
+      upstream.write(frames[0].subarray(0, 1))
+      upstream.write(Buffer.concat([frames[0].subarray(1), ping, ...frames.slice(1), later]))
+      await until(() => gate.held, Boolean, 'Registration was not held', 2000)
+      await until(
+        () => Buffer.concat(chunks).length,
+        size => size === ping.length + later.length,
+        'Later frames were blocked',
+        2000
+      )
+      assert.deepEqual(Buffer.concat(chunks), Buffer.concat([ping, later]))
+      assert.deepEqual(gate.held, { scope: 'all', pluginSync: metadata })
+      const deviceBytes = []
+      upstream.on('data', chunk => deviceBytes.push(chunk))
+      const unrelated = websocketFrame('43/local-executor,18[{"success":true}]', { masked: true })
+      client.write(unrelated)
+      await until(
+        () => Buffer.concat(deviceBytes).length,
+        size => size === unrelated.length,
+        'Device ACK was blocked',
+        2000
+      )
+      assert.equal(gate.acknowledgement, null)
+      assert.deepEqual(Buffer.concat(deviceBytes), unrelated)
+      gate.release()
+      gate.release()
+      await until(
+        () => Buffer.concat(chunks).length,
+        size =>
+          size ===
+          ping.length + later.length + frames.reduce((size, frame) => size + frame.length, 0),
+        'Held frames were not released',
+        2000
+      )
+      assert.deepEqual(Buffer.concat(chunks), Buffer.concat([ping, later, ...frames]))
+      const acknowledgement = websocketFrame(
+        `43/local-executor,17${JSON.stringify([
+          {
+            success: true,
+            scope: 'all',
+            plugin_sync: metadata,
+            skills: [{ name: 'fixture', status: 'synced', private: 'must-not-record' }],
+            credentials: 'must-not-record',
+          },
+        ])}`,
+        { masked: true }
+      )
+      client.write(acknowledgement)
+      await until(() => gate.acknowledgement, Boolean, 'Matching real ACK was not observed', 2000)
+      await until(
+        () => Buffer.concat(deviceBytes).length,
+        size => size === unrelated.length + acknowledgement.length,
+        'Matching ACK bytes were not forwarded',
+        2000
+      )
+      assert.deepEqual(Buffer.concat(deviceBytes), Buffer.concat([unrelated, acknowledgement]))
+      assert.deepEqual(gate.acknowledgement, {
+        success: true,
+        scope: 'all',
+        pluginSync: metadata,
+        skills: [{ name: 'fixture', status: 'synced' }],
+        mcps: [],
+      })
+      assert.ok(!JSON.stringify([gate.held, gate.acknowledgement]).includes('must-not-record'))
+      assert.equal(gate.error, undefined)
+    }
+  )
+}

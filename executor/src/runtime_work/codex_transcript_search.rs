@@ -13,9 +13,13 @@ use super::{
     codex_transcript_page::{
         read_codex_thread_metadata, CodexTranscriptDirection, CodexTranscriptPage,
     },
-    transcript_search_text::{codex_turn_search_sources, AsyncReplySearchProjection},
+    transcript_search_projection::search_ranges,
+    transcript_search_text::{codex_turn_search_regions, AsyncReplySearchProjection},
     util::{item_type, string_field},
 };
+
+#[cfg(test)]
+use super::transcript_search_text::codex_turn_search_sources;
 
 const SEARCH_CURSOR_PREFIX: &str = "wework-codex-search:";
 const CONTEXT_CURSOR_PREFIX: &str = "wework-codex-search-context:";
@@ -129,7 +133,7 @@ pub(super) async fn search_codex_transcript(
     if limit == 0 {
         return Ok(search_result(Vec::new(), true));
     }
-    let needle = query.trim().to_lowercase();
+    let needle = query.trim();
     if needle.is_empty() {
         return Ok(json!({"success": true, "matches": [], "totalMatches": 0, "isCapped": false}));
     }
@@ -169,10 +173,10 @@ async fn search_paginated_codex_transcript(
     excluded_turn_ids: &HashSet<String>,
     user_content_by_client_id: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let needle = query.trim().to_lowercase();
+    let needle = query.trim();
     let search = CodexSearchQuery {
         thread_id,
-        needle: &needle,
+        needle,
         limit,
         user_content_by_client_id,
     };
@@ -308,28 +312,28 @@ fn search_turn_items(
             Some((id, message_id))
         })
         .collect();
-    for (item_id, text) in codex_turn_search_sources(
+    for region in codex_turn_search_regions(
         turn,
         search.user_content_by_client_id,
         Some(search.thread_id),
         reply_projection,
     ) {
-        let text = text.to_lowercase();
-        if !text.contains(search.needle) {
+        let ranges = search_ranges(&region.text, search.needle);
+        if ranges.is_empty() {
             continue;
         }
-        if !provider_item_ids.contains(&item_id) {
+        if !provider_item_ids.contains(&region.id) {
             return Err("Codex search item is missing provider id".to_owned());
         }
-        position.item_id = item_id;
+        position.item_id = region.id.clone();
         position.reply_source_turn_id = reply_projection
             .reply_source(&position.item_id)
             .map(ToOwned::to_owned);
         let anchor = search_cursor(&position)?;
-        for (occurrence, _) in text.match_indices(search.needle).enumerate() {
+        for (occurrence, range) in ranges.into_iter().enumerate() {
             let mut matched = json!({
                 "turnId": position.turn_id, "itemId": position.item_id,
-                "occurrence": occurrence, "cursor": anchor,
+                "occurrence": occurrence, "cursor": anchor, "regionId": region.id, "range": range,
             });
             if let Some(message_id) = user_message_ids.get(&position.item_id) {
                 matched["messageId"] = json!(message_id);
@@ -423,7 +427,6 @@ pub(super) async fn load_search_match(
         thread,
         before_cursor: older_context.1,
         after_cursor: newer_context.1,
-        prepend_item_turn_ids: HashSet::new(),
     })
 }
 
@@ -706,7 +709,6 @@ pub(super) async fn load_context_page(
             .collect();
     }
     let mut turns = Vec::new();
-    let mut prepend_item_turn_ids = HashSet::new();
     if !cursor.pending_turns.is_empty() {
         let pending = cursor.pending_turns.remove(0);
         let (turn, remaining) = load_context_turn(
@@ -717,9 +719,6 @@ pub(super) async fn load_context_page(
             CONTEXT_ITEM_PAGE_SIZE,
         )
         .await?;
-        if matches!(cursor.direction, ContextDirection::Desc) {
-            prepend_item_turn_ids.extend(string_field(&turn, "id"));
-        }
         turns.push(turn);
         if let Some(remaining) = remaining {
             cursor.pending_turns.insert(0, remaining);
@@ -735,7 +734,6 @@ pub(super) async fn load_context_page(
         thread,
         before_cursor,
         after_cursor,
-        prepend_item_turn_ids,
     })
 }
 
@@ -745,7 +743,57 @@ mod native_fixture;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_search_obeys_shared_projection_contract() {
+        use crate::runtime_work::transcript_search_projection::contract_tests::*;
+        for case in cases() {
+            let turn = native_turn(&case);
+            let regions = codex_turn_search_regions(
+                &turn,
+                &HashMap::new(),
+                None,
+                &mut AsyncReplySearchProjection::default(),
+            );
+            assert_regions(&case, &regions);
+            for query in case["queries"].as_array().unwrap() {
+                let mut matches = Vec::new();
+                search_turn_items(
+                    &CodexSearchQuery {
+                        thread_id: "contract-thread",
+                        needle: query["query"].as_str().unwrap(),
+                        limit: 250,
+                        user_content_by_client_id: &HashMap::new(),
+                    },
+                    &turn,
+                    CodexSearchCursor {
+                        turn_id: case["id"].as_str().unwrap().to_owned(),
+                        item_id: String::new(),
+                        turn_cursor: "contract-turn-cursor".into(),
+                        turn_offset: 0,
+                        reply_source_turn_id: None,
+                    },
+                    &mut AsyncReplySearchProjection::default(),
+                    &mut matches,
+                )
+                .unwrap();
+                assert_matches(&case, query, &json!(matches));
+                for matched in matches {
+                    let cursor = parse_search_cursor(matched["cursor"].as_str().unwrap())
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(cursor.item_id, matched["regionId"]);
+                    assert!(turn["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|item| item["id"] == cursor.item_id));
+                }
+            }
+        }
+    }
+
     use super::*;
+    use crate::runtime_work::transcript_search_text::codex_turn_search_sources;
 
     #[test]
     fn visible_search_excludes_context_and_tool_output() {

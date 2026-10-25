@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::runtime_work::transcript_search_projection::search_ranges;
 use crate::runtime_work::transcript_search_text::{
-    assistant_block_search_text, assistant_search_text, strip_codex_ui_directives,
-    visible_assistant_content, AsyncReplySearchProjection,
+    canonical_turn_search_regions, AsyncReplySearchProjection,
 };
 
 const MAX_TRANSCRIPT_SEARCH_MATCHES: usize = 250;
@@ -174,6 +174,7 @@ pub(super) fn cached_search_match_response(
         workspace_path: link.workspace_path.clone(),
         runtime: link.runtime.clone(),
         messages,
+        canonical_turns: None,
         context_usage: None,
         running,
         pagination: TranscriptPagination::Opaque {
@@ -324,40 +325,68 @@ fn transcript_search_response(matches: Vec<Value>, total: usize, capped: bool) -
 }
 
 fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Value {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
+    if query.trim().is_empty() {
         return transcript_search_response(Vec::new(), 0, false);
     }
-    let segment_contents = cached_assistant_segment_contents(messages);
-    let mut matches = Vec::new();
-    let mut total = 0;
-    let (projection, user_texts) = cached_async_reply_search_projection(messages);
-    for message in messages {
-        let role = string_field(message, "role").unwrap_or_default();
-        if !matches!(role.as_str(), "user" | "assistant") {
-            continue;
-        }
-        let turn_id = transcript_message_turn_id(message);
-        let Some(message_id) = string_field(message, "id") else {
+    let (projection, mut user_texts) = cached_async_reply_search_projection(messages);
+    let mut normalized = messages.to_vec();
+    let mut source_by_item = HashMap::new();
+    for (index, message) in normalized.iter_mut().enumerate() {
+        let Some(id) = string_field(message, "id") else {
             continue;
         };
-        let user_text = user_texts.get(&message_id).cloned();
-        for (item_id, text) in
-            cached_message_search_sources(message, &role, &segment_contents, user_text)
+        if transcript_message_turn_id(message).is_none() {
+            message["turnId"] = json!(format!("cached-search-message-{index}"));
+            message.as_object_mut().unwrap().remove("runtimeStatus");
+        }
+        source_by_item.insert(id.clone(), index);
+        if let Some(alias) = string_field(message, "clientUserMessageId")
+            .or_else(|| string_field(message, "client_user_message_id"))
         {
-            let count = text.to_lowercase().match_indices(needle.as_str()).count();
-            total += count;
-            for occurrence in 0..count.min(limit.saturating_sub(matches.len())) {
+            source_by_item.insert(alias.clone(), index);
+            if let Some(text) = user_texts.get(&id).cloned() {
+                user_texts.insert(alias, text);
+            }
+        }
+        for item in message["runtimeItems"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(message["blocks"].as_array().into_iter().flatten())
+        {
+            if let Some(item_id) = string_field(item, "id") {
+                source_by_item.insert(item_id, index);
+            }
+        }
+    }
+    let mut matches = Vec::new();
+    let mut total = 0;
+    for turn in transcript_canonical_turns(&normalized, TranscriptTurnItemSource::CachedMessages) {
+        for region in canonical_turn_search_regions(&turn, &user_texts) {
+            let Some(&source_index) = source_by_item.get(&region.id) else {
+                continue;
+            };
+            let message = &messages[source_index];
+            let Some(message_id) = string_field(message, "id") else {
+                continue;
+            };
+            let ranges = search_ranges(&region.text, query);
+            total += ranges.len();
+            for (occurrence, range) in ranges
+                .into_iter()
+                .take(limit.saturating_sub(matches.len()))
+                .enumerate()
+            {
                 let mut item = json!({
-                    "itemId": item_id,
+                    "itemId": region.id, "regionId": region.id, "range":range,
                     "occurrence": occurrence,
                     "cursor": format!("{CACHED_SEARCH_CURSOR_PREFIX}{}", json!(message_id)),
                 });
-                if let Some(turn_id) = turn_id.as_ref() {
+                if let Some(turn_id) = transcript_message_turn_id(message) {
                     item["turnId"] = json!(turn_id);
                 }
-                if role == "user" {
-                    item["messageId"] = json!(item_id);
+                if message["role"] == "user" {
+                    item["messageId"] = json!(region.id);
                     if let Some(questions) = projection.reply_questions(&message_id) {
                         item["replyQuestions"] = json!(questions);
                     }
@@ -370,119 +399,47 @@ fn search_cached_transcript(messages: &[Value], query: &str, limit: usize) -> Va
     transcript_search_response(matches, total, capped)
 }
 
-// Cached hydration joins assistant text within each user/guidance-delimited segment.
-fn cached_assistant_segment_contents(messages: &[Value]) -> HashMap<String, Arc<str>> {
-    let mut contents = HashMap::new();
-    for turn in transcript_canonical_turns(messages, TranscriptTurnItemSource::CachedMessages) {
-        let Some(items) = turn.get("items").and_then(Value::as_array) else {
-            continue;
-        };
-        let segment_count = items
-            .iter()
-            .filter(|item| item["type"] == "user_message")
-            .count()
-            + 1;
-        for (index, segment) in items
-            .split(|item| item["type"] == "user_message")
-            .enumerate()
-        {
-            let content = segment
-                .iter()
-                .filter(|item| item["type"] == "assistant_text")
-                .map(|item| strip_codex_ui_directives(item["content"].as_str().unwrap_or_default()))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let is_last = index + 1 == segment_count;
-            let status = if is_last {
-                turn.get("runtimeStatus")
-                    .filter(|value| !value.is_null())
-                    .or_else(|| turn.get("status"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-            } else {
-                "done"
-            };
-            let error = is_last
-                .then(|| turn.get("error").and_then(Value::as_str))
-                .flatten();
-            let content: Arc<str> = visible_assistant_content(&content, status, error).into();
-            for item in segment {
-                if let Some(id) = string_field(item, "id") {
-                    contents.insert(id, content.clone());
-                }
-            }
-        }
-    }
-    contents
-}
-
-fn cached_message_search_sources(
-    message: &Value,
-    role: &str,
-    segment_contents: &HashMap<String, Arc<str>>,
-    user_text: Option<String>,
-) -> Vec<(String, String)> {
-    let Some(message_id) = string_field(message, "id") else {
-        return Vec::new();
-    };
-    let content = string_field(message, "content").unwrap_or_default();
-    if role == "user" {
-        let id = string_field(message, "clientUserMessageId")
-            .or_else(|| string_field(message, "client_user_message_id"))
-            .unwrap_or(message_id);
-        return vec![(id, user_text.unwrap_or_default())];
-    }
-    let segment_content = segment_contents.get(&message_id).or_else(|| {
-        message
-            .get("blocks")
-            .and_then(Value::as_array)?
-            .iter()
-            .find_map(|block| segment_contents.get(block.get("id")?.as_str()?.trim()))
-    });
-    let content = strip_codex_ui_directives(&content);
-    let content = if let Some(segment_content) = segment_content {
-        if segment_content.is_empty() {
-            String::new()
-        } else {
-            content
-        }
-    } else {
-        // Unkeyed runtime messages normalize status directly, without runtimeStatus.
-        visible_assistant_content(
-            &content,
-            message
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            message.get("error").and_then(Value::as_str),
-        )
-    };
-    let final_content = segment_content.map(AsRef::as_ref).unwrap_or(&content);
-    let mut sources = Vec::new();
-    for block in message
-        .get("blocks")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|block| string_field(block, "type").as_deref() == Some("text"))
-    {
-        if let (Some(id), Some(text)) = (string_field(block, "id"), string_field(block, "content"))
-        {
-            if !text.trim().is_empty() && text.trim() != final_content.trim() {
-                sources.push((id, assistant_block_search_text(&text)));
-            }
-        }
-    }
-    sources.push((message_id, assistant_search_text(&content)));
-    sources
-}
-
 #[cfg(test)]
 #[path = "transcript_search_hydration_tests.rs"]
 mod hydration_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cached_search_obeys_shared_projection_contract() {
+        use crate::runtime_work::transcript_search_projection::contract_tests::*;
+        for case in cases() {
+            let messages = cached_messages(&case);
+            let (_, user_texts) = cached_async_reply_search_projection(&messages);
+            let regions =
+                transcript_canonical_turns(&messages, TranscriptTurnItemSource::CachedMessages)
+                    .iter()
+                    .flat_map(|turn| canonical_turn_search_regions(turn, &user_texts))
+                    .collect::<Vec<_>>();
+            assert_regions(&case, &regions);
+            for query in case["queries"].as_array().unwrap() {
+                let response =
+                    search_cached_transcript(&messages, query["query"].as_str().unwrap(), 250);
+                assert_matches(&case, query, &response["matches"]);
+                assert_eq!(
+                    response["totalMatches"],
+                    query["matches"].as_array().unwrap().len()
+                );
+                for matched in response["matches"].as_array().unwrap() {
+                    let cursor: String = serde_json::from_str(
+                        matched["cursor"]
+                            .as_str()
+                            .unwrap()
+                            .strip_prefix(CACHED_SEARCH_CURSOR_PREFIX)
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    assert!(messages.iter().any(|message| message["id"] == cursor));
+                }
+            }
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -662,10 +619,10 @@ mod tests {
         ];
         let result = search_cached_transcript(&messages, "needle", 250);
         assert_eq!(result["totalMatches"], 1);
-        assert_eq!(result["matches"][0]["itemId"], "final");
+        assert_eq!(result["matches"][0]["itemId"], "partial");
         assert_eq!(
             result["matches"][0]["cursor"],
-            format!("{CACHED_SEARCH_CURSOR_PREFIX}\"final\"")
+            format!("{CACHED_SEARCH_CURSOR_PREFIX}\"partial\"")
         );
 
         messages[0]["content"] = json!("::archive-thread{}\nAPI error: first needle");
@@ -723,7 +680,8 @@ mod tests {
         let result = search_cached_transcript(&messages, "needle", 250);
         assert_eq!(result["totalMatches"], 2);
         assert_eq!(result["matches"][0]["itemId"], "first");
-        assert_eq!(result["matches"][1]["itemId"], "last");
+        assert_eq!(result["matches"][1]["itemId"], "first");
+        assert_eq!(result["matches"][1]["occurrence"], 1);
     }
 
     #[test]

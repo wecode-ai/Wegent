@@ -50,7 +50,11 @@ impl ResponsesDispatch {
     pub fn spawn() -> Self {
         let (sender, mut receiver) = mpsc::channel::<DispatchJob>(QUEUE_DEPTH);
         tokio::spawn(async move {
-            let http = match HttpClient::builder().build() {
+            // The source's OpenAI/httpx client keeps a 300-second per-read
+            // timeout for both dispatch kinds. `brz-http`'s 400 ms default
+            // per-read timeout would abort the chat-shell SSE drain at its
+            // first recorded inter-chunk gap.
+            let http = match HttpClient::builder().read_timeout(DISPATCH_TIMEOUT).build() {
                 Ok(http) => http,
                 Err(error) => {
                     tracing::error!(%error, "failed to build the responses dispatch client");
@@ -83,6 +87,11 @@ async fn run(http: &HttpClient, job: DispatchJob) {
             };
             let request = request
                 .header("content-type", "application/json")
+                .header("accept", crate::responses::create::dispatch::OPENAI_ACCEPT)
+                .header(
+                    "authorization",
+                    crate::responses::create::dispatch::OPENAI_DUMMY_AUTHORIZATION,
+                )
                 .json(&body);
             match request.timeout(DISPATCH_TIMEOUT).send().await {
                 Ok(response) => {
@@ -104,6 +113,11 @@ async fn run(http: &HttpClient, job: DispatchJob) {
             };
             let request = request
                 .header("content-type", "application/json")
+                .header("accept", crate::responses::create::dispatch::OPENAI_ACCEPT)
+                .header(
+                    "authorization",
+                    crate::responses::create::dispatch::OPENAI_DUMMY_AUTHORIZATION,
+                )
                 .header("X-Request-ID", request_id.as_str())
                 .json(&body);
             match request.timeout(DISPATCH_TIMEOUT).send().await {

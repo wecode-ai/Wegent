@@ -6,31 +6,70 @@ import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
   runDesktopControlClient,
+  seedDesktopE2ELocalModels,
+  seedDesktopE2ERuntime,
 } from './automation'
+import {
+  clearLocalModelConfigs,
+  listLegacyLocalModelConfigs,
+} from '@/features/model-settings/localModelSettings'
+import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
+  clearLocalModelConfigs()
+  replaceProviderModelConfigs([])
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
+function providerModel(id: string, enabled = true) {
+  return {
+    id,
+    displayName: id,
+    modelId: id,
+    baseUrl: 'https://provider.example/v1',
+    apiFormat: 'openai-chat-completions' as const,
+    toolProfile: 'function' as const,
+    webSearchMode: 'disabled' as const,
+    imageGenerationEnabled: false,
+    catalogReady: true,
+    enabled,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+}
+
 describe('Electron desktop E2E automation', () => {
   test.each([
-    { html: 'interrupted', occurrence: 0 },
-    { html: 'interrupted before <strong>interrupted</strong> after', occurrence: 1 },
+    { html: 'interrupted', query: 'interrupted', text: 'interrupted', occurrence: 0 },
+    {
+      html: 'interrupted before <strong>interrupted</strong> after',
+      query: 'interrupted',
+      text: 'interrupted before interrupted after',
+      occurrence: 1,
+    },
+    {
+      html: '<button data-search-excluded>İ</button>İ before <strong>İ</strong> after',
+      query: 'i\u0307',
+      text: 'İ before İ after',
+      occurrence: 1,
+    },
   ])(
     'reads the active highlight at occurrence $occurrence in the exact requested message',
-    async ({ html, occurrence }) => {
+    async ({ html, query, text, occurrence }) => {
       const fixture = document.createElement('div')
       fixture.innerHTML = `
-      <input data-testid="conversation-find-input" value="interrupted">
+      <input data-testid="conversation-find-input">
       <p data-testid="highlight-message">${html}</p>
       <p data-testid="highlight-message">The operation was interrupted after useful output</p>
     `
       document.body.append(fixture)
+      fixture.querySelector('input')!.value = query
       const [message, partial] = fixture.querySelectorAll('p')
       const range = document.createRange()
-      range.selectNodeContents(message.querySelector('strong') ?? message)
+      const target = message.querySelector('strong') ?? message
+      range.selectNodeContents(target)
+      const targetText = target.textContent
       const partialRange = document.createRange()
       partialRange.selectNodeContents(partial)
       const collapsed = document.createRange()
@@ -63,7 +102,7 @@ describe('Electron desktop E2E automation', () => {
                 id: 'read-highlight',
                 action: 'getConversationSearchHighlightMetrics',
                 selector: '[data-testid="highlight-message"]',
-                text: message.textContent,
+                text,
               })
             )
           )
@@ -76,10 +115,10 @@ describe('Electron desktop E2E automation', () => {
         await vi.waitFor(() => expect(results).toHaveLength(1))
         expect(results[0].ok).toBe(true)
         expect(JSON.parse(results[0].value)).toEqual({
-          query: 'interrupted',
+          query,
           ranges: [
             {
-              text: 'interrupted',
+              text: targetText,
               occurrence,
               top: 100,
               bottom: 120,
@@ -307,8 +346,16 @@ describe('Electron desktop E2E automation', () => {
       expect(results[0].ok).toBe(true)
       expect(console.error).toHaveBeenCalledWith(
         '[Wework] Desktop E2E result acknowledgement failed:',
-        expect.objectContaining({ action: 'click', actionSucceeded: true })
+        expect.any(String)
       )
+      const diagnostic = vi
+        .mocked(console.error)
+        .mock.calls.find(call => call[0] === '[Wework] Desktop E2E result acknowledgement failed:')
+      expect(JSON.parse(String(diagnostic?.[1]))).toMatchObject({
+        action: 'click',
+        actionSucceeded: true,
+        error: 'Failed to fetch',
+      })
     } finally {
       button.remove()
     }
@@ -395,5 +442,62 @@ describe('Electron desktop E2E automation', () => {
     await fillDesktopControlElement(editor, 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
 
     expect(updateApplicationState).toHaveBeenCalledWith('WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK')
+  })
+
+  test('seeds local model fixtures without configuring a cloud connection', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+
+    await seedDesktopE2ERuntime()
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(listLegacyLocalModelConfigs().map(model => model.id)).toEqual(
+      expect.arrayContaining([
+        'desktop-e2e-responses',
+        'desktop-e2e-vision',
+        'desktop-e2e-vision-main',
+      ])
+    )
+  })
+
+  test('propagates cloud identity failures after seeding local models', async () => {
+    const fetch = vi.fn().mockRejectedValue(new Error('identity unavailable'))
+    vi.stubGlobal('fetch', fetch)
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      cloudBackendUrl: 'https://cloud.example.com',
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+
+    await expect(seedDesktopE2ERuntime()).rejects.toThrow('identity unavailable')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(listLegacyLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
+  })
+
+  test('treats non-successful cloud identity responses as failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })))
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      cloudBackendUrl: 'https://cloud.example.com',
+      modelServerUrl: 'http://127.0.0.1:43111',
+      seedLocalModels: true,
+    }
+
+    await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
+  })
+
+  test('skips a dependent model when Provider owns its vision proxy', () => {
+    replaceProviderModelConfigs([providerModel('desktop-e2e-vision')])
+
+    seedDesktopE2ELocalModels({ seedLocalModels: true }, 'http://127.0.0.1:43111')
+
+    const standaloneIds = listLegacyLocalModelConfigs().map(model => model.id)
+    expect(standaloneIds).toContain('desktop-e2e-responses')
+    expect(standaloneIds).not.toContain('desktop-e2e-vision')
+    expect(standaloneIds).not.toContain('desktop-e2e-vision-main')
   })
 })

@@ -146,7 +146,7 @@ export function useRuntimeConversationSearch({
       signal.addEventListener('abort', abort, { once: true })
       try {
         const transcript = await queueRead(controller.signal, current =>
-          loadTranscript(current.address, { beforeCursor: match.cursor, limit: 5 })
+          loadTranscript(current.address, { beforeCursor: match.cursor, limit: 5, isolated: true })
         )
         const current = assertCurrent(signal)
         controller.signal.throwIfAborted()
@@ -196,6 +196,7 @@ export function useRuntimeConversationSearch({
       const request: Promise<void> = queueRead(controller.signal, active =>
         loadTranscript(active.address, {
           limit: 5,
+          isolated: true,
           ...(direction === 'before' ? { beforeCursor: cursor } : { afterCursor: cursor }),
         })
       )

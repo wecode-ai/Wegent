@@ -2,23 +2,205 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[tokio::test]
+async fn cloud_stand_in_ignores_issue_status_but_checks_current_assignment() {
+    let issue = Arc::new(Mutex::new(json!({})));
+    let current = issue.clone();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let assignment_reads = reads.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/loop-items/issue", get(move || {
+            let value = current.lock().unwrap().clone();
+            async move { Json(value) }
+        }))
+        .route("/api/v1/loop-items/issue/assignments", get(move || {
+            assignment_reads.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(|| async {
+            Json(json!([{"human_assignment_id":"human","device_id":"mac","task_id":"stand-in-human"}]))
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "stand-in-human".into(),
+        status: "running".into(),
+        ..RuntimeTaskLink::default()
+    });
+    let payload = json!({"projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud","standInId":"default"});
+    let config = json!({"projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z"});
+    let mut automatic = handler.clone();
+    automatic.store = RuntimeWorkStore::new(root.path().join("automatic-index.json"));
+    for status in [
+        "inbox",
+        "pending",
+        "in_progress",
+        "in_review",
+        "completed",
+        "cancelled",
+        "custom",
+    ] {
+        let value = json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"status":status,"completed_at":"2026-10-20T12:00:00Z","human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+        *issue.lock().unwrap() = value.clone();
+        let before = reads.load(Ordering::SeqCst);
+        let result = handler.run_stand_in(payload.clone()).await.unwrap();
+        assert_eq!(result["taskId"], "stand-in-human", "{status}");
+        assert_eq!(reads.load(Ordering::SeqCst), before + 1, "{status}");
+        // Automatic handling must also reach current assignment validation.
+        automatic
+            .start_cloud_stand_in(&config, &value)
+            .await
+            .unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), before + 2, "{status}");
+    }
+    for (field, value) in [
+        ("cloud_project_id", json!("other")),
+        ("assignee_user_id", json!(8)),
+    ] {
+        let original = issue.lock().unwrap().clone();
+        issue.lock().unwrap()[field] = value;
+        let before = reads.load(Ordering::SeqCst);
+        let error = handler.run_stand_in(payload.clone()).await.unwrap_err();
+        assert_eq!(error.code, "invalid_assignment");
+        assert_eq!(reads.load(Ordering::SeqCst), before);
+        *issue.lock().unwrap() = original;
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn cached_selection_failure_does_not_abort_local_polling() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Selection"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Failed selection","assignee_user_id":7}))
+                .unwrap(),
+        )
+        .unwrap();
+    let key = format!("stand-in-decision:{}:7:{}-1", project.id, issue.id);
+    store
+        .save_stand_in_decision(&key, &json!({"version":1,"error":"invalid selection"}))
+        .unwrap();
+    let configs = ["one", "two"].map(|id| json!({"id":id,"projectId":project.id,"projectStore":"local","userId":7,"tags":[],"autoSelect":true,"personalVersion":1,"enabledAfter":"2020-01-01T00:00:00Z"}));
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert!(store.list_task_bindings(&issue.id).unwrap().is_empty());
+    assert_eq!(
+        store.stand_in_decision(&key).unwrap().unwrap()["error"],
+        "invalid selection"
+    );
+}
+
+#[tokio::test]
+async fn cached_selection_failure_does_not_block_later_cloud_notifications() {
+    let started = Arc::new(AtomicUsize::new(0));
+    let calls = started.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/loop-items/{id}/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-20T12:00:01Z"}]})) }))
+        .route("/api/v1/loop-items/{id}/tasks", get(|| async { Json(json!([])) }))
+        .route("/api/v1/cloud-projects/project/chat-agents", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([])) }
+        }))
+        .route("/api/v1/cloud-projects/project/execution-environments", get(|| async { Json(json!({"items":[{"device_key":"mac","can_use":true}]})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .save_stand_in_decision(
+            "stand-in-decision:project:7:failed-human",
+            &json!({"version":1,"error":"invalid selection"}),
+        )
+        .unwrap();
+    let configs = [("one","review"),("two","review"),("docs","docs")].map(|(id,tag)| json!({"id":id,"projectId":"project","projectStore":"cloud","userId":7,"tags":[tag],"autoSelect":true,"personalVersion":1,"enabledAfter":"2020-01-01T00:00:00Z","agentId":"probe"}));
+    for (index, issue) in [
+        json!({"id":"failed","assignee_user_id":7,"tags":["review"],"human_task_binding":{"humanAssignmentId":"failed-human","assignmentId":"assignment"}}),
+        json!({"id":"later","assignee_user_id":7,"tags":["docs"],"human_task_binding":{"humanAssignmentId":"later-human","assignmentId":"assignment"}}),
+    ].iter().enumerate() {
+        let error = handler
+            .start_cloud_stand_in_with_roles(&configs, issue)
+            .await.unwrap_err();
+        if index == 0 {
+            assert_eq!(error.code, "stand_in_selection_failed");
+        }
+    }
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "The later matching assignment must reach task preparation"
+    );
+    assert!(store
+        .stand_in_decision("stand-in-decision:project:7:later-human")
+        .unwrap()
+        .is_none());
+    server.abort();
+}
+
 #[test]
-fn tag_rules_prefer_a_specific_stand_in_and_never_choose_an_ambiguous_match() {
+fn tag_rules_return_specific_candidates_and_preserve_role_order() {
     let configs = vec![
         json!({"id":"default","tags":[]}),
         json!({"id":"review","tags":["review","security"]}),
         json!({"id":"docs","tags":["docs"]}),
     ];
     assert_eq!(
-        matching_stand_in(&configs, &json!({"tags":["review"]})).unwrap()["id"],
+        super::super::personal_stand_in::matching_personal_roles(
+            &configs,
+            &json!({"tags":["review"]})
+        )[0]["id"],
         "review"
     );
     assert_eq!(
-        matching_stand_in(&configs, &json!({"tags":["other"]})).unwrap()["id"],
+        super::super::personal_stand_in::matching_personal_roles(
+            &configs,
+            &json!({"tags":["other"]})
+        )[0]["id"],
         "default"
     );
-    assert!(matching_stand_in(&configs, &json!({"tags":["review","docs"]})).is_none());
-    assert!(matching_stand_in(&configs[1..], &json!({"tags":["other"]})).is_none());
+    assert_eq!(
+        super::super::personal_stand_in::matching_personal_roles(
+            &configs,
+            &json!({"tags":["review","docs"]})
+        )
+        .len(),
+        2
+    );
+    assert!(super::super::personal_stand_in::matching_personal_roles(
+        &configs[1..],
+        &json!({"tags":["other"]})
+    )
+    .is_empty());
 }
 
 #[test]
@@ -307,28 +489,14 @@ async fn explicit_retry_reuses_failed_task_and_rolls_back_a_rejected_restart() {
 }
 
 #[tokio::test]
-async fn cloud_stand_in_requires_actor_project_and_device_permission() {
-    let allowed = Arc::new(Mutex::new(false));
-    let device_allowed = allowed.clone();
-    let router = Router::new()
-        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-        .route(
-            "/api/v1/cloud-projects/project",
-            get(|| async { Json(json!({"access_role":"Developer"})) }),
-        )
-        .route(
-            "/api/v1/cloud-projects/project/execution-environments",
-            get(move || {
-                let can_use = *device_allowed.lock().unwrap();
-                async move { Json(json!({"items":[{"device_key":"mac","can_use":can_use}]})) }
-            }),
-        );
+async fn personal_stand_in_checks_actor_without_project_device_setup() {
+    let router = Router::new().route("/api/users/me", get(|| async { Json(json!({"id":7})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
-    let runtime_root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
     let handler = RuntimeWorkRpcHandler {
-        store: RuntimeWorkStore::new(runtime_root.path().join("runtime-index.json")),
+        store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: url,
             auth_token: "test".into(),
@@ -338,15 +506,185 @@ async fn cloud_stand_in_requires_actor_project_and_device_permission() {
     };
     let mut config = json!({"projectId":"project","userId":8});
     assert_eq!(
-        handler.authorize_stand_in(&config).await.unwrap_err().code,
+        handler
+            .verify_stand_in_user(&config)
+            .await
+            .unwrap_err()
+            .code,
         "permission_denied"
     );
     config["userId"] = json!(7);
+    handler.verify_stand_in_user(&config).await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn enabled_settings_save_offline_without_agent_model_or_workspace_preparation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let prompt = "x".repeat(16000);
+    let settings = json!({
+        "enabled":true,"executionDeviceId":"mac","version":0,"prompt":prompt,
+        "name":"n".repeat(200),"tags":(0..60).map(|n| n.to_string()).collect::<Vec<_>>(),
+        "agentId":"not-loaded",
+        "model":{"runtime":"codex","provider":"native","model_id":"not-loaded"},
+        "workspace":{"projectKey":"not-indexed","workspacePath":"/not-present","executionMode":"git_worktree"}
+    });
+    let saved = handler
+        .stand_in_settings(
+            json!({
+                "projectId":"cloud-project","projectStore":"cloud","userId":7,"settings":settings
+            }),
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved["enabled"], true);
+    assert_eq!(saved["version"], 1);
+    assert_eq!(saved["prompt"], prompt);
+    assert_eq!(saved["workspace"], settings["workspace"]);
+}
+
+#[tokio::test]
+async fn default_personal_task_needs_no_project_environment() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let payload = handler
+        .prepare_stand_in_task(
+            &json!({"projectStore":"local","projectId":"not-configured","userId":7}),
+            &json!({"id":"issue","title":"Task"}),
+            &json!({"humanAssignmentId":"human"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(payload["taskId"], "stand-in-human");
+    assert_eq!(payload["executionRequest"]["bot"][0]["shell_type"], "Codex");
+    assert!(payload.get("workspacePath").is_none());
+    let request = execution_request(&payload).unwrap();
+    assert!(is_standalone_chat_workspace(&request));
+}
+
+#[tokio::test]
+async fn project_work_does_not_copy_private_preferences_into_the_source_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    for preference in ["Always use concise replies", ""] {
+        let mut personal = store.personal_stand_in(7, "mac").unwrap();
+        personal["primary"] =
+            json!({"enabled":true,"prompt":"Coordinate","preferences":preference});
+        store.save_personal_stand_in(7, "mac", personal).unwrap();
+        let payload = handler
+            .prepare_stand_in_task(
+                &json!({"projectStore":"local","projectId":"project","userId":7,"sharedPreferences":"Stale preference"}),
+                &json!({"id":"issue","title":"Task"}),
+                &json!({"humanAssignmentId":"human"}),
+            )
+            .await
+            .unwrap();
+        let prompt = payload["message"].as_str().unwrap();
+        assert!(!prompt.contains("Shared personal preferences"));
+        assert!(!prompt.contains("Always use concise replies"));
+        assert!(!prompt.contains("Stale preference"));
+        if preference.is_empty() {
+            assert!(!prompt.contains("Always use concise replies"));
+        }
+    }
+}
+
+#[test]
+fn cloud_assignments_created_in_the_enable_second_are_not_lost() {
+    let settings =
+        json!({"projectStore":"cloud","enabledAfter":"2026-10-22T06:54:17.591610+00:00"});
+    assert!(assignment_after_enable(
+        &json!({"created_at":"2026-10-22T06:54:17Z"}),
+        &settings
+    ));
+    assert!(!assignment_after_enable(
+        &json!({"created_at":"2026-10-22T06:54:16Z"}),
+        &settings
+    ));
+    assert!(!assignment_after_enable(
+        &json!({"created_at":"2026-10-22T06:54:17Z"}),
+        &json!({"projectStore":"local","enabledAfter":settings["enabledAfter"]})
+    ));
+}
+
+#[tokio::test]
+async fn project_agent_reference_is_rejected_outside_its_owning_project_before_catalog_access() {
+    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    for (project, store) in [("other", "cloud"), ("owning", "local")] {
+        let error = handler.stand_in_agent(&json!({"agentId":"reviewer","agentProject":{"id":"owning","store":"cloud"},"projectId":project,"projectStore":store})).await.unwrap_err();
+        assert_eq!(error.code, "agent_project_mismatch");
+    }
+}
+
+#[tokio::test]
+async fn personal_agent_catalog_is_owned_available_and_preserves_fixed_device_policy() {
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+        .route("/api/v1/resources", get(|| async { Json(json!({"agents":[
+            {"team_id":11,"name":"Personal reviewer","owner_type":"user","owner_id":"7","status":"available"},
+            {"team_id":12,"name":"Other user","owner_type":"user","owner_id":"8","status":"available"},
+            {"team_id":13,"name":"Workspace","owner_type":"workspace","owner_id":"7","status":"available"},
+            {"team_id":14,"name":"Archived","owner_type":"user","owner_id":"7","status":"unavailable"}
+        ]})) }))
+        .route("/api/teams/11", get(|| async { Json(json!({"name":"Personal reviewer","is_active":true,"bots":[{"role":"leader","bot":{"shell_name":"Codex","execution_policy":{"mode":"fixed","environment_id":"another-device"},"model_policy":{"mode":"user_select"}}}]})) }))
+        .route("/api/devices/online", get(|| async { Json(json!({"items":[]})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let catalog = handler
+        .personal_stand_in_agents(json!({"userId":7}))
+        .await
+        .unwrap();
     assert_eq!(
-        handler.authorize_stand_in(&config).await.unwrap_err().code,
+        catalog["items"],
+        json!([{"id":11,"name":"Personal reviewer"}])
+    );
+    assert_eq!(
+        handler
+            .personal_stand_in_agents(json!({"userId":8}))
+            .await
+            .unwrap_err()
+            .code,
         "permission_denied"
     );
-    *allowed.lock().unwrap() = true;
-    handler.authorize_stand_in(&config).await.unwrap();
+    assert_eq!(
+        handler
+            .stand_in_agent(&json!({"userId":7,"agentResourceId":11}))
+            .await
+            .unwrap_err()
+            .code,
+        "agent_device_conflict"
+    );
     server.abort();
+}
+
+#[tokio::test]
+async fn personal_settings_project_view_retains_the_requested_storage_kind() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let settings = store.personal_stand_in(7, "mac").unwrap();
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let cloud = handler
+        .stand_in_settings(
+            json!({"userId":7,"projectId":"future-project","projectStore":"cloud"}),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(cloud["projectStore"], "cloud");
+    assert_eq!(cloud["projectId"], "future-project");
 }

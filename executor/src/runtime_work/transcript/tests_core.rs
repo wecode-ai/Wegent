@@ -725,6 +725,47 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
 }
 
 #[test]
+fn transcript_keeps_unphased_text_in_processing_until_turn_completes() {
+    let mut thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": [
+                {"id": "user-1", "type": "userMessage", "content": []},
+                {"id": "text-1", "type": "agentMessage", "text": "Inspecting the failure."}
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages.last().unwrap();
+    assert_eq!(assistant["status"], "streaming");
+    assert_eq!(assistant["content"], "");
+    assert_eq!(assistant["blocks"][0]["type"], "text");
+    assert_eq!(assistant["blocks"][0]["content"], "Inspecting the failure.");
+
+    thread["turns"][0]["items"][1]["phase"] = json!("final_answer");
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(
+        messages.last().unwrap()["content"],
+        "Inspecting the failure."
+    );
+
+    thread["turns"][0]["items"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("phase");
+    thread["turns"][0]["status"] = json!("completed");
+    let messages = transcript_messages(&thread, "device-1");
+    assert_eq!(
+        messages.last().unwrap()["content"],
+        "Inspecting the failure."
+    );
+}
+
+#[test]
 fn transcript_keeps_unphased_text_before_tools_in_processing() {
     let thread = json!({
         "id": "thread-1",
@@ -1421,4 +1462,55 @@ fn context_compaction_before_user_stays_in_the_user_response_turn() {
     assert_eq!(messages[1]["role"], "assistant");
     assert_eq!(messages[1]["content"], "Done");
     assert_eq!(messages[1]["blocks"][0]["tool_name"], "context_compaction");
+}
+
+#[test]
+fn canonical_turn_retains_artifacts_from_segments_before_guidance() {
+    let thread = json!({"id":"thread-1","cwd":"/tmp/project","turns":[{
+        "id":"turn-1","status":"completed","items":[
+            {"id":"patch","type":"patchApplyEnd","status":"completed","changes":{
+                "/tmp/project/src/one.rs":{"type":"update","unified_diff":"@@ -1 +1 @@\n-old\n+new\n"}
+            }},
+            {"id":"guidance","type":"userMessage","content":[{"type":"inputText","text":"Continue"}]},
+            {"id":"final","type":"agentMessage","phase":"final_answer","text":"Done"}
+        ]
+    }]});
+    let projection = project_transcript(&thread, "device-1", false);
+    assert_eq!(
+        projection.turns[0]["fileChanges"]["files"][0]["path"],
+        "src/one.rs"
+    );
+}
+
+#[test]
+fn canonical_user_boundary_distinguishes_guidance_from_pre_prompt_processing() {
+    let projection = project_transcript(
+        &json!({"turns":[{
+            "id":"turn-1","status":"completed","items":[
+                {"id":"compact","type":"contextCompaction"},
+                {"id":"user","type":"userMessage","content":[{"type":"inputText","text":"Prompt"}]},
+                {"id":"progress","type":"agentMessage","phase":"commentary","text":"Working"},
+                {"id":"guidance","type":"userMessage","content":[{"type":"inputText","text":"Guide"}]},
+                {"id":"final","type":"agentMessage","phase":"final_answer","text":"Done"}
+            ]
+        }]}),
+        "device-1",
+        false,
+    );
+    let users = projection.turns[0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "user_message")
+        .collect::<Vec<_>>();
+    assert_ne!(users[0]["message"]["runtimeGuidance"], true);
+    assert_eq!(users[1]["message"]["runtimeGuidance"], true);
+    assert!(projection.turns[0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(
+            |item| item.pointer("/block/tool_name").and_then(Value::as_str)
+                != Some("conversation_guidance")
+        ));
 }

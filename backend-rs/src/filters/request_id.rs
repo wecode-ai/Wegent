@@ -36,8 +36,16 @@ impl<S> RustApi for RequestIdFilter<S>
 where
     S: RustApi,
 {
-    async fn call(&self, request: Request<Incoming>, peer_addr: SocketAddr) -> GatewayResponse {
-        let request_id = response_request_id(request.uri().path(), request.headers());
+    async fn call(&self, mut request: Request<Incoming>, peer_addr: SocketAddr) -> GatewayResponse {
+        // The source's request-id middleware publishes the id to the handler
+        // (`request.state.request_id` / `get_request_id()`) before the route
+        // runs (`app/main.py:718-724`), so the handler sees the same value the
+        // response echoes. Expose it on the forwarded request as well.
+        let request_id = if exposes_request_id(request.uri().path()) {
+            Some(apply_request_id(request.headers_mut()))
+        } else {
+            None
+        };
         let mut response = self.inner.call(request, peer_addr).await;
         if let Some(request_id) = request_id {
             response.headers_mut().insert(X_REQUEST_ID, request_id);
@@ -46,19 +54,24 @@ where
     }
 }
 
-fn response_request_id(path: &str, headers: &HeaderMap) -> Option<HeaderValue> {
-    if path == "/" {
-        return None;
-    }
-    Some(
-        headers
-            .get(X_REQUEST_ID)
-            .filter(|value| !value.as_bytes().is_empty())
-            // HeaderValue clones share their backing bytes, so forwarding an
-            // existing request ID does not copy the header contents.
-            .cloned()
-            .unwrap_or_else(generated_request_id),
-    )
+/// The recorded root response carries no request-id header, so the root path
+/// keeps the source's bare response.
+fn exposes_request_id(path: &str) -> bool {
+    path != "/"
+}
+
+/// Reuse the incoming request ID or generate one, and expose it on the request
+/// headers so handlers read the value the response will echo.
+fn apply_request_id(headers: &mut HeaderMap) -> HeaderValue {
+    let request_id = headers
+        .get(X_REQUEST_ID)
+        .filter(|value| !value.as_bytes().is_empty())
+        // HeaderValue clones share their backing bytes, so forwarding an
+        // existing request ID does not copy the header contents.
+        .cloned()
+        .unwrap_or_else(generated_request_id);
+    headers.insert(X_REQUEST_ID, request_id.clone());
+    request_id
 }
 
 fn generated_request_id() -> HeaderValue {
@@ -86,29 +99,32 @@ mod tests {
 
     #[test]
     fn reuses_the_incoming_request_id() {
-        let headers = HeaderMap::from_iter([(
+        let mut headers = HeaderMap::from_iter([(
             X_REQUEST_ID,
             HeaderValue::from_static("wework-http-d2ca12c2-a9f8-4241-b93b-56fff44367e6"),
         )]);
 
-        let request_id = response_request_id("/api/devices", &headers).unwrap();
+        let request_id = apply_request_id(&mut headers);
 
         assert_eq!(
             request_id,
             "wework-http-d2ca12c2-a9f8-4241-b93b-56fff44367e6"
         );
+        assert_eq!(headers[X_REQUEST_ID], request_id);
     }
 
     #[test]
     fn generates_an_eight_character_hex_id_when_absent_or_empty() {
-        for headers in [
+        for mut headers in [
             HeaderMap::new(),
             HeaderMap::from_iter([(X_REQUEST_ID, HeaderValue::from_static(""))]),
         ] {
-            let request_id = response_request_id("/api/devices", &headers).unwrap();
-            let request_id = request_id.to_str().unwrap();
-            assert_eq!(request_id.len(), 8);
-            assert!(request_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            let request_id = apply_request_id(&mut headers);
+            let text = request_id.to_str().unwrap();
+            assert_eq!(text.len(), 8);
+            assert!(text.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            // The handler-visible request header carries the same id.
+            assert_eq!(headers[X_REQUEST_ID], request_id);
         }
     }
 
@@ -119,11 +135,7 @@ mod tests {
 
     #[test]
     fn skips_the_root_path_even_when_the_request_has_an_id() {
-        let headers = HeaderMap::from_iter([(
-            X_REQUEST_ID,
-            HeaderValue::from_static("wework-http-request-1"),
-        )]);
-
-        assert_eq!(response_request_id("/", &headers), None);
+        assert!(!exposes_request_id("/"));
+        assert!(exposes_request_id("/api/devices"));
     }
 }

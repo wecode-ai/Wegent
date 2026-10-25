@@ -6,7 +6,11 @@ import 'prosemirror-view/style/prosemirror.css'
 import '@xyflow/react/dist/style.css'
 import '@wegent/collaboration/styles.css'
 import './styles/globals.css'
+import { RendererCrashProbe } from './e2e/RendererCrashProbe'
+import { getDesktopE2ERuntimeConfig } from './e2e/runtime-config'
 import App from './App.tsx'
+import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
+import { WorkbenchErrorPage } from '@/components/common/WorkbenchErrorPage'
 import { installAppLogging } from './lib/app-logging'
 import { installDebugPanelLogCapture } from './lib/debugPanel'
 import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
@@ -78,50 +82,37 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
   const root = createRoot(container)
   root.render(
     <StrictMode>
-      <DshClientContextProvider context={context}>
-        {performanceDiagnostics ? (
-          <Profiler id="wework-root" onRender={recordReactCommit}>
+      <WorkbenchErrorBoundary onError={reportRendererFailure}>
+        {getDesktopE2ERuntimeConfig().controlUrl && <RendererCrashProbe />}
+        <DshClientContextProvider context={context}>
+          {performanceDiagnostics ? (
+            <Profiler id="wework-root" onRender={recordReactCommit}>
+              <App />
+            </Profiler>
+          ) : (
             <App />
-          </Profiler>
-        ) : (
-          <App />
-        )}
-      </DshClientContextProvider>
+          )}
+        </DshClientContextProvider>
+      </WorkbenchErrorBoundary>
     </StrictMode>
   )
   logRendererStartupStep('react-mount', 'completed')
   return () => root.unmount()
 }
 
-function renderStartupFailure(container: HTMLElement, error: unknown): void {
+function reportRendererFailure(error: unknown): void {
   logRendererStartupStep('renderer-startup', 'failed', {
     errorType: error instanceof Error ? error.name : typeof error,
   })
-  console.error('[Wework] Failed to initialize the desktop frontend:', error)
+  console.error('[Wework] Desktop frontend failed:', error)
   void invokeDesktopHost<void>('renderer.startupFailed').catch(startupError => {
     console.error('[Wework] Failed to report desktop startup failure:', startupError)
   })
-  createRoot(container).render(
-    <main
-      className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground"
-      data-testid="workbench-startup-error"
-    >
-      <section className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6">
-        <h1 className="heading-section">Wework 启动失败</h1>
-        <p className="text-chat text-muted-foreground">
-          Wework 桌面前端初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
-        </p>
-        <button
-          className="rounded-md bg-primary px-3 py-2 text-primary-foreground"
-          data-testid="workbench-startup-retry"
-          onClick={() => window.location.reload()}
-          type="button"
-        >
-          重新加载
-        </button>
-      </section>
-    </main>
-  )
+}
+
+function renderStartupFailure(container: HTMLElement, error: unknown): void {
+  reportRendererFailure(error)
+  createRoot(container).render(<WorkbenchErrorPage kind="startup" />)
 }
 
 const desktopStorageReady = (async () => {

@@ -45,10 +45,13 @@ fn canonical_turn_status_uses_completed_assistant_after_live_user_projection() {
 
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0]["status"], status);
-        assert!(turns[0].get("runtimeStatus").is_none());
+        assert_eq!(turns[0]["runtimeStatus"], status);
         assert_eq!(turns[0]["completedAt"], 1_800_000_000_000_i64);
         assert_eq!(turns[0]["error"], "Provider outcome");
-        assert_eq!(turns[0]["items"][1]["content"], "Useful output");
+        assert_eq!(turns[0]["items"][1]["id"], "answer-1");
+        assert_eq!(turns[0]["items"][1]["type"], "block");
+        assert_eq!(turns[0]["items"][1]["block"]["type"], "text");
+        assert_eq!(turns[0]["items"][1]["block"]["content"], "Useful output");
     }
 }
 
@@ -57,7 +60,7 @@ fn canonical_turn_status_preserves_live_assistant_and_user_only_turns() {
     let messages = live_native_messages();
     let turns = transcript_canonical_turns(&messages, TranscriptTurnItemSource::CodexItems);
     assert_eq!(turns[0]["status"], "streaming");
-    assert!(turns[0].get("runtimeStatus").is_none());
+    assert_eq!(turns[0]["runtimeStatus"], "streaming");
 
     let turns = transcript_canonical_turns(&messages[..1], TranscriptTurnItemSource::CodexItems);
     assert_eq!(turns[0]["status"], "done");

@@ -1,3 +1,4 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
@@ -64,9 +65,7 @@ export async function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
       const isCommit = JSON.stringify(body.input).includes('Generate a Git commit subject line')
       if (isCommit) {
         generationRequest = body
@@ -115,7 +114,8 @@ export async function createDesktopScenario({
       })
       await writeFile(join(workspacePath, 'commit-generation.txt'), `${MARKER}\n`)
       await openEnvironmentInfo(control)
-      await control.command('click', '[data-testid="environment-commit-button"]')
+      // The Git contribution loads after the environment popover shell mounts.
+      await control.command('clickWhenEnabled', '[data-testid="environment-commit-button"]')
       await control.command('fill', '[data-testid="environment-commit-message-input"]', {
         value: '',
       })

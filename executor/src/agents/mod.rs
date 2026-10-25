@@ -50,7 +50,7 @@ pub(crate) use codex::{
     bind_codex_thread_model_route, codex_notification_requires_user_input,
     codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, replace_config,
-    select_wework_codex_user_instructions, wework_codex_home,
+    select_wework_codex_user_instructions, task_identity_thread_config, wework_codex_home,
     CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
     CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
@@ -58,9 +58,9 @@ pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
-    CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
-    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
-    CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexNotification, CodexNotificationSender, CodexRequestUserInputReceiver,
+    CodexResponseValueOrigin, CodexThreadStartedCallback, CodexTurnInterrupter,
+    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;

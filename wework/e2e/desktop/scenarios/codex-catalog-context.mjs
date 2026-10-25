@@ -11,6 +11,7 @@ import {
 import {
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   readRequestBody,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
@@ -84,6 +85,12 @@ export function createCatalogContextVerification({
     attachServer(server) {
       // The model fixture implements the HTTP Responses transport.
       server.on('upgrade', (_request, socket) => {
+        // Upgrade sockets leave HTTP's error handling. A client may reset the
+        // rejected connection while switching back to the HTTP transport.
+        socket.on('error', error => {
+          socket.destroy()
+          if (error.code !== 'ECONNRESET') server.emit('error', error)
+        })
         socket.end(
           'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
         )
@@ -100,6 +107,7 @@ export function createCatalogContextVerification({
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const kind = codexRequestKind(body)
       if (kind === 'compaction' || url.pathname.endsWith('/compact')) {
         compactions += 1

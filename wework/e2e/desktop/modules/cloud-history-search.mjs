@@ -122,7 +122,7 @@ async function seedHistory(cloud, taskId, nativeTaskId) {
     const turnId = `cloud-search-turn-${index}`
     const terminal = terminalHistoryTurn(index)
     const text = terminal?.text ?? answer(index)
-    const assistantEvents = terminalHistoryAssistantEvents(index, text)
+    const assistantEvents = terminalHistoryAssistantEvents(index, text, turnId)
     for (const payload of [
       { type: 'task_started', turn_id: turnId, model_context_window: null },
       { type: 'user_message', message: prompt(index), text_elements: [], local_images: [] },
@@ -281,7 +281,7 @@ export function createCloudHistorySearchVerification() {
         )
         for (const { query, matches } of TERMINAL_HISTORY_SEARCH_CASES) {
           const terminal = await request(SEARCH_PATH, { ...search, query })
-          assert.equal(terminal.totalMatches, matches.length)
+          assert.equal(terminal.totalMatches, matches.length, `Cloud contract query: ${query}`)
           assert.deepEqual(
             terminal.matches.map(match => match.turnId),
             matches.map(match => `cloud-search-turn-${match.index}`),
@@ -365,6 +365,7 @@ export function createCloudHistorySearchVerification() {
         const searchFault = arm('search', entry => entry.path === SEARCH_PATH)
         await control.command('fill', FIND, { value: QUERY })
         await control.command('waitFor', FIND_RETRY)
+        await control.command('waitFor', FIND_RETRY, { text: '搜索失败' })
         assertFault(searchFault)
         await control.command('clickWhenEnabled', FIND_RETRY)
         await assertRecovered('1 / 2', MATCH_TURNS[0])
@@ -378,6 +379,7 @@ export function createCloudHistorySearchVerification() {
         )
         await control.command('clickWhenEnabled', '[data-testid="conversation-find-next-button"]')
         await control.command('waitFor', FIND_RETRY)
+        await control.command('waitFor', FIND_RETRY, { text: '历史加载失败' })
         assertFault(hydrationFault)
         await control.command('clickWhenEnabled', FIND_RETRY)
         await assertRecovered('2 / 2', MATCH_TURNS[1])

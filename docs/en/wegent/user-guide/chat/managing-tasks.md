@@ -14,6 +14,7 @@ This guide explains how to create conversation-type tasks in the Wegent frontend
 - [Creating a Conversation](#-creating-a-conversation)
 - [Conversation Interface](#-conversation-interface)
 - [Advanced Features](#-advanced-features)
+- [Continuing a Previous Task](#continuing-a-previous-task)
 - [Managing Task Knowledge](#-managing-task-knowledge)
 - [Best Practices](#-best-practices)
 - [Common Issues](#-common-issues)
@@ -209,6 +210,17 @@ Add knowledge bases to enhance agent capabilities:
 After you select knowledge bases and send a message, they become knowledge bindings on the current Task. Follow-up messages may continue to use those bindings even if you do not select them again. External knowledge sources, when enabled by your deployment, follow the same rule.
 
 To stop future messages from using a knowledge base, open the task/group management panel from the top-right corner and remove the entry from the **Knowledge** tab. Removal only affects future messages. It does not delete context badges or citations already shown on historical messages.
+
+### Continuing a Previous Task
+
+Type `@` in the chat composer to list previous tasks you can access. The menu is ordered by most recent update. Keep typing a task title to search for older tasks that are not in the currently loaded list.
+
+Selecting a task adds a "Previous task" badge to the composer. When you send the next message, Wegent reads that task's recent conversation and passes it to the agent as handoff context: its task state, decisions, and unfinished steps become the working background for the current request, and a short or ambiguous message is read as "continue that work". The transcript stays quoted data, so instructions inside it are never treated as system instructions. This does not switch to or modify the original task, and the transcript never appears in your message bubble or the composer.
+
+- You can reference only tasks you can access. The current task is excluded from the menu.
+- Each referenced task contributes at most its latest 100 messages and about 100,000 characters. Older or longer content is omitted.
+- A message can reference multiple previous tasks. Remove a badge before sending to leave that task out of the request.
+- While editing an earlier message, you can also type `@` to reference a previous task; existing references appear as removable badges.
 
 ### Skill Selection
 

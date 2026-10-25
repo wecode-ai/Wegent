@@ -1,3 +1,4 @@
+import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -7,13 +8,13 @@ import {
 } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身独立控制-${process.pid}`
+const PROJECT = `分身独立控制-${process.pid}`
 const USER_ID = 9001
 const AUTO = '[data-testid="stand-in-auto"]'
 const PROMPT = '[data-testid="stand-in-prompt"]'
 const SAVE = '[data-testid="stand-in-save"]'
 
-/** Exercise independent settings and automatic handling against the real Executor. */
+/** Save automatic handling and execution settings together against the real Executor. */
 export function createDesktopScenario({ uiTimeoutMs }) {
   return {
     async verify(control) {
@@ -36,16 +37,14 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           },
           uiTimeoutMs
         )
-      const open = async () => {
-        await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
-        await control.command('waitFor', PROMPT, { timeoutMs: uiTimeoutMs })
-      }
-      const cancel = () => control.command('click', '[data-testid="stand-in-cancel"]')
+      const open = () => openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
+      const cancel = () => discardStandInDraft(control)
 
       await open()
+      assert.equal(await control.command('getAttribute', AUTO, { value: 'role' }), 'switch')
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await control.command('clickWhenEnabled', AUTO)
-      await control.command('waitFor', '[data-testid="stand-in-enable-notice"]')
+      await control.command('waitFor', AUTO + '[aria-checked="true"]')
       assert.equal((await read()).enabled, false, 'First activation requires saving settings')
       await cancel()
       assert.equal((await read()).version, 0, 'Cancel must not create a configuration')
@@ -61,7 +60,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await open()
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', `${AUTO}[aria-checked="true"]`)
-      assert.equal((await read()).enabled, true, 'A configured stand-in enables immediately')
+      assert.equal((await read()).enabled, false, 'Existing configurations also wait for Save')
+      assert.equal((await read()).version, saved.version, 'Editing a checkbox must not persist')
       await control.command('fill', PROMPT, { value: 'Unsaved changes' })
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
@@ -75,7 +75,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       assert.equal(await control.command('getValue', PROMPT), 'Saved manual settings')
       await control.command('fill', PROMPT, { value: 'Confirmed new settings' })
       await control.command('clickWhenEnabled', AUTO)
-      await control.command('waitFor', '[data-testid="stand-in-enable-notice"]')
+      await control.command('waitFor', AUTO + '[aria-checked="true"]')
       assert.equal((await read()).enabled, false, 'Pending edits require explicit save and enable')
       await control.command('clickWhenEnabled', SAVE)
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
@@ -87,7 +87,22 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('clickWhenEnabled', AUTO)
       await control.command('waitFor', `${AUTO}[aria-checked="false"]`)
       await cancel()
-      assert.equal((await read()).enabled, false, 'Cancel must not undo a persisted toggle')
+      assert.equal(
+        (await read()).enabled,
+        true,
+        'Cancel must discard the unsaved disable selection'
+      )
+      await open()
+      await control.command('waitFor', AUTO + '[aria-checked="true"]')
+      assert.equal(await control.command('getValue', PROMPT), 'Confirmed new settings')
+      await control.command('clickWhenEnabled', AUTO)
+      await control.command('fill', PROMPT, { value: 'Saved disabled settings' })
+      assert.equal((await read()).enabled, true, 'Disabling must wait for Save')
+      await control.command('clickWhenEnabled', SAVE)
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      saved = await read()
+      assert.equal(saved.enabled, false)
+      assert.equal(saved.prompt, 'Saved disabled settings')
     },
   }
 }

@@ -81,9 +81,24 @@ describe('visible process text in terminal conversation search', () => {
       const matches = findConversationMatches(index, 'needle')
       expect(matches.totalMatches).toBe(state === 'partial' ? 4 : 3)
       expect(matches.matches.slice(0, 3)).toEqual([
-        { messageId: 'first-block', occurrence: 0 },
-        { messageId: 'first-block', occurrence: 1 },
-        { messageId: 'second-block', occurrence: 0 },
+        {
+          messageId: 'first-block',
+          occurrence: 0,
+          regionId: 'first-block',
+          range: { start: 0, end: 6 },
+        },
+        {
+          messageId: 'first-block',
+          occurrence: 1,
+          regionId: 'first-block',
+          range: { start: 7, end: 13 },
+        },
+        {
+          messageId: 'second-block',
+          occurrence: 0,
+          regionId: 'second-block',
+          range: { start: 0, end: 6 },
+        },
       ])
       const hiddenQuery = state === 'cancelled' ? 'interrupted' : 'API error: failed'
       expect(findConversationMatches(index, hiddenQuery).totalMatches).toBe(
@@ -95,7 +110,12 @@ describe('visible process text in terminal conversation search', () => {
           [projected],
           'needle'
         )
-      ).toEqual({ messageId: projected.id, occurrence: 2 })
+      ).toEqual({
+        messageId: projected.id,
+        occurrence: 2,
+        regionId: 'second-block',
+        range: { start: 0, end: 6 },
+      })
     }
   )
 
@@ -117,9 +137,24 @@ describe('visible process text in terminal conversation search', () => {
       { itemId: 'final-item', text: '' },
     ])
     expect(findConversationMatches(index, 'needle').matches).toEqual([
-      { messageId: 'first-block', occurrence: 0 },
-      { messageId: 'first-block', occurrence: 1 },
-      { messageId: 'second-block', occurrence: 0 },
+      {
+        messageId: 'first-block',
+        occurrence: 0,
+        regionId: 'first-block',
+        range: { start: 0, end: 6 },
+      },
+      {
+        messageId: 'first-block',
+        occurrence: 1,
+        regionId: 'first-block',
+        range: { start: 7, end: 13 },
+      },
+      {
+        messageId: 'second-block',
+        occurrence: 0,
+        regionId: 'second-block',
+        range: { start: 0, end: 6 },
+      },
     ])
     expect(
       resolveConversationMatch(
@@ -127,7 +162,12 @@ describe('visible process text in terminal conversation search', () => {
         [projected],
         'needle'
       )
-    ).toEqual({ messageId: projected.id, occurrence: 2 })
+    ).toEqual({
+      messageId: projected.id,
+      occurrence: 2,
+      regionId: 'second-block',
+      range: { start: 0, end: 6 },
+    })
   })
 
   test.each(['failed', 'cancelled', 'empty'] as const)(

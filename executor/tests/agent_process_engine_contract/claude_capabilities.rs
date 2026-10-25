@@ -16,6 +16,7 @@ async fn agent_process_engine_deploys_standalone_task_skills_before_claude() {
     let fake_claude = write_fake_executable(
         "fake-claude-task-skill",
         r#"#!/bin/sh
+cat >/dev/null
 global_config=false
 task_skill=false
 if [ "$CLAUDE_CONFIG_DIR" = "$HOME/.claude" ]; then global_config=true; fi
@@ -91,6 +92,7 @@ async fn agent_process_engine_deploys_bot_skills_for_regular_claude_tasks() {
     let fake_claude = write_fake_executable(
         "fake-claude-regular-bot-skill",
         r#"#!/bin/sh
+cat >/dev/null
 isolated_config=false
 agent_skill=false
 if [ "$CLAUDE_CONFIG_DIR" = "$WEGENT_WORKBENCH_HOME/agents/test-user/default/test-agent" ]; then isolated_config=true; fi
@@ -108,7 +110,8 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"isolate
         task_id: "87".to_owned(),
         backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
-        prompt: json!("run with bot skill"),
+        // Exceed the pipe buffer so the CLI fixture must consume its input.
+        prompt: json!("run with bot skill".repeat(16_384)),
         bot: json!([{
             "id": 327,
             "shell_type": "ClaudeCode",
@@ -223,6 +226,7 @@ async fn agent_process_engine_skips_claude_fallback_when_skill_hash_is_missing()
     let fake_claude = write_fake_executable(
         "fake-claude-skip-fallback-no-hash",
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
 "#,
     );
@@ -303,6 +307,7 @@ async fn agent_process_engine_restores_enabled_claude_plugin_zip_before_claude()
     let fake_claude = write_fake_executable(
         "fake-claude-plugin-zip",
         r#"#!/bin/sh
+cat >/dev/null
 plugin_skill=false
 if [ -f "$HOME/.claude/plugins/cache/wegent/superpowers/5.0.7/skills/systematic-debugging/SKILL.md" ]; then plugin_skill=true; fi
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"plugin=%s"}]}}\n' "$plugin_skill"
@@ -357,6 +362,7 @@ exit 0
         "fake-claude-hook",
         &format!(
             r#"#!/bin/sh
+cat >/dev/null
 if [ ! -f "{}" ]; then exit 13; fi
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hook first"}}]}}}}'
 "#,
@@ -404,6 +410,7 @@ async fn agent_process_engine_writes_file_edit_hooks_before_claude() {
     let fake_claude = write_fake_executable(
         "fake-claude-file-edit-hook",
         r#"#!/bin/sh
+cat >/dev/null
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 python3 - "$settings" <<'PY'
 import json
@@ -479,6 +486,7 @@ async fn agent_process_engine_writes_default_claude_settings_before_claude() {
     let fake_claude = write_fake_executable(
         "fake-claude-default-settings",
         r#"#!/bin/sh
+cat >/dev/null
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 python3 - "$settings" <<'PY'
 import json
@@ -546,6 +554,7 @@ async fn agent_process_engine_uses_process_env_for_claude_settings_env() {
     let fake_claude = write_fake_executable(
         "fake-claude-settings-env",
         r#"#!/bin/sh
+cat >/dev/null
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 python3 - "$settings" <<'PY'
 import json
@@ -631,6 +640,7 @@ async fn agent_process_engine_replaces_stale_file_edit_hooks_before_claude() {
     let fake_claude = write_fake_executable(
         "fake-claude-stale-file-edit-hook",
         r#"#!/bin/sh
+cat >/dev/null
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 python3 - "$settings" <<'PY'
 import json

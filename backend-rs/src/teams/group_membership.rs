@@ -23,14 +23,15 @@ pub struct ErpContext<'a, R: brz_redis::Redis = brz_redis::RedisService> {
 }
 
 /// Role hierarchy (`app.schemas.base_role.ROLE_HIERARCHY`); lower is more
-/// privileged.
+/// privileged. `Viewer` sits between `Reporter` and `RestrictedAnalyst`.
 fn role_rank(role: &str) -> Option<u8> {
     match role {
         "Owner" => Some(0),
         "Maintainer" => Some(1),
         "Developer" => Some(2),
         "Reporter" => Some(3),
-        "RestrictedAnalyst" => Some(4),
+        "Viewer" => Some(4),
+        "RestrictedAnalyst" => Some(5),
         _ => None,
     }
 }
@@ -476,6 +477,20 @@ mod tests {
         assert!(!has_permission("Reporter", "Developer"));
         assert!(has_permission("Reporter", "RestrictedAnalyst"));
         assert!(!has_permission("Unknown", "Reporter"));
+    }
+
+    #[test]
+    fn viewer_ranks_between_reporter_and_restricted_analyst() {
+        // `app.schemas.base_role.ROLE_HIERARCHY`: Viewer=4 sits below
+        // Reporter=3 and above RestrictedAnalyst=5.
+        assert!(has_permission("Viewer", "Viewer"));
+        assert!(!has_permission("Viewer", "Reporter"));
+        assert!(has_permission("Reporter", "Viewer"));
+        assert!(!has_permission("RestrictedAnalyst", "Viewer"));
+        assert_eq!(
+            highest_role(&["RestrictedAnalyst".into(), "Viewer".into()]),
+            Some("Viewer".to_string())
+        );
     }
 
     #[test]

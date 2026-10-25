@@ -450,7 +450,7 @@ describe('persisted conversation find', () => {
     expect(hydrate).not.toHaveBeenCalled()
   })
 
-  test('deduplicates persisted and streaming matches by runtime item and resolves changed projection ids', async () => {
+  test('deduplicates canonical region matches and resolves changed projection ids', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const projected = {
       ...message('projection-new', 'needle\n\nneedle needle'),
@@ -464,13 +464,17 @@ describe('persisted conversation find', () => {
         {
           messageId: 'projection-old',
           itemId: 'first-item',
+          regionId: 'first-item',
           occurrence: 0,
+          range: { start: 0, end: 6 },
           cursor: 'first-cursor',
         },
         {
           messageId: 'projection-old',
-          itemId: 'second-item',
-          occurrence: 0,
+          itemId: 'first-item',
+          regionId: 'first-item',
+          occurrence: 1,
+          range: { start: 7, end: 13 },
           cursor: 'second-cursor',
         },
       ],
@@ -494,6 +498,10 @@ describe('persisted conversation find', () => {
     expect(result.current.result).toEqual({ matches: 3, active: 1, isCapped: false })
     act(() => result.current.step(1))
     expect(result.current.searchTarget?.occurrence).toBe(1)
+    expect(result.current.searchTarget).toMatchObject({
+      regionId: 'first-item',
+      range: { start: 7, end: 13 },
+    })
     rerender({ ...props, messages: [{ ...projected, id: 'projection-rebuilt' }] })
     expect(result.current.searchTarget?.messageId).toBe('projection-rebuilt')
     expect(result.current.searchTarget?.occurrence).toBe(1)
@@ -505,24 +513,49 @@ describe('persisted conversation find', () => {
 
   test('keeps live items when a reading page has the same projected message id and overlapping items', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const live = {
+    const separator: NonNullable<WorkbenchMessage['blocks']>[number] = {
+      id: 'tool-boundary',
+      subtaskId: 'turn',
+      type: 'tool',
+      toolName: 'shell',
+      toolInput: {},
+      status: 'done',
+      createdAt: 0,
+    }
+    const live: WorkbenchMessage = {
       ...message('same-projection', 'needle\n\nneedle'),
+      blocks: [separator],
       runtimeDisplayItems: [
-        { id: 'shared-item', type: 'assistant_text' as const, content: 'needle' },
-        { id: 'streaming-item', type: 'assistant_text' as const, content: 'needle' },
+        { id: 'shared-item', type: 'assistant_text', content: 'needle' },
+        { id: separator.id, type: 'block' },
+        { id: 'streaming-item', type: 'assistant_text', content: 'needle' },
       ],
     }
-    const page = {
+    const page: WorkbenchMessage = {
       ...message('same-projection', 'needle\n\nneedle'),
+      blocks: [separator],
       runtimeDisplayItems: [
-        { id: 'old-item', type: 'assistant_text' as const, content: 'needle' },
-        { id: 'shared-item', type: 'assistant_text' as const, content: 'needle' },
+        { id: 'old-item', type: 'assistant_text', content: 'needle' },
+        { id: separator.id, type: 'block' },
+        { id: 'shared-item', type: 'assistant_text', content: 'needle' },
       ],
     }
     const search = vi.fn().mockResolvedValue({
       matches: [
-        { itemId: 'old-item', occurrence: 0, cursor: 'old' },
-        { itemId: 'shared-item', occurrence: 0, cursor: 'shared' },
+        {
+          itemId: 'old-item',
+          regionId: 'old-item',
+          occurrence: 0,
+          range: { start: 0, end: 6 },
+          cursor: 'old',
+        },
+        {
+          itemId: 'shared-item',
+          regionId: 'shared-item',
+          occurrence: 0,
+          range: { start: 0, end: 6 },
+          cursor: 'shared',
+        },
       ],
       totalMatches: 2,
       isCapped: false,
@@ -559,9 +592,15 @@ describe('persisted conversation find', () => {
     expect(search).toHaveBeenCalledOnce()
   })
 
-  test('counts preceding prose when a selected item joins an existing assistant message', async () => {
+  test('resolves a selected canonical range after the complete assistant region loads', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const selectedMatch = { itemId: 'target-item', occurrence: 1, cursor: 'target-cursor' }
+    const selectedMatch = {
+      itemId: 'preceding-item',
+      regionId: 'preceding-item',
+      occurrence: 3,
+      range: { start: 21, end: 27 },
+      cursor: 'target-cursor',
+    }
     const search = vi
       .fn()
       .mockResolvedValue({ matches: [selectedMatch], totalMatches: 1, isCapped: false })
@@ -603,6 +642,10 @@ describe('persisted conversation find', () => {
     })
     expect(result.current.searchTarget?.messageId).toBe('merged-projection')
     expect(result.current.searchTarget?.occurrence).toBe(3)
+    expect(result.current.searchTarget).toMatchObject({
+      regionId: 'preceding-item',
+      range: { start: 21, end: 27 },
+    })
     expect(result.current.isLoading).toBe(false)
     expect(hydrate).toHaveBeenCalledOnce()
   })
@@ -764,6 +807,7 @@ describe('persisted conversation find', () => {
     fireEvent.keyDown(window, { key: 'f', metaKey: true })
     fireEvent.change(screen.getByTestId('conversation-find-input'), { target: { value: 'needle' } })
     await waitFor(() => expect(screen.getByTestId('conversation-find-retry')).toBeInTheDocument())
+    expect(screen.getByTestId('conversation-find-retry')).toHaveTextContent('搜索失败')
     fireEvent.click(screen.getByTestId('conversation-find-retry'))
     await waitFor(() =>
       expect(screen.queryByTestId('conversation-find-loading-icon')).not.toBeInTheDocument()
@@ -798,6 +842,7 @@ describe('persisted conversation find', () => {
     })
     await act(async () => vi.advanceTimersByTime(150))
     expect(result.current.historyFailed).toBe(true)
+    expect(result.current.failure).toBe('load')
     await act(async () => result.current.retry())
     expect(hydrate).toHaveBeenCalledTimes(2)
     rerender({
@@ -814,13 +859,16 @@ describe('persisted conversation find', () => {
     expect(search).toHaveBeenCalledOnce()
   })
 
-  test('fails a completed historical load that cannot resolve the visible occurrence', async () => {
+  test('classifies an unresolved completed load as location failure and rebuilds its search', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const search = vi.fn().mockResolvedValue({
-      matches: [{ itemId: 'missing', occurrence: 0, cursor: 'missing-cursor' }],
-      totalMatches: 1,
-      isCapped: false,
-    })
+    const search = vi
+      .fn()
+      .mockResolvedValueOnce({
+        matches: [{ itemId: 'missing', occurrence: 0, cursor: 'missing-cursor' }],
+        totalMatches: 1,
+        isCapped: false,
+      })
+      .mockResolvedValue({ matches: [], totalMatches: 0, isCapped: false })
     const hydrate = vi.fn().mockResolvedValue(undefined)
     const { result } = renderHook(() =>
       useConversationFind(
@@ -834,9 +882,16 @@ describe('persisted conversation find', () => {
     })
     await act(async () => vi.advanceTimersByTime(150))
     act(() => vi.advanceTimersByTime(1500))
-    expect(result.current.historyFailed).toBe(true)
+    expect(result.current.failure).toBe('locate')
+    expect(result.current.historyFailed).toBe(false)
     expect(result.current.isLoading).toBe(false)
     expect(result.current.searchTarget).toBeNull()
     expect(hydrate).toHaveBeenCalledOnce()
+    act(() => result.current.retry())
+    await act(async () => vi.advanceTimersByTime(150))
+    expect(search).toHaveBeenCalledTimes(2)
+    expect(hydrate).toHaveBeenCalledOnce()
+    expect(result.current.failure).toBeNull()
+    expect(result.current.result.matches).toBe(0)
   })
 })

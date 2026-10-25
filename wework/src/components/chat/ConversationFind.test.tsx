@@ -69,14 +69,26 @@ describe('conversation find', () => {
     }))
     expect(findConversationMatches(index, '输出')).toEqual({
       matches: [
-        { messageId: 'user', occurrence: 0 },
-        { messageId: 'assistant', occurrence: 0 },
+        { messageId: 'user', occurrence: 0, regionId: 'user', range: { start: 0, end: 2 } },
+        {
+          messageId: 'assistant',
+          occurrence: 0,
+          regionId: 'assistant',
+          range: { start: 0, end: 2 },
+        },
       ],
       totalMatches: 2,
       isCapped: false,
     })
     expect(findConversationMatches(index, 'OUTPUT')).toEqual({
-      matches: [{ messageId: 'assistant', occurrence: 0 }],
+      matches: [
+        {
+          messageId: 'assistant',
+          occurrence: 0,
+          regionId: 'assistant',
+          range: { start: 9, end: 15 },
+        },
+      ],
       totalMatches: 1,
       isCapped: false,
     })
@@ -108,10 +120,30 @@ describe('conversation find', () => {
     expect(result.totalMatches).toBe(300)
     expect(result.isCapped).toBe(true)
     expect(result.matches).toHaveLength(250)
-    expect(result.matches[0]).toEqual({ messageId: 'first', occurrence: 0 })
-    expect(result.matches[199]).toEqual({ messageId: 'first', occurrence: 199 })
-    expect(result.matches[200]).toEqual({ messageId: 'second', occurrence: 0 })
-    expect(result.matches[249]).toEqual({ messageId: 'second', occurrence: 49 })
+    expect(result.matches[0]).toEqual({
+      messageId: 'first',
+      occurrence: 0,
+      regionId: 'first',
+      range: { start: 0, end: 1 },
+    })
+    expect(result.matches[199]).toEqual({
+      messageId: 'first',
+      occurrence: 199,
+      regionId: 'first',
+      range: { start: 597, end: 598 },
+    })
+    expect(result.matches[200]).toEqual({
+      messageId: 'second',
+      occurrence: 0,
+      regionId: 'second',
+      range: { start: 0, end: 1 },
+    })
+    expect(result.matches[249]).toEqual({
+      messageId: 'second',
+      occurrence: 49,
+      regionId: 'second',
+      range: { start: 147, end: 148 },
+    })
   })
 
   test('indexes displayed assistant text in timeline order and hides failure and citation metadata', () => {
@@ -312,6 +344,8 @@ describe('conversation find', () => {
       query: '输出',
       messageId: 'first',
       occurrence: 0,
+      regionId: 'first',
+      range: { start: 0, end: 2 },
       matchCounts: new Map([
         ['first', 2],
         ['last', 1],
@@ -323,6 +357,8 @@ describe('conversation find', () => {
       query: '输出',
       messageId: 'first',
       occurrence: 0,
+      regionId: 'first',
+      range: { start: 0, end: 2 },
       matchCounts: new Map([
         ['first', 2],
         ['last', 1],
@@ -622,6 +658,8 @@ describe('conversation find', () => {
       query: '输出',
       messageId: 'first',
       occurrence: 0,
+      regionId: 'first',
+      range: { start: 3, end: 5 },
       matchCounts: new Map([['first', 1]]),
     })
     expect(result.current.isLoading).toBe(false)

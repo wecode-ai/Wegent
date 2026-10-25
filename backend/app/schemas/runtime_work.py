@@ -218,6 +218,7 @@ class NormalizedRuntimeMessage(BaseModel):
     client_user_message_id: Optional[str] = Field(
         default=None, alias="clientUserMessageId"
     )
+    runtime_guidance: Optional[bool] = Field(default=None, alias="runtimeGuidance")
     turn_id: Optional[str] = Field(default=None, alias="turnId")
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""
@@ -544,11 +545,18 @@ class RuntimeTranscriptResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     local_task_id: str = Field(..., alias="taskId")
+    thread_id: Optional[str] = Field(default=None, alias="threadId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
     turns: list[dict[str, Any]]
+    runtime_turns: Optional[list[dict[str, Any]]] = Field(
+        default=None, alias="runtimeTurns"
+    )
+    superseded_turn_ids: list[str] = Field(
+        default_factory=list, alias="supersededTurnIds"
+    )
     running: Optional[bool] = None
     origin: Optional[dict[str, Any]] = None
     history_unavailable: bool = Field(default=False, alias="historyUnavailable")

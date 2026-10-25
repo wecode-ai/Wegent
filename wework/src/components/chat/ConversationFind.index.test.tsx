@@ -67,8 +67,18 @@ describe('conversation search indexing', () => {
     ])
     expect(conversationSearch.findConversationMatches(index, 'needle')).toEqual({
       matches: [
-        { messageId: 'first-block', occurrence: 0 },
-        { messageId: 'second-block', occurrence: 0 },
+        {
+          messageId: 'first-block',
+          occurrence: 0,
+          regionId: 'first-block',
+          range: { start: 0, end: 6 },
+        },
+        {
+          messageId: 'second-block',
+          occurrence: 0,
+          regionId: 'second-block',
+          range: { start: 0, end: 6 },
+        },
       ],
       totalMatches: 2,
       isCapped: false,
@@ -79,7 +89,12 @@ describe('conversation search indexing', () => {
         [projected],
         'needle'
       )
-    ).toEqual({ messageId: projected.id, occurrence: 1 })
+    ).toEqual({
+      messageId: projected.id,
+      occurrence: 1,
+      regionId: 'second-block',
+      range: { start: 0, end: 6 },
+    })
   })
 
   test('keeps the navigation target stable while unrelated messages stream', () => {
@@ -120,9 +135,8 @@ describe('conversation search indexing', () => {
     expect(result.current.searchTarget?.messageId).toBe('streaming')
   })
 
-  test('reuses unchanged message text while indexing streaming replacements and new history', () => {
+  test('updates streaming replacements and new history while retaining unchanged matches', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const searchText = vi.spyOn(conversationSearch, 'conversationSearchText')
     const history = [message('history', '**needle**'), message('empty', '')]
     const streaming = { ...message('streaming', 'needle'), status: 'streaming' as const }
     const { result, rerender } = renderHook(
@@ -135,26 +149,24 @@ describe('conversation search indexing', () => {
     })
     act(() => vi.advanceTimersByTime(150))
     expect(result.current.result.matches).toBe(2)
-    expect(searchText).toHaveBeenCalledTimes(3)
 
-    searchText.mockClear()
     const updatedStreaming = { ...streaming, content: 'needle needle' }
     rerender({ messages: [...history, updatedStreaming] })
     expect(result.current.result.matches).toBe(3)
-    expect(searchText).toHaveBeenCalledExactlyOnceWith(updatedStreaming)
+    expect(result.current.searchTarget?.messageId).toBe('history')
 
-    searchText.mockClear()
     act(() => result.current.changeQuery('missing'))
     act(() => vi.advanceTimersByTime(150))
     expect(result.current.result.matches).toBe(0)
-    expect(searchText).not.toHaveBeenCalled()
+    expect(result.current.searchTarget).toBeNull()
 
     const replacedHistory = { ...history[0], content: 'missing' }
     const olderHistory = message('older', 'missing', 'user')
     rerender({ messages: [olderHistory, replacedHistory, history[1], updatedStreaming] })
     expect(result.current.result.matches).toBe(2)
     expect(result.current.searchTarget?.messageId).toBe('older')
-    expect(searchText.mock.calls.map(([item]) => item)).toEqual([olderHistory, replacedHistory])
+    act(() => result.current.step(1))
+    expect(result.current.searchTarget?.messageId).toBe('history')
   })
 
   test('refreshes projected replies when an earlier question changes or disappears', () => {

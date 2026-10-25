@@ -110,6 +110,7 @@ describe('runtime conversation search pages', () => {
     expect(loadTranscript).toHaveBeenCalledExactlyOnceWith(address, {
       beforeCursor: 'latest-match',
       limit: 5,
+      isolated: true,
     })
   })
 
@@ -137,6 +138,7 @@ describe('runtime conversation search pages', () => {
     expect(loadTranscript).toHaveBeenCalledExactlyOnceWith(address, {
       beforeCursor: match.cursor,
       limit: 5,
+      isolated: true,
     })
     expect(result.current.page?.messages[0].content).toBe('historical needle')
     const nextTranscript: RuntimePaneTranscript = {
@@ -303,11 +305,11 @@ describe('runtime conversation search pages', () => {
     ])
     expect(result.current.page).toMatchObject({ hasMoreBefore: false, hasMoreAfter: false })
     expect(loadTranscript.mock.calls.map(call => call[1])).toEqual([
-      { beforeCursor: match.cursor, limit: 5 },
-      { beforeCursor: 'before-middle', limit: 5 },
-      { afterCursor: 'after-middle', limit: 5 },
-      { beforeCursor: 'before-older', limit: 5 },
-      { afterCursor: 'after-next', limit: 5 },
+      { beforeCursor: match.cursor, limit: 5, isolated: true },
+      { beforeCursor: 'before-middle', limit: 5, isolated: true },
+      { afterCursor: 'after-middle', limit: 5, isolated: true },
+      { beforeCursor: 'before-older', limit: 5, isolated: true },
+      { afterCursor: 'after-next', limit: 5, isolated: true },
     ])
     await act(async () => {
       await result.current.loadMoreContext('before')
@@ -446,8 +448,8 @@ describe('runtime conversation search pages', () => {
     expect(result.current.page?.turns.map(turn => turn.id)).toEqual(['previous', 'middle'])
     expect(result.current.page?.loadError).toBeNull()
     expect(loadTranscript.mock.calls.slice(1).map(call => call[1])).toEqual([
-      { beforeCursor: 'before', limit: 5 },
-      { beforeCursor: 'before', limit: 5 },
+      { beforeCursor: 'before', limit: 5, isolated: true },
+      { beforeCursor: 'before', limit: 5, isolated: true },
     ])
   })
 
@@ -484,8 +486,8 @@ describe('runtime conversation search pages', () => {
     expect(result.current.page?.turns.map(turn => turn.id)).toEqual(['middle', 'next'])
     expect(result.current.page?.loadError).toBeNull()
     expect(loadTranscript.mock.calls.slice(1).map(call => call[1])).toEqual([
-      { afterCursor: 'after', limit: 5 },
-      { afterCursor: 'after', limit: 5 },
+      { afterCursor: 'after', limit: 5, isolated: true },
+      { afterCursor: 'after', limit: 5, isolated: true },
     ])
   })
 
@@ -580,6 +582,7 @@ describe('runtime conversation search pages', () => {
     expect(loadTranscript).toHaveBeenLastCalledWith(address, {
       beforeCursor: 'selected-match',
       limit: 5,
+      isolated: true,
     })
   })
 })

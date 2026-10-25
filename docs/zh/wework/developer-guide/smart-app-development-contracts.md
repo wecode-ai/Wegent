@@ -131,6 +131,8 @@ smart-app.verify.json
 
 ## 五层验证闸门
 
+已安装的智能工作台通过 `--port 0` 让 DSH 在监听时由操作系统分配 loopback 端口。Wework 复用运行时的地址公告与就绪探测，并保存 `WorkbenchRuntimeSnapshot.url` 中的实际地址；不提前探测并释放空闲端口，避免并发启动时发生端口竞争。
+
 ### 1. 结构与安全
 
 扩展现有清单检查，验证：

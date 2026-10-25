@@ -270,13 +270,16 @@ describe('RuntimeSupervisor', () => {
       const pidPath = join(directory, 'grandchild.pid')
       const script = `
         const { spawn } = require('node:child_process')
-        const { writeFileSync } = require('node:fs')
-        const child = spawn(
+        const childScript = [
+          'process.on("SIGTERM", () => {})',
+          'require("node:fs").writeFileSync(process.argv[1], String(process.pid))',
+          'setInterval(() => {}, 1000)',
+        ].join('; ')
+        spawn(
           process.execPath,
-          ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
+          ['-e', childScript, process.argv[1]],
           { stdio: 'ignore' }
         )
-        writeFileSync(process.argv[1], String(child.pid))
         setInterval(() => {}, 1000)
       `
       const supervisor = track(

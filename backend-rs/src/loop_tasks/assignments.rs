@@ -123,7 +123,7 @@ async fn list_assignments(
 }
 
 /// `require_cloud_project_role(db, project_id, user_id, Viewer)`.
-async fn require_cloud_project_role(
+pub(crate) async fn require_cloud_project_role(
     state: &AppState,
     project_id: &str,
     user_id: i32,
@@ -172,8 +172,13 @@ fn item_security(item: &LoopItemGetRow, project: &ProjectRow) -> &'static str {
     }
 }
 
-/// `ensure_shadow(db, item_id, user_id)` for an external item.
-async fn ensure_shadow(state: &AppState, item_id: &str, user_id: i32) -> Result<(), FastApiError> {
+/// `ensure_shadow(db, item_id, user_id)` for an external item. Shared with the
+/// task-binding read, which runs the same guard before listing bindings.
+pub(crate) async fn ensure_shadow(
+    state: &AppState,
+    item_id: &str,
+    user_id: i32,
+) -> Result<(), FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
     // `if not self.is_external_item(db, item_id): ...` — the guard re-runs
     // `_find_project`, so the statement is issued a second time.
@@ -253,22 +258,7 @@ pub(crate) async fn get_issue(
         .map_err(|error| FastApiError::detail(StatusCode::CONFLICT, error))?;
     let repository = provider::provider_repository(&config)
         .map_err(|error| FastApiError::detail(StatusCode::CONFLICT, error))?;
-    let default_domain = if task_provider == "github" {
-        "github.com"
-    } else {
-        "gitlab.com"
-    };
-    let domain = config.domain.as_deref().unwrap_or(default_domain).trim();
-    let default_api_base = if task_provider == "github" {
-        "https://api.github.com".to_string()
-    } else {
-        format!("https://{domain}/api/v4")
-    };
-    let api_base = config
-        .api_base
-        .as_deref()
-        .unwrap_or(&default_api_base)
-        .trim_end_matches('/');
+    let api_base = provider::api_base(&task_provider, &config);
     let path = if task_provider == "github" {
         format!("/repos/{repository}/issues/{number}")
     } else {
@@ -278,42 +268,16 @@ pub(crate) async fn get_issue(
         )
     };
     let url = format!("{api_base}{path}");
-    let mut request = state
-        .attachment_http
-        .get(&url)
-        .map_err(|error| provider::python_httpx_error_text(&error))
-        .map_err(provider_request_failed)?;
-    if task_provider == "github" {
-        request = request
-            .header("Authorization", format!("Bearer {token}"))
-            .header("Accept", "application/vnd.github+json");
-    } else {
-        request = request.header("PRIVATE-TOKEN", token.as_str());
-    }
-    let response = request
-        .send()
+    let value = provider::request_json(&state.attachment_http, &token, &task_provider, &url)
         .await
-        .map_err(|error| provider::python_httpx_error_text(&error))
-        .map_err(provider_request_failed)?;
-    let status = response.status();
-    if status == StatusCode::NOT_FOUND {
-        return Err(todo_not_found());
-    }
-    if !status.is_success() {
-        return Err(provider_request_failed(format!("HTTP status {status}")));
-    }
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| provider::python_httpx_error_text(&error))
-        .map_err(provider_request_failed)?;
-    serde_json::from_slice::<PageIssue>(&body).map_err(|_| {
+        .map_err(provider::RequestError::into_fastapi)?;
+    serde_json::from_value::<PageIssue>(value).map_err(|_| {
         FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
     })
 }
 
 /// `_item_number`: the numeric suffix of a `KEY-number` id.
-fn item_number(item_id: &str) -> Option<i64> {
+pub(crate) fn item_number(item_id: &str) -> Option<i64> {
     let (_, number) = item_id.rsplit_once('-')?;
     if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -434,46 +398,23 @@ async fn assignment_response(
     })
 }
 
-/// pydantic's `datetime` serialization: seconds with an optional six-digit
-/// fractional part.
+/// `database_datetime_as_utc`: reinterpret the configured database-session
+/// datetime convention and serialize an aware UTC datetime, as Python does.
 fn datetime_value(value: Option<chrono::NaiveDateTime>) -> Result<String, FastApiError> {
-    let Some(value) = value else {
-        return Err(FastApiError::detail(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error",
-        ));
-    };
-    let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
-    if value.and_utc().timestamp_subsec_nanos() == 0 {
-        Ok(base)
-    } else {
-        Ok(format!(
-            "{base}.{:06}",
-            value.and_utc().timestamp_subsec_micros()
-        ))
-    }
+    super::item_response::utc_datetime_string(value).ok_or_else(|| {
+        FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+    })
 }
 
-fn cloud_project_not_found() -> FastApiError {
+pub(crate) fn cloud_project_not_found() -> FastApiError {
     FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found")
 }
 
-fn todo_not_found() -> FastApiError {
+pub(crate) fn todo_not_found() -> FastApiError {
     FastApiError::detail(StatusCode::NOT_FOUND, "TODO not found")
 }
 
-fn provider_request_failed(error: impl Into<String>) -> FastApiError {
-    FastApiError::detail(
-        StatusCode::BAD_GATEWAY,
-        format!(
-            "{}{}",
-            provider::PROVIDER_REQUEST_FAILED_PREFIX,
-            error.into()
-        ),
-    )
-}
-
-fn internal(error: brz_mysql::MysqlError) -> FastApiError {
+pub(crate) fn internal(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "loop-items assignments dependency failure");
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
 }
@@ -487,9 +428,9 @@ mod tests {
     fn comment(id: &str, metadata: serde_json::Value) -> CommentRow {
         CommentRow {
             id: id.to_string(),
-            loop_item_id: Some("WEWORKBU7D045F-5".to_string()),
+            loop_item_id: Some("EXAMPLE-5".to_string()),
             description: Some(String::new()),
-            created_by_user_id: Some(6177),
+            created_by_user_id: Some(7),
             created_at: chrono::NaiveDateTime::parse_from_str(
                 "2026-10-10 13:57:44",
                 "%Y-%m-%d %H:%M:%S",
@@ -512,7 +453,7 @@ mod tests {
                 "action": "assign",
                 "target_type": target,
                 "target_id": target_id,
-                "target_name": "jiaqi62",
+                "target_name": "test-user",
                 "workflow_step": step,
                 "trigger": "manual",
             }),
@@ -533,8 +474,8 @@ mod tests {
     #[test]
     fn keeps_the_newest_event_at_the_first_position() {
         let comments = vec![
-            assign("1", "human", "6177", ""),
-            assign("2", "human", "6177", ""),
+            assign("1", "human", "7", ""),
+            assign("2", "human", "7", ""),
             assign("3", "agent", "42", ""),
         ];
         let active = active_events(&comments);
@@ -547,32 +488,36 @@ mod tests {
 
     #[test]
     fn drops_events_cancelled_by_an_unassign() {
-        let comments = vec![assign("1", "human", "6177", ""), unassign("9", "1")];
+        let comments = vec![assign("1", "human", "7", ""), unassign("9", "1")];
         assert!(active_events(&comments).is_empty());
     }
 
     #[test]
     fn workflow_step_separates_member_keys() {
         let comments = vec![
-            assign("1", "human", "6177", ""),
-            assign("2", "human", "6177", "review"),
+            assign("1", "human", "7", ""),
+            assign("2", "human", "7", "review"),
         ];
         assert_eq!(active_events(&comments).len(), 2);
     }
 
     #[test]
     fn parses_external_item_numbers() {
-        assert_eq!(item_number("WEWORKBU7D045F-5"), Some(5));
+        assert_eq!(item_number("EXAMPLE-5"), Some(5));
         assert_eq!(item_number("plain"), None);
         assert_eq!(item_number("KEY-abc"), None);
     }
 
     #[test]
-    fn formats_datetimes_like_pydantic() {
+    fn assignment_datetimes_are_rfc3339_utc_from_the_non_utc_database_session() {
         let base =
             chrono::NaiveDateTime::parse_from_str("2026-10-10 13:57:44", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
-        assert_eq!(datetime_value(Some(base)).unwrap(), "2026-10-10T13:57:44");
+        let rendered = datetime_value(Some(base)).unwrap();
+        assert_eq!(rendered, "2026-10-10T05:57:44Z");
+        let parsed = chrono::DateTime::parse_from_rfc3339(&rendered).unwrap();
+        assert_eq!(parsed.offset().local_minus_utc(), 0);
+        assert!(datetime_value(None).is_err());
         let fractional = chrono::NaiveDateTime::parse_from_str(
             "2026-10-10 13:57:44.123456",
             "%Y-%m-%d %H:%M:%S%.f",
@@ -580,46 +525,46 @@ mod tests {
         .unwrap();
         assert_eq!(
             datetime_value(Some(fractional)).unwrap(),
-            "2026-10-10T13:57:44.123456"
+            "2026-10-10T05:57:44.123456Z"
         );
     }
 
     #[test]
-    fn serializes_the_recorded_assignment_shape() {
-        let comments = vec![assign("369595377560748172", "human", "6177", "")];
+    fn serializes_the_assignment_shape() {
+        let comments = vec![assign("101", "human", "7", "")];
         let event = active_events(&comments);
         let row = IssueAssignmentResponse {
             id: event[0].comment.id.clone(),
-            issue_id: "WEWORKBU7D045F-5".to_string(),
+            issue_id: "EXAMPLE-5".to_string(),
             target_type: event[0].metadata.target_type.clone().unwrap_or_default(),
             target_id: event[0].metadata.target_id.clone().unwrap_or_default(),
-            target_name: "jiaqi62".to_string(),
+            target_name: "test-user".to_string(),
             workflow_step: None,
             body: String::new(),
             comment_id: event[0].comment.id.clone(),
-            created_by_user_id: 6177,
-            created_by_user_name: Some("jiaqi62".to_string()),
+            created_by_user_id: 7,
+            created_by_user_name: Some("test-user".to_string()),
             status: "active".to_string(),
-            created_at: "2026-10-10T13:57:44".to_string(),
-            updated_at: "2026-10-10T13:57:44".to_string(),
+            created_at: datetime_value(event[0].comment.created_at).unwrap(),
+            updated_at: datetime_value(event[0].comment.updated_at).unwrap(),
         };
         let value = crate::json_contract_tests::serialized(row).unwrap();
         assert_eq!(
             value,
             serde_json::json!({
-                "id": "369595377560748172",
-                "issue_id": "WEWORKBU7D045F-5",
+                "id": "101",
+                "issue_id": "EXAMPLE-5",
                 "target_type": "human",
-                "target_id": "6177",
-                "target_name": "jiaqi62",
+                "target_id": "7",
+                "target_name": "test-user",
                 "workflow_step": null,
                 "body": "",
-                "comment_id": "369595377560748172",
-                "created_by_user_id": 6177,
-                "created_by_user_name": "jiaqi62",
+                "comment_id": "101",
+                "created_by_user_id": 7,
+                "created_by_user_name": "test-user",
                 "status": "active",
-                "created_at": "2026-10-10T13:57:44",
-                "updated_at": "2026-10-10T13:57:44",
+                "created_at": "2026-10-10T05:57:44Z",
+                "updated_at": "2026-10-10T05:57:44Z",
             })
         );
     }

@@ -13,9 +13,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{
-    transcript_search_text::{codex_turn_search_sources, AsyncReplySearchProjection},
+    transcript_search_projection::search_ranges,
+    transcript_search_text::{codex_turn_search_regions, AsyncReplySearchProjection},
     util::{item_type, string_field},
 };
+
+#[cfg(test)]
+use super::transcript_search_text::codex_turn_search_sources;
 
 const CURSOR_PREFIX: &str = "wework-codex-legacy-search:";
 const MAX_MATCHES: usize = 250;
@@ -87,7 +91,7 @@ fn search_reader(
     excluded: &HashSet<String>,
     user_content_by_client_id: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let needle = query.trim().to_lowercase();
+    let needle = query.trim();
     let limit = limit.clamp(1, MAX_MATCHES);
     let mut matches = Vec::new();
     let mut total = 0usize;
@@ -102,7 +106,7 @@ fn search_reader(
         let mut selected_items = Vec::new();
         let mut projection = AsyncReplySearchProjection::default();
         let query = LegacySearchQuery {
-            needle: &needle,
+            needle,
             limit,
             user_content_by_client_id,
         };
@@ -177,27 +181,30 @@ fn append_turn_matches(
     total: &mut usize,
 ) -> Result<(), String> {
     let native = turn.native_turn(items.iter().map(|item| item.native.clone()).collect());
-    let sources =
-        codex_turn_search_sources(&native, query.user_content_by_client_id, None, projection)
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-    for item in items {
-        let Some(text) = sources.get(&item.id) else {
+    let by_id: HashMap<_, _> = items.iter().map(|item| (item.id.as_str(), item)).collect();
+    for region in
+        codex_turn_search_regions(&native, query.user_content_by_client_id, None, projection)
+    {
+        let Some(item) = by_id.get(region.id.as_str()) else {
             continue;
         };
-        let count = text.to_lowercase().match_indices(query.needle).count();
-        *total = total.saturating_add(count);
+        let ranges = search_ranges(&region.text, query.needle);
+        *total = total.saturating_add(ranges.len());
         let cursor = LegacySearchCursor {
             turn_id: turn.id.clone(),
-            item_id: item.id.clone(),
+            item_id: region.id.clone(),
             byte_offset: item.byte_offset,
-            reply_source_turn_id: projection.reply_source(&item.id).map(str::to_owned),
+            reply_source_turn_id: projection.reply_source(&region.id).map(str::to_owned),
         };
         let encoded = serde_json::to_string(&cursor)
             .map_err(|error| format!("Cannot encode legacy search cursor: {error}"))?;
-        for occurrence in 0..count.min(query.limit.saturating_sub(matches.len())) {
+        for (occurrence, range) in ranges
+            .into_iter()
+            .take(query.limit.saturating_sub(matches.len()))
+            .enumerate()
+        {
             let mut matched = json!({
-                "turnId": turn.id, "itemId": item.id,
+                "turnId": turn.id, "itemId": region.id, "regionId": region.id, "range":range,
                 "occurrence": occurrence, "cursor": format!("{CURSOR_PREFIX}{encoded}"),
             });
             if item.user {
@@ -460,26 +467,33 @@ impl LegacyProjection {
             }
             "context_compacted" => {
                 let id = self.next_id();
-                self.push(id, false);
+                let index = self.push(id.clone(), false);
+                return self.projected_event(index, id, payload.clone(), offset);
             }
             "entered_review_mode" | "exited_review_mode" => self.review(payload),
             "web_search_end" | "image_generation_end" => {
                 if let Some(id) = string_field(payload, "call_id") {
-                    self.upsert(id, None, false);
+                    if let Some(index) = self.upsert(id.clone(), None, false) {
+                        return self.projected_event(index, id, payload.clone(), offset);
+                    }
                 }
             }
             "mcp_tool_call_end" | "patch_apply_end" => {
                 if let Some(id) = string_field(payload, "call_id") {
                     let turn_id = string_field(payload, "turn_id");
-                    self.upsert(id, turn_id.as_deref(), false);
+                    if let Some(index) = self.upsert(id.clone(), turn_id.as_deref(), false) {
+                        return self.projected_event(index, id, payload.clone(), offset);
+                    }
                 }
             }
             "sub_agent_activity" => {
                 if let Some(id) = string_field(payload, "event_id") {
-                    self.upsert(id, None, false);
+                    if let Some(index) = self.upsert(id.clone(), None, false) {
+                        return self.projected_event(index, id, payload.clone(), offset);
+                    }
                 }
             }
-            "item_completed" => self.materialized(payload),
+            "item_completed" => return self.materialized(payload, offset),
             _ => {}
         }
         Reduction::default()
@@ -572,9 +586,9 @@ impl LegacyProjection {
         self.upsert(id, turn_id.as_deref(), false);
     }
 
-    fn materialized(&mut self, payload: &Value) {
+    fn materialized(&mut self, payload: &Value, offset: u64) -> Reduction {
         let Some(item) = payload.get("item") else {
-            return;
+            return Reduction::default();
         };
         if item_type(item) == "plan"
             && item
@@ -582,12 +596,44 @@ impl LegacyProjection {
                 .and_then(Value::as_str)
                 .map_or(true, str::is_empty)
         {
-            return;
+            return Reduction::default();
         }
-        let id = string_field(item, "id");
+        let Some(id) = string_field(item, "id") else {
+            return Reduction::default();
+        };
         let turn_id = string_field(payload, "turn_id");
-        if let Some(id) = id {
-            self.upsert(id, turn_id.as_deref(), false);
+        let Some(index) = self.upsert(id.clone(), turn_id.as_deref(), false) else {
+            return Reduction::default();
+        };
+        self.projected_event(index, id, item.clone(), offset)
+    }
+
+    /// Keep persisted process items in both search and context hydration. The
+    /// existing transcript projector decides whether each item is visible.
+    fn projected_event(
+        &mut self,
+        index: usize,
+        id: String,
+        mut native: Value,
+        offset: u64,
+    ) -> Reduction {
+        self.turns[index].first_text_offset.get_or_insert(offset);
+        self.turns[index].last_text_offset = Some(offset);
+        if self.capture_native {
+            native["id"] = json!(id);
+        } else {
+            native = Value::Null;
+        }
+        Reduction {
+            item: Some(ProjectedText {
+                turn_index: index,
+                id,
+                client_id: None,
+                user: false,
+                byte_offset: offset,
+                native,
+            }),
+            rollback_from: None,
         }
     }
 

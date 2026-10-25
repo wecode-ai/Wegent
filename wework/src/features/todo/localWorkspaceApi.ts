@@ -23,7 +23,10 @@ import type {
   ProjectSpaceApis,
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
-import type { LocalProjectChatAgentCreateInput } from '@/api/local/localDelivery'
+import type {
+  LocalProjectChatAgent,
+  LocalProjectChatAgentCreateInput,
+} from '@/api/local/localDelivery'
 import {
   ensureDefaultLocalAgent,
   isDefaultLocalAgent,
@@ -310,18 +313,19 @@ export function createLocalWorkspaceApi(
     },
   ]
   const projectAgentApi = detailServices?.localProjectChatAgentApi
+  const toProjectAgent = (agent: LocalProjectChatAgent) => ({
+    ...agent,
+    agent_id: agent.name,
+    deletable: !isDefaultLocalAgent(agent),
+    can_edit: true,
+    name: agent.displayName || agent.name,
+  })
   const listProjectAgents = async (projectId: string, options?: { forceRefresh?: boolean }) =>
     (
       await (options?.forceRefresh
         ? projectAgentApi?.list(projectId, { forceRefresh: true })
         : projectAgentApi?.list(projectId))
-    )?.map(agent => ({
-      ...agent,
-      agent_id: agent.name,
-      deletable: !isDefaultLocalAgent(agent),
-      can_edit: true,
-      name: agent.displayName || agent.name,
-    })) ?? []
+    )?.map(toProjectAgent) ?? []
   const projectChatClient = detailServices?.projectChatClient
   const localAgentResources = async (
     _workspaceId?: string,
@@ -756,9 +760,8 @@ export function createLocalWorkspaceApi(
     agents: projectAgentApi
       ? {
           list: listProjectAgents,
-          create: async (projectId, input) => ({
-            ...(await projectAgentApi.create(projectId, toLocalAgentCreateInput(input))),
-          }),
+          create: async (projectId, input) =>
+            toProjectAgent(await projectAgentApi.create(projectId, toLocalAgentCreateInput(input))),
           update: async (projectId, agentId, input) => {
             if (input.status === 'archived') {
               const existing = (await projectAgentApi.list(projectId, { forceRefresh: true })).find(
@@ -772,13 +775,13 @@ export function createLocalWorkspaceApi(
                 )
               }
             }
-            return {
-              ...(await projectAgentApi.update(
+            return toProjectAgent(
+              await projectAgentApi.update(
                 projectId,
                 agentId,
                 input as Parameters<typeof projectAgentApi.update>[2]
-              )),
-            }
+              )
+            )
           },
         }
       : {
@@ -791,7 +794,7 @@ export function createLocalWorkspaceApi(
       list: projects,
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
-        const { includeDefaultAgent = true, ...projectInput } = input
+        const { includeDefaultAgent = false, ...projectInput } = input
         const project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
           await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {

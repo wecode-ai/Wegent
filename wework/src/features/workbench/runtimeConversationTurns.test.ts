@@ -94,8 +94,9 @@ describe('runtimeConversationTurns', () => {
       const restored = projectRuntimeConversationTurns(snapshot).find(
         message => message.role === 'assistant'
       )!
-      expect(snapshot[0].startedAt).toBe(startedAt)
-      expect(snapshot[0].durationMs).toBe(10_000)
+      expect(snapshot[0].startedAt).toBe(startedAt - 1000)
+      expect(snapshot[0].durationMs).toBe(11_000)
+      expect(snapshot[0].startedAt! + snapshot[0].durationMs!).toBe(startedAt + 10_000)
       expect(snapshot[0].completedAt).toBe(new Date(startedAt + 10000).toISOString())
       expect(restored.createdAt).toBe(new Date(startedAt + 3000).toISOString())
       expect(restored.completedAt).toBeUndefined()
@@ -331,7 +332,7 @@ describe('runtimeConversationTurns', () => {
     expect(turns).toHaveLength(2)
     expect(turns[0]).toMatchObject({
       id: 'turn-1',
-      startedAt: 1000,
+      startedAt: Date.parse(userMessage('user-1', 'Implement the fix').createdAt),
     })
     expect(turns[0].items.map(item => item.id)).toEqual(['user-1', 'guidance-1'])
     expect(turns[1]).toMatchObject({

@@ -38,7 +38,11 @@ pub(super) fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>)
             .iter_mut()
             .find(|existing| string_field(existing, "id").as_deref() == Some(item_id.as_str()))
         {
+            let position = existing.get("position").cloned();
             *existing = merge_codex_command_item(existing, active_item);
+            if let Some(position) = position {
+                existing["position"] = position;
+            }
         } else {
             items.push(active_item);
         }

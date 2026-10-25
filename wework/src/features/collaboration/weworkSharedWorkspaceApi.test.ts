@@ -199,7 +199,6 @@ function createMockDeliveryApi() {
     unbindTask: vi.fn().mockResolvedValue(undefined),
     unbindCloudContext: vi.fn().mockResolvedValue(undefined),
     trackProjectTask: vi.fn().mockResolvedValue({ item: issue }),
-    updateTaskTrackingTitle: vi.fn().mockResolvedValue(issue),
     getWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowReview: vi.fn().mockResolvedValue(workflowPlan),
@@ -1262,7 +1261,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
     await expect(port.trackProjectTask(project.id, task, 'Task', 'Description')).resolves.toEqual({
       issue,
     })
-    await expect(port.updateTrackedTaskTitle(task, 'Renamed')).resolves.toEqual(issue)
 
     expect(deliveryApi.bindTask).toHaveBeenCalledWith(
       issue.id,

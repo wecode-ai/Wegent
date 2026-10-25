@@ -43,7 +43,7 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
-from app.schemas.project_chat import LoopItemAssign
+from app.schemas.project_chat import LoopItemAssign, ProjectChatMention
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
@@ -696,8 +696,15 @@ def add_board_item_comment(
     body: str,
     space_id: str = "",
     item_id: str = "",
+    mentions: list[ProjectChatMention] | None = None,
 ) -> dict[str, Any]:
-    """Add a visible comment to the Wework Issue activity."""
+    """Post an Issue comment; structured user mentions notify members.
+
+    Resolve members with get_assignment_candidates and pass mentions as
+    [{"type": "user", "id": "52", "label": "qindi"}]. Plain @name text does
+    not notify. Uses the same recipient authorization and notifications as
+    the page; do not send a separate notification for the same mention.
+    """
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
@@ -710,6 +717,7 @@ def add_board_item_comment(
             project_id=str(project.id),
             item_id=resolved_item_id,
             body=body,
+            mentions=mentions,
         )
 
 

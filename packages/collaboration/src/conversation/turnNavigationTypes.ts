@@ -8,6 +8,7 @@ export type NavigationMessage = Pick<
   "id" | "role" | "content" | "blocks"
 > & {
   turnId?: string | null;
+  runtimeGuidance?: boolean | null;
   runtimeMessageIndex?: number | null;
 };
 
@@ -27,6 +28,8 @@ export interface MessageTurnNavigationProps {
 
 export interface UserTurn {
   id: string;
+  userMessageId?: string | null;
+  runtimeGuidance?: boolean | null;
   turnId?: string | null;
   turnIndex: number;
   messageIndex: number;
@@ -44,6 +47,7 @@ export interface MessageTurnMarker extends UserTurn {
 
 export interface PendingScrollTarget {
   navigationId: string;
+  userMessageId?: string | null;
   turnId?: string | null;
   messageIndex: number;
 }

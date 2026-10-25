@@ -10,6 +10,12 @@ const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>();
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number;
   pinnedToBottom: boolean;
+  anchor?: {
+    messageId: string;
+    itemId: string | null;
+    textOffset: number | null;
+    offsetFromScrollerTop: number;
+  };
 }
 
 export function getConversationScrollSnapshot(

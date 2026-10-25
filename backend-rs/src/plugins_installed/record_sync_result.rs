@@ -11,14 +11,15 @@
 //! record_device_sync_result` (line 191) with `_record_removed_installs`,
 //! `_record_desired_install`, and `_device_install_state`.
 
-use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
+use brz_mysql::MysqlResult;
 use chrono::{Local, NaiveDateTime};
 use serde_json::{Map, Value};
 
 use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id, reconcile_plugin_device_rows,
+    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
 };
 use crate::plugins_marketplace::db::InstalledKindRow;
+use crate::plugins_marketplace::query::PluginQuery;
 
 use super::report::{DESIRED_INSTALLS_QUERY, DEVICE_ROW_QUERY, INSERT_INSTALLATION_QUERY};
 
@@ -331,24 +332,21 @@ fn raw_item_failure_message(ack: &Value) -> Option<String> {
 
 /// `record_device_sync_result`: reconcile aliases, map the ack onto the
 /// device's installation rows, and commit.
-pub async fn record_device_sync_result<T, M>(
-    transaction: &mut T,
-    mysql: &M,
+pub async fn record_device_sync_result<Q>(
+    session: &mut Q,
     user_id: i64,
     result: &SyncResult,
 ) -> MysqlResult<()>
 where
-    T: MysqlTransaction,
-    M: Mysql,
+    Q: PluginQuery,
 {
-    reconcile_plugin_device_rows::<_, _, PluginDeviceInstallationRow>(transaction, mysql, user_id)
-        .await?;
-    let canonical_id = plugin_device_id(mysql, user_id, &result.device_id).await?;
-    let installs: Vec<InstalledKindRow> = transaction
+    reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id).await?;
+    let canonical_id = plugin_device_id_on(session, user_id, &result.device_id).await?;
+    let installs: Vec<InstalledKindRow> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
     let desired_ids: Vec<i64> = installs.iter().map(|installed| installed.id).collect();
-    record_removed_installs(transaction, user_id, &canonical_id, result, &desired_ids).await?;
+    record_removed_installs(session, user_id, &canonical_id, result, &desired_ids).await?;
     let plugin_results: Vec<(i64, SyncItem)> = result
         .plugins
         .iter()
@@ -361,7 +359,7 @@ where
             .find(|(id, _)| *id == installed.id)
             .map(|(_, item)| item.clone());
         record_desired_install(
-            transaction,
+            session,
             user_id,
             &canonical_id,
             installed,
@@ -371,21 +369,21 @@ where
         )
         .await?;
     }
-    flush.emit(transaction).await
+    flush.emit(session).await
 }
 
 /// `_record_removed_installs`.
-async fn record_removed_installs<T>(
-    transaction: &mut T,
+async fn record_removed_installs<Q>(
+    session: &mut Q,
     user_id: i64,
     device_id: &str,
     result: &SyncResult,
     desired_ids: &[i64],
 ) -> MysqlResult<()>
 where
-    T: MysqlTransaction,
+    Q: PluginQuery,
 {
-    let rows: Vec<PluginDeviceInstallationRow> = transaction
+    let rows: Vec<PluginDeviceInstallationRow> = session
         .fetch_all(DEVICE_ROWS_FOR_DEVICE_QUERY, (user_id, device_id))
         .await?;
     let now = Local::now().naive_local();
@@ -394,7 +392,7 @@ where
             continue;
         }
         if result.success {
-            transaction
+            session
                 .execute(
                     "DELETE FROM plugin_device_installations WHERE plugin_device_installations.id = ?",
                     (row.id,),
@@ -416,7 +414,7 @@ where
             format_datetime(now),
             row.id
         );
-        transaction.execute(statement, ()).await?;
+        session.execute(statement, ()).await?;
     }
     Ok(())
 }
@@ -430,9 +428,9 @@ struct PendingFlush {
 impl PendingFlush {
     /// Emit one UPDATE per dirty row in identity-map order (primary key
     /// ascending), like SQLAlchemy's unit of work.
-    async fn emit<T>(&mut self, transaction: &mut T) -> MysqlResult<()>
+    async fn emit<Q>(&mut self, session: &mut Q) -> MysqlResult<()>
     where
-        T: MysqlTransaction,
+        Q: PluginQuery,
     {
         self.updates.sort_by_key(|(id, _)| *id);
         for (id, assigns) in &self.updates {
@@ -442,7 +440,7 @@ impl PendingFlush {
                 assigns.join(", "),
                 id
             );
-            transaction.execute(statement, ()).await?;
+            session.execute(statement, ()).await?;
         }
         Ok(())
     }
@@ -458,8 +456,8 @@ impl PendingFlush {
 
 /// `_record_desired_install`.
 #[allow(clippy::too_many_arguments)]
-async fn record_desired_install<T>(
-    transaction: &mut T,
+async fn record_desired_install<Q>(
+    session: &mut Q,
     user_id: i64,
     device_id: &str,
     installed: &InstalledKindRow,
@@ -468,12 +466,12 @@ async fn record_desired_install<T>(
     flush: &mut PendingFlush,
 ) -> MysqlResult<()>
 where
-    T: MysqlTransaction,
+    Q: PluginQuery,
 {
     let Some(release_id) = integer_release_id(&installed.json.0.to_value()) else {
         return Ok(());
     };
-    let row: Option<PluginDeviceInstallationRow> = transaction
+    let row: Option<PluginDeviceInstallationRow> = session
         .fetch_optional(DEVICE_ROW_QUERY, (installed.id, device_id))
         .await?;
     if let Some(row) = &row
@@ -494,7 +492,7 @@ where
         // `PluginDeviceInstallation(...)` plus `db.add`; the insert is flushed
         // at commit with the model defaults.
         let now = Local::now().naive_local();
-        transaction
+        session
             .execute(
                 INSERT_INSTALLATION_QUERY,
                 (

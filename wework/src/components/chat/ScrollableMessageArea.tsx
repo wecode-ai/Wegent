@@ -174,6 +174,7 @@ export function ScrollableMessageArea({
         loadedTranscriptRanges={visibleSearchPage ? undefined : props.loadedTranscriptRanges}
         turnNavigation={visibleSearchPage ? [] : props.turnNavigation}
         searchTarget={searchTarget}
+        onSearchNavigationFailure={find.reportNavigationFailure}
         searchNavigationPaused={
           find.queryPending || searchTarget !== find.searchTarget || !find.open || browsingContext
         }

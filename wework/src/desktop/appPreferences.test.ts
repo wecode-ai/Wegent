@@ -45,7 +45,7 @@ const mergedDefaultPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
-  replyPredictionsEnabled: false,
+  replyPredictionsEnabled: true,
   changeRequestStatusEnabled: true,
   quickPhrases: [
     {
@@ -110,6 +110,22 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
+    })
+  })
+
+  test.each([
+    [undefined, true],
+    [null, true],
+    ['false', true],
+    [true, true],
+    [false, false],
+  ])('loads reply prediction preference %j as %j', async (stored, expected) => {
+    invokeMock.mockResolvedValue({ replyPredictionsEnabled: stored })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({
+      replyPredictionsEnabled: expected,
     })
   })
 

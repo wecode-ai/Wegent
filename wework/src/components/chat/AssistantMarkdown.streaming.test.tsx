@@ -32,6 +32,30 @@ describe('AssistantMarkdown streaming stability', () => {
     vi.unstubAllGlobals()
   })
 
+  test.each([false, true])(
+    'resolves references across paragraphs and headings without remounting on completion (long: %s)',
+    long => {
+      runtimeMock.electron = true
+      const body = long
+        ? `\n\n${Array.from({ length: 5 }, (_, index) => `### Section ${index}\n\n${'Body. '.repeat(180)}`).join('\n\n')}`
+        : ''
+      const content = `[Reference label][reference]${body}\n\n[reference]: https://example.test/reference`
+      const markdown = (streaming: boolean) => (
+        <MarkdownWindowingDisabledContext.Provider value>
+          <AssistantMarkdown content={content} isStreaming={streaming} />
+        </MarkdownWindowingDisabledContext.Provider>
+      )
+      const { container, rerender } = render(markdown(true))
+      const reference = screen.getByRole('link', { name: 'Reference label' })
+      expect(reference).toHaveAttribute('href', 'https://example.test/reference')
+      expect(container).not.toHaveTextContent('[reference]')
+      expect(container.querySelectorAll('[data-markdown-window-chunk]')).toHaveLength(1)
+      rerender(markdown(false))
+      expect(screen.getByRole('link', { name: 'Reference label' })).toBe(reference)
+      expect(container).not.toHaveTextContent('[reference]')
+    }
+  )
+
   test.each([true, false])(
     'records bounded Markdown expansion without transcript content (capture at mount: %s)',
     captureAtMount => {

@@ -7,7 +7,12 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
-import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
+import {
+  createSse,
+  handleEmptyReplyPrediction,
+  readRequestBody,
+  streamingTextEvents,
+} from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   assertConversationTextOccurrences,
@@ -47,6 +52,7 @@ export function createDesktopScenario(options) {
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(BASE), 'The native session lost its earlier history')
       const current = stage++
       if (current === 4) {
