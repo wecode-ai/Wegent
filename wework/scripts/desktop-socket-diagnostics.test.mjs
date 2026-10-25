@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'vitest'
 
-const diagnosticsUrl = new URL('../e2e/desktop/socket-diagnostics.mjs', import.meta.url).href
+const diagnosticsUrl = pathToFileURL(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../e2e/desktop/socket-diagnostics.mjs')
+).href
 
 function run(script) {
   return spawnSync(
