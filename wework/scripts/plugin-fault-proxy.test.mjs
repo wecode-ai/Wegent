@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
+import { createHash, randomBytes } from 'node:crypto'
 import { connect } from 'node:net'
 import { test } from 'vitest'
 import { TransportFaultProxy } from '../e2e/desktop/modules/transport-fault-proxy.mjs'
@@ -370,3 +371,113 @@ for (const encoding of ['ordinary', 'wide', 'fragmented']) {
     }
   )
 }
+
+const extension = 'permessage-deflate; client_max_window_bits'
+const capability = '421["device:sync_capabilities",{"scope":"plugin_delta","plugins":[]}]'
+
+async function upgradedFixture(context, { gated = true } = {}) {
+  const upstreamSockets = new Set()
+  const receivedHeaders = []
+  const server = createServer()
+  server.on('upgrade', (incoming, socket) => {
+    receivedHeaders.push(incoming.headers)
+    upstreamSockets.add(socket)
+    socket.once('close', () => upstreamSockets.delete(socket))
+    const accept = createHash('sha1')
+      .update(`${incoming.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64')
+    const extensions = incoming.headers['sec-websocket-extensions']
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\n' +
+        'Upgrade: websocket\r\n' +
+        'Connection: Upgrade\r\n' +
+        `Sec-WebSocket-Accept: ${accept}\r\n` +
+        (extensions ? `Sec-WebSocket-Extensions: ${extensions}\r\n` : '') +
+        '\r\n'
+    )
+    socket.write(websocketFrame(capability))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const proxy = await new TransportFaultProxy(`http://127.0.0.1:${server.address().port}`).start()
+  const gate = gated ? proxy.holdNextCapabilitySync(() => true) : null
+  let downstream
+  context.onTestFinished(async () => {
+    downstream?.destroy()
+    await proxy.stop()
+    for (const socket of upstreamSockets) socket.destroy()
+    await new Promise((resolve, reject) =>
+      server.close(error => (error ? reject(error) : resolve()))
+    )
+  })
+  const handshake = request(`${proxy.url}/socket.io/?EIO=4&transport=websocket`, {
+    headers: {
+      Connection: 'Upgrade',
+      Upgrade: 'websocket',
+      'Sec-WebSocket-Version': '13',
+      'Sec-WebSocket-Key': randomBytes(16).toString('base64'),
+      'Sec-WebSocket-Extensions': extension,
+    },
+  })
+  const upgraded = new Promise((resolve, reject) => {
+    handshake.once('error', reject)
+    handshake.once('response', response => {
+      response.resume()
+      reject(new Error(`Expected a real WebSocket upgrade, received ${response.statusCode}`))
+    })
+    handshake.once('upgrade', (response, socket, head) => {
+      downstream = socket
+      const chunks = head.length ? [head] : []
+      socket.on('data', chunk => chunks.push(chunk))
+      resolve({ response, bytes: () => Buffer.concat(chunks) })
+    })
+  })
+  handshake.end()
+  return { ...(await upgraded), proxy, gate, receivedHeaders, upstreamSockets }
+}
+
+test('a capability gate negotiates uncompressed WebSocket traffic before reading frames', async context => {
+  const connection = await upgradedFixture(context)
+  await until(
+    () => connection.gate.held,
+    Boolean,
+    'The real upstream capability frame never reached the gate'
+  )
+  assert.equal(connection.receivedHeaders[0]['sec-websocket-extensions'], undefined)
+  assert.equal(connection.response.headers['sec-websocket-extensions'], undefined)
+  assert.equal(connection.bytes().length, 0)
+  assert.equal(connection.gate.error, undefined)
+  connection.gate.release()
+  await until(
+    connection.bytes,
+    bytes => bytes.equals(websocketFrame(capability)),
+    'Releasing the gate changed or lost the real upstream frame'
+  )
+})
+
+test('a discarded capability frame cannot be replayed by release', async context => {
+  const connection = await upgradedFixture(context)
+  await until(() => connection.gate.held, Boolean, 'No capability frame was held')
+  connection.gate.discard()
+  connection.gate.release()
+  const marker = websocketFrame('42["device:notice",{}]')
+  for (const socket of connection.upstreamSockets) socket.write(marker)
+  await until(
+    connection.bytes,
+    bytes => bytes.length >= marker.length,
+    'The live transport stopped forwarding after a dropped capability frame'
+  )
+  assert.deepEqual(connection.bytes(), marker)
+  assert.equal(connection.gate.error, undefined)
+})
+
+test('ordinary fault proxy connections preserve WebSocket extension negotiation', async context => {
+  const connection = await upgradedFixture(context, { gated: false })
+  assert.equal(connection.receivedHeaders[0]['sec-websocket-extensions'], extension)
+  assert.equal(connection.response.headers['sec-websocket-extensions'], extension)
+  await until(
+    connection.bytes,
+    bytes => bytes.equals(websocketFrame(capability)),
+    'The ordinary proxy changed the real upstream frame'
+  )
+})

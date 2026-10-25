@@ -195,7 +195,13 @@ export class TransportFaultProxy {
       downstream.destroy()
       return
     }
-    const upstream = httpRequest(this.options(request))
+    const options = this.options(request)
+    if (this.capabilitySyncGate) {
+      // The frame gate must see original JSON messages. Negotiate a real
+      // uncompressed connection instead of interpreting compressed payloads.
+      delete options.headers['sec-websocket-extensions']
+    }
+    const upstream = httpRequest(options)
     this.upstreams.add(upstream)
     upstream.once('close', () => this.upstreams.delete(upstream))
     upstream.on('error', () => downstream.destroy())
@@ -306,6 +312,9 @@ export class TransportFaultProxy {
       release() {
         if (pending && !pending.output.destroyed)
           for (const frame of pending.frames) pending.output.push(frame)
+        pending = null
+      },
+      discard() {
         pending = null
       },
     }

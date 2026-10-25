@@ -3216,6 +3216,19 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await getLocalExecutorStatus())
+    case 'getLocalExecutorIdentityDiagnostics': {
+      const {
+        ensureLocalExecutorAvailable,
+        getKnownLocalExecutorDeviceId,
+        getKnownLocalExecutorDeviceRouteId,
+      } = await import('@/desktop/localExecutor')
+      const status = await ensureLocalExecutorAvailable({ refresh: true })
+      return JSON.stringify({
+        status,
+        deviceId: getKnownLocalExecutorDeviceId(),
+        deviceRouteId: getKnownLocalExecutorDeviceRouteId(),
+      })
+    }
     case 'getBundledPluginUpdates': {
       const marketplace = getInitializedBundledPluginMarketplace()
       return JSON.stringify({

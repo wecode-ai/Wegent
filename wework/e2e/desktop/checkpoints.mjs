@@ -84,6 +84,9 @@ export const DESKTOP_CHECKPOINTS = [
 
   'plugin-composer-long-list',
   'plugin-runtime-path-recovery',
+  'plugin-runtime-route-refresh',
+  'plugin-background-sync-isolation',
+  'plugin-periodic-reconcile',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
   'project-ai-settings',
