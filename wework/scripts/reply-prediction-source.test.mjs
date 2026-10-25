@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { Readable } from 'node:stream'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { createDesktopScenario } from '../e2e/desktop/scenarios/reply-predictions.scenario.mjs'
+import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
   ...(await importOriginal()),
@@ -35,20 +37,18 @@ function fixture({
   let scenario
   const queried = []
   const response = { writeHead() {}, end() {} }
-  const modelRequest = input => ({
-    method: 'POST',
-    async *[Symbol.asyncIterator]() {
-      yield Buffer.from(
-        JSON.stringify({ model: 'gpt-5.6-luna', reasoning: { effort: 'low' }, input })
-      )
-    },
-  })
-  const beginPrediction = () => {
-    void scenario.handleHttp(
-      modelRequest(`Predict one natural next USER message. ${initial}`),
-      response,
-      new URL('http://model/responses')
-    )
+  const modelRequest = input => {
+    const request = Readable.from([
+      Buffer.from(JSON.stringify({ model: 'gpt-5.6-luna', reasoning: { effort: 'low' }, input })),
+    ])
+    request.method = 'POST'
+    return request
+  }
+  const beginPrediction = async () => {
+    const request = modelRequest(`Predict one natural next USER message. ${initial}`)
+    void scenario.handleHttp(request, response, new URL('http://model/responses'))
+    // Wait for request delivery without releasing its deliberately held response.
+    await readRequestBody(request)
   }
   const control = {
     async command(action, selector, options) {
@@ -74,7 +74,7 @@ function fixture({
       }
       if (action === 'waitFor' && selector.includes('prediction-pending')) {
         if (modelDelayMs) setTimeout(beginPrediction, modelDelayMs)
-        else beginPrediction()
+        else await beginPrediction()
       }
       if (action === 'clickWhenEnabled' && selector.includes('conversation-rename-button')) {
         assert.equal(
@@ -88,7 +88,7 @@ function fixture({
       }
       if (action === 'nativePress' && selector.includes('conversation-rename-input')) {
         renamed = true
-        if (duplicateAfterRename) beginPrediction()
+        if (duplicateAfterRename) await beginPrediction()
       }
       if (action === 'fill' && options?.value === '生成时我也能输入') throw verified
     },
