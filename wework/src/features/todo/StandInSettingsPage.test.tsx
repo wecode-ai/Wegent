@@ -91,15 +91,48 @@ describe('Personal stand-in settings', () => {
     )
     await user.click(screen.getByTestId('stand-in-connection-project-local-one'))
     expect(screen.getByRole('checkbox', { name: 'First project' })).toBeChecked()
-    expect(screen.getByRole('checkbox', { name: 'Second project' })).toBeDisabled()
+    expect(screen.queryByRole('checkbox', { name: 'Second project' })).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
     await user.click(screen.getByRole('checkbox', { name: 'First project' }))
-    expect(screen.getByRole('checkbox', { name: 'First project' })).not.toBeChecked()
-    expect(screen.getByRole('checkbox', { name: 'First project' })).toBeDisabled()
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-connections-back'))
     expect(screen.queryByTestId('stand-in-connection-project-local-one')).not.toBeInTheDocument()
     expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
       'Cloud project'
+    )
+  })
+
+  it('keeps remote all-project scope without offering projects owned by this computer', async () => {
+    const role = newStandInRole('remote', 'review')
+    role.collaboration.enabled = true
+    role.collaboration.allProjects = false
+    const { props, personalSave } = fixture({ executionDeviceId: 'remote', roles: [role] })
+    props.projects.push({
+      id: 'cloud',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-add-connection'))
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-all-projects'))
+    expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Second project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        roles: [
+          expect.objectContaining({
+            collaboration: expect.objectContaining({ allProjects: true, projects: [] }),
+          }),
+        ],
+      }),
+      'remote'
     )
   })
 

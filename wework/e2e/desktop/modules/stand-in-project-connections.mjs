@@ -6,6 +6,28 @@ const USER = 9001
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const ROLE = 'project-connection-names'
 
+/** All-project scope belongs to the selected Executor, not the editor's computer. */
+export async function verifyRemoteStandInProjectScope(control, localProjectId, cloudProjectId) {
+  await control.command('click', '[data-testid="stand-in-connections-open"]')
+  await control.command('click', '[data-testid="stand-in-add-connection"]')
+  await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
+  const source = '[data-testid="stand-in-source-collaboration"]'
+  if ((await control.command('getAttribute', source, { value: 'aria-checked' })) !== 'true')
+    await control.command('click', source)
+  const local = `[data-testid="stand-in-connect-project-${localProjectId}"]`
+  const cloud = `[data-testid="stand-in-connect-project-${cloudProjectId}"]`
+  const all = '[data-testid="stand-in-all-projects"]'
+  await control.command('waitFor', `${all}:checked`)
+  await control.command('waitFor', local, { visible: false })
+  await control.command('waitFor', `${cloud}:checked`)
+  await control.command('click', all)
+  await control.command('waitFor', `${cloud}:not(:checked)`)
+  await control.command('click', all)
+  await control.command('waitFor', `${cloud}:checked`)
+  await control.command('waitFor', local, { visible: false })
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+}
+
 /** Resolve saved project references to names in both personal connection editors. */
 export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)

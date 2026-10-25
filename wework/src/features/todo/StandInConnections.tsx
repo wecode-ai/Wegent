@@ -96,7 +96,14 @@ export function StandInConnections({
             className="max-h-64 overflow-y-auto divide-y divide-border/50"
             data-testid="stand-in-source-projects"
           >
+            {/* Remote all-project scope uses that Executor's catalog, not this computer's. */}
             {projects
+              .filter(
+                project =>
+                  allowLocalProjects ||
+                  project.project_store !== 'local' ||
+                  source.projects.some(row => row.store === 'local' && row.id === project.id)
+              )
               .filter(
                 project =>
                   !role.agentProject ||

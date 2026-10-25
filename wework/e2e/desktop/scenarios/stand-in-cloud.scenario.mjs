@@ -1,4 +1,5 @@
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { verifyRemoteStandInProjectScope } from '../modules/stand-in-project-connections.mjs'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
@@ -153,6 +154,12 @@ export function createDesktopScenario({
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
         assert.ok(model, 'Remote Executor has no native default Codex model')
+        const localProject = await requestExecutor(
+          control,
+          'projects.create',
+          { name: `${MARKER}-当前电脑项目` },
+          uiTimeoutMs
+        )
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await selectCollaborationDomain(control, CONTENT, 'cloud')
@@ -236,6 +243,7 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         await control.command('click', '[data-testid="stand-in-back"]')
         await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+        await verifyRemoteStandInProjectScope(control, localProject.id, String(project.id))
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         const agentValue = JSON.stringify(['cloud', String(project.id), String(agent.id)])
         await control.command(
