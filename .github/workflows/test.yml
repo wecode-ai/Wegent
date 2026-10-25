@@ -135,6 +135,14 @@ jobs:
       - name: Configure backend Rust target directory
         run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
 
+      - name: Set up Python and uv for gateway tests
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.11"
+
+      - name: Prepare stdlib-only Python environment for gateway tests
+        run: uv venv --python 3.11 backend/.venv
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
