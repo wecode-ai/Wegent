@@ -1,4 +1,4 @@
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, zstdDecompressSync } from 'node:zlib'
 
 import {
   ARTIFACT_CONTENT,
@@ -486,7 +486,9 @@ function readRawRequestBody(request) {
     })
     request.once('end', () => {
       try {
-        const body = Buffer.concat(chunks)
+        const rawBody = Buffer.concat(chunks)
+        const body =
+          request.headers?.['content-encoding'] === 'zstd' ? zstdDecompressSync(rawBody) : rawBody
         resolvePromise(
           (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
         )

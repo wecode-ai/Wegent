@@ -1,4 +1,5 @@
 //! Durable source cursors, message deduplication and role-owned work associations.
+use super::personal_stand_in::source_namespace;
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -43,8 +44,8 @@ fn find_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
-         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 LIMIT 1",
-        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message],
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source)],
         |row| row.get(0),
     ).optional()?;
     raw.map(|raw| {
@@ -96,7 +97,7 @@ impl LocalTaskStore {
     pub fn stand_in_source(&self, user: i64, source: &Value) -> Result<Value, TaskRuntimeError> {
         let key = stand_in_record_key(
             "stand-in-source",
-            &json!([user, source["profile"], source["kind"], source["id"]]),
+            &json!([user, source_namespace(source), source["kind"], source["id"]]),
         );
         let connection = self.connection()?;
         Ok(read_record(&connection, &key, "stand_in_source")?.unwrap_or(Value::Null))
@@ -110,7 +111,7 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let key = stand_in_record_key(
             "stand-in-source",
-            &json!([user, source["profile"], source["kind"], source["id"]]),
+            &json!([user, source_namespace(source), source["kind"], source["id"]]),
         );
         let mut state = state.clone();
         state["userId"] = json!(user);
@@ -217,7 +218,7 @@ impl LocalTaskStore {
             &json!([
                 user,
                 role,
-                source["profile"],
+                source_namespace(source),
                 source["kind"],
                 source["id"],
                 message["id"]

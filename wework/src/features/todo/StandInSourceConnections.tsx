@@ -1,15 +1,16 @@
 import { useRef, useState } from 'react'
 import { Plus, Search, X } from 'lucide-react'
-import type { StandInRole, StandInDingTalkConnection } from '@/api/personalStandIn'
-import type { StandInExecutorApi } from '@/api/standIn'
+import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
+import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInHandlingSelect } from './StandInHandlingSelect'
 
-type Connection = Pick<StandInDingTalkConnection, 'id' | 'name' | 'kind' | 'profile'>
+type Connection = Pick<StandInSourceConnection, 'id' | 'name' | 'kind' | 'profile' | 'providerId'>
 
-export function StandInDingTalkConnections({
+export function StandInSourceConnections({
   role,
+  provider,
   api,
   deviceId,
   localDeviceId,
@@ -17,6 +18,7 @@ export function StandInDingTalkConnections({
   onChange,
 }: {
   role: StandInRole
+  provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
   deviceId: string
   localDeviceId: string
@@ -25,7 +27,7 @@ export function StandInDingTalkConnections({
 }) {
   const { t } = useTranslation('common')
   const [adding, setAdding] = useState(false)
-  const [kind, setKind] = useState<'group' | 'direct'>('group')
+  const [kind, setKind] = useState(provider.resourceKinds[0] ?? '')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Connection[]>([])
   const [nextCursor, setNextCursor] = useState<string>()
@@ -33,7 +35,17 @@ export function StandInDingTalkConnections({
   const [error, setError] = useState<string | null>(null)
   const [searched, setSearched] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
-  const rows = role.dingtalk ?? []
+  const allRows = role.connections ?? []
+  const rows = allRows.filter(row => row.providerId === provider.id)
+  const prefix =
+    provider.id === '@wegent/dsh-connection-dingtalk/dingtalk'
+      ? 'stand-in-dingtalk'
+      : 'stand-in-connection-' + provider.id
+  const updateRows = (next: StandInSourceConnection[]) =>
+    onChange({
+      ...role,
+      connections: [...allRows.filter(row => row.providerId !== provider.id), ...next],
+    })
   const searchSequence = useRef(0)
   const search = async (cursor?: string) => {
     if (busy || !query.trim()) return
@@ -42,7 +54,13 @@ export function StandInDingTalkConnections({
     setError(null)
     setSearched(false)
     try {
-      const result = await api.searchDingTalk(deviceId, kind, query.trim(), cursor)
+      const result = await api.searchConnectionResources(
+        deviceId,
+        provider.id,
+        kind,
+        query.trim(),
+        cursor
+      )
       if (sequence !== searchSequence.current) return
       setResults(previous =>
         cursor
@@ -71,9 +89,9 @@ export function StandInDingTalkConnections({
   return (
     <section
       className="space-y-3 border-t border-border pt-4"
-      data-testid="stand-in-dingtalk-connections"
+      data-testid={`${prefix}-connections`}
     >
-      <h3 className="font-medium">{t('standIn.workspace.dingtalk')}</h3>
+      <h3 className="font-medium">{provider.displayName}</h3>
       {rows.map(row => (
         <div
           key={`${row.profile}:${row.kind}:${row.id}`}
@@ -82,31 +100,24 @@ export function StandInDingTalkConnections({
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm">{row.name}</p>
             <p className="text-xs text-text-muted">
-              {t(
-                row.kind === 'group'
-                  ? 'standIn.workspace.group_mentions'
-                  : 'standIn.workspace.direct_messages'
-              )}
+              {provider.resourceLabels?.[row.kind] ?? row.kind}
             </p>
           </div>
           <StandInHandlingSelect
             policy={row.policy}
             disabled={disabled}
             label={t('standIn.workspace.handling_for', { name: row.name })}
-            testId={`stand-in-dingtalk-policy-${row.id}`}
+            testId={`${prefix}-policy-${row.id}`}
             onChange={policy =>
-              onChange({
-                ...role,
-                dingtalk: rows.map(value => (value === row ? { ...value, policy } : value)),
-              })
+              updateRows(rows.map(value => (value === row ? { ...value, policy } : value)))
             }
           />
           <button
             type="button"
-            data-testid={`stand-in-dingtalk-remove-${row.id}`}
+            data-testid={`${prefix}-remove-${row.id}`}
             aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
             disabled={disabled}
-            onClick={() => onChange({ ...role, dingtalk: rows.filter(value => value !== row) })}
+            onClick={() => updateRows(rows.filter(value => value !== row))}
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
@@ -115,7 +126,7 @@ export function StandInDingTalkConnections({
       ))}
       <button
         type="button"
-        data-testid="stand-in-dingtalk-add"
+        data-testid={`${prefix}-add`}
         disabled={disabled}
         onClick={() => setAdding(value => !value)}
         className="inline-flex min-h-9 items-center gap-2 text-sm text-text-secondary hover:underline"
@@ -134,24 +145,27 @@ export function StandInDingTalkConnections({
           <div className="flex flex-wrap gap-2">
             <select
               aria-label={t('standIn.workspace.message_kind')}
-              data-testid="stand-in-dingtalk-kind"
+              data-testid={`${prefix}-kind`}
               value={kind}
               disabled={busy}
               onChange={event => {
                 searchSequence.current += 1
-                setKind(event.target.value as 'group' | 'direct')
+                setKind(event.target.value)
                 setResults([])
                 setNextCursor(undefined)
                 setSearched(false)
               }}
               className="min-h-9 rounded-md border border-border bg-background px-2 text-sm"
             >
-              <option value="group">{t('standIn.workspace.group_mentions')}</option>
-              <option value="direct">{t('standIn.workspace.direct_messages')}</option>
+              {provider.resourceKinds.map(resourceKind => (
+                <option key={resourceKind} value={resourceKind}>
+                  {provider.resourceLabels?.[resourceKind] ?? resourceKind}
+                </option>
+              ))}
             </select>
             <input
               aria-label={t('standIn.workspace.search_connections')}
-              data-testid="stand-in-dingtalk-query"
+              data-testid={`${prefix}-query`}
               value={query}
               onChange={event => {
                 searchSequence.current += 1
@@ -165,7 +179,7 @@ export function StandInDingTalkConnections({
             />
             <button
               type="submit"
-              data-testid="stand-in-dingtalk-search"
+              data-testid={`${prefix}-search`}
               disabled={disabled || busy || !query.trim()}
               className="flex min-h-9 items-center gap-1 rounded-md border border-border px-3 text-sm disabled:opacity-50"
             >
@@ -181,16 +195,18 @@ export function StandInDingTalkConnections({
           {error && (
             <div role="alert" className="space-y-2 text-sm text-error">
               <p>{error}</p>
-              {error.includes('connector_auth_required') && deviceId === localDeviceId && (
-                <button
-                  type="button"
-                  data-testid="stand-in-dingtalk-connect"
-                  onClick={() => setAuthOpen(true)}
-                  className="min-h-9 underline"
-                >
-                  {t('standIn.workspace.connect_dingtalk')}
-                </button>
-              )}
+              {error.includes('connector_auth_required') &&
+                provider.authTarget &&
+                deviceId === localDeviceId && (
+                  <button
+                    type="button"
+                    data-testid={`${prefix}-connect`}
+                    onClick={() => setAuthOpen(true)}
+                    className="min-h-9 underline"
+                  >
+                    {t('standIn.workspace.connect_source', { name: provider.displayName })}
+                  </button>
+                )}
             </div>
           )}
           {searched && !results.length && (
@@ -206,16 +222,17 @@ export function StandInDingTalkConnections({
                 <button
                   key={`${row.profile}:${row.kind}:${row.id}`}
                   type="button"
-                  data-testid={`stand-in-dingtalk-result-${row.id}`}
+                  data-testid={`${prefix}-result-${row.id}`}
                   disabled={disabled || selected}
                   onClick={() =>
-                    onChange({
-                      ...role,
-                      dingtalk: [
-                        ...rows,
-                        { ...row, policy: { automatic: true, askBeforeAct: true } },
-                      ],
-                    })
+                    updateRows([
+                      ...rows,
+                      {
+                        ...row,
+                        providerId: provider.id,
+                        policy: { automatic: true, askBeforeAct: true },
+                      },
+                    ])
                   }
                   className="flex min-h-9 w-full items-center justify-between rounded-md px-2 text-left text-sm hover:bg-muted disabled:text-text-muted"
                 >
@@ -230,7 +247,7 @@ export function StandInDingTalkConnections({
           {nextCursor && (
             <button
               type="button"
-              data-testid="stand-in-dingtalk-search-more"
+              data-testid={`${prefix}-search-more`}
               disabled={busy || disabled}
               className="min-h-9 text-sm underline"
               onClick={() => void search(nextCursor)}
@@ -241,11 +258,11 @@ export function StandInDingTalkConnections({
           <p className="text-xs text-text-muted">{t('standIn.workspace.connection_help')}</p>
         </form>
       )}
-      {authOpen && (
+      {authOpen && provider.authTarget && (
         <LocalConnectorAuthDialog
           open
-          target={{ pluginKey: 'dingtalk', connectorSlug: 'dingtalk' }}
-          title={t('standIn.workspace.connect_dingtalk')}
+          target={provider.authTarget!}
+          title={t('standIn.workspace.connect_source', { name: provider.displayName })}
           onCancel={() => setAuthOpen(false)}
           onSuccess={() => {
             setAuthOpen(false)

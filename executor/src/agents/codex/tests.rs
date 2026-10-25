@@ -61,11 +61,16 @@ fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
 #[test]
 fn stand_in_confirmation_covers_mcp_servers_in_default_and_named_homes() {
     let _environment = environment::LaunchEnvironment::new();
-    for team_id in [0, 12] {
+    for (team_id, origin_type) in [
+        (0, "dingtalk_work"),
+        (12, "dingtalk_work"),
+        (0, "connection_work"),
+        (12, "connection_work"),
+    ] {
         let request: ExecutionRequest = serde_json::from_value(json!({
             "user_name":"synthetic", "team_namespace":"default", "team_name":"review",
             "team_id":team_id, "bot":[{"id":31,"shell_type":"Codex"}],
-            "origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true,"userId":7,"deviceId":"mac","standInId":"default","workId":"work"}
+            "origin":{"type":origin_type,"initiatedBy":"stand_in","askBeforeAct":true,"userId":7,"deviceId":"mac","standInId":"default","workId":"work"}
         }))
         .unwrap();
         let home =
@@ -83,6 +88,18 @@ approval_mode = "approve"
         )
         .unwrap();
         let config = build_codex_launch_config(&request).unwrap();
+        let current_home =
+            crate::agents::instance_home::request_home(&request).unwrap_or_else(wework_codex_home);
+        assert_eq!(
+            home, current_home,
+            "The launch must use the same isolated Home as its fixture"
+        );
+        assert!(
+            fs::read_to_string(home.join("config.toml"))
+                .unwrap()
+                .contains("home_only"),
+            "The synthetic MCP fixture was overwritten during launch configuration"
+        );
         assert!(config
             .config_overrides
             .contains(&"mcp_servers.home_only.default_tools_approval_mode=\"writes\"".into()));

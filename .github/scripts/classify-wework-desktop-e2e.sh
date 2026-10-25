@@ -19,6 +19,10 @@ core_segments=(
   collaboration-local-agent-dispatch
   stand-in
   stand-in-identities
+  stand-in-connections
+  stand-in-mcp
+  stand-in-cli
+  stand-in-plugin-bridge
   stand-in-action-confirmation
   stand-in-list-confirmation
   stand-in-profile
@@ -209,7 +213,7 @@ cloud_shards=(
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
-  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
   harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
@@ -387,6 +391,10 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-local-agent-dispatch"
   select_target "core:stand-in"
   select_target "core:stand-in-identities"
+  select_target "core:stand-in-connections"
+  select_target "core:stand-in-mcp"
+  select_target "core:stand-in-cli"
+  select_target "core:stand-in-plugin-bridge"
   select_target "core:stand-in-action-confirmation"
   select_target "core:stand-in-list-confirmation"
   select_target "core:stand-in-profile"
@@ -850,8 +858,12 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
-    wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-profile.scenario.mjs|wework/src/features/todo/StandInConnectionSettings*|wework/src/features/todo/StandInDeviceSelect*|wework/src/features/todo/StandInMemory*|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_memories.rs|executor/src/runtime_work/handler/stand_in_memory.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
+    wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-profile.scenario.mjs|wework/src/features/todo/StandInConnectionSettings*|wework/src/features/todo/StandInDeviceSelect*|wework/src/features/todo/StandInMemory*|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/StandInSourceConnections*|wework/e2e/desktop/scenarios/stand-in-connections.scenario.mjs|wework/dsh/connection-*/*|wework/dsh/plugin-runtime/connections*|wework/dsh/plugin-runtime/connection-dependencies*|wework/dsh/plugin-runtime/connection-tools*|executor/src/runtime_work/connection_cli.rs|executor/src/runtime_work/connection_dependencies.rs|wework/e2e/desktop/scenarios/stand-in-cli.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-plugin-bridge.scenario.mjs|wework/e2e/desktop/fixtures/connection-source/*|executor/src/agents/codex/connection_mcp.rs|executor/src/runtime_work/connection_mcp*|wework/e2e/desktop/scenarios/stand-in-mcp.scenario.mjs|executor/src/runtime_work/connection_host.rs|executor/src/runtime_work/handler/connections.rs|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_memories.rs|executor/src/runtime_work/handler/stand_in_memory.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
       select_target "core:stand-in-identities"
+      select_target "core:stand-in-connections"
+      select_target "core:stand-in-mcp"
+      select_target "core:stand-in-cli"
+      select_target "core:stand-in-plugin-bridge"
       select_target "core:stand-in-action-confirmation"
       select_target "core:stand-in-list-confirmation"
       select_target "core:stand-in-profile"
@@ -875,6 +887,10 @@ classify_wework_path() {
     wework/e2e/desktop/scenarios/stand-in-project-enable.scenario.mjs|wework/src/features/todo/StandInOverviewPage*|wework/src/features/todo/StandInProjectSetup*|wework/src/features/todo/usePersonalStandIn*|wework/src/api/personalStandIn.ts|wework/e2e/desktop/scenarios/stand-in-controls.scenario.mjs|wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs|wework/src/features/todo/StandInComposer*|wework/src/features/todo/StandInSettingsPage*|wework/src/features/todo/useStandInModels*|wework/src/features/todo/IssueStandInControl*|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
       select_target "core:stand-in"
       select_target "core:stand-in-identities"
+      select_target "core:stand-in-connections"
+      select_target "core:stand-in-mcp"
+      select_target "core:stand-in-cli"
+      select_target "core:stand-in-plugin-bridge"
       select_target "core:stand-in-action-confirmation"
       select_target "core:stand-in-list-confirmation"
       select_target "core:stand-in-profile"
