@@ -2,7 +2,12 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
-import { newStandInRole, publishPersonalStandIn, type StandInRole } from '@/api/personalStandIn'
+import {
+  newStandInRole,
+  publishPersonalStandIn,
+  type PersonalStandInSettings,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { StandInInboxWork } from '@/api/standIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -50,6 +55,23 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   return { props, personalAgents, personalSave }
 }
 
+async function renderInitializedOverview(
+  props: ReturnType<typeof fixture>['props'],
+  settings: PersonalStandInSettings
+) {
+  let resolveInitial!: (value: PersonalStandInSettings) => void
+  vi.mocked(props.services.standInApi!.personalGet).mockReturnValueOnce(
+    new Promise(done => {
+      resolveInitial = done
+    })
+  )
+  render(<StandInOverviewPage {...props} />)
+  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+  // Finish initial loading and its subscription effects before publishing a reload.
+  await act(async () => resolveInitial(settings))
+  return screen.getByTestId('identity-conversation')
+}
+
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
   role.collaboration = {
@@ -92,8 +114,7 @@ it('keeps the active conversation mounted while settings reload', async () => {
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
-  render(<StandInOverviewPage {...props} />)
-  const conversation = await screen.findByTestId('identity-conversation')
+  const conversation = await renderInitializedOverview(props, settings)
   vi.mocked(api.personalGet).mockReturnValueOnce(pending)
   act(() => publishPersonalStandIn(settings))
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
@@ -212,8 +233,7 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   const { props } = fixture()
   const api = props.services.standInApi!
   const settings = await api.personalGet(7, 'device')
-  render(<StandInOverviewPage {...props} />)
-  const conversation = await screen.findByTestId('identity-conversation')
+  const conversation = await renderInitializedOverview(props, settings)
   vi.mocked(api.personalGet).mockRejectedValueOnce(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
   expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
