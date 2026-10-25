@@ -25,7 +25,6 @@ concurrency:
 jobs:
   changes:
     name: Detect CI Changes
-    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -47,11 +46,16 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_ALL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all') }}
         run: |
-          if [[ "$FORCE_ALL" == "true" ]]; then
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            # Always verify Backend and Rust against the queued merge commit.
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "backend_rs=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$FORCE_ALL" == "true" ]]; then
             # ci:all is the explicit full-regression path.
             .github/scripts/classify-ci-changes.sh --all
           else
@@ -727,10 +731,12 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && !cancelled() && github.event_name != 'merge_group'
+    if: always() && !cancelled()
 
     steps:
       - name: Check test results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "All test jobs completed"
           assert_result() {
@@ -744,6 +750,11 @@ jobs:
           }
 
           [[ "${{ needs.changes.result }}" == "success" ]]
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            # Missing outputs must not turn required merge checks into skips.
+            [[ "${{ needs.changes.outputs.backend }}" == "true" ]]
+            [[ "${{ needs.changes.outputs.backend_rs }}" == "true" ]]
+          fi
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
           assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
@@ -756,12 +767,3 @@ jobs:
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"
-
-  merge-queue-summary:
-    name: Test Summary
-    if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Confirm E2E-only merge queue
-        run: echo "Unit tests are completed before the merge queue"
