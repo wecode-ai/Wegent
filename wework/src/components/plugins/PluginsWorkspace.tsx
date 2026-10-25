@@ -3,6 +3,8 @@ import {
   reconcilePluginInstallation,
 } from '@/features/plugins/pluginInstallTelemetry'
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import { getToken } from '@/api/auth'
+import { getRuntimeConfig } from '@/config/runtime'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
@@ -400,14 +402,16 @@ export function PluginsWorkspace({
     subPath: '',
   })
   const [isAddingMarket, setIsAddingMarket] = useState(false)
-  const pluginApi = useMemo(
-    () =>
-      createLocalDevicePluginApi(
-        createDefaultPluginApi(cloudApiBaseUrl, cloudToken),
-        resolveLocalPluginDeviceRouteId
-      ),
-    [cloudApiBaseUrl, cloudToken]
-  )
+  const pluginApi = useMemo(() => {
+    const profile = {
+      apiBaseUrl: cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
+      token: cloudToken === undefined ? getToken() : cloudToken,
+    }
+    return createLocalDevicePluginApi(
+      createDefaultPluginApi(profile.apiBaseUrl, cloudToken),
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
+    )
+  }, [cloudApiBaseUrl, cloudToken])
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const marketplaceCacheKeyValue = useMemo(
     () => pluginMarketplaceCacheKey(cloudApiBaseUrl, cloudToken),

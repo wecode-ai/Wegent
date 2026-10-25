@@ -605,60 +605,93 @@ fn initial_backend_registration_is_visible_to_app_ipc_plugin_requests() {
         .enable_all()
         .build()
         .unwrap();
-    let (registration, description, shutdown) = runtime.block_on(async {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let registered = Arc::new(Notify::new());
-        let registration_signal = registered.clone();
-        let server = tokio::spawn(async move {
-            let router = Router::new().route(
-                "/socket.io/",
-                get(move |upgrade: WebSocketUpgrade| {
-                    let registered = registration_signal.clone();
-                    async move {
-                        upgrade.on_upgrade(move |socket| {
-                            acknowledge_route_registration(socket, registered)
-                        })
-                    }
-                }),
-            );
-            axum::serve(listener, router).await.unwrap();
-        });
-        let config = DeviceConfig {
-            device_id: "local-device".to_owned(),
-            runtime_instance_id: "runtime-1".to_owned(),
-            connection: ConnectionConfig {
-                backend_url: format!("http://{address}"),
-                auth_token: "wg-token".to_owned(),
-                ..ConnectionConfig::default()
-            },
-            ..DeviceConfig::default()
-        };
-        let route_slot = Arc::new(TestMutex::new(None));
-        let (events, _) = broadcast::channel(8);
-        let controller = LocalBackendConnectionController::start_with_runtime(
-            config,
-            Arc::new(RouteRegistrationRuntimeWorkHandler),
-            ExecutorEventHub::new(events),
-            Arc::new(TestMutex::new(None)),
-            route_slot.clone(),
-        )
-        .await;
-        let ipc = AppIpcServer::new().with_device_route_id_slot(route_slot);
+    let (registration, description, plugin_route, rejected_profile, shutdown) =
+        runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let registered = Arc::new(Notify::new());
+            let registration_signal = registered.clone();
+            let server = tokio::spawn(async move {
+                let router = Router::new().route(
+                    "/socket.io/",
+                    get(move |upgrade: WebSocketUpgrade| {
+                        let registered = registration_signal.clone();
+                        async move {
+                            upgrade.on_upgrade(move |socket| {
+                                acknowledge_route_registration(socket, registered)
+                            })
+                        }
+                    }),
+                );
+                axum::serve(listener, router).await.unwrap();
+            });
+            let config = DeviceConfig {
+                device_id: "local-device".to_owned(),
+                runtime_instance_id: "runtime-1".to_owned(),
+                connection: ConnectionConfig {
+                    backend_url: format!("http://{address}"),
+                    auth_token: "wg-token".to_owned(),
+                    ..ConnectionConfig::default()
+                },
+                ..DeviceConfig::default()
+            };
+            let route_slot = Arc::new(TestMutex::new(None));
+            let (events, _) = broadcast::channel(8);
+            let controller = LocalBackendConnectionController::start_with_runtime(
+                config,
+                Arc::new(RouteRegistrationRuntimeWorkHandler),
+                ExecutorEventHub::new(events),
+                Arc::new(TestMutex::new(None)),
+                route_slot.clone(),
+            )
+            .await;
+            let ipc = AppIpcServer::new()
+                .with_device_route_id_slot(route_slot)
+                .with_backend_connection_handler(controller.clone());
 
-        let registration =
-            tokio::time::timeout(Duration::from_secs(10), registered.notified()).await;
-        let description = ipc.dispatch("executor.protocol.describe", json!({})).await;
-        let shutdown = controller.configure_backend(json!({})).await;
-        server.abort();
-        let _ = server.await;
-        (registration, description, shutdown)
-    });
+            let registration =
+                tokio::time::timeout(Duration::from_secs(10), registered.notified()).await;
+            let description = ipc.dispatch("executor.protocol.describe", json!({})).await;
+            let params = json!({
+                "backend_url": format!("http://{address}"),
+                "auth_token": "wg-token",
+                "device_id": "local-device",
+            });
+            let plugin_route = ipc
+                .dispatch("executor.plugins.device_route", params.clone())
+                .await;
+            let mut other_profile = params;
+            other_profile["auth_token"] = json!("other-account-token");
+            let rejected_profile = ipc
+                .dispatch("executor.plugins.device_route", other_profile)
+                .await;
+            let shutdown = controller.configure_backend(json!({})).await;
+            server.abort();
+            let _ = server.await;
+            (
+                registration,
+                description,
+                plugin_route,
+                rejected_profile,
+                shutdown,
+            )
+        });
     restore_env("WEGENT_EXECUTOR_HOME", previous_home);
 
     registration.expect("the initial backend connection must register without reconnecting");
     shutdown.expect("the backend runner must stop");
     assert_eq!(description.unwrap()["device_route_id"], "app-record-42");
+    assert_eq!(
+        plugin_route.unwrap(),
+        json!({
+            "device_id": "local-device",
+            "device_route_id": "app-record-42",
+        })
+    );
+    assert_eq!(
+        rejected_profile.unwrap_err().code,
+        "plugin_route_profile_mismatch"
+    );
 }
 
 #[test]

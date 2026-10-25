@@ -1350,7 +1350,8 @@ classify_path() {
       select_target "cloud:plugin-background-sync-isolation"
       return
       ;;
-    wework/e2e/desktop/modules/plugin-sync-observer.mjs)
+    wework/e2e/desktop/modules/plugin-sync-observer.mjs | \
+      backend/app/services/plugin_device_identity.py)
       select_plugin_sync_checkpoints
       return
       ;;

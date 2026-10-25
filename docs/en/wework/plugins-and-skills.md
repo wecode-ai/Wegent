@@ -22,6 +22,8 @@ For cloud-managed plugins, uninstall completes when the account removal is commi
 
 When installing a cloud-managed plugin, the account installation is saved first and the request waits only for the current device to synchronize. Other online devices receive the change in the background without synchronizing the current device again, and offline devices catch up on their next connection. If the current device fails to synchronize, the account installation is retained and the interface shows the device as pending synchronization with a retry action. Reinstalling an installed plugin preserves its enabled state, component selections and update policy. Runtimes supporting targeted synchronization update only the affected plugin and preserve other plugin installations. Devices are addressed by the record route id assigned during registration, so historical device records for the same computer no longer make sync results ambiguous. While online, the Runtime also checks for plugin drift on a jittered low-frequency cycle as a fallback for missed notifications.
 
+After switching accounts or backends, wait for the current device to register before installing, upgrading, or synchronizing plugins. Account plugin lists and enabled preferences remain available while the connection is pending; device state synchronizes after connection.
+
 ## Refresh and repair installation state
 
 If the installed strip disagrees with marketplace cards, or a local installation remains after uninstalling, click **Refresh** at the top right of the Plugins page. Wework first refreshes plugin data, then asynchronously checks cloud-managed plugins for the current account and device and reports the result.

@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
+import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { createPluginApi } from '@/api/plugins'
-import { ensureLocalExecutorAvailable } from '@/desktop/localExecutor'
+import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import i18n from '@/i18n'
 import { createLocalDevicePluginApi, resolveLocalPluginDeviceRouteId } from './pluginDeviceApi'
 
-vi.mock('@/desktop/localExecutor', () => ({ ensureLocalExecutorAvailable: vi.fn() }))
+vi.mock('@/desktop/localExecutor', () => ({
+  ensureLocalExecutorAvailable: vi.fn(),
+  requestLocalExecutor: vi.fn(),
+}))
 
 const deviceId = 'electron-plugins'
 const requestId = 'app-record-70'
@@ -32,7 +36,10 @@ const sync = {
 }
 
 afterEach(() => vi.unstubAllGlobals())
-beforeEach(() => vi.mocked(ensureLocalExecutorAvailable).mockReset())
+beforeEach(() => {
+  vi.mocked(ensureLocalExecutorAvailable).mockReset()
+  vi.mocked(requestLocalExecutor).mockReset()
+})
 
 function cloudApi() {
   return createPluginApi(createHttpClient({ baseUrl: '/api', getToken: () => null }))
@@ -171,27 +178,36 @@ describe('local plugin device API boundary', () => {
   })
 
   test('resolves the fresh description route without changing stable identity', async () => {
-    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
-      running: true,
-      ready: true,
-      deviceId,
-      deviceRouteId: ' app-record-71 ',
+    vi.mocked(requestLocalExecutor).mockResolvedValue({
+      device_id: deviceId,
+      device_route_id: ' app-record-71 ',
     })
 
-    expect(await resolveLocalPluginDeviceRouteId(deviceId)).toBe('app-record-71')
-    expect(ensureLocalExecutorAvailable).toHaveBeenCalledExactlyOnceWith({ refresh: true })
+    expect(
+      await resolveLocalPluginDeviceRouteId(deviceId, {
+        apiBaseUrl: 'https://backend.example/api',
+        token: 'account-token',
+      })
+    ).toBe('app-record-71')
+    expect(requestLocalExecutor).toHaveBeenCalledExactlyOnceWith('executor.plugins.device_route', {
+      backend_url: 'https://backend.example',
+      auth_token: 'account-token',
+      device_id: deviceId,
+    })
+    expect(ensureLocalExecutorAvailable).not.toHaveBeenCalled()
   })
 
   test.each([
-    { deviceId, deviceRouteId: undefined },
-    { deviceId: 'another-device', deviceRouteId: 'app-record-71' },
+    { device_id: deviceId, device_route_id: undefined },
+    { device_id: 'another-device', device_route_id: 'app-record-71' },
   ])('rejects an unregistered or replaced Runtime: %o', async status => {
-    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
-      running: true,
-      ready: true,
-      ...status,
-    })
-    await expect(resolveLocalPluginDeviceRouteId(deviceId)).rejects.toThrow()
+    vi.mocked(requestLocalExecutor).mockResolvedValue(status)
+    await expect(
+      resolveLocalPluginDeviceRouteId(deviceId, {
+        apiBaseUrl: 'https://backend.example/api',
+        token: 'account-token',
+      })
+    ).rejects.toThrow()
   })
 
   test.each([
@@ -350,5 +366,171 @@ describe('local plugin device API boundary', () => {
       '/api/plugins/installed?device_id=app-record-70',
       '/api/plugins/installed?device_id=app-record-71',
     ])
+  })
+})
+
+describe('plugin route connection profile', () => {
+  const backendA = { apiBaseUrl: 'https://backend-a.example/wework/api', token: 'account-a-token' }
+  const backendB = { apiBaseUrl: 'https://backend-b.example/wework/api', token: 'account-b-token' }
+  let registered: { backend_url: string; auth_token: string; device_route_id: string }
+
+  beforeEach(() => {
+    registered = {
+      backend_url: 'https://backend-a.example/wework',
+      auth_token: backendA.token,
+      device_route_id: requestId,
+    }
+    vi.mocked(requestLocalExecutor).mockImplementation(async (_method, params) => {
+      if (
+        params?.backend_url !== registered.backend_url ||
+        params?.auth_token !== registered.auth_token
+      ) {
+        throw new Error('Plugin Runtime profile does not match')
+      }
+      return { device_id: deviceId, device_route_id: registered.device_route_id }
+    })
+    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId,
+      deviceRouteId: requestId,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ plugin: installed, ...installed, items: [installed] }))
+      )
+    )
+  })
+
+  const scopedApi = (profile: typeof backendA) =>
+    createLocalDevicePluginApi(
+      createPluginApi(
+        createHttpClient({ baseUrl: profile.apiBaseUrl, getToken: () => profile.token })
+      ),
+      id => resolveLocalPluginDeviceRouteId(id, profile)
+    )
+
+  test('rejects required targeting while the new Backend token is pending and the old Runtime remains connected', async () => {
+    const apiB = scopedApi(backendB)
+
+    await expect(apiB.installMarketplacePlugin(101, deviceId)).rejects.toThrow()
+    await expect(apiB.updateInstalledPlugin(101, { releaseId: 1002 }, deviceId)).rejects.toThrow()
+    await expect(apiB.syncInstalledPluginsToDevice(deviceId, true)).rejects.toThrow()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('omits old profile routing from account reads and preferences while new Backend configuration is pending', async () => {
+    const apiB = scopedApi(backendB)
+
+    const inventory = await apiB.listInstalledPlugins(deviceId)
+    await apiB.listMarketplacePlugins({ deviceId })
+    await apiB.updateInstalledPlugin(101, { enabled: false }, deviceId)
+
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      backendB.apiBaseUrl + '/plugins/installed',
+      backendB.apiBaseUrl + '/plugins/marketplace',
+      backendB.apiBaseUrl + '/plugins/installed/101',
+    ])
+    expect(inventory.items[0].status.devices).toEqual(wireDevices)
+  })
+
+  test('rejects a new account on the same Backend before its Runtime registration is applied', async () => {
+    const newAccount = scopedApi({ ...backendA, token: 'account-b-token' })
+
+    await expect(newAccount.installMarketplacePlugin(101, deviceId)).rejects.toThrow()
+    await newAccount.updateInstalledPlugin(101, { enabled: false }, deviceId)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      backendA.apiBaseUrl + '/plugins/installed/101',
+      expect.objectContaining({ method: 'PUT' })
+    )
+  })
+
+  test('uses the new profile route after registration and refuses to lend it to an old API closure', async () => {
+    const apiA = scopedApi(backendA)
+    const apiB = scopedApi(backendB)
+    registered = {
+      backend_url: 'https://backend-b.example/wework',
+      auth_token: backendB.token,
+      device_route_id: 'app-record-95',
+    }
+
+    await expect(apiA.installMarketplacePlugin(101, deviceId)).rejects.toThrow()
+    await apiB.installMarketplacePlugin(101, deviceId)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      backendB.apiBaseUrl + '/plugins/marketplace/101/install?device_id=app-record-95',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  test('keeps an in-flight old API bound to its profile while its IPC request is pending', async () => {
+    const resolveRegisteredRoute = vi.mocked(requestLocalExecutor).getMockImplementation()!
+    let releaseQuery!: () => void
+    const queryGate = new Promise<void>(resolve => {
+      releaseQuery = resolve
+    })
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, params) => {
+      await queryGate
+      return resolveRegisteredRoute(method, params)
+    })
+    const operation = scopedApi(backendA).installMarketplacePlugin(101, deviceId)
+    const result = expect(operation).rejects.toThrow()
+    registered = {
+      backend_url: 'https://backend-b.example/wework',
+      auth_token: backendB.token,
+      device_route_id: 'app-record-95',
+    }
+
+    releaseQuery()
+    await result
+
+    expect(requestLocalExecutor).toHaveBeenCalledExactlyOnceWith('executor.plugins.device_route', {
+      backend_url: 'https://backend-a.example/wework',
+      auth_token: backendA.token,
+      device_id: deviceId,
+    })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['plugin_route_profile_mismatch', 'workbench.plugins_runtime_changed'],
+    ['plugin_route_unavailable', 'workbench.plugins_runtime_not_registered'],
+  ])('localizes plugin route refusal %s', async (code, message) => {
+    vi.mocked(requestLocalExecutor).mockRejectedValue(
+      new DshExecutorTransportError(code, 'Internal Runtime refusal')
+    )
+
+    await expect(scopedApi(backendA).installMarketplacePlugin(101, deviceId)).rejects.toThrow(
+      i18n.t(message)
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('refuses device targeting without account credentials', async () => {
+    await expect(
+      resolveLocalPluginDeviceRouteId(deviceId, { ...backendA, token: null })
+    ).rejects.toThrow(i18n.t('workbench.plugins_runtime_changed'))
+    expect(requestLocalExecutor).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('obtains each reconnect route from the plugin profile query without changing stable identity', async () => {
+    const apiA = scopedApi(backendA)
+    await apiA.installMarketplacePlugin(101, deviceId)
+    registered.device_route_id = 'app-record-71'
+    await apiA.installMarketplacePlugin(101, deviceId)
+
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      backendA.apiBaseUrl + '/plugins/marketplace/101/install?device_id=app-record-70',
+      backendA.apiBaseUrl + '/plugins/marketplace/101/install?device_id=app-record-71',
+    ])
+    expect(requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.device_route', {
+      backend_url: 'https://backend-a.example/wework',
+      auth_token: backendA.token,
+      device_id: deviceId,
+    })
   })
 })

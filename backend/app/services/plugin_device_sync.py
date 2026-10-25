@@ -18,7 +18,11 @@ from app.services.device.capability_sync_service import (
 from app.services.device.plugin_change_sync import schedule_other_devices
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device_service import device_service
-from app.services.plugin_device_identity import plugin_device_id, plugin_device_rows
+from app.services.plugin_device_identity import (
+    plugin_device_id,
+    plugin_device_rows,
+    resolve_plugin_runtime_device_id,
+)
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
@@ -159,15 +163,25 @@ async def sync_plugin_to_other_devices_after_change(
         with get_db_session() as db:
             devices = await device_service.get_online_devices(db, user_id)
             current = (
-                plugin_device_id(db, user_id, current_device_id)
+                resolve_plugin_runtime_device_id(
+                    db, user_id=user_id, device_id=current_device_id
+                )
                 if current_device_id
                 else None
             )
+            if current_device_id and current is None:
+                logger.info(
+                    "Skipping background plugin sync without a unique current target: "
+                    "user_id=%s installed_plugin_id=%s",
+                    user_id,
+                    installed_plugin_id,
+                )
+                return
             current_route = (
                 resolve_runtime_route_identity(
-                    db, user_id=user_id, submitted_device_id=current_device_id
+                    db, user_id=user_id, submitted_device_id=current
                 )
-                if current_device_id
+                if current
                 else None
             )
             excluded = {current, current_device_id}
@@ -177,6 +191,11 @@ async def sync_plugin_to_other_devices_after_change(
             for device in devices:
                 target = device_capability_sync_service._extract_device_id(device)
                 if not target or target in excluded:
+                    continue
+                target = resolve_plugin_runtime_device_id(
+                    db, user_id=user_id, device_id=target
+                )
+                if target is None:
                     continue
                 route = resolve_runtime_route_identity(
                     db, user_id=user_id, submitted_device_id=target

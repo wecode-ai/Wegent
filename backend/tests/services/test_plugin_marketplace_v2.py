@@ -3153,6 +3153,18 @@ async def test_install_returns_plugin_when_device_sync_fails(
 async def test_release_update_syncs_current_device_before_background_convergence(
     test_db, test_user, monkeypatch
 ):
+    test_db.add_all(
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name=name,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+        for name in ("current-device", "other-device")
+    )
+    test_db.commit()
     installed, _, _, latest = _create_marketplace_update_install(
         test_db, user_id=test_user.id, index=1
     )

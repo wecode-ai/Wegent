@@ -853,6 +853,17 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
     test_user,
     monkeypatch,
 ):
+    test_db.add(
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name="online-device",
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+    )
+    test_db.commit()
     InstalledPluginService().publish_marketplace_plugin(
         db=test_db,
         user_id=BUILTIN_PLUGIN_OWNER_ID,

@@ -1,5 +1,7 @@
 import type { createPluginApi } from '@/api/plugins'
-import { ensureLocalExecutorAvailable } from '@/desktop/localExecutor'
+import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { normalizeCloudBackendUrl } from '@/features/cloud-connection/cloudConnectionStorage'
 import i18n from '@/i18n'
 import type {
   DeviceCapabilitySyncResponse,
@@ -13,13 +15,40 @@ interface DeviceScope {
   requestId: string
 }
 
-/** Resolve one fresh registration without changing the stable inventory identity. */
-export async function resolveLocalPluginDeviceRouteId(deviceId: string): Promise<string> {
-  const executor = await ensureLocalExecutorAvailable({ refresh: true })
-  if (executor.deviceId?.trim() !== deviceId.trim()) {
+export interface PluginRuntimeProfile {
+  apiBaseUrl: string
+  token: string | null
+}
+
+/** Resolve the registered route only within the HTTP client's connection profile. */
+export async function resolveLocalPluginDeviceRouteId(
+  deviceId: string,
+  profile: PluginRuntimeProfile
+): Promise<string> {
+  if (!profile.token) throw new Error(i18n.t('workbench.plugins_runtime_changed'))
+  const { backendUrl } = normalizeCloudBackendUrl(
+    new URL(profile.apiBaseUrl, window.location.origin).toString()
+  )
+  const registration = await requestLocalExecutor<{
+    device_id: string
+    device_route_id: string
+  }>('executor.plugins.device_route', {
+    backend_url: backendUrl,
+    auth_token: profile.token,
+    device_id: deviceId.trim(),
+  }).catch((error: unknown) => {
+    if (error instanceof DshExecutorTransportError) {
+      if (error.code === 'plugin_route_profile_mismatch')
+        throw new Error(i18n.t('workbench.plugins_runtime_changed'))
+      if (error.code === 'plugin_route_unavailable')
+        throw new Error(i18n.t('workbench.plugins_runtime_not_registered'))
+    }
+    throw error
+  })
+  if (registration.device_id?.trim() !== deviceId.trim()) {
     throw new Error(i18n.t('workbench.plugins_runtime_changed'))
   }
-  const routeId = executor.deviceRouteId?.trim()
+  const routeId = registration.device_route_id?.trim()
   if (!routeId) throw new Error(i18n.t('workbench.plugins_runtime_not_registered'))
   return routeId
 }

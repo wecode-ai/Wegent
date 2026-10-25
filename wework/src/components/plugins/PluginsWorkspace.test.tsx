@@ -271,6 +271,14 @@ function mockCodexAppServerInvoke(
   const apps = options.apps ?? []
 
   vi.mocked(requestLocalExecutor).mockImplementation((method: string, params?: unknown) => {
+    if (method === 'executor.plugins.device_route') {
+      return Promise.resolve(localExecutorMocks.ensureAvailable.getMockImplementation()?.()).then(
+        status => ({
+          device_id: status?.deviceId,
+          device_route_id: status?.deviceRouteId,
+        })
+      )
+    }
     if (method === 'executor.plugins.import_package.preview' && options.localPluginImport) {
       return Promise.resolve({
         valid: true,
@@ -1628,6 +1636,14 @@ describe('PluginsWorkspace', () => {
     mockKnownExecutorDevice('current-device')
     vi.mocked(requestLocalExecutor).mockReset()
     vi.mocked(requestLocalExecutor).mockImplementation(method => {
+      if (method === 'executor.plugins.device_route') {
+        return Promise.resolve(localExecutorMocks.ensureAvailable.getMockImplementation()?.()).then(
+          status => ({
+            device_id: status?.deviceId,
+            device_route_id: status?.deviceRouteId,
+          })
+        )
+      }
       if (method === 'executor.plugins.personal.list') {
         return Promise.resolve({ marketplacePath: '', plugins: [] })
       }
@@ -4189,6 +4205,7 @@ describe('PluginsWorkspace', () => {
 
   test('does not report an account install as installed when this device failed', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    window.localStorage.setItem('auth_token', 'account-token')
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
       marketplaceDeviceState: 'failed',

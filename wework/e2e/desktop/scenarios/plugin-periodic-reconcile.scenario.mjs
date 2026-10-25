@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
-import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
+import { stopProcessGroup } from '../process-lifecycle.mjs'
+import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -53,9 +54,9 @@ export async function createDesktopScenario({
   let cloud
   let proxy
   let observation
+  let cloudProxy
+  let cloudObservation
   let missedInstalledId
-  const manifest = async () =>
-    JSON.parse(await readFile(join(executorHome, 'capabilities/manifest-v2.json'), 'utf8'))
   const diagnostics = () => ({
     objectStorage: 'MinIO',
     evidence,
@@ -66,6 +67,7 @@ export async function createDesktopScenario({
     reconciliations: observation?.reconciliations,
     requests: proxy?.requests,
     heldChange: observation?.gate.held,
+    cloud: cloudObservation,
   })
 
   async function update(item, deviceId, body) {
@@ -98,7 +100,75 @@ export async function createDesktopScenario({
     return { ...release, slug, installedId: Number(installed.metadata.labels.id) }
   }
 
-  async function waitForAutomaticRecovery({ item, deviceRouteId, baseline, retained }) {
+  async function settledSetup(targets, operate, existing) {
+    const previous = existing
+      ? await cloud.queryDatabase(
+          'SELECT device_id, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s',
+          [1, existing.installedId]
+        )
+      : []
+    const offsets = targets.map(target => target.observation.capabilities.length)
+    const fixture = await operate()
+    await Promise.all(
+      targets.map(async (target, index) => {
+        const requests = await until(
+          () =>
+            target.observation.capabilities
+              .slice(offsets[index])
+              .filter(
+                value =>
+                  value.scope === 'plugin_delta' &&
+                  value.pluginIds.includes(String(fixture.installedId))
+              ),
+          values => values.length > 0,
+          `${target.kind} did not receive its actual setup delta`,
+          workbenchReadyTimeoutMs
+        )
+        assert.equal(requests.length, 1, `${target.kind} received duplicate setup deltas`)
+        const [request] = requests
+        const before = previous.find(row => row.device_id === target.persistedDeviceId)
+        const settled = await until(
+          async () => ({
+            acknowledgement: target.observation.acknowledgements.find(
+              value =>
+                value.at >= request.at &&
+                value.id === request.id &&
+                value.namespace === request.namespace &&
+                value.pluginSync?.generation === request.pluginSync.generation
+            ),
+            plugin: await materializedPlugin(target.home, fixture.installedId),
+            rows: await cloud.queryDatabase(
+              'SELECT state, desired_release_id, actual_release_id, error_code, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+              [1, fixture.installedId, target.persistedDeviceId]
+            ),
+          }),
+          value =>
+            value.acknowledgement?.success === true &&
+            value.plugin?.plugin_sync_generation === request.pluginSync.generation &&
+            value.rows.length === 1 &&
+            value.rows[0].state === 'installed' &&
+            value.rows[0].desired_release_id === fixture.releaseId &&
+            value.rows[0].actual_release_id === fixture.releaseId &&
+            !value.rows[0].error_code &&
+            (!before || value.rows[0].last_sync_at !== before.last_sync_at),
+          `${target.kind} setup ACK, Runtime generation and persisted result did not settle`,
+          workbenchReadyTimeoutMs
+        )
+        assert.deepEqual(settled.acknowledgement.pluginSync, request.pluginSync)
+        evidence.push({
+          case: 'setup-delta-acknowledged-and-persisted-before-baseline',
+          target: target.kind,
+          installedId: fixture.installedId,
+          generation: request.pluginSync.generation,
+          persisted: settled.rows,
+        })
+      })
+    )
+    return fixture
+  }
+
+  async function waitForAutomaticRecovery({ target, item, baseline, retained }) {
+    const { observation, home, deviceRouteId } = target
     const deadline = baseline.registeredAt + MAX_RECONCILE_DELAY_MS + workbenchReadyTimeoutMs
     let lastProgressAt = 0
     while (Date.now() < deadline) {
@@ -110,7 +180,7 @@ export async function createDesktopScenario({
       )
       const requests = observation.reconciliations.slice(baseline.reconciliationCount)
       assert.ok(requests.length <= 1, 'Recovery issued duplicate reconcile requests')
-      const current = await materializedPlugin(executorHome, item.installedId)
+      const current = await materializedPlugin(home, item.installedId)
       if (
         current?.enabled === false &&
         current.component_states?.[`skill:${item.slug}`] === false
@@ -127,7 +197,7 @@ export async function createDesktopScenario({
         )
         return { current, request, elapsedMs }
       }
-      const unchanged = await materializedPlugin(executorHome, retained.installedId)
+      const unchanged = await materializedPlugin(home, retained.installedId)
       assert.deepEqual(
         requests.length === 0 ? unchanged : pluginRuntime(unchanged),
         requests.length === 0 ? baseline.retained : pluginRuntime(baseline.retained),
@@ -136,7 +206,7 @@ export async function createDesktopScenario({
       if (Date.now() - lastProgressAt >= 30_000) {
         lastProgressAt = Date.now()
         console.log(
-          `[plugin-periodic-reconcile] waiting for production timer: ` +
+          `[plugin-periodic-reconcile:${target.kind}] waiting for production timer: ` +
             `${Math.floor((Date.now() - baseline.registeredAt) / 1000)}s; ` +
             `heartbeats=${observation.heartbeats.length - baseline.heartbeatCount}`
         )
@@ -146,78 +216,182 @@ export async function createDesktopScenario({
     throw new Error('The production plugin reconcile timer did not recover the missed change')
   }
 
+  async function configOnlyCloudTarget() {
+    const original = await cloud.device(CLOUD_DEVICE_ID)
+    assert.ok(original, 'The real cloud Executor has no owned Device fixture')
+    await stopProcessGroup(cloud.remoteExecutor)
+    await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
+    const logicalId = 'plugin-periodic-cloud-logical'
+    const changed = await cloud.executeDatabase(
+      'UPDATE kinds SET name = %s, `json` = JSON_SET(JSON_REMOVE(`json`, %s), %s, %s, %s, JSON_OBJECT(%s, %s, %s, %s)) WHERE user_id = %s AND namespace = %s AND kind = %s AND id = %s AND name = %s',
+      [
+        logicalId,
+        '$.spec.deviceId',
+        '$.metadata.name',
+        logicalId,
+        '$.spec.cloudConfig',
+        'deviceId',
+        CLOUD_DEVICE_ID,
+        'sandboxId',
+        logicalId,
+        1,
+        'default',
+        'Device',
+        original.id,
+        CLOUD_DEVICE_ID,
+      ]
+    )
+    assert.equal(changed.affected, 1, 'Cloud identity fixture must update exactly its owned row')
+    cloud.remoteExecutorEnv.WEGENT_BACKEND_URL = cloudProxy.url
+    cloud.remoteExecutorEnv.WEGENT_SOCKET_URL = cloudProxy.url
+    cloud.remoteExecutor = await cloud.spawnExecutor(
+      cloud.remoteExecutorEnv,
+      cloud.remoteExecutorLogPath
+    )
+    const registered = await until(
+      () => cloud.devices(),
+      devices => devices.some(device => device.id === original.id && device.status === 'online'),
+      'The cloudConfig-only Device did not register through the real cloud matching path',
+      workbenchReadyTimeoutMs
+    ).then(devices => devices.find(device => device.id === original.id))
+    assert.equal(registered.device_id, logicalId)
+    assert.equal(registered.runtime_instance_id, original.runtime_instance_id)
+    const rows = await cloud.queryDatabase(
+      'SELECT name, JSON_CONTAINS_PATH(`json`, %s, %s) AS has_device_id, JSON_UNQUOTE(JSON_EXTRACT(`json`, %s)) AS socket_id FROM kinds WHERE user_id = %s AND namespace = %s AND kind = %s AND id = %s',
+      ['one', '$.spec.deviceId', '$.spec.cloudConfig.deviceId', 1, 'default', 'Device', original.id]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].has_device_id, 0)
+    assert.equal(rows[0].socket_id, CLOUD_DEVICE_ID)
+    evidence.push({ case: 'real-cloud-registration-uses-only-cloudConfig-identity', rows })
+    return {
+      kind: 'cloudConfig-only',
+      device: registered,
+      deviceRouteId: CLOUD_DEVICE_ID,
+      persistedDeviceId: logicalId,
+      home: dirname(cloud.remoteCodexHome),
+      proxy: cloudProxy,
+      observation: cloudObservation,
+    }
+  }
+
   async function verifyRecovery(control) {
+    const cloudTarget = await configOnlyCloudTarget()
     const local = await cloud.waitForConnectedAppDevice()
     const deviceRouteId = local.socket_device_id || local.execution_target_id
     assert.match(deviceRouteId, /^app-record-\d+$/, 'The App has no exact Runtime record route')
+    const targets = [
+      {
+        kind: 'app',
+        device: local,
+        deviceRouteId,
+        persistedDeviceId: deviceRouteId,
+        home: executorHome,
+        proxy,
+        observation,
+      },
+      cloudTarget,
+    ]
     // Do not open the plugin workspace: its user-facing catalog refresh and
     // initial auto-sync must not become a competing recovery trigger.
-    const item = await install('periodic-reconcile-changed-plugin', deviceRouteId)
-    const retained = await install('periodic-reconcile-retained-plugin', deviceRouteId)
-    await update(item, deviceRouteId, { updatePolicy: 'manual' })
-    await update(retained, deviceRouteId, { updatePolicy: 'manual' })
-    await until(
-      async () => ({
-        changed: await materializedPlugin(executorHome, item.installedId),
-        retained: await materializedPlugin(executorHome, retained.installedId),
-      }),
-      value => value.changed?.enabled === true && value.retained?.enabled === true,
-      'The isolated local Executor did not materialize both plugin fixtures',
-      workbenchReadyTimeoutMs
+    const item = await settledSetup(targets, () =>
+      install('periodic-reconcile-changed-plugin', deviceRouteId)
     )
-    assert.ok(proxy.websockets.size > 0, 'The local Executor bypassed the real fault proxy')
-    assert.ok(observation.registrations.length > 0, 'The local registration was not observed')
-    const registered = observation.registrations.at(-1)
-    assert.equal(registered.runtimeInstanceId, local.runtime_instance_id)
-    const before = await manifest()
-    const retainedBefore = await materializedPlugin(executorHome, retained.installedId)
-    const retainedSkillPath = join(
-      retainedBefore.runtime.codex_link,
-      'skills',
-      retained.slug,
-      'SKILL.md'
+    const retained = await settledSetup(targets, () =>
+      install('periodic-reconcile-retained-plugin', deviceRouteId)
     )
-    const retainedSkill = await readFile(retainedSkillPath)
-    const baseline = {
-      registeredAt: registered.at,
-      registrationCount: observation.registrations.length,
-      heartbeatCount: observation.heartbeats.length,
-      reconciliationCount: observation.reconciliations.length,
-      retained: retainedBefore,
-      capturedAt: Date.now(),
+    for (const fixture of [item, retained]) {
+      await settledSetup(
+        targets,
+        async () => {
+          // An explicit state write gives both Runtimes a fresh identifiable
+          // delta, including the foreground App's normal same-release path.
+          await update(fixture, deviceRouteId, { updatePolicy: 'manual', enabled: true })
+          return fixture
+        },
+        fixture
+      )
     }
-    assert.ok(
-      Date.now() - baseline.registeredAt < MIN_RECONCILE_DELAY_MS - 30_000,
-      'Fixture setup consumed the first production timer period'
-    )
+    for (const target of targets) {
+      await until(
+        async () => ({
+          changed: await materializedPlugin(target.home, item.installedId),
+          retained: await materializedPlugin(target.home, retained.installedId),
+        }),
+        value => value.changed?.enabled === true && value.retained?.enabled === true,
+        `${target.kind} did not materialize both real plugin fixtures`,
+        workbenchReadyTimeoutMs
+      )
+      assert.ok(target.proxy.websockets.size > 0, `${target.kind} bypassed its real fault proxy`)
+      const registered = target.observation.registrations.at(-1)
+      assert.ok(registered, `${target.kind} registration was not observed`)
+      assert.equal(registered.runtimeInstanceId, target.device.runtime_instance_id)
+      target.before = JSON.parse(
+        await readFile(join(target.home, 'capabilities/manifest-v2.json'), 'utf8')
+      )
+      target.retainedBefore = await materializedPlugin(target.home, retained.installedId)
+      target.retainedSkillPath = join(
+        target.retainedBefore.runtime.codex_link,
+        'skills',
+        retained.slug,
+        'SKILL.md'
+      )
+      target.retainedSkill = await readFile(target.retainedSkillPath)
+      target.baseline = {
+        registeredAt: registered.at,
+        registrationCount: target.observation.registrations.length,
+        heartbeatCount: target.observation.heartbeats.length,
+        reconciliationCount: target.observation.reconciliations.length,
+        retained: target.retainedBefore,
+        capturedAt: Date.now(),
+      }
+      assert.ok(
+        Date.now() - registered.at < MIN_RECONCILE_DELAY_MS - 30_000,
+        `${target.kind} fixture setup consumed the first production timer period`
+      )
+    }
     missedInstalledId = item.installedId
     const componentStates = { [`skill:${item.slug}`]: false }
-    // The remote device completes the account mutation. Its background delta
-    // to the current App is lost; no UI refresh, reconnect or manual sync follows.
-    await update(item, CLOUD_DEVICE_ID, { enabled: false, componentStates })
-    const held = await until(
-      () => {
-        if (observation.gate.error) throw observation.gate.error
-        return observation.gate.held
-      },
-      Boolean,
-      'The account change did not send the real targeted delta to the local Executor'
-    )
-    assert.equal(held.scope, 'plugin_delta')
-    assert.equal(held.pluginSync.complete, false)
-    const missed = observation.capabilities.find(
-      value => value.pluginSync?.generation === held.pluginSync.generation
-    )
-    assert.deepEqual(missed.pluginIds, [String(item.installedId)])
-    assert.deepEqual(missed.removedIds, [])
-    assert.deepEqual(missed.skills, [])
-    assert.deepEqual(missed.mcps, [])
-    observation.gate.discard()
+    // A third real Runtime completes the account mutation. Both observed
+    // Runtimes lose their own delta; neither reconnects nor manually refreshes.
+    await update(item, REMOTE_DOCKER_DEVICE_ID, { enabled: false, componentStates })
+    for (const target of targets) {
+      const held = await until(
+        () => {
+          if (target.observation.gate.error) throw target.observation.gate.error
+          return target.observation.gate.held
+        },
+        Boolean,
+        `The account change did not dispatch a real delta to ${target.kind}`
+      )
+      assert.equal(held.scope, 'plugin_delta')
+      assert.equal(held.pluginSync.complete, false)
+      target.missed = target.observation.capabilities.find(
+        value => value.pluginSync?.generation === held.pluginSync.generation
+      )
+      assert.deepEqual(target.missed.pluginIds, [String(item.installedId)])
+      assert.deepEqual(target.missed.removedIds, [])
+      assert.deepEqual(target.missed.skills, [])
+      assert.deepEqual(target.missed.mcps, [])
+      target.observation.gate.discard()
+      assert.equal((await materializedPlugin(target.home, item.installedId)).enabled, true)
+      evidence.push({
+        case: 'real-runtime-state-change-notification-lost',
+        target: target.kind,
+        discarded: true,
+        missed: target.missed,
+      })
+    }
     assert.equal((await accountPlugin(cloud, item.slug)).spec.enabled, false)
-    assert.equal((await materializedPlugin(executorHome, item.installedId)).enabled, true)
-    evidence.push({ case: 'real-runtime-state-change-notification-lost', discarded: true, missed })
+    await Promise.all(
+      targets.map(target => verifyTargetRecovery(target, item, retained, componentStates))
+    )
+    await captureScreenshot(control, 'plugin-periodic-reconcile.png', 'body')
+  }
 
-    const recovered = await waitForAutomaticRecovery({ item, deviceRouteId, baseline, retained })
+  async function verifyTargetRecovery(target, item, retained, componentStates) {
+    const { observation, deviceRouteId, persistedDeviceId, baseline, retainedBefore } = target
+    const recovered = await waitForAutomaticRecovery({ target, item, baseline, retained })
     const complete = await until(
       () => observation.capabilities,
       values =>
@@ -238,7 +412,8 @@ export async function createDesktopScenario({
     )
     assert.deepEqual(complete.skills, [])
     assert.deepEqual(complete.mcps, [])
-    assert.ok(complete.pluginSync.generation > missed.pluginSync.generation)
+    assert.equal(complete.deviceId, deviceRouteId)
+    assert.ok(complete.pluginSync.generation > target.missed.pluginSync.generation)
     const acknowledged = await until(
       () =>
         observation.acknowledgements.find(
@@ -258,7 +433,7 @@ export async function createDesktopScenario({
       () =>
         cloud.queryDatabase(
           'SELECT state, desired_release_id, actual_release_id, error_code FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
-          [1, item.installedId, deviceRouteId]
+          [1, item.installedId, persistedDeviceId]
         ),
       rows =>
         rows.length === 1 &&
@@ -266,16 +441,18 @@ export async function createDesktopScenario({
         rows[0].desired_release_id === item.releaseId &&
         rows[0].actual_release_id === item.releaseId &&
         !rows[0].error_code,
-      'Automatic reconciliation did not persist its real App-route acknowledgement'
+      `Automatic reconciliation did not persist its canonical ${target.kind} acknowledgement`
     )
-    const after = await manifest()
+    const after = JSON.parse(
+      await readFile(join(target.home, 'capabilities/manifest-v2.json'), 'utf8')
+    )
     assert.deepEqual(
-      pluginRuntime(await materializedPlugin(executorHome, retained.installedId)),
+      pluginRuntime(await materializedPlugin(target.home, retained.installedId)),
       pluginRuntime(retainedBefore)
     )
-    assert.deepEqual(await readFile(retainedSkillPath), retainedSkill)
-    assert.deepEqual(after.skills, before.skills)
-    assert.deepEqual(after.mcps, before.mcps)
+    assert.deepEqual(await readFile(target.retainedSkillPath), target.retainedSkill)
+    assert.deepEqual(after.skills, target.before.skills)
+    assert.deepEqual(after.mcps, target.before.mcps)
     assert.equal(recovered.current.version, '1.0.0', 'State recovery changed the plugin release')
     assert.deepEqual(recovered.current.component_states, componentStates)
     const heartbeats = observation.heartbeats.slice(baseline.heartbeatCount)
@@ -289,18 +466,16 @@ export async function createDesktopScenario({
       longestHeartbeatGapMs < 60_000,
       'Missed plugin delivery interrupted Runtime heartbeats'
     )
-    const currentDevice = (await cloud.devices()).find(device => device.id === local.id)
+    const currentDevice = (await cloud.devices()).find(device => device.id === target.device.id)
     assert.equal(currentDevice?.status, 'online')
-    assert.equal(currentDevice?.runtime_instance_id, local.runtime_instance_id)
-    assert.equal(currentDevice?.device_id, local.device_id)
-    assert.equal(
-      currentDevice?.socket_device_id || currentDevice?.execution_target_id,
-      deviceRouteId
-    )
+    assert.equal(currentDevice?.runtime_instance_id, target.device.runtime_instance_id)
+    assert.equal(currentDevice?.device_id, target.device.device_id)
     evidence.push({
       case: 'production-timer-recovers-missed-plugin-state-without-reconnect-or-refresh',
+      target: target.kind,
       deviceRouteId,
-      runtimeInstanceId: local.runtime_instance_id,
+      persistedDeviceId,
+      runtimeInstanceId: target.device.runtime_instance_id,
       elapsedMs: recovered.elapsedMs,
       request: recovered.request,
       acknowledged,
@@ -309,7 +484,6 @@ export async function createDesktopScenario({
       longestHeartbeatGapMs,
       unchangedPluginId: retained.installedId,
     })
-    await captureScreenshot(control, 'plugin-periodic-reconcile.png', 'body')
   }
 
   return {
@@ -319,6 +493,16 @@ export async function createDesktopScenario({
     async prepareCloud({ backendUrl }) {
       proxy = await new TransportFaultProxy(backendUrl).start()
       observation = observePluginSyncTransport(proxy, {
+        holdCapability: payload =>
+          missedInstalledId !== undefined &&
+          payload.scope === 'plugin_delta' &&
+          payload.plugins?.some(
+            plugin =>
+              Number(plugin.installed_plugin_id) === missedInstalledId && plugin.enabled === false
+          ),
+      })
+      cloudProxy = await new TransportFaultProxy(backendUrl).start()
+      cloudObservation = observePluginSyncTransport(cloudProxy, {
         holdCapability: payload =>
           missedInstalledId !== undefined &&
           payload.scope === 'plugin_delta' &&
@@ -348,6 +532,7 @@ export async function createDesktopScenario({
     async cleanup() {
       try {
         await proxy?.stop()
+        await cloudProxy?.stop()
       } finally {
         await objectStorage.stop()
       }

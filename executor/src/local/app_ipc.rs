@@ -137,6 +137,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.harnesses.list",
     "executor.harnesses.prepare_launch",
     "executor.health",
+    "executor.plugins.device_route",
     "executor.plugins.initialize_bundled_marketplace",
     "executor.plugins.import_package",
     "executor.plugins.import_package.finalize",
@@ -256,6 +257,10 @@ pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_quota<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn plugin_device_route<'a>(
+        &'a self,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -807,6 +812,16 @@ impl AppIpcServer {
             } else {
                 handler.migrate_plugin_auth(params).await
             };
+        }
+
+        if method == "executor.plugins.device_route" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "plugin_route_unavailable",
+                    "Plugin Runtime is not registered for this connection",
+                )
+            })?;
+            return handler.plugin_device_route(params).await;
         }
 
         if method == "executor.backend.configure" {

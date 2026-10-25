@@ -238,6 +238,9 @@ vi.mock('@/desktop/localExecutor', () => ({
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(async (capability: string) => {
+    if (capability === 'executor.plugins.device_route') {
+      return { device_id: 'local-device', device_route_id: 'local-device' }
+    }
     if (capability === 'executor.plugins.personal.list') {
       return { marketplacePath: '', plugins: [] }
     }

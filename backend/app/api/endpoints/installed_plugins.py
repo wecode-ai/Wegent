@@ -59,12 +59,12 @@ from app.services.auth.task_token import TaskTokenInfo, verify_task_token
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.plugin_reconciliation import reconcile_device_plugins
 from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
-from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
     verify_marketplace_submission_upload_token,
 )
+from app.services.plugin_device_identity import resolve_plugin_runtime_device_id
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
@@ -209,15 +209,13 @@ async def sync_installed_plugins_to_device(
     user_id = current_user.id
 
     if reconcile:
-        if (
-            resolve_runtime_route_identity(
-                db, user_id=user_id, submitted_device_id=normalized_device_id
-            )
-            is None
-        ):
+        reconciliation_device_id = resolve_plugin_runtime_device_id(
+            db, user_id=user_id, device_id=normalized_device_id
+        )
+        if reconciliation_device_id is None:
             raise HTTPException(status_code=404, detail="Device not found")
         db.close()
-        return await reconcile_device_plugins(user_id, normalized_device_id)
+        return await reconcile_device_plugins(user_id, reconciliation_device_id)
 
     db.close()
     pending_count = await run_plugin_operation(

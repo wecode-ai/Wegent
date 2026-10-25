@@ -9,7 +9,7 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { navigateTo } from '@/lib/navigation'
 import * as localPlugins from '@/api/local/codexPlugins'
-import { ensureLocalExecutorAvailable } from '@/desktop/localExecutor'
+import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
@@ -22,6 +22,7 @@ vi.mock('@/lib/navigation', () => ({
 vi.mock('@/desktop/localExecutor', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/localExecutor')>()),
   ensureLocalExecutorAvailable: vi.fn(),
+  requestLocalExecutor: vi.fn(),
 }))
 
 function cachedInstalledPlugin(): InstalledPluginItem {
@@ -120,6 +121,17 @@ describe('PluginManagementWorkspace cache', () => {
       deviceId: 'device-1',
       deviceRouteId: 'app-record-70',
     })
+    vi.mocked(requestLocalExecutor)
+      .mockReset()
+      .mockImplementation(async method => {
+        if (method === 'executor.plugins.device_route') {
+          const status = await vi.mocked(ensureLocalExecutorAvailable).getMockImplementation()?.({
+            refresh: true,
+          })
+          return { device_id: status?.deviceId, device_route_id: status?.deviceRouteId }
+        }
+        return undefined
+      })
     window.localStorage.clear()
   })
 
@@ -154,7 +166,10 @@ describe('PluginManagementWorkspace cache', () => {
     expect(readState).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=app-record-70')
-    expect(ensureLocalExecutorAvailable).toHaveBeenCalledWith({ refresh: true })
+    expect(requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.device_route',
+      expect.objectContaining({ auth_token: 'cloud-token', device_id: 'resolved-device' })
+    )
     expect(String(vi.mocked(fetch).mock.calls[0][0])).not.toContain('marketplace')
   })
 
@@ -344,8 +359,60 @@ describe('PluginManagementWorkspace cache', () => {
         'device-1'
       )
     }
-    expect(ensureLocalExecutorAvailable).toHaveBeenCalledTimes(3)
-    expect(ensureLocalExecutorAvailable).toHaveBeenLastCalledWith({ refresh: true })
+    expect(requestLocalExecutor).toHaveBeenCalledTimes(3)
+    expect(requestLocalExecutor).toHaveBeenLastCalledWith(
+      'executor.plugins.device_route',
+      expect.objectContaining({ auth_token: 'cloud-token', device_id: 'device-1' })
+    )
+  })
+
+  test('omits the old account route after switching tokens on the same Backend before Runtime configuration', async () => {
+    const { installed } = seedCloudInstalledPlugin()
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, params) => {
+      if (method !== 'executor.plugins.device_route') return undefined
+      if (params?.auth_token !== 'cloud-token')
+        throw new Error('Runtime still belongs to previous account')
+      return { device_id: 'device-1', device_route_id: 'app-record-70' }
+    })
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT')
+        return Response.json({ ...installed, spec: { ...installed.spec, enabled: false } })
+      return Response.json({ items: [installed] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(
+      <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+    )
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/plugins/installed?device_id=app-record-70',
+        expect.anything()
+      )
+    )
+    fetchMock.mockClear()
+
+    rerender(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)
+    const toggle = await screen.findByTestId('installed-plugin-toggle-cached-1')
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/plugins/installed/cached-1',
+        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: false }) })
+      )
+    )
+    expect(fetchMock.mock.calls.every(([input]) => !String(input).includes('device_id='))).toBe(
+      true
+    )
+    expect(requestLocalExecutor).toHaveBeenLastCalledWith(
+      'executor.plugins.device_route',
+      expect.objectContaining({ auth_token: 'other-account', device_id: 'device-1' })
+    )
+    expect(
+      fetchMock.mock.calls.every(
+        ([, init]) => new Headers(init?.headers).get('Authorization') === 'Bearer other-account'
+      )
+    ).toBe(true)
   })
 
   test('saves account enabled preference without device targeting when Runtime IPC is unavailable', async () => {

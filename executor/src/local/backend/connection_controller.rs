@@ -27,6 +27,8 @@ use crate::{
 
 use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SocketIoTransport};
 
+mod plugin_route;
+
 #[derive(Clone)]
 pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
@@ -226,6 +228,13 @@ impl LocalBackendConnectionController {
 }
 
 impl BackendConnectionHandler for LocalBackendConnectionController {
+    fn plugin_device_route<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(self.resolve_plugin_device_route(params))
+    }
+
     fn execute_plugin_auth<'a>(
         &'a self,
         params: Value,

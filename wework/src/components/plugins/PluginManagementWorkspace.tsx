@@ -7,6 +7,7 @@ import {
 } from '@/features/plugins/pluginInventory'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
+import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -125,20 +126,20 @@ function PluginManagementWorkspaceContent({
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
+    const profile = {
+      apiBaseUrl: resolvedCloudApiBaseUrl,
+      token: cloudToken === undefined ? getToken() : cloudToken,
+    }
     return createLocalDevicePluginApi(
       createPluginApi(
         createHttpClient({
-          baseUrl: resolvedCloudApiBaseUrl,
-          ...(cloudToken === undefined
-            ? {}
-            : {
-                getToken: () => cloudToken,
-                redirectOnUnauthorized: false,
-              }),
+          baseUrl: profile.apiBaseUrl,
+          getToken: () => profile.token,
+          ...(cloudToken === undefined ? {} : { redirectOnUnauthorized: false }),
         }),
         resolvedCloudApiBaseUrl
       ),
-      resolveLocalPluginDeviceRouteId
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
     )
   }, [cloudToken, resolvedCloudApiBaseUrl])
 

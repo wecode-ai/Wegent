@@ -18,6 +18,21 @@ from tests.services.test_plugin_marketplace_v2 import _device_install
 pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
 
 
+def owned_local_devices(db, user_id: int, names: tuple[str, ...]) -> None:
+    db.add_all(
+        Kind(
+            user_id=user_id,
+            kind="Device",
+            namespace="default",
+            name=name,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+        for name in names
+    )
+    db.commit()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "current_alias", ["route", "runtime-current", "electron-current"]
@@ -86,9 +101,14 @@ async def test_background_excludes_current_app_aliases_and_deduplicates_other_ap
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("current_alias", ["cloud-current", "cloud-socket-current"])
+@pytest.mark.parametrize(
+    "current_alias", ["cloud-current", "cloud-socket-current", " cloud-socket-current "]
+)
+@pytest.mark.parametrize(
+    "other_identity", ["unique", "duplicate_socket", "name_collision"]
+)
 async def test_background_excludes_current_cloud_connection_alias(
-    test_db, test_user, monkeypatch, current_alias
+    test_db, test_user, monkeypatch, current_alias, other_identity
 ):
     devices = [
         Kind(
@@ -106,6 +126,28 @@ async def test_background_excludes_current_cloud_connection_alias(
         )
         for name in ("current", "other")
     ]
+    if other_identity != "unique":
+        devices.append(
+            Kind(
+                user_id=test_user.id,
+                kind="Device",
+                namespace="default",
+                name=(
+                    "another-cloud"
+                    if other_identity == "duplicate_socket"
+                    else "cloud-socket-other"
+                ),
+                is_active=True,
+                json={
+                    "spec": {
+                        "deviceType": (
+                            "cloud" if other_identity == "duplicate_socket" else "local"
+                        ),
+                        "cloudConfig": {"deviceId": "cloud-socket-other"},
+                    }
+                },
+            )
+        )
     test_db.add_all(devices)
     test_db.commit()
     monkeypatch.setattr(
@@ -116,10 +158,18 @@ async def test_background_excludes_current_cloud_connection_alias(
         "get_online_devices",
         AsyncMock(
             return_value=[
-                {"device_id": "cloud-current"},
-                {"device_id": "cloud-socket-current"},
-                {"device_id": "cloud-other"},
-                {"device_id": "cloud-other"},
+                {
+                    "device_id": "cloud-current",
+                    "socket_device_id": "cloud-socket-current",
+                },
+                {
+                    "device_id": "cloud-other",
+                    "socket_device_id": "cloud-socket-other",
+                },
+                {
+                    "device_id": "cloud-other",
+                    "socket_device_id": "cloud-socket-other",
+                },
             ]
         ),
     )
@@ -133,15 +183,58 @@ async def test_background_excludes_current_cloud_connection_alias(
     schedule.assert_called_once_with(
         plugin_device_sync.device_capability_sync_service,
         user_id=test_user.id,
-        device_ids=["cloud-other"],
+        device_ids=["cloud-other"] if other_identity == "unique" else [],
         installed_plugin_ids=[17],
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_current", ["missing", "ambiguous"])
+async def test_background_never_guesses_an_unresolved_current_runtime(
+    test_db, test_user, monkeypatch, invalid_current
+):
+    owned_local_devices(test_db, test_user.id, ("safe-other",))
+    if invalid_current == "ambiguous":
+        test_db.add_all(
+            Kind(
+                user_id=test_user.id,
+                kind="Device",
+                namespace="default",
+                name=name,
+                is_active=True,
+                json={
+                    "spec": {
+                        "deviceType": "cloud",
+                        "cloudConfig": {"deviceId": "ambiguous-current"},
+                    }
+                },
+            )
+            for name in ("first-current", "second-current")
+        )
+        test_db.commit()
+    monkeypatch.setattr(
+        plugin_device_sync, "get_db_session", plugin_write_operations.get_db_session
+    )
+    monkeypatch.setattr(
+        plugin_device_sync.device_service,
+        "get_online_devices",
+        AsyncMock(return_value=[{"device_id": "safe-other"}]),
+    )
+    schedule = Mock()
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", schedule)
+
+    await plugin_device_sync.sync_plugin_to_other_devices_after_change(
+        test_user.id, 17, f"{invalid_current}-current"
+    )
+
+    schedule.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_background_dispatch_preserves_unrelated_inventory_and_generation(
     test_db, test_user, monkeypatch
 ):
+    owned_local_devices(test_db, test_user.id, ("current", "other"))
     installed, release = _device_install(test_db, test_user.id)
     installed_id, release_id, user_id = installed.id, release.id, test_user.id
     unrelated = Kind(
@@ -262,6 +355,7 @@ async def test_background_dispatch_preserves_unrelated_inventory_and_generation(
 async def test_background_failure_isolated_from_slow_device_and_request_session(
     test_db, test_user, monkeypatch, caplog
 ):
+    owned_local_devices(test_db, test_user.id, ("current", "failed", "slow"))
     started = asyncio.Event()
     release = asyncio.Event()
     enumerated_sessions = []

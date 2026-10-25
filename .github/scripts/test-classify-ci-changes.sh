@@ -605,6 +605,16 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/plugin-sync-observer.mjs"
 
+assert_desktop_case "plugin-only runtime identity selects route, background and periodic recovery" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "backend/app/services/plugin_device_identity.py"
+
 assert_desktop_case "plugin sync writes exercise route, background and periodic recovery" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false

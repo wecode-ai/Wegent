@@ -90,6 +90,16 @@ def runtime_state_sync(plugin_requests, monkeypatch):
 def installed_runtime_state(runtime_state_sync, monkeypatch):
     context, calls, inventory = runtime_state_sync
     with context.sessions.begin() as db:
+        db.add(
+            Kind(
+                user_id=context.user_id,
+                kind="Device",
+                namespace="default",
+                name=OTHER_DEVICE_ID,
+                is_active=True,
+                json={"spec": {"deviceType": "local", "deviceId": OTHER_DEVICE_ID}},
+            )
+        )
         installed = db.get(Kind, context.installed_id)
         current = (
             db.query(PluginDeviceInstallation)

@@ -3,6 +3,7 @@ import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
+  createDefaultPluginApi,
   keepRicherMarketplacePluginDetail,
   marketplacePluginDetailSelectionKey,
   marketplacePluginDetailSource,
@@ -315,5 +316,45 @@ describe('marketplacePluginDetailSelectionKey', () => {
     expect(marketplacePluginDetailSelectionKey(enterprise)).not.toBe(
       marketplacePluginDetailSelectionKey(personal)
     )
+  })
+})
+
+describe('plugin HTTP profile credentials', () => {
+  test('captures the implicit token so an old API cannot read a replacement account token', async () => {
+    localStorage.setItem('auth_token', 'original-account')
+    const api = createDefaultPluginApi('/api')
+    localStorage.setItem('auth_token', 'replacement-account')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ items: [] })))
+    try {
+      await api.listInstalledPlugins()
+      const options = vi.mocked(fetch).mock.calls[0][1]
+      expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer original-account')
+    } finally {
+      localStorage.removeItem('auth_token')
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test.each([
+    { token: undefined, redirects: true },
+    { token: 'explicit-cloud-account', redirects: false },
+    { token: null, redirects: false },
+  ])('preserves the existing 401 redirect policy: %o', async ({ token, redirects }) => {
+    localStorage.setItem('auth_token', 'implicit-account')
+    vi.mocked(navigateTo).mockClear()
+    const api = createDefaultPluginApi('/api', token)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ detail: 'Unauthorized' }, { status: 401 }))
+    )
+    try {
+      await expect(api.listInstalledPlugins()).rejects.toMatchObject({ status: 401 })
+      if (redirects) expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/login')
+      else expect(navigateTo).not.toHaveBeenCalled()
+    } finally {
+      localStorage.removeItem('auth_token')
+      vi.mocked(navigateTo).mockClear()
+      vi.unstubAllGlobals()
+    }
   })
 })

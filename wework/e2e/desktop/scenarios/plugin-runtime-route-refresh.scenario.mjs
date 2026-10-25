@@ -35,6 +35,8 @@ export async function createDesktopScenario({
   const objectStorage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
   let cloud
   let appProxy
+  let restoredProxy
+  let restoredTransport
   let transport
   let cleanedUp = false
 
@@ -42,6 +44,7 @@ export async function createDesktopScenario({
     if (cleanedUp) return
     cleanedUp = true
     try {
+      await restoredProxy?.stop()
       await appProxy?.stop()
     } finally {
       await objectStorage.stop()
@@ -219,7 +222,7 @@ export async function createDesktopScenario({
     assert.deepEqual(sync[0].pluginIds, [String(fixture.installedId)])
     const acknowledgement = await successfulAcknowledgement(sync[0])
     const installedIdentity = await identity(control)
-    assert.equal(installedIdentity.deviceRouteId, current.execution_target_id)
+    assert.equal(installedIdentity.description.device_route_id, current.execution_target_id)
     assert.equal(installedIdentity.deviceId, stableDeviceId)
     await control.command('waitFor', testId(`plugin-marketplace-actions-${pluginId}`), {
       timeoutMs: workbenchReadyTimeoutMs,
@@ -317,6 +320,160 @@ export async function createDesktopScenario({
     }
   }
 
+  async function pendingProfileMustNotReuseRoute(control, current, stableDeviceId, fixture) {
+    const pendingSlug = 'plugin-route-pending-profile'
+    const pending = {
+      ...(await cloud.publishPluginRelease({
+        slug: pendingSlug,
+        version: '1.0.0',
+        skills: { [pendingSlug]: 'Verify plugin routing while a real profile is configuring' },
+      })),
+      slug: pendingSlug,
+    }
+    const stored = JSON.parse(
+      await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
+    )
+    restoredProxy.rule = request =>
+      request.method === 'POST' && request.path === '/api/users/me/wegent-runtime-token'
+        ? 'hold-response'
+        : null
+    // Restore a real native profile through the production provider. The new
+    // origin forwards to the same isolated backend; only its token response is
+    // delayed. No status, API response or Executor identity is fabricated.
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({
+        cloudConnection: {
+          ...stored,
+          backendUrl: restoredProxy.url,
+          apiBaseUrl: `${restoredProxy.url}/api`,
+          socketBaseUrl: restoredProxy.url,
+          socketBaseUrlOverride: restoredProxy.url,
+          webUrl: restoredProxy.url,
+        },
+      }),
+    })
+    const readyCount = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await control.awaitReadyAfter(readyCount)
+    const held = await until(
+      () => restoredProxy.requests,
+      requests => requests.some(request => request.committedResponseHeld),
+      'The restored profile did not wait for its real Runtime token response',
+      workbenchReadyTimeoutMs
+    ).then(requests => requests.find(request => request.committedResponseHeld))
+    assert.equal(held.path, '/api/users/me/wegent-runtime-token')
+    assert.equal(held.status, 200)
+    const before = await identity(control)
+    assert.equal(before.description.device_route_id, current.execution_target_id)
+    assert.equal(before.deviceId, stableDeviceId)
+    assert.ok(appProxy.websockets.size > 0, 'The previous real profile is no longer connected')
+    assert.equal(restoredTransport.registrations.length, 0)
+    const pendingDiagnostics = JSON.parse(
+      await control.command('getPluginSyncDiagnostics', 'body', { value: stableDeviceId })
+    )
+    assert.equal(pendingDiagnostics.rendererConnected, false)
+
+    try {
+      const readOffset = restoredTransport.writes.length
+      await openPlugin(control, fixture)
+      await control.command('click', testId('plugins-manage-button'))
+      const toggle = testId(`installed-plugin-toggle-${fixture.installedId}`)
+      await control.command('waitFor', `${toggle}[aria-checked="true"]`)
+      const reads = restoredTransport.writes
+        .slice(readOffset)
+        .filter(request => request.method === 'GET' && request.path === '/api/plugins/installed')
+      assert.ok(reads.length > 0, 'The new profile did not read its real plugin account')
+      assert.ok(reads.every(request => request.deviceId === null))
+      const updateOffset = restoredTransport.writes.length
+      await control.command('click', toggle)
+      await until(
+        () => accountPlugin(cloud, fixture.slug),
+        plugin => plugin?.spec.enabled === false,
+        'The account preference did not persist while Runtime configuration was pending'
+      )
+      const updates = restoredTransport.writes
+        .slice(updateOffset)
+        .filter(request => request.method === 'PUT')
+      assert.equal(updates.length, 1)
+      assert.equal(updates[0].deviceId, null, 'Account preference reused another profile route')
+      await openPlugin(control, pending)
+      await control.command('waitFor', testId(`plugin-marketplace-install-${pending.pluginId}`))
+      const installOffset = restoredTransport.writes.length
+      await control.command(
+        'clickWhenEnabled',
+        testId(`plugin-marketplace-install-${pending.pluginId}`)
+      )
+      await control.command('waitFor', testId('install-plugin-dialog-confirm'))
+      await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+      await control.command(
+        'waitFor',
+        `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
+      )
+      const installs = restoredTransport.writes
+        .slice(installOffset)
+        .filter(request => request.method === 'POST' && request.path.endsWith('/install'))
+      assert.deepEqual(installs, [], 'A required-device install reused another profile route')
+      assert.equal(await accountPlugin(cloud, pending.slug), undefined)
+      assert.equal(restoredTransport.registrations.length, 0)
+      evidence.push({ case: 'restored-profile-token-pending', before, reads, updates, installs })
+    } finally {
+      restoredProxy.rule = () => null
+      for (const request of restoredProxy.requests.filter(request => request.committedResponseHeld))
+        await request.release()
+    }
+    await until(
+      () => restoredTransport.registrations,
+      registrations =>
+        registrations.some(value => value.runtimeInstanceId === current.runtime_instance_id),
+      'The real Runtime did not register on the restored profile after its token was released',
+      workbenchReadyTimeoutMs
+    )
+    await until(
+      async () =>
+        JSON.parse(
+          await control.command('getPluginSyncDiagnostics', 'body', { value: stableDeviceId })
+        ),
+      value => value.backend.connected && value.rendererConnected,
+      'The restored profile registration did not become ready',
+      workbenchReadyTimeoutMs
+    )
+    const recovered = await identity(control)
+    assert.equal(recovered.deviceId, stableDeviceId)
+    const offset = restoredTransport.writes.length
+    await openPlugin(control, fixture)
+    await control.command('click', testId('plugins-manage-button'))
+    const toggle = testId(`installed-plugin-toggle-${fixture.installedId}`)
+    await control.command('waitFor', `${toggle}[aria-checked="false"]`)
+    await control.command('click', toggle)
+    await until(
+      () => accountPlugin(cloud, fixture.slug),
+      plugin => plugin?.spec.enabled === true,
+      'The account preference did not recover on the configured profile'
+    )
+    const updates = restoredTransport.writes
+      .slice(offset)
+      .filter(request => request.method === 'PUT')
+    assert.equal(updates.length, 1)
+    assert.equal(updates[0].deviceId, recovered.description.device_route_id)
+    await openPlugin(control, pending)
+    await control.command(
+      'clickWhenEnabled',
+      testId(`plugin-marketplace-install-${pending.pluginId}`)
+    )
+    await control.command('waitFor', testId('install-plugin-dialog-confirm'))
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    await control.command('waitFor', testId(`plugin-marketplace-actions-${pending.pluginId}`), {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    const install = restoredTransport.writes
+      .slice(offset)
+      .filter(request => request.method === 'POST' && request.path.endsWith('/install'))
+    assert.equal(install.length, 1)
+    assert.equal(install[0].deviceId, recovered.description.device_route_id)
+    assert.ok(await accountPlugin(cloud, pending.slug))
+    evidence.push({ case: 'restored-profile-token-released', recovered, updates, install })
+  }
+
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
@@ -325,6 +482,8 @@ export async function createDesktopScenario({
       try {
         appProxy = await new TransportFaultProxy(backendUrl).start()
         transport = observePluginSyncTransport(appProxy)
+        restoredProxy = await new TransportFaultProxy(backendUrl).start()
+        restoredTransport = observePluginSyncTransport(restoredProxy)
         appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = appProxy.url
         appEnvironment.WEWORK_BACKEND_URL = appProxy.url
         appEnvironment.WEWORK_SOCKET_URL = appProxy.url
@@ -344,16 +503,17 @@ export async function createDesktopScenario({
         const { current, stableDeviceId } = await refreshRoute(control)
         await installOnCurrentRuntime(control, current, stableDeviceId, fixture)
         await toggleInManager(control, current, stableDeviceId, fixture)
+        await pendingProfileMustNotReuseRoute(control, current, stableDeviceId, fixture)
         await captureScreenshot(control, 'plugin-runtime-route-refresh.png', 'body')
       } finally {
         appProxy.disconnectWebSockets(false)
         await writeFile(
           join(resultDir, 'plugin-runtime-route-refresh-evidence.json'),
-          JSON.stringify({ evidence, transport }, null, 2)
+          JSON.stringify({ evidence, transport, restoredTransport }, null, 2)
         )
       }
     },
-    diagnostics: () => ({ evidence, transport }),
+    diagnostics: () => ({ evidence, transport, restoredTransport }),
     cleanup,
   }
 }
