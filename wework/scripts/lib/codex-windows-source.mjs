@@ -200,8 +200,7 @@ export async function buildWindowsCodex(cacheRoot) {
       ...isolatedGitEnvironment(),
       CARGO_TARGET_DIR: target,
       CARGO_BUILD_JOBS: '2',
-      CARGO_PROFILE_DEV_DEBUG: '0',
-      CARGO_PROFILE_TEST_DEBUG: '0',
+      CARGO_PROFILE_RELEASE_DEBUG: '0',
       CARGO_PROFILE_RELEASE_LTO: 'false',
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16',
     }
