@@ -136,8 +136,7 @@ pub(super) async fn load_timeline_page(
 
 fn timeline_entry_turn_id(entry: &Value) -> Option<String> {
     match entry["type"].as_str() {
-        Some("item") => string_field(entry, "turnId"),
-        Some("turnStarted" | "turnCompleted") => string_field(entry, "turn_id"),
+        Some("item" | "turnStarted" | "turnCompleted") => string_field(entry, "turnId"),
         _ => None,
     }
 }
@@ -195,15 +194,10 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
                 if entry["type"] == "turnStarted" {
                     turn["ownsUserPresentation"] = json!(true);
                 }
-                for (source, target) in [
-                    ("started_at", "startedAt"),
-                    ("completed_at", "completedAt"),
-                    ("duration_ms", "durationMs"),
-                    ("status", "status"),
-                    ("error", "error"),
-                ] {
-                    if let Some(value) = entry.get(source).filter(|value| !value.is_null()) {
-                        turn[target] = value.clone();
+                // Native JSON-RPC responses use camelCase for lifecycle boundaries.
+                for field in ["startedAt", "completedAt", "durationMs", "status", "error"] {
+                    if let Some(value) = entry.get(field).filter(|value| !value.is_null()) {
+                        turn[field] = value.clone();
                     }
                 }
             }
@@ -220,7 +214,7 @@ mod tests {
     #[test]
     fn a_turn_started_after_metadata_was_read_remains_running() {
         let turns = timeline_turns(&json!({"data":[
-            {"type":"turnStarted","position":10,"turn_id":"new","started_at":123},
+            {"type":"turnStarted","position":10,"turnId":"new","startedAt":123},
             {"type":"item","position":11,"turnId":"new","item":{"id":"stream","type":"agentMessage","text":"Still running"}}
         ]}), vec![]).unwrap();
         assert_eq!(turns[0]["status"], "inProgress");
@@ -261,7 +255,7 @@ mod tests {
             ("completed", None, "aborted", None, "done", vec!["aborted"]),
         ] {
             let mut entries =
-                vec![json!({"type":"turnStarted","position":1,"turn_id":"old","started_at":123})];
+                vec![json!({"type":"turnStarted","position":1,"turnId":"old","startedAt":123})];
             if let Some(text) = narrative {
                 entries.push(json!({"type":"item","position":2,"turnId":"old","item":{
                     "id":"narrative","type":"agentMessage","phase":"commentary","text":text
@@ -270,8 +264,8 @@ mod tests {
             entries.push(json!({"type":"item","position":3,"turnId":"old","item":{
                 "id":"answer","type":"agentMessage","phase":"final_answer","text":content
             }}));
-            entries.push(json!({"type":"turnCompleted","position":4,"turn_id":"old",
-                "status":status,"started_at":123,"completed_at":124,"duration_ms":1000,
+            entries.push(json!({"type":"turnCompleted","position":4,"turnId":"old",
+                "status":status,"startedAt":123,"completedAt":124,"durationMs":1000,
                 "error":error.map(|message| json!({"message":message}))
             }));
             // The recent turn metadata page does not contain this older turn.
@@ -311,7 +305,7 @@ mod tests {
     fn opening_boundary_ownership_does_not_leak_into_another_page() {
         let metadata = timeline_turns(
             &json!({"data":[
-                {"type":"turnStarted","position":1,"turn_id":"turn"}
+                {"type":"turnStarted","position":1,"turnId":"turn"}
             ]}),
             vec![],
         )
@@ -332,7 +326,7 @@ mod tests {
         let page = json!({"data": [
             {"type":"item", "position":3313, "turnId":"turn", "item":{"id":"old"}},
             {"type":"item", "position":4945, "turnId":"turn", "item":{"id":"new"}},
-            {"type":"turnCompleted", "position":5000, "turn_id":"turn", "status":"completed", "completed_at":123}
+            {"type":"turnCompleted", "position":5000, "turnId":"turn", "status":"completed", "completedAt":123}
         ]});
         let turns = timeline_turns(&page, vec![]).unwrap();
         assert_eq!(turns[0]["items"][0]["position"], 3313);
@@ -342,7 +336,7 @@ mod tests {
         assert_eq!(turns[0]["timelineCompleted"], true);
         let earlier = timeline_turns(
             &json!({"data":[
-                {"type":"turnStarted","position":1,"turn_id":"turn"},
+                {"type":"turnStarted","position":1,"turnId":"turn"},
                 {"type":"item","position":2,"turnId":"turn","item":{"id":"earlier"}}
             ]}),
             turns,

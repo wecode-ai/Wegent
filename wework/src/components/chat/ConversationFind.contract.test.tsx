@@ -29,7 +29,6 @@ function projectMessages(fixture: ContractCase) {
           role: 'user',
           content: item.content,
           status: 'done',
-          runtimeGuidance: true,
           createdAt: '2026-10-23T00:00:00Z',
         },
       }

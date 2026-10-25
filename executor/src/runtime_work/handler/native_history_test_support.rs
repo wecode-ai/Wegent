@@ -34,7 +34,7 @@ pub(super) fn install_native_history(
         .collect();
     let mut metadata = Vec::new();
     for mut turn in turns {
-        entries.push(json!({"type":"turnStarted","position":entries.len(),"turn_id":turn["id"]}));
+        entries.push(json!({"type":"turnStarted","position":entries.len(),"turnId":turn["id"]}));
         for item in turn["items"].as_array().unwrap() {
             entries.push(
                 json!({"type":"item","position":entries.len(),"turnId":turn["id"],"item":item}),
@@ -42,9 +42,9 @@ pub(super) fn install_native_history(
         }
         if terminal_boundary(&turn) {
             entries.push(json!({
-                "type":"turnCompleted","position":entries.len(),"turn_id":turn["id"],
-                "status":turn["status"],"completed_at":turn["completedAt"],
-                "duration_ms":turn["durationMs"],"error":turn["error"]
+                "type":"turnCompleted","position":entries.len(),"turnId":turn["id"],
+                "status":turn["status"],"completedAt":turn["completedAt"],
+                "durationMs":turn["durationMs"],"error":turn["error"]
             }));
         }
         turn["items"] = json!([]);

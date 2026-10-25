@@ -22,7 +22,7 @@ async fn native_timeline_keeps_an_active_open_turn_running_without_unpersisted_i
         fs::write(
             root.join("thread_timeline_list.json"),
             json!({"data":[
-            {"type":"turnStarted","position":1,"turn_id":"current"},
+            {"type":"turnStarted","position":1,"turnId":"current"},
             {"type":"item","position":2,"turnId":"current","item":{
                 "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
             }}
@@ -57,11 +57,11 @@ async fn native_timeline_completion_boundary_wins_over_the_active_execution_buff
         fs::write(
             root.join("thread_timeline_list.json"),
             json!({"data":[
-            {"type":"turnStarted","position":1,"turn_id":"current"},
+            {"type":"turnStarted","position":1,"turnId":"current"},
             {"type":"item","position":2,"turnId":"current","item":{
                 "id":"user","type":"userMessage","content":[{"type":"text","text":"Question"}]
             }},
-            {"type":"turnCompleted","position":3,"turn_id":"current","status":native_status}
+            {"type":"turnCompleted","position":3,"turnId":"current","status":native_status}
         ],"nextCursor":null})
             .to_string(),
         )
@@ -183,7 +183,7 @@ async fn native_timeline_only_restores_user_presentations_on_their_own_page() {
         fs::write(
             root.join("thread_timeline_list.json"),
             json!({"data":[
-            {"type":"turnStarted","position":0,"turn_id":"current"},
+            {"type":"turnStarted","position":0,"turnId":"current"},
             {"type":"item","position":1,"turnId":"current","item":{
                 "id":"native-user","clientId":"client-user","type":"userMessage",
                 "content":[{"type":"inputText","text":"Original prompt"}]
@@ -289,7 +289,7 @@ async fn native_timeline_binds_plain_execution_identity_without_synthesizing_a_p
         );
     });
     fs::write(root.join("thread_timeline_list.json"), json!({"data":[
-        {"type":"turnStarted","position":0,"turn_id":"current"},
+        {"type":"turnStarted","position":0,"turnId":"current"},
         {"type":"item","position":1,"turnId":"current","item":{
             "id":"native-user","type":"userMessage","content":[{"type":"inputText","text":"Original prompt"}]
         }},
@@ -320,11 +320,11 @@ async fn native_timeline_restores_completed_approval_evidence_with_native_histor
     fs::write(
         root.join("thread_timeline_list.json"),
         json!({"data":[
-        {"type":"turnStarted", "position":1, "turn_id":"current"},
+        {"type":"turnStarted", "position":1, "turnId":"current"},
         {"type":"item", "position":2, "turnId":"current", "item":{
             "id":"current-text", "type":"agentMessage", "phase":"final_answer", "text":"Current"
         }},
-        {"type":"turnCompleted", "position":3, "turn_id":"current", "status":"completed"}
+        {"type":"turnCompleted", "position":3, "turnId":"current", "status":"completed"}
     ], "nextCursor":null})
         .to_string(),
     )

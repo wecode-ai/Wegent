@@ -72,7 +72,10 @@ export function projectRuntimeConversationTurn(
   for (const item of turn.items) {
     if (item.type === "user_message") {
       const hadAssistant = assistantItems.length > 0;
-      const splitsReply = hasUser || item.message.runtimeGuidance === true;
+      const splitsReply =
+        hasUser ||
+        item.message.runtimeGuidance === true ||
+        assistantItems.some((item) => item.type === "assistant_text");
       if (splitsReply) flushAssistant(false, hadAssistant);
       hasUser = true;
       const parsedContexts = parseCodeCommentContexts(item.message.content);

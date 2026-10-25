@@ -375,11 +375,20 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
     const assistant = items.find(item => item.type === 'agentMessage')
     assert.ok(user && assistant, 'The completed native fixture must contain both message types')
     const maximum = database
-      .prepare('SELECT MAX(rollout_ordinal) AS value FROM thread_items WHERE thread_id = ?')
-      .get(threadId).value
+      .prepare(
+        `SELECT MAX(value) AS value FROM (
+        SELECT COALESCE(MAX(rollout_ordinal), 0) AS value FROM thread_items WHERE thread_id = ?
+        UNION ALL
+        SELECT COALESCE(MAX(rollout_ordinal), 0) FROM thread_turns WHERE thread_id = ?
+        UNION ALL
+        SELECT COALESCE(MAX(rollout_end_ordinal), 0) FROM thread_turns WHERE thread_id = ?
+      )`
+      )
+      .get(threadId, threadId, threadId).value
     const insertTurn = database.prepare(`INSERT INTO thread_turns
-      (thread_id, turn_id, rollout_ordinal, status, error_json, started_at, completed_at,
-       first_user_item_id, final_agent_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      (thread_id, turn_id, rollout_ordinal, rollout_end_ordinal, status, error_json,
+       started_at, completed_at, first_user_item_id, final_agent_item_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     const insertItem = database.prepare(`INSERT INTO thread_items
       (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -391,10 +400,12 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
       const terminal = terminalHistoryTurn(index)
       const parts = terminalHistoryAssistantParts(index, `Native search answer ${index}`)
       const timestamp = startedAt + index * 1000
+      const endOrdinal = ordinal + parts.length + 2
       insertTurn.run(
         threadId,
         turnId,
         ordinal,
+        endOrdinal,
         terminal?.status ?? 'completed',
         terminal?.error ? JSON.stringify(terminal.error) : null,
         Math.floor(timestamp / 1000),
@@ -454,7 +465,7 @@ export function seedNativeTerminalHistory(sqliteHome, threadId) {
           item.type
         )
       )
-      ordinal += turnItems.length + 1
+      ordinal = endOrdinal + 1
     }
     database.exec('COMMIT')
   } finally {

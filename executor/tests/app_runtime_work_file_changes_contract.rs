@@ -983,9 +983,9 @@ fn take_fake_transcript_turns(thread: &mut Value) -> (Vec<Value>, String) {
             .expect("native transcript fixture must declare its turn status");
         let mut entries = vec![json!({
             "type": "turnStarted",
-            "turn_id": turn["id"],
+            "turnId": turn["id"],
             "position": position,
-            "started_at": turn["startedAt"],
+            "startedAt": turn["startedAt"],
         })];
         position += 1;
         for item in items.as_array().into_iter().flatten() {
@@ -995,12 +995,12 @@ fn take_fake_transcript_turns(thread: &mut Value) -> (Vec<Value>, String) {
         }
         entries.push(json!({
             "type": "turnCompleted",
-            "turn_id": turn["id"],
+            "turnId": turn["id"],
             "position": position,
             "status": status,
-            "started_at": turn["startedAt"],
-            "completed_at": turn["completedAt"],
-            "duration_ms": turn["durationMs"],
+            "startedAt": turn["startedAt"],
+            "completedAt": turn["completedAt"],
+            "durationMs": turn["durationMs"],
             "error": turn["error"],
         }));
         position += 1;
