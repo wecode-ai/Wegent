@@ -65,6 +65,10 @@ from app.schemas.installed_plugin import (
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
 )
+from app.services.plugin_catalog_storage import (
+    create_or_lock_plugin_release,
+    lock_catalog_plugin,
+)
 from app.services.plugin_device_identity import (
     coalesce_plugin_device_rows,
     plugin_device_id,
@@ -688,16 +692,25 @@ class PluginMarketplaceService:
                 status_code=422,
                 detail="Official plugin slug must match the manifest name",
             )
-        plugin = (
-            db.query(Plugin)
-            .filter(
-                Plugin.catalog_namespace == catalog_namespace,
-                Plugin.slug == slug,
-            )
-            .with_for_update()
-            .first()
+        plugin = lock_catalog_plugin(
+            db,
+            catalog_namespace=catalog_namespace,
+            slug=slug,
+            initial_values={
+                "name": parsed.name,
+                "display_name": parsed.displayName,
+                "listing_type": listing_type,
+                "source_type": "native",
+                "source_provider": "wework",
+                "owner_user_id": 0,
+                "origin_plugin_id": origin_plugin_id,
+                "keywords_json": [],
+                "interface_json": {},
+                "visibility": visibility,
+                "status": "draft",
+            },
         )
-        if plugin and (
+        if (
             plugin.source_type != "native"
             or plugin.source_provider != "wework"
             or plugin.owner_user_id != 0
@@ -706,32 +719,14 @@ class PluginMarketplaceService:
                 status_code=409,
                 detail="Plugin slug is owned by a different publisher",
             )
-        if plugin and plugin.listing_type != listing_type:
+        if plugin.listing_type != listing_type:
             raise HTTPException(
                 status_code=409, detail="Plugin listing type cannot be changed"
             )
-        if plugin and catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
+        if catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
             self._validate_enterprise_origin(
                 plugin, requested_origin_plugin_id=origin_plugin_id
             )
-        if not plugin:
-            plugin = Plugin(
-                catalog_namespace=catalog_namespace,
-                slug=slug,
-                name=parsed.name,
-                display_name=parsed.displayName,
-                listing_type=listing_type,
-                source_type="native",
-                source_provider="wework",
-                owner_user_id=0,
-                origin_plugin_id=origin_plugin_id,
-                keywords_json=[],
-                interface_json={},
-                visibility=visibility,
-                status="draft",
-            )
-            db.add(plugin)
-            db.flush()
         current_release = (
             db.get(PluginRelease, plugin.latest_release_id)
             if plugin.latest_release_id
@@ -1369,31 +1364,10 @@ class PluginMarketplaceService:
             raise HTTPException(status_code=422, detail="Plugin version is required")
         self._validate_version(parsed.version)
         digest = hashlib.sha256(package).hexdigest()
-        existing = (
-            db.query(PluginRelease)
-            .filter(
-                PluginRelease.plugin_id == plugin.id,
-                PluginRelease.version == parsed.version,
-            )
-            .with_for_update()
-            .first()
-        )
-        if existing:
-            if existing.sha256 != digest:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Plugin version already exists with different content",
-                )
-            if existing.status == "ready" and existing.scan_status == "passed":
-                return PublishedRelease(release=existing, created=False)
-            raise HTTPException(
-                status_code=409, detail="Plugin version publication is incomplete"
-            )
-
         interface = (
             parsed.interface.model_dump(exclude_none=True) if parsed.interface else {}
         )
-        release = PluginRelease(
+        release_values = dict(
             plugin_id=plugin.id,
             version=parsed.version,
             manifest_json=parsed.manifest,
@@ -1412,8 +1386,18 @@ class PluginMarketplaceService:
             publication_revision_id=publication_revision_id,
             source_commit_sha=source_commit_sha,
         )
-        db.add(release)
-        db.flush()
+        release, created = create_or_lock_plugin_release(db, release_values)
+        if not created:
+            if release.sha256 != digest:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Plugin version already exists with different content",
+                )
+            if release.status == "ready" and release.scan_status == "passed":
+                return PublishedRelease(release=release, created=False)
+            raise HTTPException(
+                status_code=409, detail="Plugin version publication is incomplete"
+            )
         package_storage = storage or plugin_package_storage
         object_key = self._storage_key(plugin.id, release.id, digest)
         release.storage_key = object_key
