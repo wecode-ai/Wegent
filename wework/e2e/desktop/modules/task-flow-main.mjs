@@ -4710,10 +4710,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         teardownFailures.push({ error, label })
       }
     }
-    await runTeardownStep('desktop application', async () => {
-      control.prepareForApplicationShutdown()
-      await stopDesktopAppProcess(app)
-    })
+    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
     await runTeardownStep('desktop controller', async () => control.close())

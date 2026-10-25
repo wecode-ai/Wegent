@@ -120,58 +120,68 @@ test('retains server ownership and ports when an error follows socket closure', 
   assert.match(result.stderr, /Unhandled 'error' event/)
 })
 
-for (const timing of ['before shutdown', 'existing connection', 'new connection']) {
-  test(`handles a real peer reset only during application shutdown: ${timing}`, () => {
-    const result = run(`
-      import { createServer, connect } from 'node:net'
-      let client
-      const server = createServer(socket => {
-        socket.once('data', () => {
-          if (${JSON.stringify(timing)} === 'existing connection') {
-            beginShutdown()
-            beginShutdown()
-          }
-          client.resetAndDestroy()
-        })
-        socket.once('close', () => server.close())
-      })
-      const beginShutdown = trackModelServerConnections(server)
-      if (${JSON.stringify(timing)} === 'new connection') beginShutdown()
-      server.listen(0, '127.0.0.1', () => {
-        client = connect(server.address().port, '127.0.0.1', () => client.write('ready'))
-      })
-    `)
-    assert.equal(result.status, timing === 'before shutdown' ? 1 : 0, result.stderr)
-    if (timing === 'before shutdown') {
-      assert.match(result.stderr, /Unhandled 'error' event/)
-      assert.match(result.stderr, /ECONNRESET/)
-    } else {
-      assert.equal(result.stderr, '')
-    }
-  })
-}
+test('owns a model peer reset while the scenario is still running', () => {
+  const result = run(`
+    import { createServer, connect } from 'node:net'
+    let client
+    const server = createServer(socket => {
+      socket.once('data', () => client.resetAndDestroy())
+      socket.once('close', () => server.close())
+    })
+    trackModelServerConnections(server)
+    server.listen(0, '127.0.0.1', () => {
+      client = connect(server.address().port, '127.0.0.1', () => client.write('ready'))
+    })
+  `)
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stderr, '')
+})
+
+test('leaves unrelated controller peer resets fatal', () => {
+  const result = run(`
+    import { createServer, connect } from 'node:net'
+    trackModelServerConnections(createServer())
+    let client
+    const controller = createServer(socket => {
+      socket.once('data', () => client.resetAndDestroy())
+    })
+    controller.listen(0, '127.0.0.1', () => {
+      client = connect(controller.address().port, '127.0.0.1', () => client.write('ready'))
+    })
+  `)
+  assert.equal(result.status, 1, result.stderr)
+  assert.match(result.stderr, /Unhandled 'error' event/)
+  assert.match(result.stderr, /ECONNRESET/)
+})
 
 for (const code of ['ECONNRESET', 'EIO']) {
-  test(`preserves shutdown ownership after socket closure: ${code}`, () => {
+  test(`retains model ownership after HTTP completes and removes its handlers: ${code}`, () => {
     const result = run(`
-      import { createServer, connect } from 'node:net'
-      const server = createServer(socket => {
-        beginShutdown()
+      import { createServer } from 'node:http'
+      import { connect } from 'node:net'
+      const server = createServer((request, response) => response.end('complete'))
+      trackModelServerConnections(server)
+      server.on('connection', socket => {
         socket.once('close', () => {
           server.close()
-          socket.emit('error', Object.assign(new Error('late socket error'), {
+          socket.emit('error', Object.assign(new Error('late HTTP socket error'), {
             code: ${JSON.stringify(code)},
           }))
         })
-        socket.destroy()
       })
-      const beginShutdown = trackModelServerConnections(server)
       server.listen(0, '127.0.0.1', () => {
-        connect(server.address().port, '127.0.0.1').on('error', () => {})
+        const client = connect(server.address().port, '127.0.0.1', () => {
+          client.write('GET /responses HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n')
+        })
+        client.once('data', bytes => {
+          if (!bytes.toString().startsWith('HTTP/1.1 200')) throw new Error('Invalid HTTP fixture')
+        })
+        client.resume()
+        client.on('error', () => {})
       })
     `)
     assert.equal(result.status, code === 'ECONNRESET' ? 0 : 1, result.stderr)
     if (code === 'ECONNRESET') assert.equal(result.stderr, '')
-    else assert.match(result.stderr, /late socket error/)
+    else assert.match(result.stderr, /late HTTP socket error/)
   })
 }

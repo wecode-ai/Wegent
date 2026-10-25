@@ -447,7 +447,7 @@ class DesktopE2EServer {
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
-    this.prepareForApplicationShutdown = trackModelServerConnections(this.server)
+    trackModelServerConnections(this.server)
     this.setDesktopScenario(desktopScenario)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response).catch(error => this.fail(error, response))
@@ -710,7 +710,6 @@ class DesktopE2EServer {
   }
 
   async close() {
-    this.prepareForApplicationShutdown()
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
     for (const { response, timeout } of this.controlLongPolls.values()) {
