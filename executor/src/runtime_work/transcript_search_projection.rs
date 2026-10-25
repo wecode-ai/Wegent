@@ -122,9 +122,9 @@ impl MappedSource {
         } else {
             self.text.len() - self.text.trim_start().len()
         };
-        self.remove([end..self.text.len()]);
+        self.remove(std::iter::once(end..self.text.len()));
         if start > 0 {
-            self.remove([0..start.min(end)]);
+            self.remove(std::iter::once(0..start.min(end)));
         }
     }
 

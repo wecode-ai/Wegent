@@ -260,7 +260,7 @@ fn is_prose_annotation(directive: &Directive<'_>) -> bool {
             .attributes
             .get("path")
             .is_some_and(|path| valid_citation_path(path))
-        && directive.attributes.get("purpose").is_none_or(|purpose| {
+        && directive.attributes.get("purpose").map_or(true, |purpose| {
             purpose.is_empty() || matches!(purpose.as_str(), "source" | "output")
         })
 }
