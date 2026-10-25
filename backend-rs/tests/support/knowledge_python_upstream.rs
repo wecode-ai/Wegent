@@ -103,8 +103,9 @@ impl Drop for PythonUpstream {
             // uv supervises Python; terminating only uv orphans the HTTP server.
             let group = format!("-{}", self.child.id());
             let signal = |name: &str| {
+                // procps 4.0.4 misparses negative PIDs without an option terminator.
                 let _ = Command::new("/bin/kill")
-                    .args([name, group.as_str()])
+                    .args([name, "--", group.as_str()])
                     .stderr(Stdio::null())
                     .status();
             };
@@ -149,12 +150,43 @@ mod cleanup_tests {
     use super::*;
     use std::time::Instant;
 
+    // Keep a child in the test runner's group to detect over-broad cleanup.
+    struct UnrelatedProcess(Child);
+
+    impl UnrelatedProcess {
+        fn start() -> Self {
+            Self(
+                Command::new("/bin/sleep")
+                    .arg("60")
+                    .spawn()
+                    .expect("start unrelated sentinel"),
+            )
+        }
+
+        fn assert_running(&mut self) {
+            assert!(
+                self.0
+                    .try_wait()
+                    .expect("inspect unrelated sentinel")
+                    .is_none(),
+                "upstream cleanup terminated an unrelated process"
+            );
+        }
+    }
+
+    impl Drop for UnrelatedProcess {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     struct ObservedPython(u32);
 
     impl ObservedPython {
         fn is_running(&self) -> bool {
             Command::new("/bin/kill")
-                .args(["-0", &self.0.to_string()])
+                .args(["-0", "--", &self.0.to_string()])
                 .stderr(Stdio::null())
                 .status()
                 .unwrap()
@@ -175,7 +207,7 @@ mod cleanup_tests {
             if self.is_running() {
                 // A failing regression test must also clean up its own fixture.
                 let _ = Command::new("/bin/kill")
-                    .args(["-KILL", &self.0.to_string()])
+                    .args(["-KILL", "--", &self.0.to_string()])
                     .status();
             }
         }
@@ -183,6 +215,7 @@ mod cleanup_tests {
 
     #[tokio::test]
     async fn normal_drop_stops_actual_python_process_and_listener() {
+        let mut unrelated = UnrelatedProcess::start();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let backend = root.join("../backend");
         let upstream = PythonUpstream::start(&backend);
@@ -199,6 +232,7 @@ mod cleanup_tests {
         let python = ObservedPython(pid);
         assert!(python.is_running());
         drop(upstream);
+        unrelated.assert_running();
         assert!(
             python.wait_until_stopped(),
             "Python process {pid} survived guard drop"
@@ -216,6 +250,7 @@ mod cleanup_tests {
                 let _ = std::fs::remove_file(&self.0);
             }
         }
+        let mut unrelated = UnrelatedProcess::start();
         let probe = ProbeFile(std::env::temp_dir().join(format!(
             "wegent-python-startup-{}-{}.json",
             std::process::id(),
@@ -247,6 +282,7 @@ time.sleep(60)
         .unwrap();
         let pid = u32::try_from(metadata["pid"].as_u64().unwrap()).unwrap();
         let python = ObservedPython(pid);
+        unrelated.assert_running();
         let panic = result.err().expect("readiness must time out");
         let message = panic
             .downcast_ref::<String>()

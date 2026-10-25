@@ -159,6 +159,9 @@ jobs:
         working-directory: backend-rs
         run: cargo fmt --check
 
+      - name: Record signal runtime for gateway tests
+        run: /bin/kill --version
+
       - name: Run Rust backend tests
         working-directory: backend-rs
         run: |
