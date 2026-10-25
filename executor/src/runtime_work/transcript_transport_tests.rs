@@ -219,3 +219,43 @@ fn cleanup_only_removes_expired_snapshots_in_the_transfer_cache() {
     assert!(active_path.exists());
     assert!(unrelated_path.exists());
 }
+
+#[test]
+fn escaped_large_transcripts_do_not_feed_the_compressor_fragment_by_fragment() {
+    struct CountedWriter<W> {
+        inner: W,
+        writes: usize,
+    }
+    impl<W: Write> Write for CountedWriter<W> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            self.inner.write(bytes)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+    let packed = pack(large_transcript());
+    let started = std::time::Instant::now();
+    let writer = write_json(
+        CountedWriter {
+            inner: GzEncoder::new(Vec::new(), Compression::default()),
+            writes: 0,
+        },
+        &packed,
+    )
+    .unwrap();
+    let writes = writer.writes;
+    let bytes = writer.inner.finish().unwrap();
+    eprintln!(
+        "transcript compression writes={writes} elapsed_ms={} compressed_bytes={}",
+        started.elapsed().as_millis(),
+        bytes.len()
+    );
+    let decoded: Value = serde_json::from_reader(GzDecoder::new(bytes.as_slice())).unwrap();
+    assert_eq!(decoded, packed);
+    assert!(
+        writes < 1024,
+        "The compressor received {writes} individual JSON fragments"
+    );
+}

@@ -6,9 +6,9 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -50,11 +50,14 @@ pub(super) fn snapshot_directory(root: &Path, payload: &Value) -> PathBuf {
 }
 
 pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcError> {
+    let started = Instant::now();
     let packed = pack(response);
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    serde_json::to_writer(&mut encoder, &packed).map_err(transport_error)?;
+    let packed_at = Instant::now();
+    let encoder = write_json(GzEncoder::new(Vec::new(), Compression::default()), &packed)?;
     let bytes = encoder.finish().map_err(transport_error)?;
+    let compressed_at = Instant::now();
     let id = format!("{:x}", Sha256::digest(&bytes));
+    let hashed_at = Instant::now();
     if bytes.len() > CHUNK_BYTES {
         fs::create_dir_all(directory).map_err(transport_error)?;
         // tempfile passes paths directly to Win32 when publishing. Canonicalize
@@ -71,12 +74,39 @@ pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcE
             }
         }
     }
-    Ok(chunk(
-        &id,
-        0,
-        bytes.len(),
-        &bytes[..bytes.len().min(CHUNK_BYTES)],
-    ))
+    let response = chunk(&id, 0, bytes.len(), &bytes[..bytes.len().min(CHUNK_BYTES)]);
+    crate::logging::log_executor_event(
+        "runtime transcript transport encoded",
+        &[
+            (
+                "pack_ms",
+                packed_at.duration_since(started).as_millis().to_string(),
+            ),
+            (
+                "compress_ms",
+                compressed_at
+                    .duration_since(packed_at)
+                    .as_millis()
+                    .to_string(),
+            ),
+            (
+                "hash_ms",
+                hashed_at
+                    .duration_since(compressed_at)
+                    .as_millis()
+                    .to_string(),
+            ),
+            ("publish_ms", hashed_at.elapsed().as_millis().to_string()),
+            ("compressed_bytes", bytes.len().to_string()),
+        ],
+    );
+    Ok(response)
+}
+
+fn write_json<W: Write>(writer: W, value: &Value) -> Result<W, AppIpcError> {
+    let mut buffered = BufWriter::new(writer);
+    serde_json::to_writer(&mut buffered, value).map_err(transport_error)?;
+    buffered.into_inner().map_err(transport_error)
 }
 
 pub(super) fn read_chunk(directory: &Path, request: &Value) -> Result<Value, AppIpcError> {

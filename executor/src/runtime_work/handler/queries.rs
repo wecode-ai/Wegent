@@ -342,8 +342,20 @@ impl RuntimeWorkRpcHandler {
         }
         // A refresh can replace the linked provider session before publishing.
         let directory = snapshot_directory();
+        let queued_at = Instant::now();
         tokio::task::spawn_blocking(move || {
+            let started_at = Instant::now();
             transcript_transport::remove_expired_transfers(&runtime_directory)?;
+            log_executor_event(
+                "runtime transcript transport scheduled",
+                &[
+                    (
+                        "queue_ms",
+                        started_at.duration_since(queued_at).as_millis().to_string(),
+                    ),
+                    ("cleanup_ms", started_at.elapsed().as_millis().to_string()),
+                ],
+            );
             transcript_transport::encode(&directory, response)
         })
         .await
