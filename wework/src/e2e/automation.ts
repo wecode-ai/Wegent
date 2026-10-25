@@ -3217,18 +3217,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getLocalExecutorStatus':
       return JSON.stringify(await getLocalExecutorStatus())
     case 'getLocalExecutorIdentityDiagnostics': {
-      const {
-        ensureLocalExecutorAvailable,
-        getKnownLocalExecutorDeviceId,
-        getKnownLocalExecutorDeviceRouteId,
-      } = await import('@/desktop/localExecutor')
+      const { ensureLocalExecutorAvailable, getKnownLocalExecutorDeviceId } =
+        await import('@/desktop/localExecutor')
       const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
       const status = await ensureLocalExecutorAvailable()
       return JSON.stringify({
         status,
         description: await describeDshExecutor(),
         deviceId: getKnownLocalExecutorDeviceId(),
-        deviceRouteId: getKnownLocalExecutorDeviceRouteId(),
+        deviceRouteId: status.deviceRouteId ?? null,
       })
     }
     case 'getBundledPluginUpdates': {

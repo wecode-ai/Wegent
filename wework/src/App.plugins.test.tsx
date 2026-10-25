@@ -226,15 +226,17 @@ vi.mock('@/desktop/localExecutor', () => ({
   getLocalExecutorStatus: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
-  ensureLocalExecutorAvailable: vi
-    .fn()
-    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  ensureLocalExecutorAvailable: vi.fn().mockResolvedValue({
+    running: true,
+    ready: true,
+    deviceId: 'local-device',
+    deviceRouteId: 'local-device',
+  }),
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
-  getKnownLocalExecutorDeviceRouteId: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn(async (capability: string) => {
     if (capability === 'executor.plugins.personal.list') {
       return { marketplacePath: '', plugins: [] }

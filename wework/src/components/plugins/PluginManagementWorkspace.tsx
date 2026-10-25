@@ -10,6 +10,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
@@ -121,17 +125,20 @@ function PluginManagementWorkspaceContent({
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
-    return createPluginApi(
-      createHttpClient({
-        baseUrl: resolvedCloudApiBaseUrl,
-        ...(cloudToken === undefined
-          ? {}
-          : {
-              getToken: () => cloudToken,
-              redirectOnUnauthorized: false,
-            }),
-      }),
-      resolvedCloudApiBaseUrl
+    return createLocalDevicePluginApi(
+      createPluginApi(
+        createHttpClient({
+          baseUrl: resolvedCloudApiBaseUrl,
+          ...(cloudToken === undefined
+            ? {}
+            : {
+                getToken: () => cloudToken,
+                redirectOnUnauthorized: false,
+              }),
+        }),
+        resolvedCloudApiBaseUrl
+      ),
+      resolveLocalPluginDeviceRouteId
     )
   }, [cloudToken, resolvedCloudApiBaseUrl])
 

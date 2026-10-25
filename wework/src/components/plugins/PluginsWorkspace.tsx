@@ -3,7 +3,10 @@ import {
   reconcilePluginInstallation,
 } from '@/features/plugins/pluginInstallTelemetry'
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
-import { createLocalDevicePluginApi } from '@/features/plugins/pluginDeviceApi'
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
@@ -61,10 +64,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
-import {
-  ensureLocalExecutorAvailable,
-  getKnownLocalExecutorDeviceRouteId,
-} from '@/desktop/localExecutor'
+import { ensureLocalExecutorAvailable } from '@/desktop/localExecutor'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -404,7 +404,7 @@ export function PluginsWorkspace({
     () =>
       createLocalDevicePluginApi(
         createDefaultPluginApi(cloudApiBaseUrl, cloudToken),
-        getKnownLocalExecutorDeviceRouteId
+        resolveLocalPluginDeviceRouteId
       ),
     [cloudApiBaseUrl, cloudToken]
   )

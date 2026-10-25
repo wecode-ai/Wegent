@@ -25,7 +25,6 @@ import {
   getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
   getKnownLocalExecutorDeviceId,
-  getKnownLocalExecutorDeviceRouteId,
   getLocalExecutorStatus,
   readLocalExecutorLog,
   requestLocalExecutor,
@@ -218,8 +217,8 @@ describe('localExecutor', () => {
       ...description,
       device_route_id: 'app-record-70',
     })
-    await ensureLocalExecutorStarted()
-    expect(getKnownLocalExecutorDeviceRouteId()).toBe('app-record-70')
+    const started = await ensureLocalExecutorStarted()
+    expect(started.deviceRouteId).toBe('app-record-70')
     expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
 
     describeDshExecutorMock.mockResolvedValue({
@@ -230,7 +229,7 @@ describe('localExecutor', () => {
 
     expect(refreshed.deviceId).toBe('electron-device')
     expect(refreshed.runtimeInstanceId).toBe('electron-runtime')
-    expect(getKnownLocalExecutorDeviceRouteId()).toBe('app-record-71')
+    expect(refreshed.deviceRouteId).toBe('app-record-71')
     expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
     await ensureLocalExecutorStarted()
     expect(
@@ -243,13 +242,13 @@ describe('localExecutor', () => {
   test('clears an initialized plugin route when a fresh description is no longer registered', async () => {
     const description = await describeDshExecutorMock()
     describeDshExecutorMock.mockResolvedValue({ ...description, device_route_id: 'app-record-70' })
-    await ensureLocalExecutorStarted()
-    expect(getKnownLocalExecutorDeviceRouteId()).toBe('app-record-70')
+    const started = await ensureLocalExecutorStarted()
+    expect(started.deviceRouteId).toBe('app-record-70')
 
     describeDshExecutorMock.mockResolvedValue(description)
-    await ensureLocalExecutorAvailable({ refresh: true })
+    const refreshed = await ensureLocalExecutorAvailable({ refresh: true })
 
-    expect(getKnownLocalExecutorDeviceRouteId()).toBeNull()
+    expect(refreshed.deviceRouteId).toBeUndefined()
     expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
   })
 
@@ -282,8 +281,8 @@ describe('localExecutor', () => {
         ...description,
         device_route_id: 'app-record-71',
       })
-      await ensureLocalExecutorAvailable({ refresh: true })
-      expect(getKnownLocalExecutorDeviceRouteId()).toBe('app-record-71')
+      const refreshed = await ensureLocalExecutorAvailable({ refresh: true })
+      expect(refreshed.deviceRouteId).toBe('app-record-71')
       expect(peekLocalCodexPluginsReadState(params)?.deviceId).toBe('electron-device')
 
       clearLocalCodexPluginsReadStateCache()

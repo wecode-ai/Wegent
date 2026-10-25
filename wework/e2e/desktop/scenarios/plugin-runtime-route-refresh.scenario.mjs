@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import { refreshPluginInventory } from '../modules/plugin-inventory-state.mjs'
+import {
+  refreshPluginInventory,
+  verifyPluginEnabledState,
+} from '../modules/plugin-inventory-state.mjs'
 import {
   accountPlugin,
   assertInventory,
@@ -154,6 +157,21 @@ export async function createDesktopScenario({
     return fixture
   }
 
+  async function successfulAcknowledgement(sync) {
+    const matches = value =>
+      value.at >= sync.at &&
+      value.namespace === sync.namespace &&
+      value.id === sync.id &&
+      value.pluginSync?.generation === sync.pluginSync.generation
+    const acknowledgement = await until(
+      () => transport.acknowledgements,
+      values => values.some(value => matches(value) && value.success),
+      'The current Runtime did not acknowledge its real plugin delta'
+    ).then(values => values.find(value => matches(value) && value.success))
+    assert.deepEqual(acknowledgement.pluginSync, sync.pluginSync)
+    return acknowledgement
+  }
+
   async function installOnCurrentRuntime(control, current, stableDeviceId, fixture) {
     const { slug, pluginId } = fixture
     const writeStart = transport.writes.length
@@ -199,17 +217,7 @@ export async function createDesktopScenario({
     assert.equal(sync[0].scope, 'plugin_delta')
     assert.equal(sync[0].pluginSync.complete, false)
     assert.deepEqual(sync[0].pluginIds, [String(fixture.installedId)])
-    const acknowledgesInstall = value =>
-      value.at >= sync[0].at &&
-      value.namespace === sync[0].namespace &&
-      value.id === sync[0].id &&
-      value.pluginSync?.generation === sync[0].pluginSync.generation
-    const acknowledgement = await until(
-      () => transport.acknowledgements,
-      values => values.some(value => acknowledgesInstall(value) && value.success),
-      'The current Runtime did not acknowledge its real plugin install'
-    ).then(values => values.find(acknowledgesInstall))
-    assert.deepEqual(acknowledgement.pluginSync, sync[0].pluginSync)
+    const acknowledgement = await successfulAcknowledgement(sync[0])
     const installedIdentity = await identity(control)
     assert.equal(installedIdentity.deviceRouteId, current.execution_target_id)
     assert.equal(installedIdentity.deviceId, stableDeviceId)
@@ -245,6 +253,70 @@ export async function createDesktopScenario({
     })
   }
 
+  async function toggleInManager(control, current, stableDeviceId, fixture) {
+    const toggle = testId(`installed-plugin-toggle-${fixture.installedId}`)
+    for (const enabled of [false, true]) {
+      await openPlugin(control, fixture)
+      await control.command('click', testId('plugins-manage-button'))
+      await control.command('waitFor', `${toggle}[aria-checked="${!enabled}"]`)
+      const writeStart = transport.writes.length
+      const capabilityStart = transport.capabilities.length
+
+      await control.command('click', toggle)
+      await until(
+        () => accountPlugin(cloud, fixture.slug),
+        plugin => plugin?.spec.enabled === enabled,
+        'The manager toggle did not save the account enabled state'
+      )
+      const writes = transport.writes
+        .slice(writeStart)
+        .filter(
+          request =>
+            request.method === 'PUT' &&
+            request.path === `/api/plugins/installed/${fixture.installedId}`
+        )
+      assert.equal(writes.length, 1, 'One manager toggle must issue one account update')
+      assert.equal(writes[0].deviceId, current.execution_target_id)
+      const sync = await until(
+        () => transport.capabilities.slice(capabilityStart),
+        values => values.some(value => value.pluginIds.includes(String(fixture.installedId))),
+        'The manager toggle did not dispatch its actual current Runtime delta'
+      ).then(values =>
+        values.filter(value => value.pluginIds.includes(String(fixture.installedId)))
+      )
+      assert.equal(sync.length, 1, 'The manager toggle duplicated the current Runtime delta')
+      assert.equal(sync[0].deviceId, current.execution_target_id)
+      assert.equal(sync[0].scope, 'plugin_delta')
+      assert.equal(sync[0].pluginSync.complete, false)
+      assert.deepEqual(sync[0].pluginIds, [String(fixture.installedId)])
+      const acknowledgement = await successfulAcknowledgement(sync[0])
+      const runtime = await until(
+        () => materializedPlugin(executorHome, fixture.installedId),
+        plugin => plugin?.enabled === enabled,
+        'The manager toggle did not update the current Runtime manifest',
+        workbenchReadyTimeoutMs
+      )
+      await control.command('waitFor', `${toggle}[aria-checked="${enabled}"]`)
+      await verifyPluginEnabledState(control, fixture, enabled, workbenchReadyTimeoutMs)
+      const state = await inventory(control)
+      assert.equal(state.sharedInventory.deviceId, stableDeviceId)
+      assert.equal(
+        state.sharedInventory.installedPlugins.filter(plugin => plugin.pluginKey === fixture.slug)
+          .length,
+        1
+      )
+      evidence.push({
+        case: 'manager-toggle-after-route-refresh',
+        enabled,
+        writes,
+        sync,
+        acknowledgement,
+        runtime,
+        inventory: state,
+      })
+    }
+  }
+
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
@@ -271,6 +343,7 @@ export async function createDesktopScenario({
         const fixture = await prepareInstall(control)
         const { current, stableDeviceId } = await refreshRoute(control)
         await installOnCurrentRuntime(control, current, stableDeviceId, fixture)
+        await toggleInManager(control, current, stableDeviceId, fixture)
         await captureScreenshot(control, 'plugin-runtime-route-refresh.png', 'body')
       } finally {
         appProxy.disconnectWebSockets(false)

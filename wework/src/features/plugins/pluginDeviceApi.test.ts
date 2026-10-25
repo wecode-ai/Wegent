@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
-import { createLocalDevicePluginApi } from './pluginDeviceApi'
+import { ensureLocalExecutorAvailable } from '@/desktop/localExecutor'
+import i18n from '@/i18n'
+import { createLocalDevicePluginApi, resolveLocalPluginDeviceRouteId } from './pluginDeviceApi'
+
+vi.mock('@/desktop/localExecutor', () => ({ ensureLocalExecutorAvailable: vi.fn() }))
 
 const deviceId = 'electron-plugins'
 const requestId = 'app-record-70'
@@ -28,13 +32,15 @@ const sync = {
 }
 
 afterEach(() => vi.unstubAllGlobals())
+beforeEach(() => vi.mocked(ensureLocalExecutorAvailable).mockReset())
+
+function cloudApi() {
+  return createPluginApi(createHttpClient({ baseUrl: '/api', getToken: () => null }))
+}
 
 function apiWithResponse(response: unknown) {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(response))))
-  return createLocalDevicePluginApi(
-    createPluginApi(createHttpClient({ baseUrl: '/api', getToken: () => null })),
-    () => requestId
-  )
+  return createLocalDevicePluginApi(cloudApi(), async () => requestId)
 }
 
 describe('local plugin device API boundary', () => {
@@ -55,7 +61,12 @@ describe('local plugin device API boundary', () => {
   })
 
   test('keeps unscoped account inventory unscoped', async () => {
-    const api = apiWithResponse({ items: [installed] })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [installed] })))
+    )
+    const resolveRoute = vi.fn()
+    const api = createLocalDevicePluginApi(cloudApi(), resolveRoute)
 
     const response = await api.listInstalledPlugins()
 
@@ -64,6 +75,8 @@ describe('local plugin device API boundary', () => {
       expect.objectContaining({ method: 'GET' })
     )
     expect(response.items[0].status.devices).toEqual(wireDevices)
+    expect(resolveRoute).not.toHaveBeenCalled()
+    expect(ensureLocalExecutorAvailable).not.toHaveBeenCalled()
   })
 
   test('maps the marketplace device state without changing catalog fields', async () => {
@@ -155,5 +168,187 @@ describe('local plugin device API boundary', () => {
       acknowledgedCount: 1,
       acknowledgedInstalledPluginIds: [101],
     })
+  })
+
+  test('resolves the fresh description route without changing stable identity', async () => {
+    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId,
+      deviceRouteId: ' app-record-71 ',
+    })
+
+    expect(await resolveLocalPluginDeviceRouteId(deviceId)).toBe('app-record-71')
+    expect(ensureLocalExecutorAvailable).toHaveBeenCalledExactlyOnceWith({ refresh: true })
+  })
+
+  test.each([
+    { deviceId, deviceRouteId: undefined },
+    { deviceId: 'another-device', deviceRouteId: 'app-record-71' },
+  ])('rejects an unregistered or replaced Runtime: %o', async status => {
+    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
+      running: true,
+      ready: true,
+      ...status,
+    })
+    await expect(resolveLocalPluginDeviceRouteId(deviceId)).rejects.toThrow()
+  })
+
+  test.each([
+    { enabled: false },
+    { componentStates: { review: false } },
+    { updatePolicy: 'manual' as const },
+  ])('saves account preferences without unavailable Runtime context: %o', async request => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(installed))))
+    const resolveRoute = vi.fn().mockRejectedValue(new Error('Local IPC offline'))
+    const api = createLocalDevicePluginApi(cloudApi(), resolveRoute)
+
+    expect(await api.updateInstalledPlugin(101, request, deviceId)).toEqual(installed)
+
+    expect(resolveRoute).toHaveBeenCalledExactlyOnceWith(deviceId)
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify(request) })
+    )
+  })
+
+  test.each([
+    { enabled: false },
+    { componentStates: { review: false } },
+    { updatePolicy: 'manual' as const },
+  ])('propagates HTTP account-save failures without Runtime context: %o', async request => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ detail: 'Write failed' }), { status: 503 })
+        )
+    )
+    const api = createLocalDevicePluginApi(
+      cloudApi(),
+      vi.fn().mockRejectedValue(new Error('IPC offline'))
+    )
+
+    await expect(api.updateInstalledPlugin(101, request, deviceId)).rejects.toMatchObject({
+      status: 503,
+    })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'PUT' })
+    )
+  })
+
+  test('reads account inventory and removes account membership without requiring IPC', async () => {
+    const resolveRoute = vi.fn().mockRejectedValue(new Error('IPC offline'))
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementation(async (_url, options) =>
+          options.method === 'DELETE'
+            ? new Response(null, { status: 204 })
+            : new Response(JSON.stringify({ items: [installed] }))
+        )
+    )
+    const api = createLocalDevicePluginApi(cloudApi(), resolveRoute)
+
+    await api.listInstalledPlugins(deviceId)
+    await api.listMarketplacePlugins({ deviceId })
+    resolveRoute.mockClear()
+    await api.uninstallInstalledPlugin(101, deviceId)
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed',
+      expect.objectContaining({ method: 'GET' })
+    )
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/marketplace',
+      expect.objectContaining({ method: 'GET' })
+    )
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+    expect(resolveRoute).not.toHaveBeenCalled()
+  })
+
+  test.each(['install', 'builtin', 'upgrade', 'release', 'single-sync', 'reconcile', 'report'])(
+    'does not send a %s request when fresh route resolution fails',
+    async operation => {
+      vi.stubGlobal('fetch', vi.fn())
+      const failure = new Error('Current registration unavailable')
+      const api = createLocalDevicePluginApi(cloudApi(), vi.fn().mockRejectedValue(failure))
+      const requests = {
+        install: () => api.installMarketplacePlugin(101, deviceId),
+        builtin: () => api.ensureBuiltinPluginInstalled('documents', { deviceId }),
+        upgrade: () => api.updateMarketplacePlugin(101, 1002, deviceId),
+        release: () => api.updateInstalledPlugin(101, { releaseId: 1002 }, deviceId),
+        'single-sync': () => api.syncInstalledPluginToDevice(101, deviceId),
+        reconcile: () => api.syncInstalledPluginsToDevice(deviceId, true),
+        report: () => api.reportInstalledPluginsOnDevice(deviceId, []),
+      }
+
+      await expect(requests[operation as keyof typeof requests]()).rejects.toBe(failure)
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  )
+
+  test('rejects missing Runtime identity and empty routes without sending a synchronization request', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const resolver = vi.fn().mockResolvedValue(' ')
+    const api = createLocalDevicePluginApi(cloudApi(), resolver)
+
+    await expect(api.syncInstalledPluginsToDevice('')).rejects.toThrow(
+      i18n.t('workbench.plugins_device_identity_required')
+    )
+    expect(resolver).not.toHaveBeenCalled()
+    await expect(api.syncInstalledPluginsToDevice(deviceId)).rejects.toThrow(
+      i18n.t('workbench.plugins_runtime_not_registered')
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('captures each asynchronous route and response scope across concurrent registration changes', async () => {
+    const pendingRoutes: Array<(route: string) => void> = []
+    const pendingResponses: Array<(response: Response) => void> = []
+    const resolver = vi.fn(() => new Promise<string>(resolve => pendingRoutes.push(resolve)))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(resolve => pendingResponses.push(resolve)))
+    )
+    const api = createLocalDevicePluginApi(cloudApi(), resolver)
+    const first = api.listInstalledPlugins(deviceId)
+    const second = api.listInstalledPlugins(deviceId)
+    expect(fetch).not.toHaveBeenCalled()
+
+    pendingRoutes[0]('app-record-70')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    pendingRoutes[1]('app-record-71')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    const response = (route: string) =>
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              ...installed,
+              status: { devices: [{ deviceId: route }, { deviceId: 'unrelated-device' }] },
+            },
+          ],
+        })
+      )
+    pendingResponses[1](response('app-record-71'))
+    pendingResponses[0](response('app-record-70'))
+
+    for (const result of await Promise.all([first, second])) {
+      expect(result.items[0].status.devices).toEqual([
+        { deviceId },
+        { deviceId: 'unrelated-device' },
+      ])
+    }
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      '/api/plugins/installed?device_id=app-record-70',
+      '/api/plugins/installed?device_id=app-record-71',
+    ])
   })
 })

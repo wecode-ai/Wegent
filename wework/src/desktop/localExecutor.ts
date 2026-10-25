@@ -388,12 +388,6 @@ export function getKnownLocalExecutorDeviceId(): string | null {
   )
 }
 
-/** Backend-assigned record route id of the current Runtime, once registered. */
-export function getKnownLocalExecutorDeviceRouteId(): string | null {
-  const status = availableLocalExecutorStatus ?? initializedLocalExecutorStatus
-  return status?.deviceRouteId?.trim() || null
-}
-
 export function ensureLocalExecutorAvailable(
   options: { refresh?: boolean } = {}
 ): Promise<LocalExecutorStatus> {

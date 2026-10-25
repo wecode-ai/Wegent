@@ -45,13 +45,14 @@ const localExecutorMocks = vi.hoisted(() => ({
 const desktopHostMock = vi.hoisted(() => vi.fn())
 
 function mockKnownExecutorDevice(deviceId: string, deviceRouteId: string | null = null): void {
+  const routeId = deviceRouteId ?? deviceId
   localExecutorMocks.knownDeviceId = deviceId
-  localExecutorMocks.deviceRouteId = deviceRouteId
+  localExecutorMocks.deviceRouteId = routeId
   const status = {
     running: true,
     ready: true,
     deviceId,
-    deviceRouteId: deviceRouteId ?? undefined,
+    deviceRouteId: routeId,
   }
   localExecutorMocks.ensureStarted.mockResolvedValue(status)
   localExecutorMocks.ensureAvailable.mockResolvedValue(status)
@@ -68,7 +69,6 @@ vi.mock('@/desktop/localExecutor', async importOriginal => ({
   ensureLocalExecutorStarted: localExecutorMocks.ensureStarted,
   ensureLocalExecutorAvailable: localExecutorMocks.ensureAvailable,
   getKnownLocalExecutorDeviceId: () => localExecutorMocks.knownDeviceId,
-  getKnownLocalExecutorDeviceRouteId: () => localExecutorMocks.deviceRouteId,
   requestLocalExecutor: localExecutorMocks.request,
 }))
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -5593,7 +5593,7 @@ describe('PluginsWorkspace', () => {
       await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
 
       expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/installed/101?device_id=current-device',
+        '/api/plugins/installed/101',
         expect.objectContaining({ method: 'DELETE' })
       )
       await waitFor(() =>
@@ -5665,7 +5665,7 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/installed/101?device_id=current-device',
+        '/api/plugins/installed/101',
         expect.objectContaining({ method: 'DELETE' })
       )
     )
@@ -5779,7 +5779,7 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/installed/101?device_id=current-device',
+        '/api/plugins/installed/101',
         expect.objectContaining({ method: 'DELETE' })
       )
     )
@@ -5954,6 +5954,107 @@ describe('PluginsWorkspace', () => {
         params: expect.objectContaining({ method: 'plugin/read' }),
       })
     )
+  })
+
+  test('refreshes the Runtime route for component changes while retaining stable inventory identity', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const deviceId = 'electron-plugins'
+    mockSystemSkillsFetch({
+      deviceId,
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceHasSkill: true,
+    })
+    mockCodexAppServerInvoke({ deviceId, deviceRouteId: 'app-record-70' })
+    const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    writePluginInventory(cacheKey, deviceId, { installedPlugins: [] })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+    const toggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
+    await waitFor(() => expect(getPluginMarketplaceCache(cacheKey)?.deviceId).toBe(deviceId))
+    const installed = getPluginMarketplaceCache(cacheKey)!.installedPlugins.find(
+      plugin => String(plugin.metadata.labels?.id) === '101'
+    )!
+    expect(installed).toBeDefined()
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (...args) => {
+      if (String(args[0]).includes('/plugins/installed/101') && args[1]?.method === 'PUT') {
+        return new Response(
+          JSON.stringify({
+            ...installed,
+            spec: { ...installed.spec, componentStates: { 'skill:documents': false } },
+            status: {
+              ...installed.status,
+              devices: [{ deviceId: 'app-record-71', state: 'installed' }],
+            },
+          })
+        )
+      }
+      return originalFetch(...args)
+    })
+    localExecutorMocks.ensureAvailable.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId,
+      deviceRouteId: 'app-record-71',
+    })
+
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/101?device_id=app-record-71',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ componentStates: { 'skill:documents': false } }),
+        })
+      )
+    )
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins[0].spec.componentStates).toEqual(
+        { 'skill:documents': false }
+      )
+    )
+    expect(getPluginMarketplaceCache(cacheKey)?.deviceId).toBe(deviceId)
+    expect(
+      getPluginMarketplaceCache(cacheKey)?.installedPlugins[0].status.devices?.[0].deviceId
+    ).toBe(deviceId)
+    expect(localExecutorMocks.deviceRouteId).toBe('app-record-70')
+  })
+
+  test('uses the fresh Runtime route for a manual installation-state reconciliation', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const deviceId = 'electron-plugins'
+    mockSystemSkillsFetch({ deviceId, deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId, deviceRouteId: 'app-record-70' })
+    const originalRequest = localExecutorMocks.request.getMockImplementation()!
+    localExecutorMocks.request.mockImplementation(async (method, ...args) => {
+      if (method === 'executor.plugins.store.list')
+        return { storePath: '/tmp/store', plugins: [], supportsPluginReconciliation: true }
+      return originalRequest(method, ...args)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+    localExecutorMocks.ensureAvailable.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId,
+      deviceRouteId: 'app-record-71',
+    })
+
+    await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/sync-device?device_id=app-record-71&reconcile=true',
+        expect.objectContaining({ method: 'POST' })
+      )
+    )
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+      '插件安装状态已核对并同步'
+    )
+    expect(localExecutorMocks.deviceRouteId).toBe('app-record-70')
   })
 
   test('does not reload the marketplace when a plugin component is toggled', async () => {
@@ -6893,7 +6994,7 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/101?device_id=current-device',
+      '/api/plugins/installed/101',
       expect.objectContaining({ method: 'DELETE' })
     )
     expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()

@@ -1,4 +1,6 @@
 import type { createPluginApi } from '@/api/plugins'
+import { ensureLocalExecutorAvailable } from '@/desktop/localExecutor'
+import i18n from '@/i18n'
 import type {
   DeviceCapabilitySyncResponse,
   InstalledPlugin,
@@ -9,6 +11,17 @@ type PluginApi = ReturnType<typeof createPluginApi>
 interface DeviceScope {
   deviceId: string
   requestId: string
+}
+
+/** Resolve one fresh registration without changing the stable inventory identity. */
+export async function resolveLocalPluginDeviceRouteId(deviceId: string): Promise<string> {
+  const executor = await ensureLocalExecutorAvailable({ refresh: true })
+  if (executor.deviceId?.trim() !== deviceId.trim()) {
+    throw new Error(i18n.t('workbench.plugins_runtime_changed'))
+  }
+  const routeId = executor.deviceRouteId?.trim()
+  if (!routeId) throw new Error(i18n.t('workbench.plugins_runtime_not_registered'))
+  return routeId
 }
 
 function localDeviceId(deviceId: string, scope: DeviceScope): string {
@@ -57,21 +70,38 @@ function localInstallResponse(response: PluginMarketplaceInstallResponse, scope:
 /** Address the Runtime record on the wire; retain stable identity in plugin state. */
 export function createLocalDevicePluginApi(
   api: PluginApi,
-  getDeviceRouteId: () => string | null
+  resolveDeviceRouteId: (deviceId: string) => Promise<string>
 ): PluginApi {
-  const deviceScope = (deviceId = ''): DeviceScope => ({
-    deviceId,
-    requestId: deviceId ? getDeviceRouteId() || deviceId : '',
-  })
+  const deviceScope = async (
+    deviceId = '',
+    context: 'required' | 'optional' = 'required'
+  ): Promise<DeviceScope> => {
+    const stableDeviceId = deviceId.trim()
+    if (!stableDeviceId) {
+      if (context === 'required')
+        throw new Error(i18n.t('workbench.plugins_device_identity_required'))
+      return { deviceId: '', requestId: '' }
+    }
+    try {
+      const requestId = (await resolveDeviceRouteId(stableDeviceId)).trim()
+      if (!requestId) throw new Error(i18n.t('workbench.plugins_runtime_not_registered'))
+      return { deviceId: stableDeviceId, requestId }
+    } catch (error) {
+      // Account reads and preferences remain available without a local Runtime.
+      // Omit unavailable targeting context; never reuse a stale record route.
+      if (context === 'required') throw error
+      return { deviceId: stableDeviceId, requestId: '' }
+    }
+  }
   return {
     ...api,
     async listInstalledPlugins(deviceId) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(deviceId, 'optional')
       const response = await api.listInstalledPlugins(scope.requestId)
       return { ...response, items: response.items.map(plugin => localPlugin(plugin, scope)) }
     },
     async listMarketplacePlugins(params = {}) {
-      const scope = deviceScope(params.deviceId)
+      const scope = await deviceScope(params.deviceId, 'optional')
       const response = await api.listMarketplacePlugins({ ...params, deviceId: scope.requestId })
       return {
         ...response,
@@ -82,12 +112,12 @@ export function createLocalDevicePluginApi(
       }
     },
     async installMarketplacePlugin(id, deviceId) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(deviceId)
       const response = await api.installMarketplacePlugin(id, scope.requestId)
       return localInstallResponse(response, scope)
     },
     async ensureBuiltinPluginInstalled(pluginKey, options = {}) {
-      const scope = deviceScope(options.deviceId)
+      const scope = await deviceScope(options.deviceId)
       const response = await api.ensureBuiltinPluginInstalled(pluginKey, {
         ...options,
         deviceId: scope.requestId,
@@ -95,18 +125,21 @@ export function createLocalDevicePluginApi(
       return localInstallResponse(response, scope)
     },
     async updateMarketplacePlugin(id, releaseId, deviceId) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(deviceId)
       return localPlugin(await api.updateMarketplacePlugin(id, releaseId, scope.requestId), scope)
     },
     async updateInstalledPlugin(id, request, deviceId) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(
+        deviceId,
+        request.releaseId === undefined ? 'optional' : 'required'
+      )
       return localPlugin(await api.updateInstalledPlugin(id, request, scope.requestId), scope)
     },
-    uninstallInstalledPlugin(id, deviceId) {
-      return api.uninstallInstalledPlugin(id, deviceScope(deviceId).requestId)
+    uninstallInstalledPlugin(id) {
+      return api.uninstallInstalledPlugin(id)
     },
     async syncInstalledPluginToDevice(id, deviceId) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(deviceId)
       const response = await api.syncInstalledPluginToDevice(id, scope.requestId)
       return {
         ...response,
@@ -115,7 +148,7 @@ export function createLocalDevicePluginApi(
       }
     },
     async syncInstalledPluginsToDevice(deviceId, reconcile = false) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(deviceId)
       const response = await api.syncInstalledPluginsToDevice(scope.requestId, reconcile)
       return {
         ...response,
@@ -124,7 +157,7 @@ export function createLocalDevicePluginApi(
       }
     },
     async reportInstalledPluginsOnDevice(deviceId, reports) {
-      const scope = deviceScope(deviceId)
+      const scope = await deviceScope(deviceId)
       const response = await api.reportInstalledPluginsOnDevice(scope.requestId, reports)
       return { ...response, deviceId: localDeviceId(response.deviceId, scope) }
     },
