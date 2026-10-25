@@ -13,22 +13,20 @@
 //! * a non-SSE (executor) target is dispatched fire-and-forget and the caller
 //!   receives the `queued` `ResponseObject` immediately;
 //! * an SSE (chat-shell) target blocks: with `stream=True` it returns the SSE
-//!   framing (`text/event-stream`), otherwise it waits for the chat-shell
-//!   stream and, on a transport failure, renders the source's
-//!   `500 {"detail": "LLM request failed: Connection error."}`.
+//!   framing (`text/event-stream`), otherwise it consumes the chat-shell
+//!   stream ([`super::sse_sync`]) and renders the completed response from the
+//!   persisted assistant turn. A transport or terminal failure renders the
+//!   source's `500 {"detail": "LLM request failed: <message>"}`.
 //!
-//! The chat-shell upstream is the deployment's `CHAT_SHELL_URL`; the recorded
-//! create cases reach it with no server listening, so the dispatch fails with
-//! the openai client's `Connection error.` message.
+//! The chat-shell upstream is the deployment's `CHAT_SHELL_URL`.
 use std::io;
 use std::pin::Pin;
-use std::time::Duration;
 
-use brz_http::Client as HttpClient;
 use brz_http_server::{Bytes, HttpResponse, StatusCode};
 use serde_json::Value;
 
 use crate::http_compat::FastApiError;
+use crate::internal_callback::completion;
 use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
@@ -37,7 +35,7 @@ use super::request::{BuildExecutionRequestInput, build_execution_request};
 use super::response_object::ResponseObject;
 use super::routing::{self, RouteInputs};
 use super::session::ChatSessionSetup;
-use super::streaming::{SSE_CONTENT_TYPE, framing_events, request_shell_type};
+use super::streaming::{SSE_CONTENT_TYPE, request_shell_type};
 
 /// The boxed byte stream the create handler returns.
 pub type BodyStream = Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, io::Error>> + Send>>;
@@ -79,6 +77,8 @@ pub struct DispatchInput<'a> {
     pub bot: &'a super::resolution::KindRow,
     pub bot_role: &'a str,
     pub team_member_prompt: Option<&'a str>,
+    /// The assistant subtask's `bot_ids` (`_get_bot_for_subtask`'s input).
+    pub bot_ids: &'a [i64],
     pub input_text: &'a str,
     pub task_json: &'a Value,
     pub setup: &'a ChatSessionSetup,
@@ -89,6 +89,11 @@ pub struct DispatchInput<'a> {
     pub previous_response_id: Option<String>,
     /// The caller's model string (echoed in the response).
     pub model_string: &'a str,
+    /// The Task row's `project_id` (`_merge_project_workspace`).
+    pub task_project_id: i64,
+    /// The assistant subtask row's executor identity.
+    pub executor_name: &'a str,
+    pub executor_namespace: &'a str,
     /// `enable_tools`: `enable_chat_bot or current/inherited KB refs`.
     pub enable_tools: bool,
     /// `enable_chat_bot` (`wegent_chat_bot` in the request tools).
@@ -114,6 +119,7 @@ pub async fn dispatch_create(
             bot: input.bot,
             bot_role: input.bot_role,
             team_member_prompt: input.team_member_prompt,
+            bot_ids: input.bot_ids,
             message: input.input_text,
             enable_tools: input.enable_tools,
             enable_web_search: input.enable_web_search,
@@ -122,6 +128,9 @@ pub async fn dispatch_create(
             request_id: input.request_id,
             message_id: input.message_id,
             is_group_chat: input.is_group_chat,
+            task_project_id: input.task_project_id,
+            executor_name: input.executor_name,
+            executor_namespace: input.executor_namespace,
         },
     )
     .await?;
@@ -140,6 +149,10 @@ pub async fn dispatch_create(
     });
 
     let created_at = chrono::Utc::now().timestamp();
+    // `_update_subtask_to_running` (`dispatcher.py:166`): every dispatch mode
+    // flips the assistant subtask to RUNNING before it is dispatched, and the
+    // committed change re-derives the Task CRD's status.
+    mark_subtask_running(state, request.subtask_id).await;
     if !routing::supports_streaming(&target) {
         // Non-SSE: fire-and-forget the executor dispatch and return `queued`.
         if let Some(url) = target.url.as_deref() {
@@ -157,19 +170,21 @@ pub async fn dispatch_create(
         return json_response(&object);
     }
 
-    // SSE target (chat-shell).
+    // SSE target (chat-shell): stream the transformed upstream events to the
+    // caller (`raw_chat_stream` + `create_streaming_response`).
     if input.stream && !input.background {
-        // The stream opens with the two framing events; the chat-shell dispatch
-        // (enqueued on the startup-owned worker) feeds the events a reachable
-        // upstream appends.
-        enqueue_chat_shell_dispatch(state, &target.url, &request, input.request_id).await;
-        let events = framing_events(
-            input.setup.task_id,
-            created_at,
-            input.model_string,
-            input.previous_response_id.clone(),
-        );
-        return Ok(sse_response(events));
+        let events = super::streaming_bridge::stream(
+            state,
+            &request,
+            &super::streaming_bridge::BridgeInput {
+                model_string: input.model_string,
+                previous_response_id: input.previous_response_id.clone(),
+                request_id: input.request_id,
+                created_at,
+                target_url: target.url.as_deref(),
+            },
+        )?;
+        return Ok(sse_stream_response(events));
     }
 
     if input.background {
@@ -183,16 +198,60 @@ pub async fn dispatch_create(
         return json_response(&object);
     }
 
-    // SSE sync: wait for the chat-shell stream. A transport failure renders the
-    // source's `500 {"detail": "LLM request failed: Connection error."}`.
-    if let Some(url) = target.url.as_deref()
-        && let Err(message) = dispatch_chat_shell_sync(url, &request, input.request_id).await
-    {
+    // SSE sync: consume the chat-shell stream, persist its terminal state, and
+    // render the completed response from the stored assistant turn. A transport
+    // or terminal failure renders the source's
+    // `500 {"detail": "LLM request failed: <message>"}`.
+    let Some(url) = target.url.as_deref() else {
         return Err(FastApiError::detail(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("LLM request failed: {message}"),
+            "LLM request failed: Chat Shell SSE dispatch requires a target URL",
         ));
-    }
+    };
+    let collected =
+        super::sse_sync::collect(state, url, &request, input.request_id, request.message_id)
+            .await
+            .map_err(|message| {
+                FastApiError::detail(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("LLM request failed: {message}"),
+                )
+            })?;
+
+    // `_query_subtasks` + `_filter_current_assistant_turn`: only the assistant
+    // subtask this request created contributes output items.
+    let subtasks = super::super::responses_repository::list_subtasks_for_user_ordered(
+        state.task_store.as_ref(),
+        input.setup.task_id,
+        i32::try_from(input.user_id).unwrap_or(i32::MAX),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "responses sync subtask read failed");
+        FastApiError::internal()
+    })?;
+    let active: Vec<_> = subtasks
+        .into_iter()
+        .filter(|subtask| subtask.id == input.setup.assistant_subtask_id)
+        .collect();
+    let output = super::super::output_builder::build_response_output(
+        &active,
+        &state.auth,
+        Some(super::super::output_builder::ActiveAssistant {
+            subtask_id: input.setup.assistant_subtask_id,
+            status: "completed",
+            content: &collected.content,
+        }),
+    )
+    .map_err(|error| {
+        tracing::error!(?error, "responses sync output build failed");
+        FastApiError::internal()
+    })?;
+    let output: Vec<Value> = output
+        .iter()
+        .map(|item| serde_json::to_value(item).unwrap_or(Value::Null))
+        .collect();
+
     let object = ResponseObject {
         id: format!("resp_{}", input.setup.task_id),
         object: "response",
@@ -200,12 +259,30 @@ pub async fn dispatch_create(
         status: "completed",
         error: None,
         model: input.model_string.to_string(),
-        output: Vec::new(),
+        output,
         pending_user_input: None,
         pending_user_input_payload: None,
         previous_response_id: input.previous_response_id.clone(),
     };
     json_response(&object)
+}
+
+/// `ExecutionDispatcher._update_subtask_to_running`
+/// (`app/services/execution/dispatcher.py:335-355`): mark the dispatched
+/// assistant subtask RUNNING and re-derive the Task CRD. The source's
+/// `update_subtask_status` commits before the task status update, and its
+/// after-commit hook publishes the run metrics; a store failure only logs.
+async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
+    let Some(redis) = state.redis.as_ref() else {
+        return;
+    };
+    let ctx = completion::Completion {
+        mysql: &state.mysql,
+        redis,
+        tables: crate::internal_callback::tables(state),
+        executor_manager: &state.executor_manager,
+    };
+    completion::mark_subtask_running(&ctx, subtask_id).await;
 }
 
 /// `_dispatch_http_callback`: enqueue the fire-and-forget executor-manager
@@ -218,39 +295,6 @@ async fn enqueue_executor_dispatch(state: &AppState, target_url: &str, request: 
         .responses_dispatch
         .submit(crate::responses::dispatch::DispatchJob::Executor { url, body })
         .await;
-}
-
-/// `_dispatch_sse`: open the chat-shell stream. The recorded cases only reach
-/// the transport-failure branch, so this returns `Err("Connection error.")` for
-/// a connect failure and `Ok(())` once the upstream accepts the request.
-async fn dispatch_chat_shell_sync(
-    target_url: &str,
-    request: &ExecutionRequest,
-    request_id: &str,
-) -> Result<(), String> {
-    let payload = dispatch::assemble(request, true, false);
-    let url = format!("{}/v1/responses", target_url.trim_end_matches('/'));
-    let client = HttpClient::builder()
-        .build()
-        .map_err(|_| "Connection error.".to_string())?;
-    let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
-    // `AsyncOpenAI(base_url=f"{target.url}/v1")` with `stream=True` and the
-    // `X-Request-ID` propagation header.
-    let result = client
-        .post(&url)
-        .map_err(|_| "Connection error.".to_string())?
-        .header("content-type", "application/json")
-        .header("X-Request-ID", request_id)
-        .json(&body)
-        .timeout(Duration::from_secs(300))
-        .send()
-        .await;
-    match result {
-        // A reachable chat-shell streams the OpenAI responses events; the sync
-        // path only needs to know the connection opened.
-        Ok(_) => Ok(()),
-        Err(_) => Err("Connection error.".to_string()),
-    }
 }
 
 /// Enqueue the fire-and-forget chat-shell dispatch for the streaming response.
@@ -296,6 +340,11 @@ fn sse_response(events: Vec<Bytes>) -> HttpResponse<BodyStream> {
     let stream: BodyStream = Box::pin(futures_util::stream::iter(
         events.into_iter().map(Ok::<Bytes, io::Error>),
     ));
+    sse_stream_response(stream)
+}
+
+/// The `text/event-stream` response over a lazy body stream.
+fn sse_stream_response(stream: BodyStream) -> HttpResponse<BodyStream> {
     let response = HttpResponse::new(stream)
         .header("content-type", SSE_CONTENT_TYPE)
         .expect("a literal content type");

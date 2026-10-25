@@ -2,7 +2,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-export async function collectCodexSqliteDiagnostics(directory) {
+export async function collectCodexSqliteDiagnostics(directory, threadId) {
   try {
     const files = []
     for (const name of await readdir(directory)) {
@@ -14,6 +14,11 @@ export async function collectCodexSqliteDiagnostics(directory) {
         try {
           database = new DatabaseSync(join(directory, name), { readOnly: true })
           entry.integrity = database.prepare('PRAGMA quick_check').all()
+          if (name === 'state_5.sqlite' && threadId) {
+            entry.thread =
+              database.prepare('SELECT id, history_mode FROM threads WHERE id = ?').get(threadId) ??
+              null
+          }
           if (name === 'thread_history_1.sqlite') {
             entry.recentItems = database
               .prepare(

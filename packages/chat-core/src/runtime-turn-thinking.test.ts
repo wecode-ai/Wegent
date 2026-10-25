@@ -162,6 +162,28 @@ describe("native streaming thinking normalization", () => {
     expect(merged.streamingThinkingContent).toBeUndefined();
   });
 
+  it.each([finalText, plan])(
+    "uses native positions to clear the summary when a prepended page contains $id",
+    (boundary) => {
+      const local = turn([
+        { ...thinking, position: 1 },
+        { ...tool, position: 2 },
+      ]);
+      const page = {
+        ...turn([{ ...boundary, position: 3 }]),
+        itemMerge: "prepend" as const,
+      };
+      const [merged] = mergeRuntimeConversationTurns([local], [page]);
+
+      expect(merged.items.map((item) => item.id)).toEqual([
+        "reasoning",
+        "command",
+        boundary.id,
+      ]);
+      expect(merged.streamingThinkingContent).toBeUndefined();
+    },
+  );
+
   it.each(["done", "failed", "cancelled"] as const)(
     "keeps a local %s turn terminal when a streaming snapshot arrives",
     (status) => {

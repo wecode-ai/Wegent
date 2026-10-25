@@ -4,6 +4,7 @@ import '@/i18n'
 import type { InstalledPlugin } from '@/types/api'
 import { PluginDetailView } from './PluginDetailView'
 import type { InstalledPluginItem } from './PluginManagementRows'
+import { pluginDetailPrimaryActionPending } from './pluginDetailReadyToTry'
 
 function createDetailPlugin(): InstalledPluginItem {
   const raw: InstalledPlugin = {
@@ -54,6 +55,59 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test.each([
+    { readyToTry: false, updateAvailable: false },
+    { readyToTry: true, updateAvailable: true },
+  ])('blocks installation changes until reconciliation completes (%j)', state => {
+    const onToggle = vi.fn()
+    const plugin = createDetailPlugin()
+    const view = (reconciling: boolean) => (
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={onToggle}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        usableOnThisDevice={state.readyToTry}
+        primaryActionDisabled={pluginDetailPrimaryActionPending({
+          ...state,
+          operationPending: false,
+          reconciling,
+        })}
+      />
+    )
+    const { rerender } = render(view(true))
+    const button = screen.getByTestId('plugin-detail-toggle-local-1')
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(onToggle).not.toHaveBeenCalled()
+    rerender(view(false))
+    expect(button).not.toBeDisabled()
+    fireEvent.click(button)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps a healthy installed plugin usable while reconciliation is running', () => {
+    const onToggle = vi.fn()
+    render(
+      <PluginDetailView
+        plugin={createDetailPlugin()}
+        onBack={vi.fn()}
+        onToggle={onToggle}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        primaryActionDisabled={pluginDetailPrimaryActionPending({
+          operationPending: false,
+          reconciling: true,
+          readyToTry: true,
+          updateAvailable: false,
+        })}
+      />
+    )
+    fireEvent.click(screen.getByTestId('plugin-detail-toggle-local-1'))
+    expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
   test('deduplicates identical category and publisher metadata', () => {
     const plugin = createDetailPlugin()
     plugin.raw.spec.interface = {

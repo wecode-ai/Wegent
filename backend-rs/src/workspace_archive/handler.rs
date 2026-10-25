@@ -381,4 +381,34 @@ mod tests {
             format!("\"{VALIDATION_FAILED}\"")
         );
     }
+
+    /// The cutover is real only when the route table selects the pattern the
+    /// handler registers. `config/routes.toml` lists
+    /// `/api/internal/workspace-archives/:task_id/restore-sandbox`, and the
+    /// template must not answer the sibling `/archive` or `/archive-sandbox`
+    /// methods.
+    #[test]
+    fn route_table_selects_the_registered_restore_sandbox_handler() {
+        const PATH: &str = "/api/internal/workspace-archives/:task_id/restore-sandbox";
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const POST: u16 = 1 << 5;
+        const URI: &str = "/api/internal/workspace-archives/913144407018301/restore-sandbox";
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&path).expect("routes file loads");
+        let table = crate::RouteTable::compile(config).expect("routes compile");
+        assert!(table.matches(&http::Method::POST, URI));
+        assert!(!table.matches(&http::Method::GET, URI));
+        assert!(!table.matches(
+            &http::Method::POST,
+            "/api/internal/workspace-archives/913144407018301/archive"
+        ));
+
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & POST != 0);
+        assert!(registered, "POST {PATH} must be registered by the router");
+    }
 }

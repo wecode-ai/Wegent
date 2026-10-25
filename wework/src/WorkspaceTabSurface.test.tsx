@@ -20,6 +20,7 @@ const workbenchProviderMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
   composerAppsSourceActive: vi.fn(),
   loadTaskComposerCatalogs: vi.fn(),
+  workspaceTabRevealRevision: vi.fn(),
 }))
 const portalOwnershipMocks = vi.hoisted(() => ({
   setActiveOwner: vi.fn(),
@@ -96,13 +97,16 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
     children,
     composerAppsSourceActive,
     loadTaskComposerCatalogs,
+    workspaceTabRevealRevision,
   }: {
     children: React.ReactNode
     composerAppsSourceActive?: boolean
     loadTaskComposerCatalogs?: boolean
+    workspaceTabRevealRevision?: number
   }) => {
     workbenchProviderMocks.composerAppsSourceActive(composerAppsSourceActive)
     workbenchProviderMocks.loadTaskComposerCatalogs(loadTaskComposerCatalogs)
+    workbenchProviderMocks.workspaceTabRevealRevision(workspaceTabRevealRevision)
     useEffect(() => workbenchProviderMocks.cleanup, [])
     return <>{children}</>
   },
@@ -139,6 +143,7 @@ describe('WorkspaceTabSurface', () => {
     workbenchProviderMocks.cleanup.mockClear()
     workbenchProviderMocks.composerAppsSourceActive.mockClear()
     workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
+    workbenchProviderMocks.workspaceTabRevealRevision.mockClear()
     portalOwnershipMocks.setActiveOwner.mockClear()
     harnessAppLauncherMocks.cleanup.mockClear()
     harnessAppLauncherMocks.requested.mockClear()
@@ -185,6 +190,38 @@ describe('WorkspaceTabSurface', () => {
     expect(appIframeMocks.cleanup).not.toHaveBeenCalled()
 
     unmount()
+  })
+
+  test('signals a runtime-work revalidation when a retained tab is revealed', async () => {
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      tab: {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        fixed: true,
+        title: '任务',
+        contentRoute: '/',
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { rerender } = render(<WorkspaceTabSurface {...props} active />)
+    await waitFor(() =>
+      expect(workbenchProviderMocks.workspaceTabRevealRevision).toHaveBeenLastCalledWith(0)
+    )
+
+    rerender(<WorkspaceTabSurface {...props} active={false} />)
+    rerender(<WorkspaceTabSurface {...props} active />)
+
+    await waitFor(() =>
+      expect(workbenchProviderMocks.workspaceTabRevealRevision).toHaveBeenLastCalledWith(1)
+    )
   })
 
   test('keeps a project board in the local workbench for task execution', () => {

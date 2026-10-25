@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import {
   ChevronDown,
@@ -16,8 +16,15 @@ import type {
   RequestUserInputOption,
 } from "@wegent/chat-core/runtime";
 export type { RequestUserInputPayload } from "@wegent/chat-core/runtime";
-import { hasImplementationPlanText } from "@wegent/chat-core/runtime-user-input";
+import {
+  hasImplementationPlanText,
+  hasRequestUserInputResponse,
+} from "@wegent/chat-core/runtime-user-input";
 import { McpUrlAuthorizationCard } from "./McpUrlAuthorizationCard";
+import {
+  requestUserInputExpired,
+  useRequestUserInputDeadline,
+} from "./useRequestUserInputDeadline";
 
 interface RequestUserInputCardProps {
   payload: RequestUserInputPayload;
@@ -31,10 +38,27 @@ interface RequestUserInputCardProps {
 }
 
 export function RequestUserInputCard(props: RequestUserInputCardProps) {
-  if (props.payload.interactionKind === "mcp_url") {
-    return <McpUrlAuthorizationCard {...props} />;
+  const { expired, remainingTime } = useRequestUserInputDeadline(props.payload);
+  if (
+    expired ||
+    hasRequestUserInputResponse(props.payload) ||
+    (props.payload.interactionStatus &&
+      props.payload.interactionStatus !== "pending")
+  ) {
+    return (
+      <RequestUserInputSummary
+        payload={
+          expired
+            ? { ...props.payload, interactionStatus: "expired" }
+            : props.payload
+        }
+      />
+    );
   }
-  return <RequestUserInputForm {...props} />;
+  if (props.payload.interactionKind === "mcp_url") {
+    return <McpUrlAuthorizationCard {...props} remainingTime={remainingTime} />;
+  }
+  return <RequestUserInputForm {...props} remainingTime={remainingTime} />;
 }
 
 function RequestUserInputForm({
@@ -43,8 +67,10 @@ function RequestUserInputForm({
   disabled = false,
   onSubmit,
   onIgnore,
-}: RequestUserInputCardProps) {
+  remainingTime,
+}: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation();
+  const formId = useId();
   const formRef = useRef<HTMLFormElement | null>(null);
   const submitInFlightRef = useRef(false);
   const questions = useMemo(
@@ -65,41 +91,30 @@ function RequestUserInputForm({
   );
   const [submitted, setSubmitted] = useState(false);
   const isDisabled = disabled || submitted;
-  const customQuestionIds = new Set(
-    questions
-      .filter(
-        (question) => question.allowCustom && question.options.length === 0,
-      )
-      .map((question) => question.id),
-  );
 
   useEffect(() => {
     formRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const handleSubmit = async (
-    answersOverride?: Record<string, string>,
-    activeQuestionIdOverride?: string | null,
+  const submitAnswers = async (
+    answers: RequestUserInputResponse["answers"],
   ): Promise<boolean> => {
     if (
       isDisabled ||
+      requestUserInputExpired(payload) ||
       submitInFlightRef.current ||
-      questions.length === 0 ||
       !onSubmit
     )
       return false;
 
-    const effectiveAnswers = answersOverride ?? selectedAnswers;
-    const answers = responseAnswers(
-      questions,
-      effectiveAnswers,
-      activeQuestionIdOverride ?? activeQuestionId,
-    );
     submitInFlightRef.current = true;
     try {
       const accepted = await onSubmit({
         requestId: payload.requestId ?? payload.request_id,
         itemId: payload.itemId ?? payload.item_id,
+        ...(payload.interactionScope
+          ? { interactionScope: payload.interactionScope }
+          : {}),
         answers,
       });
       if (accepted !== false) setSubmitted(true);
@@ -107,6 +122,28 @@ function RequestUserInputForm({
     } finally {
       submitInFlightRef.current = false;
     }
+  };
+
+  const handleSubmit = (
+    answersOverride?: Record<string, string>,
+    activeQuestionIdOverride?: string | null,
+  ): Promise<boolean> => {
+    if (questions.length === 0) return Promise.resolve(false);
+    return submitAnswers(
+      responseAnswers(
+        questions,
+        answersOverride ?? selectedAnswers,
+        activeQuestionIdOverride ?? activeQuestionId,
+      ),
+    );
+  };
+
+  const isMcpForm = payload.interactionKind === "mcp_form";
+  const canIgnore = isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore);
+  const handleIgnore = () => {
+    // Cancel this MCP request, not the containing task or its other questions.
+    if (isMcpForm) void submitAnswers({});
+    else onIgnore?.();
   };
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -136,7 +173,7 @@ function RequestUserInputForm({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      onIgnore?.();
+      handleIgnore();
       return;
     }
 
@@ -162,12 +199,12 @@ function RequestUserInputForm({
 
   const actionControls = (
     <>
-      {(!compact || onIgnore) && (
+      {(!compact || canIgnore) && (
         <button
           type="button"
           data-testid="request-user-input-ignore-button"
-          disabled={isDisabled || !onIgnore}
-          onClick={onIgnore}
+          disabled={isDisabled || !canIgnore}
+          onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
           {t("request_user_input.ignore")}
@@ -205,23 +242,35 @@ function RequestUserInputForm({
           : "rounded-2xl border border-border/70 bg-base shadow-sm",
       )}
     >
+      {remainingTime && (
+        <p
+          data-testid="request-user-input-deadline"
+          role="timer"
+          aria-live="off"
+          className="mb-2 text-sm text-text-muted"
+        >
+          {t("request_user_input.expires_in", { time: remainingTime })}
+        </p>
+      )}
       <div
         data-testid="request-user-input-questions"
         className="scrollbar-soft min-h-0 flex-1 overflow-y-auto pr-1"
       >
         <div className="flex flex-col gap-1.5">
-          {questions.map((question) => (
+          {questions.map((question, questionIndex) => (
             <div key={question.id} className="min-w-0">
               {question.header ? (
                 <div className="mb-1 text-sm font-medium leading-5 text-text-primary">
                   {question.header}
                 </div>
               ) : null}
-              {!customQuestionIds.has(question.id) ? (
-                <div className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary">
-                  {question.question}
-                </div>
-              ) : null}
+              <div
+                id={`${formId}-${questionIndex}`}
+                data-testid={`request-user-input-question-${question.id}`}
+                className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary"
+              >
+                {question.question}
+              </div>
               {question.options.length > 0 ? (
                 <div
                   className={cn(
@@ -284,6 +333,7 @@ function RequestUserInputForm({
                   </span>
                   <input
                     data-testid={`request-user-input-custom-${question.id}`}
+                    aria-labelledby={`${formId}-${questionIndex}`}
                     value={selectedAnswers[question.id] ?? ""}
                     disabled={isDisabled}
                     onChange={(event) => {
@@ -294,10 +344,7 @@ function RequestUserInputForm({
                       }));
                     }}
                     className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm font-medium leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
-                    placeholder={
-                      question.question ||
-                      t("request_user_input.custom_placeholder")
-                    }
+                    placeholder={t("request_user_input.custom_placeholder")}
                   />
                 </div>
               ) : null}
@@ -338,6 +385,25 @@ export function RequestUserInputSummary({
         answer,
     };
   });
+
+  const interactionStatus = requestUserInputExpired(payload)
+    ? "expired"
+    : payload.interactionStatus;
+  if (interactionStatus === "expired" || interactionStatus === "cancelled") {
+    return (
+      <div
+        data-testid="request-user-input-summary"
+        className="text-sm text-text-secondary"
+      >
+        <p
+          role="status"
+          data-testid={`request-user-input-${interactionStatus}`}
+        >
+          {t(`request_user_input.${interactionStatus}`)}
+        </p>
+      </div>
+    );
+  }
 
   if (payload.interactionKind === "mcp_url") {
     return (

@@ -93,6 +93,7 @@ export function useStandInModels(
     models: readyCatalog?.models ?? [],
     selectedModel,
     fixed: Boolean(fixedModel),
+    fixedIdentity: fixedModel,
     defaultIdentity: fixedModel ? null : readyCatalog?.defaultIdentity,
     error: readyCatalog?.error,
     unavailable: Boolean(

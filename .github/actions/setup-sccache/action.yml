@@ -46,6 +46,7 @@ runs:
       if: steps.install.outcome == 'success'
       shell: bash
       run: |
+        export CARGO_INCREMENTAL=0
         export SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"
         export SCCACHE_GHA_ENABLED=true
         export SCCACHE_GHA_VERSION="wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
@@ -59,12 +60,10 @@ runs:
         fi
 
         {
-          echo "CARGO_INCREMENTAL=0"
           echo "RUSTC_WRAPPER=sccache"
-          echo "SCCACHE_BASEDIRS=$GITHUB_WORKSPACE"
-          echo "SCCACHE_GHA_ENABLED=true"
-          echo "SCCACHE_GHA_VERSION=wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
-          if [[ -n "${SCCACHE_GHA_RW_MODE:-}" ]]; then
-            echo "SCCACHE_GHA_RW_MODE=$SCCACHE_GHA_RW_MODE"
-          fi
+          for variable in CARGO_INCREMENTAL SCCACHE_BASEDIRS SCCACHE_GHA_ENABLED SCCACHE_GHA_VERSION SCCACHE_GHA_RW_MODE; do
+            if declare -p "$variable" >/dev/null 2>&1; then
+              printf '%s=%s\n' "$variable" "${!variable}"
+            fi
+          done
         } >> "$GITHUB_ENV"

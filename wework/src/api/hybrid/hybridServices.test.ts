@@ -96,6 +96,14 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    standInApi: {
+      personalSave: vi.fn(),
+      save: vi.fn(),
+      organizeWork: vi.fn(),
+      memories: vi.fn(async () => []),
+      saveMemory: vi.fn(),
+      deleteMemory: vi.fn(),
+    },
     getLocalRuntimeSidebarIdentity: localSidebarIdentity,
     replyPredictionApi: { predict: vi.fn().mockResolvedValue({ suggestion: '继续' }) },
     composerCatalogApi: { readCatalog: vi.fn() },
@@ -177,6 +185,14 @@ const mocks = vi.hoisted(() => {
     createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
   }
   const cloudServices = {
+    standInApi: {
+      personalSave: vi.fn(),
+      save: vi.fn(),
+      organizeWork: vi.fn(),
+      memories: vi.fn(async () => []),
+      saveMemory: vi.fn(),
+      deleteMemory: vi.fn(),
+    },
     projectChatClient: { reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]) },
     composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
@@ -469,6 +485,76 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
+
+describe('stand-in save routing', () => {
+  it.each(['local-device', 'remote-device'])(
+    'routes saves by the selected Executor %s rather than the stored device field',
+    async deviceId => {
+      mocks.localSidebarIdentity.mockResolvedValue({
+        deviceId: 'local-device',
+        runtimeInstanceId: 'local-runtime',
+        provenance: 'local-ipc',
+      })
+      const local = mocks.localServices.standInApi
+      const cloud = mocks.cloudServices.standInApi
+      for (const api of [local, cloud]) {
+        api.personalSave.mockClear()
+        api.save.mockClear()
+        api.memories.mockClear()
+        api.saveMemory.mockClear()
+        api.deleteMemory.mockClear()
+        api.organizeWork.mockClear()
+      }
+      const settings = {
+        userId: 7,
+        executionDeviceId: 'old-device',
+        version: 1,
+        autoSelect: false,
+        roles: [],
+      }
+      const services = createServices()
+      await services.standInApi!.personalSave(7, settings, deviceId)
+      const selected = deviceId === 'local-device' ? local : cloud
+      const other = selected === local ? cloud : local
+      expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
+      expect(other.personalSave).not.toHaveBeenCalled()
+      const projectSettings = {
+        enabled: true,
+        prompt: '',
+        executionDeviceId: 'old-device',
+        version: 1,
+      }
+      await services.standInApi!.save('project', 7, 'cloud', projectSettings, deviceId)
+      expect(selected.save).toHaveBeenCalledExactlyOnceWith(
+        'project',
+        7,
+        'cloud',
+        projectSettings,
+        deviceId
+      )
+      expect(other.save).not.toHaveBeenCalled()
+      const memory = { content: 'Prefer concise replies', scope: { kind: 'personal' as const } }
+      await services.standInApi!.memories(7, deviceId)
+      await services.standInApi!.saveMemory(7, deviceId, memory)
+      await services.standInApi!.deleteMemory(7, deviceId, 'memory-1', 3)
+      expect(selected.memories).toHaveBeenCalledExactlyOnceWith(7, deviceId)
+      expect(selected.saveMemory).toHaveBeenCalledExactlyOnceWith(7, deviceId, memory)
+      expect(selected.deleteMemory).toHaveBeenCalledExactlyOnceWith(7, deviceId, 'memory-1', 3)
+      expect(other.memories).not.toHaveBeenCalled()
+      expect(other.saveMemory).not.toHaveBeenCalled()
+      expect(other.deleteMemory).not.toHaveBeenCalled()
+      await services.standInApi!.organizeWork(7, deviceId, 'work', ['message'], 'target')
+      expect(selected.organizeWork).toHaveBeenCalledExactlyOnceWith(
+        7,
+        deviceId,
+        'work',
+        ['message'],
+        'target'
+      )
+      expect(other.organizeWork).not.toHaveBeenCalled()
+    }
+  )
+})
 
 describe('qualified local sidebar routing', () => {
   const identity = {

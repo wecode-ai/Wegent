@@ -1,3 +1,8 @@
+import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
+import { useRuntimeConversationSnapshot } from '@/features/workbench/useRuntimeConversationSnapshot'
+import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import { useDebugSnapshotPublisher } from '@/features/workbench/useDebugSnapshotPublisher'
+
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import {
   transcriptRangeFromPage,
@@ -9,6 +14,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -22,10 +28,8 @@ import {
   summarizeRuntimePaneMemory,
   summarizeMessages,
   updateRuntimePaneDebugSnapshot,
-  DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
-import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessageBuffer'
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
@@ -60,9 +64,7 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import {
   projectRuntimeGoalContinuing,
-  projectRuntimeGoalContinuationActive,
   runtimeGoalCreateInput,
-  shouldReconcileActiveRuntimeGoalTranscript,
   visibleRuntimeGoal,
 } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
@@ -91,7 +93,6 @@ import type {
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
   GuidanceWorkbenchMessage,
-  RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
   RuntimePaneTranscript,
   RuntimeSubagentStatus,
@@ -104,16 +105,13 @@ import {
   isBrowserAnnotationContext,
 } from '@/lib/browser-annotation-context'
 import {
-  abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
   appendOptimisticRuntimeConversationGuidance,
-  beginRuntimeConversationHydration,
   beginRuntimeConversationOperation,
   beginRuntimeGoalSnapshot,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
   clearInterruptedRuntimeConversationGuidanceExcept,
-  completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   getRuntimeConversationMetadata,
@@ -125,16 +123,14 @@ import {
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
   removeRuntimeConversationTurn,
-  reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationSnapshotSettlesLatestTurn,
-  runtimeConversationHydrationHasUpdates,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
   subscribeRuntimeConversation,
-  subscribeRuntimeTransportReplaced,
   takeInterruptedRuntimeConversationGuidance,
   updateRuntimeConversationBlocks,
+  replaceRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   createRuntimeUserMessage,
@@ -285,6 +281,10 @@ export function useWorkbenchPaneSession({
   )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
+  const codeCommentContextsRef = useRef(codeCommentContexts)
+  useLayoutEffect(() => {
+    codeCommentContextsRef.current = codeCommentContexts
+  }, [codeCommentContexts])
   const [browserAnnotationCommand, setBrowserAnnotationCommand] =
     useState<BrowserAnnotationCommand | null>(null)
   const browserAnnotationCommandSequenceRef = useRef(0)
@@ -311,20 +311,22 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, projectChat]
   )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
-  const draftOwnershipRef = useRef({ scopeKey: inputScopeKey, value: input, revision: 0 })
-  if (
-    draftOwnershipRef.current.scopeKey !== inputScopeKey ||
-    draftOwnershipRef.current.value !== input
-  ) {
-    draftOwnershipRef.current = {
-      scopeKey: inputScopeKey,
-      value: input,
-      revision: draftOwnershipRef.current.revision + 1,
-    }
-  }
   const setInputForScope = projectChat.setInputForScope
+  const [inputRevision, setInputRevision] = useState(0)
+  const inputRevisionRef = useRef(0)
+  const activeInputScopeRef = useRef(inputScopeKey)
+  useLayoutEffect(() => {
+    if (activeInputScopeRef.current === inputScopeKey) return
+    activeInputScopeRef.current = inputScopeKey
+    inputRevisionRef.current += 1
+    setInputRevision(inputRevisionRef.current)
+  }, [inputScopeKey])
   const scopedSetInput = useCallback(
-    (value: string) => setInputForScope(inputScopeKey, value),
+    (value: string) => {
+      inputRevisionRef.current += 1
+      setInputRevision(inputRevisionRef.current)
+      setInputForScope(inputScopeKey, value)
+    },
     [inputScopeKey, setInputForScope]
   )
   const [localError, setLocalError] = useState<string | null>(null)
@@ -353,16 +355,11 @@ export function useWorkbenchPaneSession({
   )
   const clearError = useCallback(() => setError(null), [setError])
   const markDraftEdited = useCallback(() => {
-    draftOwnershipRef.current.revision += 1
+    inputRevisionRef.current += 1
+    setInputRevision(inputRevisionRef.current)
     clearError()
   }, [clearError])
-  const setInput = useCallback(
-    (value: string) => {
-      draftOwnershipRef.current.revision += 1
-      scopedSetInput(value)
-    },
-    [scopedSetInput]
-  )
+  const setInput = scopedSetInput
   const restoreInputAfterFailure = useCallback(
     (value: string) => {
       scopedSetInput(value)
@@ -372,8 +369,21 @@ export function useWorkbenchPaneSession({
 
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
-      setCodeCommentContexts([])
-      if (!contexts.some(isBrowserAnnotationContext)) return
+      // Native cleanup clears the entire page; retain an edited annotation batch.
+      const submittedAnnotations = contexts.filter(isBrowserAnnotationContext)
+      const currentAnnotations = codeCommentContextsRef.current.filter(isBrowserAnnotationContext)
+      const preserveAnnotations =
+        reason === 'send_success' &&
+        (submittedAnnotations.length !== currentAnnotations.length ||
+          currentAnnotations.some(context => !submittedAnnotations.includes(context)))
+      setCodeCommentContexts(current =>
+        current.filter(
+          context =>
+            !contexts.includes(context) ||
+            (preserveAnnotations && isBrowserAnnotationContext(context))
+        )
+      )
+      if (preserveAnnotations || !contexts.some(isBrowserAnnotationContext)) return
 
       browserAnnotationCommandSequenceRef.current += 1
       setBrowserAnnotationCommand({
@@ -417,14 +427,6 @@ export function useWorkbenchPaneSession({
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const interruptAndSendInFlightRef = useRef(false)
   const lastQueueDiagnosticRef = useRef<string | null>(null)
-  const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
-  const rebuildingTranscriptRef = useRef(false)
-  const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
-  const goalTranscriptReconciliationRef = useRef<{
-    key: string
-    attempts: number
-  } | null>(null)
-  const messageActionFrameRef = useRef<number | null>(null)
   const continuationInFlightRef = useRef(false)
   const currentRuntimeTaskLoadTarget = useMemo(
     () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
@@ -434,76 +436,27 @@ export function useWorkbenchPaneSession({
     useState<RuntimeTaskLoadTarget | null>(() =>
       currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null
     )
-  const runtimeTaskLoadTarget = retainedRuntimeTaskLoadTarget
+  const runtimeTaskLoadTarget =
+    currentRuntimeTaskLoadTarget?.key === retainedRuntimeTaskLoadTarget?.key
+      ? retainedRuntimeTaskLoadTarget
+      : (currentRuntimeTaskLoadTarget ?? retainedRuntimeTaskLoadTarget)
   const transcriptLoading =
     runtimeTaskLoadTarget !== null && transcriptLoadingKey === runtimeTaskLoadTarget.key
   const transcriptLoadingMoreBefore =
     runtimeTaskLoadTarget !== null && transcriptLoadingMoreBeforeKey === runtimeTaskLoadTarget.key
-  const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
-    currentRuntimeTask ? getRuntimeConversationMessages(currentRuntimeTask) : []
-  )
-  const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
-    currentRuntimeTask ? getRuntimeConversationTurns(currentRuntimeTask) : []
-  )
+  const [draftMessages, setDraftMessages] = useState<WorkbenchMessage[]>([])
+  const conversation = useRuntimeConversationSnapshot(runtimeTaskLoadTarget?.address ?? null)
+  const messages = runtimeTaskLoadTarget ? conversation.messages : draftMessages
+  const turns = conversation.turns
   const messagesRef = useRef<WorkbenchMessage[]>(messages)
-  const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
-    if (actions.length === 0) return
-    setMessages(currentMessages => {
-      const activeRuntimeTask =
-        runtimeTaskLoadTargetRef.current?.address ?? currentRuntimeTaskRef.current
-      let nextMessages = currentMessages
-      for (const action of actions) {
-        if (action.type === 'reset') {
-          nextMessages = action.messages
-          continue
-        }
-        if (activeRuntimeTask) {
-          nextMessages = applyRuntimeConversationAction(activeRuntimeTask, action)
-        }
-      }
-      if (activeRuntimeTask) {
-        debugRuntimePaneMessageFlow('message-action', {
-          address: runtimeAddressDebug(activeRuntimeTask),
-          actionType: actions.length === 1 ? actions[0].type : 'batched',
-          actionCount: actions.length,
-          previousCount: currentMessages.length,
-          nextCount: nextMessages.length,
-          nextMessages: summarizeWorkbenchMessages(nextMessages),
-        })
-      }
-      return nextMessages
-    })
-  }, [])
-  const flushPendingMessageActions = useCallback(() => {
-    if (messageActionFrameRef.current !== null) {
-      cancelAnimationFrame(messageActionFrameRef.current)
-      messageActionFrameRef.current = null
+  const dispatchMessages = useCallback((action: RuntimePaneMessageAction) => {
+    const address = runtimeTaskLoadTargetRef.current?.address ?? currentRuntimeTaskRef.current
+    if (address) {
+      applyRuntimeConversationAction(address, action)
+    } else {
+      setDraftMessages(current => reduceWorkbenchMessages(current, action) as WorkbenchMessage[])
     }
-    const pendingActions = pendingMessageActionsRef.current
-    if (pendingActions.length === 0) return
-    pendingMessageActionsRef.current = []
-    applyMessageActions(pendingActions)
-  }, [applyMessageActions])
-  const dispatchMessages = useCallback(
-    (action: RuntimePaneMessageAction) => {
-      if (!isBatchableRuntimePaneMessageAction(action)) {
-        flushPendingMessageActions()
-        applyMessageActions([action])
-        return
-      }
-
-      appendBufferedRuntimePaneMessageAction(pendingMessageActionsRef.current, action)
-      if (messageActionFrameRef.current !== null) return
-      messageActionFrameRef.current = requestAnimationFrame(() => {
-        messageActionFrameRef.current = null
-        const pendingActions = pendingMessageActionsRef.current
-        if (pendingActions.length === 0) return
-        pendingMessageActionsRef.current = []
-        applyMessageActions(pendingActions)
-      })
-    },
-    [applyMessageActions, flushPendingMessageActions]
-  )
+  }, [])
   const lifecycleAddress = resolveRuntimePaneLifecycleAddress(
     currentRuntimeTask,
     runtimeTaskLoadTarget?.address
@@ -651,23 +604,11 @@ export function useWorkbenchPaneSession({
   }, [currentRuntimeTaskLoadTarget])
 
   useEffect(() => {
-    return () => {
-      if (messageActionFrameRef.current !== null) {
-        cancelAnimationFrame(messageActionFrameRef.current)
-        messageActionFrameRef.current = null
-      }
-      pendingMessageActionsRef.current = []
-    }
-  }, [])
-
-  useEffect(() => {
     runtimeTaskLoadTargetRef.current = runtimeTaskLoadTarget
   }, [runtimeTaskLoadTarget])
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
-      setMessages([])
-      setTurns([])
       setSubagentStatuses([])
       setTaskPlan(null)
       return
@@ -681,8 +622,6 @@ export function useWorkbenchPaneSession({
           current && isPendingGoalVisibleForRuntimeTarget(current, address) ? null : current
         )
       }
-      setMessages(getRuntimeConversationMessages(address))
-      setTurns(getRuntimeConversationTurns(address))
       setSubagentStatuses(metadata.subagentStatuses)
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
@@ -804,9 +743,6 @@ export function useWorkbenchPaneSession({
 
     let cancelled = false
     let cancelNavigationLoad = () => {}
-    const hydrationToken = beginRuntimeConversationHydration(address)
-    rebuildingTranscriptRef.current = true
-    rebuildingTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
     const cachedSeededMessages = getRuntimeConversationMessages(address)
     const seededMessages =
       displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
@@ -821,7 +757,6 @@ export function useWorkbenchPaneSession({
       seededCount: seededMessages.length,
       seededMessages: summarizeWorkbenchMessages(seededMessages),
     })
-    dispatchMessages({ type: 'reset', messages: seededMessages })
     setTranscriptLoadingKey(loadKey)
     setTranscriptError(null)
     setTranscriptHasMoreBefore(false)
@@ -847,16 +782,11 @@ export function useWorkbenchPaneSession({
         })
         if (!cancelled) {
           const preserveActiveTurn =
-            (runtimeConversationHydrationHasUpdates(address, hydrationToken) ||
-              getRuntimeConversationTurns(address) !== turnsAtLoadStart) &&
+            getRuntimeConversationTurns(address) !== turnsAtLoadStart &&
             (lifecycleStore.getTask(address)?.derived.isRunning ?? false) &&
             !runtimeConversationSnapshotSettlesLatestTurn(address, transcript.turns)
           lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn })
-          const nextMessages = completeRuntimeConversationHydration(
-            address,
-            hydrationToken,
-            transcript.turns
-          )
+          const nextMessages = getRuntimeConversationMessages(address)
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptFullContent(transcript.fullContent === true)
           setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
@@ -870,10 +800,6 @@ export function useWorkbenchPaneSession({
             seededCount: seededMessages.length,
             resetSource: transcript.messages.length > 0 ? 'transcript' : 'seed',
             nextMessages: summarizeWorkbenchMessages(nextMessages),
-          })
-          dispatchMessages({
-            type: 'reset',
-            messages: nextMessages,
           })
           if (
             transcript.runtime === 'codex' &&
@@ -899,15 +825,11 @@ export function useWorkbenchPaneSession({
                 })
             })
           }
-          rebuildingTranscriptRef.current = false
-          rebuildingTranscriptIdentityRef.current = null
         }
       })
       .catch(error => {
+        if (error instanceof SupersededConversationRead) return
         if (!cancelled) {
-          abortRuntimeConversationHydration(address, hydrationToken)
-          rebuildingTranscriptRef.current = false
-          rebuildingTranscriptIdentityRef.current = null
           loadedRuntimeTranscriptKeyRef.current = null
           setTranscriptFullContent(false)
           setTranscriptHasMoreBefore(false)
@@ -923,104 +845,30 @@ export function useWorkbenchPaneSession({
         }
       })
       .finally(() => {
+        debugRuntimePaneMessageFlow('transcript-load-settled', {
+          key: loadKey,
+          cancelled,
+          activeKey: runtimeTaskLoadTargetRef.current?.key,
+        })
         if (!cancelled) {
           setTranscriptLoadingKey(current => (current === loadKey ? null : current))
         }
       })
 
     return () => {
+      debugRuntimePaneMessageFlow('transcript-load-cancelled', {
+        key: loadKey,
+        activeKey: runtimeTaskLoadTargetRef.current?.key,
+      })
       cancelled = true
       cancelNavigationLoad()
-      abortRuntimeConversationHydration(address, hydrationToken)
-      if (rebuildingTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey) {
-        rebuildingTranscriptRef.current = false
-        rebuildingTranscriptIdentityRef.current = null
-      }
     }
-  }, [
-    dispatchMessages,
-    lifecycleStore,
-    runtimeTaskLoadTarget,
-    runtimeTranscriptPageSize,
-    transcriptReloadVersion,
-  ])
+  }, [lifecycleStore, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptReloadVersion])
   const reloadRuntimeTranscript = useCallback(() => {
     loadedRuntimeTranscriptKeyRef.current = null
     setTranscriptError(null)
     setTranscriptReloadVersion(version => version + 1)
   }, [])
-
-  useEffect(() => {
-    if (!runtimeTaskLoadTarget) return
-    const target = runtimeTaskLoadTarget
-    const { address, identityKey } = target
-    return subscribeRuntimeTransportReplaced(replacement => {
-      if (
-        runtimeTaskLoadTargetRef.current?.identityKey !== identityKey ||
-        rebuildingTranscriptRef.current ||
-        !hasUnsettledRuntimePaneState(messagesRef.current)
-      ) {
-        return
-      }
-
-      const hydrationToken = beginRuntimeConversationHydration(address)
-      rebuildingTranscriptRef.current = true
-      rebuildingTranscriptIdentityRef.current = identityKey
-      console.warn('[Wework] Runtime transport replaced during an active response', {
-        address: runtimeAddressDebug(address),
-        previousRuntimeInstanceId: replacement.previousRuntimeInstanceId,
-        runtimeInstanceId: replacement.runtimeInstanceId,
-        currentMessageCount: messagesRef.current.length,
-      })
-
-      void loadRuntimeTranscriptForPaneRef
-        .current(address, {
-          limit: runtimeTranscriptPageSize,
-          refresh: true,
-        })
-        .then(transcript => {
-          if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
-            abortRuntimeConversationHydration(address, hydrationToken)
-            return
-          }
-
-          const nextMessages = completeRuntimeConversationHydration(
-            address,
-            hydrationToken,
-            transcript.turns
-          )
-          loadedRuntimeTranscriptKeyRef.current = target.key
-          setTranscriptError(null)
-          setTranscriptFullContent(transcript.fullContent === true)
-          setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
-          setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
-          setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
-          setTurnNavigation(transcript.turnNavigation ?? [])
-          dispatchMessages({ type: 'reset', messages: nextMessages })
-          lifecycleStore.syncTranscript(address, transcript)
-          console.info('[Wework] Runtime pane reconciled after transport replacement', {
-            address: runtimeAddressDebug(address),
-            running: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
-            transcriptMessageCount: transcript.messages.length,
-            restoredMessageCount: nextMessages.length,
-          })
-        })
-        .catch(error => {
-          abortRuntimeConversationHydration(address, hydrationToken)
-          if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
-          setTranscriptError(error instanceof Error ? error.message : String(error))
-          console.error('[Wework] Runtime replacement transcript recovery failed', {
-            address: runtimeAddressDebug(address),
-            error,
-          })
-        })
-        .finally(() => {
-          if (rebuildingTranscriptIdentityRef.current !== identityKey) return
-          rebuildingTranscriptRef.current = false
-          rebuildingTranscriptIdentityRef.current = null
-        })
-    })
-  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget, runtimeTranscriptPageSize])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (
@@ -1041,7 +889,6 @@ export function useWorkbenchPaneSession({
       })
       if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
       setTranscriptError(null)
-      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -1054,7 +901,6 @@ export function useWorkbenchPaneSession({
           ? transcript.turnNavigation
           : current
       )
-      dispatchMessages({ type: 'reset', messages: nextMessages })
     } catch (error) {
       if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
       setTranscriptError(error instanceof Error ? error.message : String(error))
@@ -1068,7 +914,6 @@ export function useWorkbenchPaneSession({
       setTranscriptLoadingMoreBeforeKey(current => (current === loadKey ? null : current))
     }
   }, [
-    dispatchMessages,
     runtimeTaskLoadTarget,
     runtimeTranscriptPageSize,
     transcriptBeforeCursor,
@@ -1104,7 +949,6 @@ export function useWorkbenchPaneSession({
         loadOptions.beforeCursor === undefined
           ? transcriptBeforeCursor
           : (transcript.beforeCursor ?? null)
-      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -1117,10 +961,8 @@ export function useWorkbenchPaneSession({
           ? transcript.turnNavigation
           : current
       )
-      dispatchMessages({ type: 'reset', messages: nextMessages })
     },
     [
-      dispatchMessages,
       runtimeTaskLoadTarget,
       runtimeTranscriptPageSize,
       transcriptBeforeCursor,
@@ -1141,7 +983,6 @@ export function useWorkbenchPaneSession({
       }
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
       if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
-      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -1152,9 +993,8 @@ export function useWorkbenchPaneSession({
           ? transcript.turnNavigation
           : current
       )
-      dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [dispatchMessages, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
+    [runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
   )
 
   const getRuntimeModelFields = useCallback(
@@ -1190,7 +1030,6 @@ export function useWorkbenchPaneSession({
       const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
         applyRequestUserInputResponseToBlock(block, response)
       )
-      setMessages(nextMessages)
       debugRuntimePaneMessageFlow('request-user-input-response-applied', {
         address: runtimeAddressDebug(currentRuntimeTask),
         requestUserInputKey: requestUserInputResponseKey(response),
@@ -1212,12 +1051,10 @@ export function useWorkbenchPaneSession({
       try {
         const appendedLocalMessage = options.appendLocalMessage !== false
         if (appendedLocalMessage) {
-          setMessages(
-            applyRuntimeConversationAction(currentRuntimeTask, {
-              type: 'user_added',
-              message: createRuntimeQueuedUserMessage(message),
-            })
-          )
+          applyRuntimeConversationAction(currentRuntimeTask, {
+            type: 'user_added',
+            message: createRuntimeQueuedUserMessage(message),
+          })
         }
         const result = await sendRuntimeQueuedMessage(
           currentRuntimeTask,
@@ -1233,12 +1070,11 @@ export function useWorkbenchPaneSession({
         if (!operation.isCurrent()) return { accepted: false, queued: false }
         const { accepted: sent, queued } = result
         if ((!sent || queued) && appendedLocalMessage) {
-          const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
+          rollbackRejectedRuntimeConversationTurn(
             currentRuntimeTask,
             currentRuntimeTaskRef.current,
             message.id
           )
-          if (rolledBackMessages) setMessages(rolledBackMessages)
         }
         return result
       } finally {
@@ -1323,11 +1159,9 @@ export function useWorkbenchPaneSession({
                 : item
             )
         )
-        setMessages(
-          removeRuntimeConversationTurn(currentRuntimeTask, {
-            clientUserMessageId: message.id,
-          })
-        )
+        removeRuntimeConversationTurn(currentRuntimeTask, {
+          clientUserMessageId: message.id,
+        })
         return false
       }
 
@@ -1453,7 +1287,7 @@ export function useWorkbenchPaneSession({
         return false
       }
 
-      const previousMessages = currentMessages
+      const previousTurns = getRuntimeConversationTurns(currentRuntimeTask)
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
@@ -1473,30 +1307,23 @@ export function useWorkbenchPaneSession({
         ...(additionalContext ? { additionalContext } : {}),
       }
 
-      const nextMessages = replaceRuntimeConversationFromUserMessage(
-        currentRuntimeTask,
-        message.id,
-        { ...editedMessage, role: 'user' }
-      )
-      setMessages(nextMessages)
+      replaceRuntimeConversationFromUserMessage(currentRuntimeTask, message.id, {
+        ...editedMessage,
+        role: 'user',
+      })
       try {
         const sent = await editLastUserMessage(request)
         if (sent) {
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           return true
         }
-        const transcript = await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
+        await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
           limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         removeRuntimeConversationTurn(currentRuntimeTask, {
           clientUserMessageId: editedMessage.id,
         })
-        const restoredMessages = reconcileRuntimeConversationSnapshot(
-          currentRuntimeTask,
-          transcript.turns
-        )
-        setMessages(restoredMessages)
         return false
       } catch (error) {
         const transcript = await loadRuntimeTranscriptForPaneRef
@@ -1508,10 +1335,9 @@ export function useWorkbenchPaneSession({
         removeRuntimeConversationTurn(currentRuntimeTask, {
           clientUserMessageId: editedMessage.id,
         })
-        const restoredMessages = transcript
-          ? reconcileRuntimeConversationSnapshot(currentRuntimeTask, transcript.turns)
-          : previousMessages
-        setMessages(restoredMessages)
+        if (!transcript) {
+          replaceRuntimeConversationSnapshot(currentRuntimeTask, previousTurns)
+        }
         console.error('[Wework] Runtime last user message edit failed', {
           address: runtimeAddressDebug(currentRuntimeTask),
           messageId: message.id,
@@ -1838,20 +1664,20 @@ export function useWorkbenchPaneSession({
   const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<boolean> =
     useCallback(
       async (inputOverride, options = {}) => {
-        const submittedDraftOwnership = {
-          scopeKey: inputScopeKey,
-          revision: draftOwnershipRef.current.revision,
-        }
-        const clearSubmittedInput = () => {
-          const current = draftOwnershipRef.current
-          if (
-            current.scopeKey === submittedDraftOwnership.scopeKey &&
-            current.revision === submittedDraftOwnership.revision
-          ) {
-            setInput('')
-          }
-        }
         const submittedInput = (inputOverride ?? input).trim()
+        // Capture the rendered revision, before asynchronous submission preparation.
+        let submittedInputRevision = inputRevision
+        const ownsSubmittedInput = () =>
+          inputRevisionRef.current === submittedInputRevision &&
+          activeInputScopeRef.current === inputScopeKey
+        const clearSubmittedInput = () => {
+          if (!ownsSubmittedInput()) return
+          setInput('')
+          submittedInputRevision = inputRevisionRef.current
+        }
+        const restoreSubmittedInput = (scopeKey: string, value: string) => {
+          if (ownsSubmittedInput()) setInputForScope(scopeKey, value)
+        }
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
         const paneIsBusy = readCurrentPaneBusy()
@@ -1944,7 +1770,7 @@ export function useWorkbenchPaneSession({
               clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
-              setCodeCommentContexts([])
+              clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             } else {
               currentAttachments.forEach(addExistingAttachment)
               setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
@@ -2026,7 +1852,7 @@ export function useWorkbenchPaneSession({
             if (seededGoalAddress) {
               clearRuntimePaneGoalSeed(seededGoalAddress)
             }
-            restoreInputAfterFailure(submittedInput)
+            restoreSubmittedInput(inputScopeKey, submittedInput)
             setGoalDraftActive(true)
             setPendingGoalState(null)
           }
@@ -2168,7 +1994,7 @@ export function useWorkbenchPaneSession({
               },
             })
           } catch (error) {
-            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )
@@ -2195,11 +2021,11 @@ export function useWorkbenchPaneSession({
               }
             }
             if (isRuntimeTaskAddress(sent)) {
-              dispatchMessages({ type: 'reset', messages: [] })
+              setDraftMessages([])
             }
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
-            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )
@@ -2208,6 +2034,7 @@ export function useWorkbenchPaneSession({
         }
 
         if (hasCodeComments) {
+          resetAttachments()
           const queuedMessage: RuntimePaneQueuedMessage = {
             id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
             content: appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts),
@@ -2223,12 +2050,10 @@ export function useWorkbenchPaneSession({
           }
 
           if (paneIsBusy) {
-            resetAttachments()
             if (options.interruptWhenBusy) {
               const sent = await interruptAndSendQueuedMessage(queuedMessage)
               if (!sent) {
                 currentAttachments.forEach(addExistingAttachment)
-                setCodeCommentContexts(codeCommentContexts)
               } else {
                 clearSubmittedInput()
                 clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
@@ -2258,7 +2083,6 @@ export function useWorkbenchPaneSession({
           }
           if (result.accepted) {
             clearSubmittedInput()
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
             const lifecycleAfterSend = currentRuntimeTask
@@ -2271,9 +2095,9 @@ export function useWorkbenchPaneSession({
             }
             setQueuedMessages(messages => [...messages, queuedMessage])
             clearSubmittedInput()
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
+            currentAttachments.forEach(addExistingAttachment)
             setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
           }
           return result.accepted || isRuntimeTaskBusyError(sendError)
@@ -2324,7 +2148,7 @@ export function useWorkbenchPaneSession({
         }
         if (result.accepted) {
           clearSubmittedInput()
-          setCodeCommentContexts([])
+          clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
         } else if (isRuntimeTaskBusyError(sendError)) {
           const lifecycleAfterSend = currentRuntimeTask
             ? lifecycleStore.getTask(currentRuntimeTask)
@@ -2350,10 +2174,10 @@ export function useWorkbenchPaneSession({
         codeCommentContexts,
         compactRuntimePaneTask,
         currentRuntimeTask,
-        dispatchMessages,
         goalDraftActive,
         getRuntimeModelFields,
         input,
+        inputRevision,
         inputScopeKey,
         interruptAndSendQueuedMessage,
         lifecycleStore,
@@ -2365,7 +2189,6 @@ export function useWorkbenchPaneSession({
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,
         resetAttachments,
-        restoreInputAfterFailure,
         sendCurrentInput,
         sendQueuedMessageAsGuidance,
         sendRuntimeMessage,
@@ -2890,191 +2713,36 @@ export function useWorkbenchPaneSession({
     activeAssistantMessage,
   }
   const goalContinuing = projectRuntimeGoalContinuing(goalProjectionInput)
-  const goalContinuationActive = projectRuntimeGoalContinuationActive(goalProjectionInput)
-
-  useEffect(() => {
-    const shouldReconcile = shouldReconcileActiveRuntimeGoalTranscript({
-      goalContinuing: goalContinuationActive,
-      messages,
-      activeAssistantMessage,
-    })
-    if (!runtimeTaskLoadTarget || transcriptLoading || !shouldReconcile) {
-      if (!shouldReconcile) {
-        goalTranscriptReconciliationRef.current = null
-      }
-      return
-    }
-
-    const { address, identityKey } = runtimeTaskLoadTarget
-    const activeTurnId =
-      activeAssistantMessage?.turnId?.trim() ||
-      activeAssistantMessage?.subtaskId?.trim() ||
-      activeAssistantMessage?.id
-    const reconciliationKey = `${identityKey}:${activeTurnId}`
-    if (goalTranscriptReconciliationRef.current?.key !== reconciliationKey) {
-      goalTranscriptReconciliationRef.current = {
-        key: reconciliationKey,
-        attempts: 0,
-      }
-    }
-    if ((goalTranscriptReconciliationRef.current?.attempts ?? 0) >= 30) {
-      return
-    }
-
-    let cancelled = false
-    let retryTimeout: number | null = null
-    const reconcile = async () => {
-      if (cancelled) return
-      if (rebuildingTranscriptRef.current) {
-        retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
-        return
-      }
-
-      const reconciliation = goalTranscriptReconciliationRef.current
-      if (!reconciliation || reconciliation.key !== reconciliationKey) return
-      if (reconciliation.attempts >= 30) return
-      reconciliation.attempts += 1
-      const attempt = reconciliation.attempts
-      const hydrationToken = beginRuntimeConversationHydration(address)
-      rebuildingTranscriptRef.current = true
-      rebuildingTranscriptIdentityRef.current = identityKey
-      try {
-        const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: runtimeTranscriptPageSize,
-          refresh: true,
-        })
-        if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
-          abortRuntimeConversationHydration(address, hydrationToken)
-          return
-        }
-
-        const nextMessages = completeRuntimeConversationHydration(
-          address,
-          hydrationToken,
-          transcript.turns
-        )
-        dispatchMessages({ type: 'reset', messages: nextMessages })
-        lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn: true })
-        console.info('[Wework] Active Goal transcript projection reconciled', {
-          address: runtimeAddressDebug(address),
-          attempt,
-          transcriptMessageCount: transcript.messages.length,
-          restoredMessageCount: nextMessages.length,
-        })
-
-        if (
-          attempt < 30 &&
-          shouldReconcileActiveRuntimeGoalTranscript({
-            goalContinuing: true,
-            messages: nextMessages,
-            activeAssistantMessage,
-          })
-        ) {
-          retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
-        }
-      } catch (error) {
-        abortRuntimeConversationHydration(address, hydrationToken)
-        if (!cancelled && attempt < 30) {
-          retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
-        }
-        console.error('[Wework] Active Goal transcript projection reconciliation failed', {
-          address: runtimeAddressDebug(address),
-          attempt,
-          error,
-        })
-      } finally {
-        if (rebuildingTranscriptIdentityRef.current === identityKey) {
-          rebuildingTranscriptRef.current = false
-          rebuildingTranscriptIdentityRef.current = null
-        }
-      }
-    }
-
-    void reconcile()
-    return () => {
-      cancelled = true
-      if (retryTimeout !== null) {
-        window.clearTimeout(retryTimeout)
-      }
-    }
-  }, [
-    activeAssistantMessage,
-    dispatchMessages,
-    goalContinuationActive,
-    lifecycleStore,
-    messages,
-    runtimeTaskLoadTarget,
-    runtimeTranscriptPageSize,
-    transcriptLoading,
-  ])
-
-  useEffect(() => {
-    if (!debugSnapshotEnabled) return
-
-    let timeout: number | null = null
-    const schedule = () => {
-      if (timeout !== null) return
-      timeout = window.setTimeout(() => {
-        timeout = null
-        updateRuntimePaneDebugSnapshot(
-          {
-            currentRuntimeTask,
-            status: paneStatus,
-            messageSummary: summarizeMessages(messages),
-            messageStyleComparison: compareMessageStyles(messages),
-            memory: summarizeRuntimePaneMemory({
-              messages,
-              currentRuntimeTask,
-              loadedRanges: loadedTranscriptRanges,
-            }),
-            queuedMessages,
-            guidanceMessages,
-            codeCommentContextCount: codeCommentContexts.length,
-            inputLength: input.length,
-            transcript: {
-              loading: transcriptLoading,
-              hasMoreBefore: transcriptHasMoreBefore,
-              loadingMoreBefore: transcriptLoadingMoreBefore,
-              turnNavigationCount: turnNavigation.length,
-              loadedRanges: loadedTranscriptRanges,
-            },
-            subagentStatuses,
-            goal,
-            goalDraftActive,
-          },
-          { enabled: debugSnapshotEnabled }
-        )
-      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
-    }
-    schedule()
-    return () => {
-      if (timeout !== null) {
-        clearTimeout(timeout)
-      }
-    }
-  }, [
-    codeCommentContexts.length,
-    currentRuntimeTask,
-    debugSnapshotEnabled,
-    goal,
-    taskPlan,
-    goalDraftActive,
-    guidanceMessages,
-    input.length,
-    loadedTranscriptRanges,
-    messages,
-    paneStatus,
-    queuedMessages,
-    queuedMessagesPaused,
-    subagentStatuses,
-    transcriptHasMoreBefore,
-    transcriptFullContent,
-    transcriptLoading,
-    transcriptError,
-    reloadRuntimeTranscript,
-    transcriptLoadingMoreBefore,
-    turnNavigation.length,
-  ])
+  useDebugSnapshotPublisher(debugSnapshotEnabled, () => {
+    updateRuntimePaneDebugSnapshot(
+      {
+        currentRuntimeTask,
+        status: paneStatus,
+        messageSummary: summarizeMessages(messages),
+        messageStyleComparison: compareMessageStyles(messages),
+        memory: summarizeRuntimePaneMemory({
+          messages,
+          currentRuntimeTask,
+          loadedRanges: loadedTranscriptRanges,
+        }),
+        queuedMessages,
+        guidanceMessages,
+        codeCommentContextCount: codeCommentContexts.length,
+        inputLength: input.length,
+        transcript: {
+          loading: transcriptLoading,
+          hasMoreBefore: transcriptHasMoreBefore,
+          loadingMoreBefore: transcriptLoadingMoreBefore,
+          turnNavigationCount: turnNavigation.length,
+          loadedRanges: loadedTranscriptRanges,
+        },
+        subagentStatuses,
+        goal,
+        goalDraftActive,
+      },
+      { enabled: debugSnapshotEnabled }
+    )
+  })
 
   return {
     scopeKey: inputScopeKey,
@@ -3300,6 +2968,7 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
     id: message.id,
     role: message.role,
     status: message.status,
+    runtimeStatus: message.runtimeStatus,
     contentLength: message.content.length,
     subtaskId: message.subtaskId ?? null,
     turnId: message.turnId ?? null,
@@ -3307,15 +2976,11 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
 }
 
 function debugRuntimePaneMessageFlow(event: string, details: Record<string, unknown>) {
-  if (!isRuntimeDebugEnabled()) return
+  if (!event.startsWith('transcript-load-') && !isRuntimeDebugEnabled()) return
   console.debug('[Wework] Runtime pane message flow', {
     event,
     ...details,
   })
-}
-
-function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): boolean {
-  return action.type === 'assistant_chunk' || action.type === 'block_updated'
 }
 
 function isRuntimeDebugEnabled(): boolean {
@@ -3334,18 +2999,6 @@ function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: nu
   if (followingMessages.some(message => message.status === 'streaming')) return false
 
   return followingMessages.some(message => message.role === 'assistant')
-}
-
-function isUnsettledRuntimeMessage(message: WorkbenchMessage): boolean {
-  return (
-    message.status === 'streaming' ||
-    message.status === 'pending' ||
-    Boolean(
-      message.blocks?.some(block =>
-        ['generating_arguments', 'pending', 'streaming'].includes(block.status)
-      )
-    )
-  )
 }
 
 function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -3374,10 +3027,6 @@ export function scheduleRuntimeTurnNavigationLoad(callback: () => void): () => v
   }
   const timeoutId = window.setTimeout(callback, 0)
   return () => window.clearTimeout(timeoutId)
-}
-
-function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {
-  return messages.some(isUnsettledRuntimeMessage)
 }
 
 function isRuntimeTaskAddress(value: unknown): value is RuntimeTaskAddress {

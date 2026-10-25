@@ -244,24 +244,16 @@ export class ComponentUpdateManager {
     return paths
   }
 
-  async stageAvailableUpdate(): Promise<boolean> {
-    const packaged = await this.packagedManifest()
-    const channel = packaged.channel
-    if (channel !== 'stable' && channel !== 'beta') return false
-    return this.stageUpdateForApp(this.currentAppVersion, channel, true)
-  }
-
   async stageUpdateForApp(
     appVersion: string,
     channel: string,
-    ignoreDifferentAppVersion = false,
     onProgress?: (progress: ComponentDownloadProgress) => void
   ): Promise<boolean> {
-    const key = JSON.stringify([appVersion, channel, ignoreDifferentAppVersion])
+    const key = JSON.stringify([appVersion, channel])
     if (this.activeStage) {
       if (this.activeStage.key !== key) {
         await this.activeStage.promise.catch(() => undefined)
-        return this.stageUpdateForApp(appVersion, channel, ignoreDifferentAppVersion, onProgress)
+        return this.stageUpdateForApp(appVersion, channel, onProgress)
       }
       const active = this.activeStage
       if (onProgress) {
@@ -276,7 +268,7 @@ export class ComponentUpdateManager {
     }
     const listeners = new Set<(progress: ComponentDownloadProgress) => void>()
     if (onProgress) listeners.add(onProgress)
-    const promise = this.performStage(appVersion, channel, ignoreDifferentAppVersion, progress => {
+    const promise = this.performStage(appVersion, channel, progress => {
       progress = { ...progress, stageId: this.activeStage?.id }
       if (this.activeStage) this.activeStage.progress = progress
       listeners.forEach(listener => listener(progress))
@@ -293,7 +285,6 @@ export class ComponentUpdateManager {
   private async performStage(
     appVersion: string,
     channel: string,
-    ignoreDifferentAppVersion: boolean,
     onProgress: (progress: ComponentDownloadProgress) => void
   ): Promise<boolean> {
     const packaged = await this.packagedManifest()
@@ -307,13 +298,6 @@ export class ComponentUpdateManager {
       throw new Error(`Component manifest request failed: HTTP ${response.status}`)
     }
     const manifest = (await response.json()) as unknown
-    if (
-      ignoreDifferentAppVersion &&
-      isRecord(manifest) &&
-      manifest.appVersion !== this.currentAppVersion
-    ) {
-      return false
-    }
     const remote = validateRemoteManifest(
       manifest,
       appVersion,

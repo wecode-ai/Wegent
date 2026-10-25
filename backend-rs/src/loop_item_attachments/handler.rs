@@ -76,12 +76,26 @@ pub(super) async fn require_item_view_access(
         .cloud_project_id
         .parse()
         .map_err(|_| HttpError::cloud_project_not_found())?;
-    let access = BoardSnapshotRepository::new(&state.mysql)
+    let repository = BoardSnapshotRepository::new(&state.mysql);
+    let access = repository
         .require_cloud_project_role(project_number, user_id)
         .await
         .map_err(HttpError::internal)?
         .ok_or_else(HttpError::cloud_project_not_found)?;
+    // `db.get(CloudProject, str(project_id))` runs after the role query and
+    // before the required-role comparison; the row is request-owned even
+    // though only the access role and project metadata are consumed.
+    repository
+        .project_entity(project_number)
+        .await
+        .map_err(HttpError::internal)?;
     let role = access.role.as_str();
+
+    // `require_cloud_project_role(..., BaseRole.Viewer)`: a caller below
+    // `Viewer` (RestrictedAnalyst) is `403 "Insufficient permission"`.
+    if !has_permission(role, "Viewer") {
+        return Err(HttpError::insufficient_permission());
+    }
 
     if has_permission(role, "Maintainer") {
         return Ok(());
@@ -105,4 +119,36 @@ pub(super) async fn require_item_view_access(
         return Ok(());
     }
     Err(HttpError::todo_not_found())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Deferred APIs retain Python ownership and registered Rust implementations.
+    #[test]
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
+        const PATH: &str = "/api/v1/loop-items/:item_id/attachments";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).unwrap();
+        assert!(
+            !config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must remain on Python"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(!table.matches(
+            &http::Method::GET,
+            "/api/v1/loop-items/WEWORK2D8526-22/attachments"
+        ));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
+    }
 }

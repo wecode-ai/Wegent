@@ -1,3 +1,4 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
@@ -82,9 +83,7 @@ export function createDesktopScenario({ captureScreenshot, workspacePath, uiTime
         !['/responses', '/v1/responses'].includes(url.pathname)
       )
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString())
+      const body = await readRequestBody(request)
       const input = JSON.stringify(body.input ?? body.messages ?? [])
       if (input.includes('Predict one natural next USER message')) {
         predictionRequests += 1

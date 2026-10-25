@@ -53,6 +53,7 @@ fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
         let RecoveryAction::Retry {
             delay,
             notification,
+            ..
         } = recovery.observe(&completed("failed"), &state)
         else {
             panic!("settled overload should retry");
@@ -94,6 +95,98 @@ fn overload_recovery_accepts_structured_completion_without_error_notification() 
             message: "Selected model is at capacity. Please try a different model.".to_owned()
         }
     );
+}
+
+fn blocked_goal(turn_id: Value) -> Value {
+    json!({"method": "thread/goal/updated", "params": {
+        "threadId": "root-thread", "turnId": turn_id,
+        "goal": {
+            "threadId": "root-thread", "objective": "Finish the original task",
+            "status": "blocked", "tokenBudget": 10000,
+            "tokensUsed": 123, "timeUsedSeconds": 45,
+            "createdAt": 1, "updatedAt": 2
+        }
+    }})
+}
+
+#[test]
+fn overload_recovery_restores_only_the_goal_stopped_by_the_failed_turn() {
+    for turn_id in [json!("failed-turn"), json!("other-turn"), Value::Null] {
+        let mut recovery = OverloadRecovery::default();
+        let update = blocked_goal(turn_id.clone());
+        recovery.observe(&update, &state());
+        recovery.observe(&overload_error(), &state());
+        let RecoveryAction::Retry { goal, .. } = recovery.observe(&completed("failed"), &state())
+        else {
+            panic!("overload should retry");
+        };
+        assert_eq!(
+            goal,
+            (turn_id == "failed-turn").then(|| update["params"]["goal"].clone())
+        );
+    }
+}
+
+#[test]
+fn overload_recovery_does_not_restore_a_goal_after_user_mutation() {
+    let stopped = blocked_goal(json!("failed-turn"));
+    for status in [
+        "active",
+        "paused",
+        "blocked",
+        "complete",
+        "usageLimited",
+        "budgetLimited",
+        "cleared",
+    ] {
+        let mut recovery = OverloadRecovery::default();
+        recovery.observe(&stopped, &state());
+        let mut mutation = blocked_goal(Value::Null);
+        mutation["params"]["goal"]["status"] = json!(status);
+        if status == "cleared" {
+            mutation["method"] = json!("thread/goal/cleared");
+        }
+        recovery.observe(&mutation, &state());
+        recovery.observe(&overload_error(), &state());
+        assert!(
+            matches!(
+                recovery.observe(&completed("failed"), &state()),
+                RecoveryAction::Forward
+            ),
+            "retried after {status}"
+        );
+    }
+}
+
+#[test]
+fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff() {
+    let expected = blocked_goal(json!("failed-turn"))["params"]["goal"].clone();
+    assert_eq!(
+        goal_resume_params(&expected, &json!({"goal": expected}))
+            .unwrap()
+            .unwrap(),
+        json!({
+            "threadId": "root-thread", "status": "active", "origin": "automatic",
+        })
+    );
+    for (field, value) in [
+        ("status", json!("active")),
+        ("status", json!("paused")),
+        ("status", json!("complete")),
+        ("objective", json!("A different task")),
+        ("tokenBudget", json!(20000)),
+        ("updatedAt", json!(3)),
+        ("createdAt", json!(3)),
+    ] {
+        let mut current = expected.clone();
+        current[field] = value;
+        assert!(goal_resume_params(&expected, &json!({"goal": current}))
+            .unwrap()
+            .is_none());
+    }
+    assert!(goal_resume_params(&expected, &json!({"goal": null}))
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -213,7 +306,7 @@ async fn overload_recovery_backoff_completes_without_cancellation() {
 }
 
 fn shared_options(
-    notifications: tokio::sync::mpsc::UnboundedSender<Value>,
+    notifications: tokio::sync::mpsc::UnboundedSender<super::super::CodexNotification>,
     cancellation: Option<oneshot::Receiver<()>>,
 ) -> super::super::SharedTurnNotificationOptions {
     super::super::SharedTurnNotificationOptions {
@@ -228,6 +321,7 @@ fn shared_options(
         active_turn_finished: None,
         wait_for_goal_continuation: false,
         auto_approve_mcp_tool_calls: false,
+        stand_in_single_approval: false,
     }
 }
 
@@ -238,8 +332,8 @@ async fn overload_recovery_shared_reader_keeps_failure_internal_and_cancels_back
     let (sender, mut receiver) = tokio::sync::broadcast::channel(16);
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (cancel_tx, cancel_rx) = oneshot::channel();
-    sender.send(overload_error()).unwrap();
-    sender.send(completed("failed")).unwrap();
+    sender.send(overload_error().into()).unwrap();
+    sender.send(completed("failed").into()).unwrap();
     let mut state = state();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut options = shared_options(notify_tx, Some(cancel_rx));
@@ -285,7 +379,7 @@ async fn overload_recovery_shared_reader_does_not_retry_other_terminal_errors() 
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut error = overload_error();
     error["params"]["error"]["codexErrorInfo"] = json!("usageLimitExceeded");
-    sender.send(error.clone()).unwrap();
+    sender.send(error.clone().into()).unwrap();
     let mut state = state();
     let result = read_shared_turn_notifications(
         &client,
@@ -299,7 +393,7 @@ async fn overload_recovery_shared_reader_does_not_retry_other_terminal_errors() 
     .await
     .unwrap();
     assert!(matches!(result, ExecutionOutcome::Failed { .. }));
-    assert_eq!(notify_rx.recv().await.unwrap(), error);
+    assert_eq!(*notify_rx.recv().await.unwrap(), error);
 }
 
 #[cfg(unix)]
@@ -308,7 +402,7 @@ async fn overload_recovery_native_reader_continues_only_after_completion() {
     use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
     use std::process::Stdio;
     let script = format!(
-        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{error}' '{completed}'
+        r#"printf '%s\n' '{{"id":1,"result":{{"turn":{{"id":"failed-turn"}}}}}}' '{error}' '{completed}'
 IFS= read -r continuation
 printf '%s\n' "{{\"method\":\"test/continuation\",\"params\":$continuation}}" '{{"id":2,"result":{{}}}}'
 printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn"}}}}}}'
@@ -333,6 +427,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (active_tx, mut active_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let params = continuation_params(json!({
         "threadId": "root-thread", "model": "original-model",
@@ -345,6 +440,9 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                active_turn_started: Some(Box::new(move |thread_id, turn_id| {
+                    active_tx.send((thread_id, turn_id)).unwrap();
+                })),
                 overload_turn_recovering: Some(Box::new(move |thread_id, turn_id| {
                     recovery_tx.send((thread_id, turn_id)).unwrap();
                 })),
@@ -352,6 +450,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
                 notifications: Some(notify_tx),
                 request_user_input_answers: None,
                 auto_approve_mcp_tool_calls: false,
+                stand_in_single_approval: false,
                 defer_interactive_forms: false,
             },
         ),
@@ -390,5 +489,280 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         ("root-thread".to_owned(), "failed-turn".to_owned())
     );
     assert!(recovery_rx.try_recv().is_err());
+    assert_eq!(
+        active_rx.try_recv().unwrap(),
+        ("root-thread".to_owned(), "failed-turn".to_owned())
+    );
+    assert_eq!(
+        active_rx.try_recv().unwrap(),
+        ("root-thread".to_owned(), "recovered-turn".to_owned())
+    );
+    assert!(active_rx.try_recv().is_err());
     assert!(child.wait().await.unwrap().success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_native_reader_restores_goal_and_waits_for_automatic_continuation() {
+    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
+    use std::process::Stdio;
+    let stopped = blocked_goal(json!("failed-turn"));
+    let mut active = stopped.clone();
+    active["params"]["turnId"] = Value::Null;
+    active["params"]["goal"]["status"] = json!("active");
+    let mut complete = active.clone();
+    complete["params"]["goal"]["status"] = json!("complete");
+    let script = format!(
+        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{stopped}' '{error}' '{failed}'
+IFS= read -r goal_get
+printf '%s\n' '{{"id":2,"result":{{"goal":{goal}}}}}'
+IFS= read -r goal_set
+printf '%s\n' "{{\"method\":\"test/resume\",\"params\":$goal_set}}" '{{"id":3,"result":{{"goal":{active_goal}}}}}' '{active}'
+printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn"}}}}}}'
+printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"root-thread","turnId":"recovered-turn","delta":"first turn"}}}}'
+printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn","status":"completed"}}}}}}'
+printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"goal-continuation"}}}}}}'
+printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"root-thread","turnId":"goal-continuation","delta":"goal finished"}}}}' '{complete}'
+printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","turn":{{"id":"goal-continuation","status":"completed"}}}}}}'
+"#,
+        error = overload_error(),
+        failed = completed("failed"),
+        goal = stopped["params"]["goal"],
+        active_goal = active["params"]["goal"],
+    );
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        2,
+    );
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = state();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        rpc.read_turn(
+            1,
+            &mut state,
+            super::super::json_rpc::TurnReadOptions {
+                active_turn_started: None,
+                overload_turn_recovering: None,
+                overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
+                notifications: Some(notify_tx),
+                request_user_input_answers: None,
+                auto_approve_mcp_tool_calls: false,
+                stand_in_single_approval: false,
+                defer_interactive_forms: false,
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "goal finished".to_owned()
+        }
+    );
+    assert_eq!(
+        state.goal_status_snapshot(),
+        (true, Some("complete".to_owned()))
+    );
+    let mut resume = None;
+    while let Ok(message) = notify_rx.try_recv() {
+        if message["method"] == "test/resume" {
+            resume = Some(message["params"].clone());
+        }
+    }
+    let resume = resume.expect("Goal was never resumed");
+    assert_eq!(resume["method"], "thread/goal/set");
+    assert_eq!(
+        resume["params"],
+        json!({"threadId": "root-thread", "status": "active", "origin": "automatic"})
+    );
+    assert!(child.wait().await.unwrap().success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_native_reader_settles_goal_mutation_without_stop_button_request() {
+    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
+    use std::process::Stdio;
+    let stopped = blocked_goal(json!("failed-turn"));
+    let mut paused = stopped["params"]["goal"].clone();
+    paused["status"] = json!("paused");
+    let script = format!(
+        r#"printf '%s\n' '{{"id":1,"result":{{}}}}' '{stopped}' '{error}' '{failed}'
+IFS= read -r goal_get
+printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
+"#,
+        error = overload_error(),
+        failed = completed("failed"),
+    );
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        2,
+    );
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = state();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        rpc.read_turn(
+            1,
+            &mut state,
+            super::super::json_rpc::TurnReadOptions {
+                active_turn_started: None,
+                overload_turn_recovering: None,
+                overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
+                notifications: Some(notify_tx),
+                request_user_input_answers: None,
+                auto_approve_mcp_tool_calls: false,
+                stand_in_single_approval: false,
+                defer_interactive_forms: false,
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(outcome, ExecutionOutcome::Cancelled { .. }));
+    assert_eq!(
+        state.goal_status_snapshot(),
+        (true, Some("paused".to_owned()))
+    );
+    let mut last_goal = None;
+    while let Ok(message) = notify_rx.try_recv() {
+        if message["method"] == "thread/goal/updated" {
+            last_goal = Some(message["params"]["goal"].clone());
+        }
+    }
+    assert_eq!(last_goal, Some(paused));
+    assert!(child.wait().await.unwrap().success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resume() {
+    use super::super::{
+        CodexAppServerClient, CodexAppServerProcess, CodexAppServerSharedState,
+        CodexNotificationHub, PendingCodexRequests,
+    };
+    use std::{collections::BTreeMap, process::Stdio, sync::Arc};
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        sync::Mutex,
+    };
+    for method in ["thread/goal/set", "thread/goal/clear"] {
+        let mut client = CodexAppServerClient::new(format!("goal-recovery-gate-{method}"));
+        client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+        client.mark_thread_active("root-thread").await;
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .args(["-c", "cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        super::super::configure_codex_app_server_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut requests = BufReader::new(child.stdout.take().unwrap()).lines();
+        let pending = Arc::new(PendingCodexRequests::default());
+        {
+            let mut shared = client.state.lock().await;
+            shared.process_environment =
+                client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
+            shared.process = Some(CodexAppServerProcess {
+                child,
+                config_diagnostics: None,
+                stdin: Arc::new(Mutex::new(stdin)),
+                pending: Arc::clone(&pending),
+                notifications: CodexNotificationHub::new(),
+                reader_task: tokio::spawn(async {}),
+            });
+        }
+        let expected = blocked_goal(json!("failed-turn"))["params"]["goal"].clone();
+        let gate = client.thread_lifecycle_gate("root-thread").await;
+        let recovery_client = client.clone();
+        let recovery_goal = expected.clone();
+        let recovery = tokio::spawn(async move {
+            resume_goal(&recovery_client, "root-thread", &recovery_goal).await
+        });
+        let read: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(read["method"], "thread/goal/get");
+        let user_client = client.clone();
+        let user_mutation = tokio::spawn(async move {
+            user_client
+                .mutate_thread_goal(
+                    method,
+                    json!({"threadId": "root-thread", "status": "paused"}),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while Arc::strong_count(&gate) < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("user mutation must reach the gate while the recovery snapshot is held");
+        assert!(!user_mutation.is_finished());
+        assert!(
+            pending
+                .complete(read["id"].as_u64().unwrap(), || Ok(
+                    json!({"goal": expected})
+                ))
+                .await
+        );
+        let resume: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(resume["method"], "thread/goal/set");
+        assert_eq!(
+            resume["params"]["status"], "active",
+            "the user mutation interleaved before automatic recovery"
+        );
+        let mut active = expected.clone();
+        active["status"] = json!("active");
+        assert!(
+            pending
+                .complete(resume["id"].as_u64().unwrap(), || Ok(
+                    json!({"goal": active})
+                ))
+                .await
+        );
+        assert!(recovery.await.unwrap().unwrap().1);
+        let user: Value =
+            serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(user["method"], method);
+        assert_eq!(user["params"]["status"], "paused");
+        let response = if method == "thread/goal/clear" {
+            json!({"cleared": true})
+        } else {
+            json!({"goal": {"status": "paused"}})
+        };
+        assert!(
+            pending
+                .complete(user["id"].as_u64().unwrap(), || Ok(response.clone()))
+                .await
+        );
+        assert_eq!(user_mutation.await.unwrap().unwrap(), response);
+        client.restart().await;
+    }
 }

@@ -6,10 +6,12 @@ import {
   type WorkbenchProjectPnpmCommand,
 } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 
 const SCRIPT_NAME = /^[A-Za-z0-9:_-]+$/
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 const SCRIPT_ORDER = ['typecheck', 'test', 'build'] as const
+const PROJECT_RUN_ARGS = ['--config.verify-deps-before-run=false', 'run']
 const SAFE_ENVIRONMENT_KEYS = new Set([
   'CI',
   'COMSPEC',
@@ -90,22 +92,26 @@ export async function runSmartAppProjectScripts(
     }
   }
   const resolveCommand = options.resolveCommand ?? resolveWorkbenchProjectPnpmCommand
-  const command = await resolveCommand({
-    runtimeRoot: options.runtimeRoot,
-    environment: options.environment,
-  })
-  const environment = sanitizedEnvironment(command.environment)
+  const command = await traceSmartAppVerification('scripts.command', () =>
+    resolveCommand({
+      runtimeRoot: options.runtimeRoot,
+      environment: options.environment,
+    })
+  )
+  const environment = projectScriptEnvironment(command.environment, options.projectRoot)
   const run = options.run ?? runCommand
   const logsDirectory = join(options.projectRoot, 'test-results', 'smart-app', 'logs')
   await mkdir(logsDirectory, { recursive: true, mode: 0o700 })
   const scripts: SmartAppProjectScriptResult[] = []
   for (const key of SCRIPT_ORDER) {
     const script = options.scripts[key]
-    const result = await run(command.command, [...command.argsPrefix, 'run', script], {
-      cwd: options.projectRoot,
-      env: environment,
-      shell: false,
-    })
+    const result = await traceSmartAppVerification(`scripts.${key}`, () =>
+      run(command.command, [...command.argsPrefix, ...PROJECT_RUN_ARGS, script], {
+        cwd: options.projectRoot,
+        env: environment,
+        shell: false,
+      })
+    )
     const log = join(logsDirectory, `${key}.log`)
     await writeFile(log, scriptLog(command.command, script, result), { mode: 0o600 })
     const logPath = relative(options.projectRoot, log).split(sep).join('/')
@@ -139,16 +145,20 @@ export async function runSmartAppRuntimeProbe(
     environment: options.environment,
   })
   const environment = {
-    ...sanitizedEnvironment(command.environment),
+    ...projectScriptEnvironment(command.environment, options.projectRoot),
     SMART_APP_BASE_URL: options.baseUrl,
     ...(options.cookieHeader ? { SMART_APP_COOKIE: options.cookieHeader } : {}),
   }
   const run = options.run ?? runCommand
-  const result = await run(command.command, [...command.argsPrefix, 'run', options.script], {
-    cwd: options.projectRoot,
-    env: environment,
-    shell: false,
-  })
+  const result = await run(
+    command.command,
+    [...command.argsPrefix, ...PROJECT_RUN_ARGS, options.script],
+    {
+      cwd: options.projectRoot,
+      env: environment,
+      shell: false,
+    }
+  )
   const log = join(options.projectRoot, 'test-results', 'smart-app', 'logs', 'runtime-probe.log')
   await mkdir(join(log, '..'), { recursive: true, mode: 0o700 })
   await writeFile(log, scriptLog(command.command, options.script, result), { mode: 0o600 })
@@ -167,6 +177,13 @@ export async function runSmartAppRuntimeProbe(
       },
     ],
   }
+}
+
+function projectScriptEnvironment(
+  environment: NodeJS.ProcessEnv,
+  projectRoot: string
+): NodeJS.ProcessEnv {
+  return { ...sanitizedEnvironment(environment), NPM_CONFIG_WORKSPACE_DIR: projectRoot }
 }
 
 function sanitizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

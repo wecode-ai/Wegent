@@ -172,6 +172,34 @@ function responseFailed(id, message, code = 'context_length_exceeded') {
   }
 }
 
+function toolOutputText(request, callId) {
+  const findOutput = value => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const output = findOutput(item)
+        if (output != null) return output
+      }
+      return null
+    }
+    if (!value || typeof value !== 'object') return null
+    if (
+      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
+      value.call_id === callId
+    ) {
+      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
+    }
+    if (value.type === 'tool_search_output' && value.call_id === callId) {
+      return JSON.stringify(value.tools ?? [])
+    }
+    for (const item of Object.values(value)) {
+      const output = findOutput(item)
+      if (output != null) return output
+    }
+    return null
+  }
+  return findOutput(request.input ?? [])
+}
+
 function functionCall(callId, name, argumentsValue, outputIndex = 0) {
   const argumentsText = JSON.stringify(argumentsValue)
   const itemId = `fc_${callId}`
@@ -437,38 +465,42 @@ function matrixPatch(model) {
   ].join('\n')
 }
 
+const requestBodies = new WeakMap()
+const rawRequestBodies = new WeakMap()
+
 function readRequestBody(request) {
-  return new Promise((resolvePromise, reject) => {
-    let body = ''
-    request.setEncoding('utf8')
-    request.on('data', chunk => {
-      body += chunk
-    })
-    request.once('end', () => {
-      try {
-        resolvePromise(body ? JSON.parse(body) : {})
-      } catch (error) {
-        reject(error)
-      }
-    })
-    request.once('error', reject)
-  })
+  const cached = requestBodies.get(request)
+  if (cached) return cached
+  const parsed = readRawRequestBody(request).then(body => (body ? JSON.parse(body) : {}))
+  requestBodies.set(request, parsed)
+  return parsed
 }
 
 function readRawRequestBody(request) {
-  return new Promise((resolvePromise, reject) => {
+  const cached = rawRequestBodies.get(request)
+  if (cached) return cached
+  const raw = new Promise((resolvePromise, reject) => {
     const chunks = []
     request.on('data', chunk => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
     request.once('end', () => {
-      const body = Buffer.concat(chunks)
-      resolvePromise(
-        (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
-      )
+      try {
+        const body = Buffer.concat(chunks)
+        resolvePromise(
+          (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
+        )
+      } catch (error) {
+        reject(error)
+      }
     })
     request.once('error', reject)
+    request.once('close', () => {
+      if (!request.readableEnded) reject(new Error('Request body stream closed before end'))
+    })
   })
+  rawRequestBodies.set(request, raw)
+  return raw
 }
 
 function parseTelemetryPayload(rawBody) {
@@ -884,6 +916,7 @@ export {
   mcpToolRequestEvents,
   selectToolSearch,
   toolSearchResponseEvents,
+  toolOutputText,
   requestToolSearchResults,
   selectShellTool,
   selectShellToolCommand,

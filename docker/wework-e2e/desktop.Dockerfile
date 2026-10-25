@@ -8,6 +8,7 @@ ARG UV_VERSION=0.11.17
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    apparmor \
     build-essential \
     ca-certificates \
     curl \

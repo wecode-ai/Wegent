@@ -65,3 +65,30 @@ export function turnStatus(
   if (turn.status === "cancelled") return "done";
   return turn.status;
 }
+
+/** Live completion closes the same wall-clock interval used by the running label. */
+export function completeRuntimeTurnTiming(
+  turn: RuntimeConversationTurn,
+  source: { startedAt?: number; durationMs?: number },
+): Pick<RuntimeConversationTurn, "startedAt" | "completedAt" | "durationMs"> {
+  if (
+    ["done", "failed", "cancelled"].includes(turn.status) &&
+    turn.completedAt !== null &&
+    turn.completedAt !== undefined
+  ) {
+    return {
+      startedAt: turn.startedAt ?? source.startedAt,
+      completedAt: turn.completedAt,
+      durationMs: turn.durationMs ?? source.durationMs,
+    };
+  }
+  const completedAt = Date.now();
+  return {
+    startedAt: turn.startedAt ?? source.startedAt,
+    completedAt: new Date(completedAt).toISOString(),
+    durationMs:
+      turn.startedAt === undefined
+        ? source.durationMs
+        : Math.max(0, completedAt - turn.startedAt),
+  };
+}

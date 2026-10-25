@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import {
+  assertFullscreenIssueComposerColumn,
+  assertFullscreenIssueComposerColumnAtWindowSize,
+} from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
 
@@ -1004,11 +1008,43 @@ async function verifyWorkspaceIssueCreation(control) {
   const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
   const createIssueTitle = `${createIssueDialog} [data-testid="cloud-todo-title"]`
   const createIssueDescription = `${createIssueDialog} [data-testid="cloud-todo-detail-description"]`
-  await control.command('click', createIssueSelector)
+  const createIssueFullscreen = `${createIssueDialog} [data-testid="cloud-todo-create-fullscreen"]`
+  const createIssueContent = `${createIssueDialog} [data-testid="cloud-todo-create-content"]`
+  const createIssueFooter = `${createIssueDialog} [data-testid="cloud-todo-create-footer"]`
+  await control.command('clickWhenEnabled', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', createIssueFullscreen)
+  await control.command('waitFor', `${createIssuePanel}.h-full`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', createIssueContent, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertFullscreenIssueComposerColumn(control, {
+    contentSelector: createIssueContent,
+    footerSelector: createIssueFooter,
+    panelSelector: createIssuePanel,
+    label: 'Workspace fullscreen Issue composer',
+  })
+  await assertFullscreenIssueComposerColumnAtWindowSize(control, {
+    contentSelector: createIssueContent,
+    footerSelector: createIssueFooter,
+    panelSelector: createIssuePanel,
+    windowSize: { width: 640, height: 800 },
+    maxContentWidth: 700,
+    label: 'Narrow workspace fullscreen Issue composer',
+  })
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-01-fullscreen.png',
+    createIssuePanel
+  )
+  await control.command('click', createIssueFullscreen)
   await control.command('fill', createIssueTitle, {
     value: issueTitle,
   })

@@ -10,6 +10,7 @@
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 
 use super::models::{SmartAppReleaseRow, SmartAppRow};
+use crate::sql_support::StatementArg;
 
 /// `db.get(SmartApp, id)`.
 pub const FIND_SMART_APP: &str = "SELECT smart_apps.id, smart_apps.owner_user_id, smart_apps.name, smart_apps.display_name, smart_apps.summary, smart_apps.description_md, smart_apps.source_type, smart_apps.visibility, smart_apps.status, smart_apps.tags_json, smart_apps.icon_storage_key, smart_apps.screenshots_json, smart_apps.extensions_json, smart_apps.latest_release_id, smart_apps.featured_rank, smart_apps.is_listed, smart_apps.created_at, smart_apps.updated_at, smart_apps.published_at \nFROM smart_apps \nWHERE smart_apps.id = ?";
@@ -142,8 +143,35 @@ where
          resource_members.entity_id = ? OR resource_members.entity_type = 'namespace' \
          AND resource_members.entity_id IN ({placeholders})) \n LIMIT 1"
     );
-    let mut params: Vec<String> = vec![smart_app_id.to_string(), user_id.to_string()];
-    params.extend(namespace_ids);
+    let params = grant_params(smart_app_id, user_id, &namespace_ids);
     let row: Option<MemberIdRow> = mysql.fetch_optional(sql, params).await?;
     Ok(row.is_some())
+}
+
+/// The grant query's bind values. `resource_members.resource_id` is an
+/// integer column, so the Smart app id stays an integer (the source's integer
+/// bind); the identity columns are text. Replay matches the materialized
+/// statement tokens, so binding the id as text would change the value family.
+fn grant_params(smart_app_id: i64, user_id: i64, namespace_ids: &[String]) -> Vec<StatementArg> {
+    let mut params = vec![
+        StatementArg::Int(smart_app_id),
+        StatementArg::Str(user_id.to_string()),
+    ];
+    params.extend(namespace_ids.iter().cloned().map(StatementArg::Str));
+    params
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grant_params_bind_the_integer_resource_id() {
+        let params = grant_params(2, 89, &["285".to_owned(), "42".to_owned()]);
+        assert_eq!(params.len(), 4);
+        assert!(matches!(params[0], StatementArg::Int(2)));
+        assert!(matches!(&params[1], StatementArg::Str(value) if value == "89"));
+        assert!(matches!(&params[2], StatementArg::Str(value) if value == "285"));
+        assert!(matches!(&params[3], StatementArg::Str(value) if value == "42"));
+    }
 }

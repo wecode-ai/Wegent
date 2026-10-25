@@ -331,7 +331,10 @@ jobs:
     timeout-minutes: 60
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -347,6 +350,9 @@ jobs:
         with:
           filter: blob:none
           persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
@@ -365,7 +371,7 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -394,6 +400,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
@@ -648,13 +655,13 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Windows Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64
 
       - name: Download Windows Redis E2E tools
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-redis-e2e-tools
           path: wework/test-results/windows-e2e-tools/redis
@@ -772,6 +779,8 @@ jobs:
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
+        # Finish before the job deadline so failure logs and artifacts can upload.
+        timeout-minutes: 40
         continue-on-error: true
         shell: pwsh
         env:
@@ -794,6 +803,13 @@ jobs:
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
+              Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |
+                Select-Object Name, Length, Attributes | Format-Table | Out-String | Write-Host
+              if (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue) {
+                Get-MpThreatDetection -ErrorAction Continue |
+                  Select-Object InitialDetectionTime, ActionSuccess, Resources |
+                  ConvertTo-Json -Depth 3 | Write-Host
+              }
               throw "Missing Windows Wework desktop E2E resource: $path"
             }
           }
@@ -859,7 +875,10 @@ jobs:
     timeout-minutes: 60
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -876,8 +895,11 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -891,6 +913,12 @@ jobs:
           python-version: "3.12"
           setup-python: "false"
           setup-uv: "false"
+
+      - name: Set up real object storage for plugin sync recovery E2E
+        if: contains(matrix.segments, 'plugin-write-coordination')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
@@ -996,7 +1024,10 @@ jobs:
     timeout-minutes: 25
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -1010,9 +1041,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           filter: blob:none
+          persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -1081,7 +1116,7 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
-    if: always()
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
 
     steps:
@@ -1428,7 +1463,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))
         env:
           CI: true
         run: |

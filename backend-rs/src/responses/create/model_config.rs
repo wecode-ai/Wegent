@@ -101,9 +101,8 @@ impl std::error::Error for ModelConfigError {}
 /// the `api_key` placeholder through the deployment adapter and the placeholder
 /// engine.
 ///
-/// Not modeled: `decrypt_api_key`, the `EXECUTOR_ENV`/`DEFAULT_HEADERS`
-/// environment fallback, `codex_catalog_model_id`, and `imageConfig`; no
-/// recorded create case reaches them.
+/// Not modeled: `decrypt_api_key`, `codex_catalog_model_id`, and
+/// `imageConfig`; no recorded create case reaches them.
 pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, ModelConfigError> {
     let model_config = model_spec
         .get("modelConfig")
@@ -140,14 +139,20 @@ pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, Mo
         .unwrap_or("openai")
         .to_string();
 
+    // `default_headers`: Model `DEFAULT_HEADERS`, then the Model env, then
+    // `settings.EXECUTOR_ENV.DEFAULT_HEADERS`, then the deployment
+    // `DEFAULT_HEADERS` variable. The recorded create case resolves the
+    // deployment header template, so the fallback is required.
     let default_headers = model_config
         .get("DEFAULT_HEADERS")
-        .filter(|value| is_non_empty_object(value))
+        .and_then(headers_value)
+        .or_else(|| env.get("DEFAULT_HEADERS").and_then(headers_value))
         .or_else(|| {
-            env.get("DEFAULT_HEADERS")
-                .filter(|value| is_non_empty_object(value))
+            default_headers_from_executor_env(
+                crate::config::env_or_dotenv("EXECUTOR_ENV").as_deref(),
+            )
         })
-        .cloned()
+        .or_else(|| default_headers_from_json(std::env::var("DEFAULT_HEADERS").ok().as_deref()))
         .unwrap_or(Value::Object(Map::new()));
 
     let mut api_format = model_spec
@@ -265,16 +270,7 @@ pub fn build_agent_config(
     override_model_name: Option<&str>,
     resolved_model_spec: Option<&Value>,
 ) -> Value {
-    let inline_ready = !(force_override && override_model_name.is_some())
-        && raw_agent_config
-            .get("env")
-            .and_then(|env| env.get("model"))
-            .is_some_and(is_truthy)
-        && raw_agent_config
-            .get("env")
-            .and_then(|env| env.get("api_key"))
-            .is_some_and(is_truthy);
-    if inline_ready {
+    if inline_agent_config_ready(raw_agent_config, force_override, override_model_name) {
         return raw_agent_config.clone();
     }
 
@@ -299,12 +295,61 @@ pub fn build_agent_config(
     model_config
 }
 
+/// `build_agent_config_for_bot`'s short-circuit: the bot's inline
+/// `agent_config.env` already carries `model` and `api_key`, and no override is
+/// forced. A ready inline config returns before `_resolve_model_for_bot`, so it
+/// is also the predicate that decides whether the bot entry re-reads the Model.
+pub fn inline_agent_config_ready(
+    raw_agent_config: &Value,
+    force_override: bool,
+    override_model_name: Option<&str>,
+) -> bool {
+    !(force_override && override_model_name.is_some())
+        && raw_agent_config
+            .get("env")
+            .and_then(|env| env.get("model"))
+            .is_some_and(is_truthy)
+        && raw_agent_config
+            .get("env")
+            .and_then(|env| env.get("api_key"))
+            .is_some_and(is_truthy)
+}
+
 /// Python truthiness for the scalars the config carries.
 use brz_json::adapters::python_truthy as is_truthy;
 
 /// Whether `value` is a JSON object with at least one key.
 fn is_non_empty_object(value: &Value) -> bool {
     value.as_object().is_some_and(|map| !map.is_empty())
+}
+
+/// A `DEFAULT_HEADERS` value: an object, or a JSON string of an object.
+fn headers_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(_) => is_non_empty_object(value).then(|| value.clone()),
+        Value::String(text) => default_headers_from_json(Some(text)),
+        _ => None,
+    }
+}
+
+/// `settings.EXECUTOR_ENV`'s `DEFAULT_HEADERS`, which may itself be a JSON
+/// object or a JSON string of an object.
+fn default_headers_from_executor_env(configured: Option<&str>) -> Option<Value> {
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let parsed: Value = serde_json::from_str(configured).ok()?;
+    parsed.get("DEFAULT_HEADERS").and_then(headers_value)
+}
+
+/// `get_default_headers_from_env`'s `DEFAULT_HEADERS` variable: a JSON object.
+fn default_headers_from_json(configured: Option<&str>) -> Option<Value> {
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    serde_json::from_str::<Value>(configured)
+        .ok()
+        .filter(is_non_empty_object)
 }
 
 #[cfg(test)]
@@ -386,7 +431,7 @@ mod tests {
                 },
                 "context_window": 991000,
                 "max_output_tokens": 64000,
-                "DEFAULT_HEADERS": {"wecode-source": "agent"},
+                "DEFAULT_HEADERS": {"x-runtime-source": "agent"},
             },
         });
         let config = extract_model_config(&spec).expect("config");
@@ -415,7 +460,10 @@ mod tests {
         assert_eq!(config["api_format"], Value::Null);
         assert_eq!(config["protocol"], json!("claude"));
         assert_eq!(config["context_window"], json!(991000));
-        assert_eq!(config["default_headers"]["wecode-source"], json!("agent"));
+        assert_eq!(
+            config["default_headers"]["x-runtime-source"],
+            json!("agent")
+        );
         assert_eq!(
             config["modelCapabilities"],
             json!({"supportsImage": true, "supportsVideo": true})
@@ -432,6 +480,31 @@ mod tests {
             build_agent_config(&raw, true, Some("other-model"), Some(&spec)),
             json!({"env": {"model": "openai"}})
         );
+    }
+
+    /// `build_agent_config_for_bot` returns the inline config before
+    /// `_resolve_model_for_bot`; the recorded create case's Bot has no
+    /// `agent_config` at all, so its Model is resolved a second time.
+    #[test]
+    fn a_ready_inline_agent_config_skips_the_bot_model_resolution() {
+        let ready = json!({"env": {"model": "claude", "api_key": "sk-x"}});
+        assert!(inline_agent_config_ready(&ready, false, None));
+        assert!(!inline_agent_config_ready(
+            &ready,
+            true,
+            Some("other-model")
+        ));
+        assert!(!inline_agent_config_ready(&json!({}), false, None));
+        assert!(!inline_agent_config_ready(
+            &json!({"env": {"model": "claude"}}),
+            false,
+            None
+        ));
+        assert!(!inline_agent_config_ready(
+            &json!({"env": {"model": "claude", "api_key": ""}}),
+            false,
+            None
+        ));
     }
 
     #[test]
@@ -455,11 +528,72 @@ mod tests {
     }
 
     #[test]
+    fn a_bot_without_inline_agent_config_uses_the_resolved_model_config() {
+        // Recorded `metadata.bot[0].agent_config`: the Bot CRD has no
+        // `agent_config`, so the resolved Model CRD `modelConfig` is used.
+        let spec = json!({
+            "modelConfig": {
+                "env": {"model": "claude", "api_key": "${DEPLOYMENT_USER_API_KEY}"},
+                "context_window": 991000,
+                "max_output_tokens": 64000,
+            }
+        });
+        assert_eq!(
+            build_agent_config(&Value::Null, false, None, Some(&spec)),
+            json!({
+                "env": {"model": "claude", "api_key": "${DEPLOYMENT_USER_API_KEY}"},
+                "context_window": 991000,
+                "max_output_tokens": 64000,
+            })
+        );
+        // Without a resolved Model the raw (absent) config is kept.
+        assert_eq!(
+            build_agent_config(&Value::Null, false, None, None),
+            Value::Null
+        );
+    }
+
+    #[test]
     fn extract_model_config_requires_env() {
         assert!(matches!(
             extract_model_config(&json!({"modelConfig": {}})),
             Err(ModelConfigError::NoEnv)
         ));
+    }
+
+    #[test]
+    fn default_headers_read_the_deployment_executor_env_template() {
+        // Recorded deployment template: `EXECUTOR_ENV.DEFAULT_HEADERS` with the
+        // `x-runtime-*` placeholders resolved later by the placeholder engine.
+        let executor_env = json!({
+            "DEFAULT_HEADERS": {
+                "x-runtime-source": "agent",
+                "x-runtime-user": "${task_data.user.name}",
+                "x-runtime-session-id": "${task_data.task_id}",
+            }
+        })
+        .to_string();
+        assert_eq!(
+            default_headers_from_executor_env(Some(&executor_env)),
+            Some(json!({
+                "x-runtime-source": "agent",
+                "x-runtime-user": "${task_data.user.name}",
+                "x-runtime-session-id": "${task_data.task_id}",
+            }))
+        );
+        // The setting may store DEFAULT_HEADERS as a JSON string.
+        let stringified = json!({"DEFAULT_HEADERS": "{\"x-runtime-action\":\"wegent\"}"});
+        assert_eq!(
+            default_headers_from_executor_env(Some(&stringified.to_string())),
+            Some(json!({"x-runtime-action": "wegent"}))
+        );
+        assert_eq!(default_headers_from_executor_env(Some("{}")), None);
+        assert_eq!(default_headers_from_executor_env(Some("not json")), None);
+        assert_eq!(
+            default_headers_from_json(Some(r#"{"x-runtime-executor":"chat"}"#)),
+            Some(json!({"x-runtime-executor": "chat"}))
+        );
+        assert_eq!(default_headers_from_json(Some("[]")), None);
     }
 
     #[test]

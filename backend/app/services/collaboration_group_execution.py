@@ -24,6 +24,7 @@ from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.services.loop_item_executions.profile import native_runtime_contract
 from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.notification_target import board_notification_target
 from app.services.project_chat.service import bot_config, compiled_bot_config
 from app.services.wework_notifications import create_notification
 
@@ -228,6 +229,9 @@ def _notify_human_leader(
         for notification in existing
     ):
         return
+    target = board_notification_target(
+        db, project, item, pending_assignee_user_id=human.id
+    )
     create_notification(
         db,
         user_id=human.id,
@@ -238,6 +242,7 @@ def _notify_human_leader(
         project_id=str(project.id),
         item_id=item.id,
         payload={
+            **target.payload(),
             "action": "coordinate_collaboration_group",
             "projectId": str(project.id),
             "itemId": item.id,

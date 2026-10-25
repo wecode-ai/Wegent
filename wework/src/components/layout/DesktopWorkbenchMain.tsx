@@ -30,7 +30,6 @@ import {
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
-import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
@@ -218,6 +217,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import {
   getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
@@ -1699,7 +1699,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...currentRuntimeTask,
         threadId: selectedSubagentConversationId,
       },
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
       .then(transcript => {
         setSubagentTranscripts(current => ({
@@ -2978,6 +2978,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneMessages,
     paneSession.answeredRequestUserInputIds
   )
+  useRequestUserInputExpiryRefresh(pendingRequestUserInput?.expiresAtUnixMs)
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]
@@ -4373,7 +4374,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setFileOpenError(null)
       try {
         const trimmedPath = await resolveHomeRelativeWorkspacePath(
-          decodeMarkdownFilePath(path.trim()),
+          path.trim(),
           effectiveWorkspaceTarget?.deviceId ??
             resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)!,
           getDeviceHomeDirectory
@@ -5306,7 +5307,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       displayedRightPanelExpanded && 'z-critical'
                     )}
                     stickyFooter={
-                      temporaryChatExpanded || isCreatingWorktree ? null : (
+                      (temporaryChatExpanded && !pendingRequestUserInput) ||
+                      isCreatingWorktree ? null : (
                         <>
                           <div
                             className={cn(
@@ -5365,7 +5367,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     {t('workbench.back_to_work_item', '返回 Issue')}
                                   </button>
                                 </div>
-                              ) : !displayedRightPanelExpanded ? (
+                              ) : !displayedRightPanelExpanded || pendingRequestUserInput ? (
                                 <>
                                   {showConversationDeviceBanner ? (
                                     <ConversationDeviceOfflineBanner
@@ -5392,6 +5394,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         'implementation-plan'
                                       }
                                       payload={pendingRequestUserInput}
+                                      messages={paneMessages}
                                       onSubmit={response => {
                                         const isImplementationPlanRequest =
                                           isImplementationPlanRequestUserInput(

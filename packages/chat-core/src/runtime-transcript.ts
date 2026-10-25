@@ -40,12 +40,17 @@ export function runtimeTranscriptTurnsToConversationTurns(
     const items: RuntimeConversationItem[] = [];
     for (const item of turn.items) {
       if (!item || typeof item.id !== "string" || !item.id.trim()) continue;
+      const position =
+        typeof item.position === "number" && Number.isSafeInteger(item.position)
+          ? item.position
+          : undefined;
       switch (item.type) {
         case "user_message": {
           const message = runtimeMessageToWorkbenchMessage(item.message);
           if (message.role === "user") {
             items.push({
               id: item.id,
+              position,
               type: "user_message",
               message: { ...message, role: "user" },
             });
@@ -56,6 +61,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
           if (typeof item.content === "string") {
             items.push({
               id: item.id,
+              position,
               type: "assistant_text",
               content: stripCodexUiDirectives(item.content),
               createdAt: runtimeTimestampToIso(item.createdAt),
@@ -70,7 +76,8 @@ export function runtimeTranscriptTurnsToConversationTurns(
             0,
             fallbackTimestamp,
           );
-          if (block) items.push({ id: item.id, type: "block", block });
+          if (block)
+            items.push({ id: item.id, position, type: "block", block });
           break;
         }
       }
@@ -89,6 +96,9 @@ export function runtimeTranscriptTurnsToConversationTurns(
     return [
       {
         id: turn.id,
+        position:
+          turn.position ??
+          items.find((item) => item.position !== undefined)?.position,
         clientUserMessageId: items.find((item) => item.type === "user_message")
           ?.message.id,
         runtimeMessageIndex:
@@ -191,6 +201,8 @@ export function runtimeMessageToWorkbenchMessage(
     source,
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),
+    runtimeGuidance:
+      message.runtimeGuidance ?? message.runtime_guidance ?? undefined,
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: normalizeTurnFileChanges(
       message.fileChanges ?? message.file_changes,

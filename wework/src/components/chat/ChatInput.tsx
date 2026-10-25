@@ -179,6 +179,7 @@ export interface ChatInputProps {
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
@@ -335,6 +336,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     projectWork,
     showProjectWorkBar = true,
     showExecutionTools = true,
+    showModelSelector,
     queuedMessages = [],
     guidanceMessages = [],
     codeComments = [],
@@ -713,6 +715,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             </div>
           )}
           <ProjectChatComposer
+            composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
             pluginPickerIconOnly={pluginPickerIconOnly}
@@ -770,6 +773,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             projectPhrases={projectQuickPhrases}
             showProjectWorkBar={showProjectWorkBar}
             showExecutionTools={showExecutionTools}
+            showModelSelector={showModelSelector}
             projectWorkBarMiddleContext={projectWorkBarMiddleContext}
             projectWorkBar={projectWorkBar}
             projectWorkBarTrailingContext={projectWorkBarTrailingContext}

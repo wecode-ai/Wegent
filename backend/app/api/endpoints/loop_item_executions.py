@@ -696,7 +696,8 @@ def decide_collaboration_issue_status(
     }
 
 
-@router.post("/{project_id}/executions/statuses")
+# MIGRATION-CANDIDATE(api="POST /api/v1/cloud-projects/*/executions/statuses"): remove after final confirmation.
+# @router.post("/{project_id}/executions/statuses")
 def execution_statuses(
     project_id: int,
     values: LoopItemExecutionStatusQuery,

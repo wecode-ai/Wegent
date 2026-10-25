@@ -42,7 +42,7 @@
   {
     "id": 1,
     "name": "team",
-    "display_name": "",
+    "display_name": null,
     "is_system": true,
     "recommended_mode": "code",
     "agent_type": null

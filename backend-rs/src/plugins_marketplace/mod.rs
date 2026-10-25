@@ -25,6 +25,7 @@ pub mod components;
 pub mod db;
 mod handler;
 pub mod models;
+pub(crate) mod query;
 pub mod service;
 
 pub use service::{MarketplaceQuery, list_plugins};

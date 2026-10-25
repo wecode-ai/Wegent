@@ -160,6 +160,10 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
             "/notifications/mcp",
             post(handle_notifications_mcp).delete(delete_mcp_session),
         )
+        .route(
+            "/stand-in/mcp",
+            post(handle_stand_in_mcp).delete(delete_mcp_session),
+        )
         .with_state(state);
     let server_endpoint = endpoint.clone();
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -331,7 +335,7 @@ async fn handle_mcp(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    handle_mcp_for_surface(state, headers, request, false).await
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::ProjectSpace).await
 }
 
 async fn handle_notifications_mcp(
@@ -339,14 +343,22 @@ async fn handle_notifications_mcp(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    handle_mcp_for_surface(state, headers, request, true).await
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::Notifications).await
+}
+
+async fn handle_stand_in_mcp(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::StandIn).await
 }
 
 async fn handle_mcp_for_surface(
     state: SpaceMcpHttpState,
     headers: HeaderMap,
     request: Value,
-    notifications_only: bool,
+    expected_surface: WeworkMcpSurface,
 ) -> Response {
     if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -357,11 +369,6 @@ async fn handle_mcp_for_surface(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let (session_id, mut context) = if method == "initialize" {
-        let expected_surface = if notifications_only {
-            WeworkMcpSurface::Notifications
-        } else {
-            WeworkMcpSurface::ProjectSpace
-        };
         let Some(context) = registered_context(&state, &headers, expected_surface) else {
             return json_rpc_http_error(
                 request.get("id").cloned().unwrap_or(Value::Null),
@@ -396,6 +403,9 @@ async fn handle_mcp_for_surface(
         };
         (session_id, context)
     };
+    if context.surface() != expected_surface {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     context.set_cloud_collaboration_dispatcher(
         state
             .collaboration_dispatcher
