@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { acquireProcessLock } from './process-lock.mjs'
+import { isolatedGitEnvironment } from './git-environment.mjs'
 
 export const CODEX_SOURCE_COMMIT = 'cf4041fa09238f33cf106e3046801ed23590bae8'
 const NATIVE_TARGET = 'x86_64-pc-windows-msvc'
@@ -55,7 +56,7 @@ function run(program, args, cwd, env = process.env) {
   return new Promise((resolve, reject) => {
     const child = spawn(program, args, {
       cwd,
-      env,
+      env: program === 'git' ? isolatedGitEnvironment(env) : env,
       stdio: ['inherit', 'pipe', 'inherit'],
       shell: false,
     })
@@ -71,23 +72,27 @@ function run(program, args, cwd, env = process.env) {
   })
 }
 
-export async function configurePinnedSourceCheckout(source) {
+export async function configurePinnedSourceCheckout(source, environment = process.env) {
   for (const [key, value] of [
     ['core.longpaths', 'true'],
     ['core.autocrlf', 'false'],
     ['core.eol', 'lf'],
   ]) {
-    await run('git', ['config', '--local', key, value], source)
+    await run('git', ['config', '--local', key, value], source, environment)
   }
 }
 
 export async function windowsCodexRecipe() {
   const broker = await readFile(brokerSource)
   const recipe = await readFile(fileURLToPath(import.meta.url))
+  const gitEnvironment = await readFile(
+    join(dirname(fileURLToPath(import.meta.url)), 'git-environment.mjs')
+  )
   return createHash('sha256')
     .update(CODEX_SOURCE_COMMIT)
     .update(broker)
     .update(recipe)
+    .update(gitEnvironment)
     .digest('hex')
 }
 
@@ -168,7 +173,7 @@ export async function buildWindowsCodex(cacheRoot) {
     }
     const target = join(tmpdir(), 'wegent-codex-source-target')
     const env = {
-      ...process.env,
+      ...isolatedGitEnvironment(),
       CARGO_TARGET_DIR: target,
       CARGO_BUILD_JOBS: '2',
       CARGO_PROFILE_DEV_DEBUG: '0',

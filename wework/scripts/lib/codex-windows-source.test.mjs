@@ -57,9 +57,13 @@ test.each(['mod.rs', 'windows.rs'])('rejects changed upstream no-follow source: 
 test('pinned checkout overrides CRLF conversion and enables complete Windows paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'codex-checkout-'))
   roots.push(root)
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))
+  )
   const git = args =>
     execFileSync('git', args, {
       cwd: root,
+      env,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim()
@@ -72,7 +76,7 @@ test('pinned checkout overrides CRLF conversion and enables complete Windows pat
   await rm(file)
   git(['checkout-index', '--all', '--force'])
   expect(await readFile(file, 'utf8')).toBe(canonical.replaceAll('\n', '\r\n'))
-  await configurePinnedSourceCheckout(root)
+  await configurePinnedSourceCheckout(root, env)
   await rm(file)
   git(['checkout-index', '--all', '--force'])
   expect(await readFile(file, 'utf8')).toBe(canonical)

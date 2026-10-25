@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { rewriteGitMarker } from '../e2e/desktop/scenarios/archived-worktree-cleanup.scenario.mjs'
+import { isolatedGitEnvironment } from './lib/git-environment.mjs'
 
 test('damages and restores a real worktree Git marker without leaving trailing bytes', async t => {
   const root = await mkdtemp(join(tmpdir(), 'wework-archive-fixture-'))
@@ -13,11 +14,7 @@ test('damages and restores a real worktree Git marker without leaving trailing b
   const repository = join(root, 'repository')
   const worktree = join(root, 'worktree')
   // Hooks export repository-local Git variables; the fixture must own its repository.
-  const env = { ...process.env }
-  const localVariables = execFileSync('git', ['rev-parse', '--local-env-vars'], {
-    encoding: 'utf8',
-  })
-  for (const name of localVariables.trim().split(/\r?\n/)) delete env[name]
+  const env = isolatedGitEnvironment()
   const git = (...args) =>
     execFileSync('git', args, { encoding: 'utf8', env, stdio: 'pipe' }).trim()
   git('init', repository)
