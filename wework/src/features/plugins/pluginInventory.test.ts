@@ -376,7 +376,10 @@ describe('shared domain inventory regressions', () => {
     await loadAndSelect({
       deviceId: 'device',
       readLocalInstalledPlugins: async () => [
-        { ...dingtalk, spec: { ...dingtalk.spec, version: '1.0.0' } },
+        {
+          ...dingtalk,
+          spec: { ...dingtalk.spec, version: '1.0.0', sourcePayload: { localPresent: true } },
+        },
       ],
       listCloudInstalledPlugins: async () => [cloud],
       listCodexApps: async () => [],
@@ -409,6 +412,7 @@ describe('shared domain inventory regressions', () => {
       spec: {
         ...dingtalk.spec,
         version: '1.0.0',
+        sourcePayload: { localPresent: true },
         interface: { defaultPrompt: ['Installed template'] },
         componentStates: { 'skills:other': false },
       },
@@ -474,7 +478,9 @@ describe('shared domain inventory regressions', () => {
     }
     const apps = await loadAndSelect({
       deviceId: 'device',
-      readLocalInstalledPlugins: async () => [dingtalk],
+      readLocalInstalledPlugins: async () => [
+        { ...dingtalk, spec: { ...dingtalk.spec, sourcePayload: { localPresent: true } } },
+      ],
       listCloudInstalledPlugins: async () => [pending],
       listCodexApps: async () => [],
     })
@@ -666,7 +672,11 @@ describe('pluginInventory', () => {
     }
     const local: InstalledPlugin = {
       ...dingtalk,
-      spec: { ...dingtalk.spec, interface: { defaultPrompt: ['installed template'] } },
+      spec: {
+        ...dingtalk.spec,
+        sourcePayload: { localPresent: true },
+        interface: { defaultPrompt: ['installed template'] },
+      },
     }
     const apps = await loadAndSelect({
       deviceId: 'local-device',
