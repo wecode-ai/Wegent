@@ -71,7 +71,14 @@ impl LocalBackendConnectionController {
     }
 
     pub async fn start(config: DeviceConfig) -> Self {
-        Self::start_internal(config, None, None, Arc::new(StdMutex::new(None))).await
+        Self::start_internal(
+            config,
+            None,
+            None,
+            Arc::new(StdMutex::new(None)),
+            Arc::new(StdMutex::new(None)),
+        )
+        .await
     }
 
     pub(crate) async fn start_with_runtime(
@@ -79,12 +86,14 @@ impl LocalBackendConnectionController {
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         runtime_event_hub: ExecutorEventHub,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
+        device_route_id: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         Self::start_internal(
             config,
             Some(runtime_work_handler),
             Some(runtime_event_hub),
             connection_snapshot,
+            device_route_id,
         )
         .await
     }
@@ -94,6 +103,7 @@ impl LocalBackendConnectionController {
         runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
         runtime_event_hub: Option<ExecutorEventHub>,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
+        device_route_id: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         let initial_profile = normalized_connection(&config.connection).map(|connection| {
             LocalBackendConnectionProfile {
@@ -109,7 +119,7 @@ impl LocalBackendConnectionController {
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
-            device_route_id: Arc::new(StdMutex::new(None)),
+            device_route_id,
         };
         controller.replace_connection(initial_profile).await;
         controller
@@ -117,12 +127,6 @@ impl LocalBackendConnectionController {
 
     pub fn connection_snapshot(&self) -> Arc<StdMutex<Option<ConnectionConfig>>> {
         Arc::clone(&self.connection_snapshot)
-    }
-
-    /// Share the slot that receives the backend-assigned device route id.
-    pub fn with_device_route_id_slot(mut self, slot: Arc<StdMutex<Option<String>>>) -> Self {
-        self.device_route_id = slot;
-        self
     }
 
     async fn replace_connection(&self, profile: Option<LocalBackendConnectionProfile>) -> bool {

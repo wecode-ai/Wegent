@@ -4,6 +4,11 @@
 
 use super::*;
 use crate::config::device::UpdateConfig;
+use axum::{
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    routing::get,
+    Router,
+};
 use std::{
     ffi::OsString,
     path::PathBuf,
@@ -508,6 +513,130 @@ async fn registration_captures_backend_assigned_device_route_id() {
         .expect("registration succeeds");
 
     assert_eq!(route_slot.lock().unwrap().as_deref(), Some("app-record-42"));
+}
+
+struct RouteRegistrationRuntimeWorkHandler;
+
+impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            match data["method"].as_str() {
+                Some("runtime.runner.catalog") => Ok(json!({"models": []})),
+                Some("runtime.capacity.get") => Ok(json!({"limit": 1, "active": 0, "queued": 0})),
+                method => panic!("unexpected runtime method: {method:?}"),
+            }
+        })
+    }
+}
+
+async fn acknowledge_route_registration(mut socket: WebSocket, registered: Arc<Notify>) {
+    socket
+        .send(Message::Text(
+            r#"0{"sid":"route-test","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+    while let Some(Ok(Message::Text(packet))) = socket.next().await {
+        if packet.starts_with("40/local-executor,") {
+            socket
+                .send(Message::Text(
+                    r#"40/local-executor,{"sid":"route-test"}"#.into(),
+                ))
+                .await
+                .unwrap();
+        } else if let Some(event) = packet.strip_prefix("42/local-executor,") {
+            let (ack_id, payload) = event.split_once('[').unwrap();
+            let payload: Value = serde_json::from_str(&format!("[{payload}")).unwrap();
+            if payload[0] == "device:heartbeat" {
+                registered.notify_one();
+            }
+            if !ack_id.is_empty() {
+                let response = if payload[0] == "device:register" {
+                    json!({"success": true, "device_route_id": "app-record-42"})
+                } else {
+                    json!({"success": true, "task": null, "workspace_cleanup_intents": []})
+                };
+                socket
+                    .send(Message::Text(
+                        format!("43/local-executor,{ack_id}[{response}]").into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn initial_backend_registration_is_visible_to_app_ipc_plugin_requests() {
+    use crate::local::app_ipc::BackendConnectionHandler;
+
+    let _guard = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
+    env::set_var("WEGENT_EXECUTOR_HOME", home.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (registration, description, shutdown) = runtime.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let registered = Arc::new(Notify::new());
+        let registration_signal = registered.clone();
+        let server = tokio::spawn(async move {
+            let router = Router::new().route(
+                "/socket.io/",
+                get(move |upgrade: WebSocketUpgrade| {
+                    let registered = registration_signal.clone();
+                    async move {
+                        upgrade.on_upgrade(move |socket| {
+                            acknowledge_route_registration(socket, registered)
+                        })
+                    }
+                }),
+            );
+            axum::serve(listener, router).await.unwrap();
+        });
+        let config = DeviceConfig {
+            device_id: "local-device".to_owned(),
+            runtime_instance_id: "runtime-1".to_owned(),
+            connection: ConnectionConfig {
+                backend_url: format!("http://{address}"),
+                auth_token: "wg-token".to_owned(),
+                ..ConnectionConfig::default()
+            },
+            ..DeviceConfig::default()
+        };
+        let route_slot = Arc::new(TestMutex::new(None));
+        let (events, _) = broadcast::channel(8);
+        let controller = LocalBackendConnectionController::start_with_runtime(
+            config,
+            Arc::new(RouteRegistrationRuntimeWorkHandler),
+            ExecutorEventHub::new(events),
+            Arc::new(TestMutex::new(None)),
+            route_slot.clone(),
+        )
+        .await;
+        let ipc = AppIpcServer::new().with_device_route_id_slot(route_slot);
+
+        let registration =
+            tokio::time::timeout(Duration::from_secs(10), registered.notified()).await;
+        let description = ipc.dispatch("executor.protocol.describe", json!({})).await;
+        let shutdown = controller.configure_backend(json!({})).await;
+        server.abort();
+        let _ = server.await;
+        (registration, description, shutdown)
+    });
+    restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+
+    registration.expect("the initial backend connection must register without reconnecting");
+    shutdown.expect("the backend runner must stop");
+    assert_eq!(description.unwrap()["device_route_id"], "app-record-42");
 }
 
 #[test]

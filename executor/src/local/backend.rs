@@ -870,9 +870,9 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
         runtime_work_handler.clone(),
         event_hub.clone(),
         backend_connection_snapshot,
+        device_route_id.clone(),
     )
-    .await
-    .with_device_route_id_slot(device_route_id.clone());
+    .await;
     let server = AppIpcServer::new()
         .with_device_id(app_ipc_device_id)
         .with_runtime_instance_id(runtime_instance_id)

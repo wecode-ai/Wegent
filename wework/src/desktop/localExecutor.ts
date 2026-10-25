@@ -384,8 +384,8 @@ export function getKnownLocalExecutorDeviceId(): string | null {
   // current Runtime registration even when historical Device records share
   // this desktop's stable device id.
   return (
-    initializedLocalExecutorStatus?.deviceRouteId?.trim() ||
     availableLocalExecutorStatus?.deviceRouteId?.trim() ||
+    initializedLocalExecutorStatus?.deviceRouteId?.trim() ||
     initializedLocalExecutorStatus?.deviceId?.trim() ||
     availableLocalExecutorStatus?.deviceId?.trim() ||
     null
@@ -395,8 +395,8 @@ export function getKnownLocalExecutorDeviceId(): string | null {
 /** Backend-assigned record route id of the current Runtime, once registered. */
 export function getKnownLocalExecutorDeviceRouteId(): string | null {
   return (
-    initializedLocalExecutorStatus?.deviceRouteId?.trim() ||
     availableLocalExecutorStatus?.deviceRouteId?.trim() ||
+    initializedLocalExecutorStatus?.deviceRouteId?.trim() ||
     null
   )
 }

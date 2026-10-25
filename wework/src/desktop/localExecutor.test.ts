@@ -25,6 +25,7 @@ import {
   getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
   getKnownLocalExecutorDeviceId,
+  getKnownLocalExecutorDeviceRouteId,
   getLocalExecutorStatus,
   readLocalExecutorLog,
   requestLocalExecutor,
@@ -201,6 +202,41 @@ describe('localExecutor', () => {
         ([method]) => method === 'runtime.codex.ensure_started'
       )
     ).toHaveLength(2)
+  })
+
+  test('uses the refreshed plugin route for the same Runtime without restarting Codex', async () => {
+    const description = {
+      protocol_version: 1,
+      device_id: 'electron-device',
+      runtime_instance_id: 'electron-runtime',
+      version: '1.8.6',
+      capabilities: ['executor.plugins'],
+      renderer_methods: ['runtime.*'],
+      transports: ['local-endpoint-ndjson'],
+    }
+    describeDshExecutorMock.mockResolvedValue({
+      ...description,
+      device_route_id: 'app-record-70',
+    })
+    await ensureLocalExecutorStarted()
+    expect(getKnownLocalExecutorDeviceRouteId()).toBe('app-record-70')
+
+    describeDshExecutorMock.mockResolvedValue({
+      ...description,
+      device_route_id: ' app-record-71 ',
+    })
+    const refreshed = await ensureLocalExecutorAvailable({ refresh: true })
+
+    expect(refreshed.deviceId).toBe('electron-device')
+    expect(refreshed.runtimeInstanceId).toBe('electron-runtime')
+    expect(getKnownLocalExecutorDeviceRouteId()).toBe('app-record-71')
+    expect(getKnownLocalExecutorDeviceId()).toBe('app-record-71')
+    await ensureLocalExecutorStarted()
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.ensure_started'
+      )
+    ).toHaveLength(1)
   })
 
   test('rejects a fresh sidebar status check when a cached executor is no longer reachable', async () => {
