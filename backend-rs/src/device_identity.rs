@@ -67,6 +67,21 @@ struct CloudConfig {
 }
 
 impl DeviceKindRow {
+    /// `remote_control_is_enabled`: unknown explicit types never gain controls.
+    pub(crate) fn remote_control_enabled(&self) -> bool {
+        match self
+            .json
+            .get("spec")
+            .and_then(|spec| spec.get("deviceType"))
+        {
+            None => true,
+            Some(serde_json::Value::String(kind)) => {
+                matches!(kind.as_str(), "local" | "cloud" | "remote")
+            }
+            Some(_) => false,
+        }
+    }
+
     /// `device.json.get("spec", {})` parsed into the typed projection.
     fn spec(&self) -> DeviceSpec {
         self.json
@@ -300,7 +315,7 @@ where
 }
 
 /// Source `app/services/device/runtime_route.py::_identity_from_device`.
-fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> {
+pub(crate) fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRouteIdentity> {
     let runtime_device_id = runtime_device_id(device);
     // `if not runtime_device_id: return None`.
     if runtime_device_id.is_empty() {
@@ -810,6 +825,8 @@ mod tests {
         };
         let identity = identity_from_device(&row).expect("cloud identity");
         assert_eq!(identity.logical_device_id, "8afb8635");
+        assert_eq!(identity.runtime_device_id, "8afb8635");
+        assert_eq!(identity.runtime_instance_id, None);
         assert_eq!(identity.device_type, DeviceType::Cloud);
         assert_eq!(identity.device_type.value(), "cloud");
 
@@ -821,6 +838,7 @@ mod tests {
         };
         let identity = identity_from_device(&app).expect("app identity");
         assert_eq!(identity.logical_device_id, "app-record-268663");
+        assert_eq!(identity.runtime_device_id, "app-record-268663");
         assert_eq!(identity.device_type, DeviceType::App);
 
         // No runtime route id means no identity, like `_identity_from_device`.

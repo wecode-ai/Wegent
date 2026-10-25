@@ -144,6 +144,7 @@ import {
   sendRuntimeQueuedMessage,
 } from '@/features/workbench/runtimeQueuedMessageSender'
 import { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
+import { useRuntimeConversationSearch } from './useRuntimeConversationSearch'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -221,6 +222,7 @@ export function useWorkbenchPaneSession({
     state: workbenchState,
     projectChat,
     loadRuntimeTranscriptForPane,
+    searchRuntimeTranscriptForPane,
     getRuntimeGoal,
     setRuntimeGoal,
     clearRuntimeGoal,
@@ -996,6 +998,13 @@ export function useWorkbenchPaneSession({
     },
     [runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
   )
+
+  const conversationSearch = useRuntimeConversationSearch({
+    target: runtimeTaskLoadTarget,
+    targetRef: runtimeTaskLoadTargetRef,
+    searchTranscript: searchRuntimeTranscriptForPane,
+    loadTranscript: loadRuntimeTranscriptForPane,
+  })
 
   const getRuntimeModelFields = useCallback(
     (modelOptionsOverride?: ModelOptions) => {
@@ -2786,6 +2795,11 @@ export function useWorkbenchPaneSession({
     loadFullTranscriptForExport,
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
+    searchTranscript: runtimeTaskLoadTarget ? conversationSearch.search : undefined,
+    ensureSearchMatch: runtimeTaskLoadTarget ? conversationSearch.ensureMatch : undefined,
+    searchPage: conversationSearch.page,
+    loadSearchContext: conversationSearch.loadMoreContext,
+    releaseSearchPage: conversationSearch.releasePage,
     send,
     sendContinuation,
     retryFailedMessage: retryFailedMessageInPane,

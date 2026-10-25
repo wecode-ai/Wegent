@@ -239,6 +239,7 @@ async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
 
 #[tokio::test]
 async fn terminating_shared_app_servers_releases_every_registered_process() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut child = spawn_idle_app_server_child();
     let stdin = child.stdin.take().expect("the child should expose stdin");
     let state = shared_codex_app_server_state("codex-app-server-termination-test");

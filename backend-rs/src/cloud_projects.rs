@@ -44,6 +44,23 @@ mod environment_authorization;
 /// reads shared by the project projections.
 pub(crate) mod members;
 
+/// Resolve a point read with the same CP grants as the project catalog.
+pub(crate) async fn authorized_project<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    user_id: i32,
+) -> Result<Option<(ProjectListRow, &'static str)>, brz_mysql::MysqlError> {
+    Ok(
+        collaboration_access::authorized_projects(mysql, user_id, Some(project_id), None)
+            .await?
+            .into_iter()
+            .next()
+            .and_then(|access| {
+                role_for_priority(access.priority).map(|role| (access.project, role))
+            }),
+    )
+}
+
 pub(crate) use access::{
     LOOP_ITEMS_COLUMNS, WORKSPACE_ID_COLUMN, entity_columns, project_access_point_statement,
     role_for_priority,

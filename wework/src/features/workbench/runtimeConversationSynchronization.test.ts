@@ -292,3 +292,58 @@ test('reading a child thread cannot replace or invalidate its parent task conver
     content: 'Parent continues',
   })
 })
+
+test('isolated search pages use canonical projection without adopting or overwriting live history', async () => {
+  await synchronizeRuntimeConversation(
+    async () => ({ ...response('Live parent'), threadId: 'parent' }),
+    { ...address, threadId: 'parent' }
+  )
+  const read = vi.fn(async () => ({ ...response('Historical match'), threadId: 'historical' }))
+  const historical = await synchronizeRuntimeConversation(
+    read,
+    { ...address, threadId: 'historical' },
+    { isolated: true, beforeCursor: 'search-cursor', limit: 5 }
+  )
+  expect(read).toHaveBeenCalledExactlyOnceWith({
+    ...address,
+    threadId: 'historical',
+    beforeCursor: 'search-cursor',
+    limit: 5,
+  })
+  expect(historical.turns[0].items[0]).toMatchObject({ content: 'Historical match' })
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({ content: 'Live parent' })
+  applyRuntimeConversationAction(address, {
+    type: 'assistant_chunk',
+    subtaskId: 'turn',
+    itemId: 'text',
+    content: ' continues',
+  })
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({
+    content: 'Live parent continues',
+  })
+})
+
+test('isolated context paging neither queues behind nor supersedes a concurrent live snapshot', async () => {
+  const pending = deferred<RuntimeTranscriptResponse>()
+  const liveRead = vi.fn(() => pending.promise)
+  const live = synchronizeRuntimeConversation(liveRead, { ...address, threadId: 'parent' })
+  await vi.waitFor(() => expect(liveRead).toHaveBeenCalledTimes(1))
+  const searchRead = vi.fn(async () => ({ ...response('Search context'), threadId: 'historical' }))
+  const context = await synchronizeRuntimeConversation(
+    searchRead,
+    { ...address, threadId: 'historical' },
+    { isolated: true, afterCursor: 'context-cursor', limit: 5 }
+  )
+  expect(searchRead).toHaveBeenCalledExactlyOnceWith({
+    ...address,
+    threadId: 'historical',
+    afterCursor: 'context-cursor',
+    limit: 5,
+  })
+  expect(context.turns[0].items[0]).toMatchObject({ content: 'Search context' })
+  pending.resolve({ ...response('Current live snapshot'), threadId: 'parent' })
+  await live
+  expect(getRuntimeConversationTurns(address)[0].items[0]).toMatchObject({
+    content: 'Current live snapshot',
+  })
+})

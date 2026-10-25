@@ -187,6 +187,104 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         },
         uiTimeoutMs
       )
+
+      // Each connected identity owns one execution for the same real assignment.
+      let personal = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: user.id },
+        uiTimeoutMs
+      )
+      const template = personal.roles[0]
+      const roleIds = ['fanout-review', 'fanout-docs']
+      personal = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.save',
+        {
+          userId: user.id,
+          settings: {
+            ...personal,
+            roles: [
+              ...personal.roles,
+              ...roleIds.map(id => ({
+                ...template,
+                id,
+                name: id,
+                enabled: true,
+                prompt: `${MARKER} ${id}`,
+                version: 0,
+                collaboration: { ...template.collaboration, tags: ['fanout'] },
+              })),
+            ],
+          },
+        },
+        uiTimeoutMs
+      )
+      const fanout = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
+        title: `${MARKER} independent stand-ins`,
+        assignee_user_id: user.id,
+        tags: ['fanout'],
+      })
+      await refreshInbox(control)
+      const fanoutBindings = await until(
+        () => request(`/v1/loop-items/${fanout.id}/tasks`),
+        rows => {
+          assert.ok(rows.length <= roleIds.length, 'One identity created duplicate executions')
+          return rows.length === roleIds.length
+        },
+        'Every matching stand-in must bind its own task'
+      )
+      assert.equal(new Set(fanoutBindings.map(row => row.task_id)).size, roleIds.length)
+      assert.equal(new Set(fanoutBindings.map(row => row.human_assignment_id)).size, 1)
+      const owners = []
+      for (const binding of fanoutBindings) {
+        assert.equal(binding.device_id, deviceId)
+        await until(
+          () =>
+            requestExecutor(control, 'runtime.tasks.get', { taskId: binding.task_id }, uiTimeoutMs),
+          result => {
+            assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
+            return result.task?.status === 'done'
+          },
+          'An independently dispatched stand-in did not complete'
+        )
+        const transcript = await requestExecutor(
+          control,
+          'runtime.tasks.transcript',
+          { taskId: binding.task_id, limit: 1 },
+          uiTimeoutMs
+        )
+        owners.push(transcript.origin.standInId)
+      }
+      assert.deepEqual(owners.sort(), [...roleIds].sort())
+      await until(
+        () => countAssignments(fanout),
+        count => count > 0,
+        'Fan-out validation was not logged'
+      )
+      assert.equal(await countAssignments(fanout), 1, 'Fan-out must share assignment validation')
+      assert.equal(
+        modelRequests,
+        3,
+        'Each eligible identity must execute once without AI role selection'
+      )
+      await refreshInbox(control)
+      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      assert.equal(await countAssignments(fanout), 1)
+      assert.equal(modelRequests, 3, 'Inbox refresh must not replay either identity')
+      assert.deepEqual(await request(`/v1/loop-items/${fanout.id}/tasks`), fanoutBindings)
+      await requestExecutor(
+        control,
+        'runtime.stand_in.personal.save',
+        {
+          userId: user.id,
+          settings: {
+            ...personal,
+            roles: personal.roles.map(role => ({ ...role, enabled: false })),
+          },
+        },
+        uiTimeoutMs
+      )
     },
     diagnostics() {
       return {

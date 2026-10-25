@@ -34,18 +34,20 @@ mod task_lookup_tests;
 
 #[path = "task_rename_tests.rs"]
 mod task_rename_tests;
+#[path = "transcript_turn_status_tests.rs"]
+mod transcript_turn_status_tests;
 
 #[path = "transcript_status_tests.rs"]
 mod transcript_status_tests;
 
 /// Restores one environment variable when a test finishes.
-struct ScalarEnv {
+pub(super) struct ScalarEnv {
     key: &'static str,
     previous: Option<String>,
 }
 
 impl ScalarEnv {
-    fn set(key: &'static str, value: &str) -> Self {
+    pub(super) fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
         Self { key, previous }

@@ -85,6 +85,50 @@ pub(crate) async fn load_codex_transcript(
     if !thread.is_object() {
         return Err("thread/read returned a non-object thread".to_owned());
     }
+    if let Some(cursor) = request
+        .cursor
+        .map(super::codex_legacy_search::parse_legacy_context_cursor)
+        .transpose()?
+        .flatten()
+    {
+        return super::codex_legacy_search::load_legacy_context_page(
+            thread,
+            cursor,
+            request.direction,
+            request.limit,
+        )
+        .await;
+    }
+    if let Some(cursor) = request
+        .cursor
+        .map(super::codex_transcript_search::parse_context_cursor)
+        .transpose()?
+        .flatten()
+    {
+        return super::codex_transcript_search::load_context_page(
+            client,
+            thread,
+            cursor,
+            request.direction,
+        )
+        .await;
+    }
+    if let Some(cursor) = request
+        .cursor
+        .map(super::codex_legacy_search::parse_legacy_search_cursor)
+        .transpose()?
+        .flatten()
+    {
+        return super::codex_legacy_search::load_legacy_search_match(thread, cursor).await;
+    }
+    if let Some(cursor) = request
+        .cursor
+        .map(super::codex_transcript_search::parse_search_cursor)
+        .transpose()?
+        .flatten()
+    {
+        return super::codex_transcript_search::load_search_match(client, thread, cursor).await;
+    }
     if request.prefer_rollout_history {
         if let Some(page) = load_rollout_transcript_page(&thread, &request).await? {
             return Ok(page);
@@ -601,7 +645,7 @@ fn codex_turn_history_is_pending(error: &str) -> bool {
         .contains("list_turns is not supported yet")
 }
 
-fn thread_uses_paginated_history(thread: &Value) -> bool {
+pub(super) fn thread_uses_paginated_history(thread: &Value) -> bool {
     string_field(thread, "historyMode").as_deref() == Some("paginated")
 }
 

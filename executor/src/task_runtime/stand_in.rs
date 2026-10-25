@@ -43,13 +43,7 @@ impl LocalTaskStore {
             .and_then(|projects| projects.iter().find(|project| project["id"] == project_id))
             .and_then(|project| project["store"].as_str())
             .unwrap_or("local");
-        Ok(project_role(
-            &role,
-            user_id,
-            project_id,
-            kind,
-            personal["autoSelect"] == true,
-        ))
+        Ok(project_role(&role, user_id, project_id, kind))
     }
 
     pub fn save_stand_in_settings(
@@ -127,13 +121,7 @@ impl LocalTaskStore {
         personal["version"] = json!(personal["version"].as_i64().unwrap_or(0) + 1);
         write_personal(&connection, &personal)?;
         connection.commit()?;
-        Ok(project_role(
-            &value,
-            user_id,
-            project_id,
-            &kind,
-            personal["autoSelect"] == true,
-        ))
+        Ok(project_role(&value, user_id, project_id, &kind))
     }
 }
 

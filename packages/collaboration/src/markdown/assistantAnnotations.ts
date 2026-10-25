@@ -53,6 +53,40 @@ const literalTypes = new Set([
 const candidatePattern =
   /:+[a-zA-Z][\w-]*(?:\{|\[)|【[^\n†】]+†L|\uE200(?:cite|filecite|filenav)(?:\uE202|$)/g
 
+export function stripUnsupportedContentReferenceCitations(content: string): string {
+  return projectUnsupportedContentReferenceCitations(content).content
+}
+
+/** Retain original offsets while excluding opaque markers or all non-prose annotations. */
+export function projectUnsupportedContentReferenceCitations(content: string, proseOnly = false) {
+  const hasAnnotations = proseOnly
+    ? /codex-file-citation|codex-followup|†L|\uE200/.test(content)
+    : content.includes('\uE200')
+  const spans =
+    hasAnnotations
+      ? collectAssistantAnnotations(content, undefined, true).filter(span =>
+          span.annotation.kind === 'hidden'
+            ? content[span.start] === '\uE200'
+            : proseOnly
+        )
+      : []
+  let cursor = 0
+  let text = ''
+  const sources: Array<{ start: number; end: number; sourceStart: number; sourceEnd: number }> = []
+  const append = (end: number) => {
+    if (end <= cursor) return
+    const start = text.length
+    text += content.slice(cursor, end)
+    sources.push({ start, end: text.length, sourceStart: cursor, sourceEnd: end })
+  }
+  for (const span of spans) {
+    append(span.start)
+    cursor = span.end
+  }
+  append(content.length)
+  return { content: text, sources }
+}
+
 export function collectAssistantAnnotations(
   source: string,
   tree: Root = markdownParser.parse(source),
@@ -233,6 +267,8 @@ function positiveInteger(value: string | undefined): number | undefined {
 }
 
 function citationPath(value: string | undefined): string | undefined {
+  // Reject control characters in file paths deliberately.
+  // eslint-disable-next-line no-control-regex
   if (!value?.trim() || /[\u0000-\u001f\u007f]/.test(value)) return undefined
   let path = value.trim()
   if (/^file:\/\//i.test(path)) {

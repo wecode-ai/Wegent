@@ -297,10 +297,10 @@ export function runtimeConversationMessageHasStartedTurn(
 export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): symbol {
   const key = runtimeConversationKey(address)
   const existing = hydrationByConversation.get(key)
-  if (existing) return existing.token
   cancelTerminalConversationEviction(key)
+  // A closing reader must not cancel a newer reader's hydration.
   const token = Symbol(key)
-  hydrationByConversation.set(key, { token, bufferedActions: [] })
+  hydrationByConversation.set(key, { token, bufferedActions: existing?.bufferedActions ?? [] })
   return token
 }
 

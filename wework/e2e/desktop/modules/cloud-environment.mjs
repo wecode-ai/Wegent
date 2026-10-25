@@ -533,6 +533,7 @@ class RealCloudEnvironment {
           '127.0.0.1',
           '--port',
           '0',
+          // Match start-hybrid-backend.sh: the gateway must not reuse expired upstream sockets.
           '--timeout-keep-alive',
           '2400',
         ],
