@@ -4,7 +4,7 @@ sidebar_position: 61
 
 # Wework stand-in connection plugins
 
-Connections are capabilities of outer Wework Core DSH plugins. The Codex plugin protocol remains unchanged. A connection plugin can depend on an existing Codex plugin or implement its own external access. Collection, pagination and normalization use deterministic code; models handle work interpretation, ownership and execution.
+Connections are capabilities of outer Wework Core DSH plugins. The Codex plugin protocol remains unchanged. A connection plugin can depend on an existing Codex plugin or implement its own external access. Collection, pagination and normalization use deterministic code; models organize and process work within each role.
 
 ## Manifest and registration
 
@@ -126,9 +126,9 @@ Executor owns the single background collection scheduler. Providers run in the W
 
 Collection requires the connection runtime on the bound device. If it is unavailable, preserve progress and report the condition; do not fall back to the removed DingTalk collector or transfer collection silently.
 
-Sources are shared by user, provider, account and resource. Settings versions are checked after collection. Events are persisted before advancing the page checkpoint; interrupted pages replay and deduplicate. External calls and database writes are not a distributed exactly-once transaction.
+Sources are collected once per user, provider, account and resource. Each event reaches every connected role whose enable-time cutoff admits it. Deduplication, quoted-message threading and work grouping are role-local; no model selects recipient roles. Settings versions are checked after collection. Events are persisted before advancing the page checkpoint; interrupted pages replay and deduplicate. External calls and database writes are not a distributed exactly-once transaction.
 
-Existing ownership, organization, execution queues and approval flows remain authoritative. New work uses `connection_work`; historical `dingtalk_work` retains the same external-source restrictions and confirmation rules. Provider identity also separates deduplication and memory scopes. Temporary failures retain progress and retry with backoff without opening login automatically.
+Existing work organization, execution queues and approval flows remain authoritative. New work uses `connection_work`; historical `dingtalk_work` retains the same external-source restrictions and confirmation rules. Provider identity also separates deduplication and memory scopes. Temporary failures retain progress and retry with backoff without opening login automatically.
 
 ## DingTalk migration
 
@@ -147,3 +147,5 @@ Node tests cover protocol and dependency resolution, DingTalk collection contrac
 Bridge coverage includes SDK dependency isolation and legacy read contracts, Executor discovery pagination and ownership, dependency changes, deadline/error cleanup and cleanup after caller cancellation. Tests live in `connection-runtime/mcp.test.mjs`, `runtime_work/connection_mcp_tests.rs` and `agents/codex/connection_mcp.rs`. The CI-registered `stand-in-mcp` desktop checkpoint uses the actual host and Executor to verify cross-dependency rejection and catalog recovery.
 
 Generic CLI tests also cover operation/argument boundaries, exact installed roots, original login identity, network failures, group/direct filtering and checkpoint retention on failure. The CI-registered `stand-in-cli` desktop checkpoint verifies the real directory declaration, rejects writes/injection, and checks removal of the old dedicated endpoint. Desktop execution remains opt-in under repository policy.
+
+The `stand-in-plugin-bridge` checkpoint uses a real local Codex plugin and MCP server to verify dependency installation, discovery and reads, write rejection, active-dependency uninstall protection and uninstall after disabling the adapter. It asserts zero model requests. The original Codex plugin needs no Wework interface.

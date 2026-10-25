@@ -22,7 +22,6 @@ function fixture() {
     userId: 7,
     executionDeviceId: 'mac',
     version: 1,
-    autoSelect: false,
     roles: [newStandInRole('mac', 'default')],
   }
   const project = {

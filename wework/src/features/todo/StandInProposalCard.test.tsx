@@ -18,7 +18,6 @@ function fixture() {
     userId: 7,
     executionDeviceId: 'mac',
     version: 3,
-    autoSelect: false,
     roles: [],
     primary: {
       enabled: true,

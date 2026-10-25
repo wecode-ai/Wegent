@@ -85,6 +85,18 @@ window.__ModuleLoader__.load({
         'Voice input'
       )
       const close = ctx.wework.localization.translate({ en: 'Close', 'zh-CN': '关闭' }, 'Close')
+      const modelHelp = [
+        {
+          en: 'INT8 · Smaller download and lower memory use through 8-bit quantization. A good starting point for everyday dictation; recognition accuracy may be affected.',
+          'zh-CN':
+            'INT8 · 轻量版：用 8 位量化缩小模型，下载和内存占用更少。日常语音输入可先选它，识别准确率可能受量化影响。',
+        },
+        {
+          en: 'FP32 · Full 32-bit precision, with a larger download and higher memory use. If INT8 makes frequent errors, try FP32 and compare with the same recording.',
+          'zh-CN':
+            'FP32 · 完整精度版：保留 32 位浮点精度，下载和内存占用更大。如果 INT8 经常识别出错，可试用 FP32，用同一段录音对比效果。',
+        },
+      ].map(copy => ctx.wework.localization.translate(copy, copy.en))
       return function VoiceSettings(props) {
         const [open, setOpen] = useState(false)
         useEffect(() => {
@@ -93,12 +105,25 @@ window.__ModuleLoader__.load({
           window.addEventListener(OPEN_SETTINGS, show)
           return () => window.removeEventListener(OPEN_SETTINGS, show)
         }, [])
+        const preparation = h(
+          'div',
+          { className: 'space-y-3' },
+          h(OfficialPreparation, props),
+          h(
+            'div',
+            {
+              'data-testid': 'voice-input-model-help',
+              className: 'space-y-1 text-sm text-muted-foreground',
+            },
+            ...modelHelp.map((text, index) => h('p', { key: index }, text))
+          )
+        )
         if (!overlay)
           return h(
             'section',
             { 'data-testid': 'voice-input-settings', className: 'space-y-4' },
             h('h2', { className: 'heading-small' }, title),
-            h(OfficialPreparation, props)
+            preparation
           )
         if (!open) return null
         return h(
@@ -119,7 +144,7 @@ window.__ModuleLoader__.load({
             {
               'data-testid': 'voice-input-setup',
             },
-            h(OfficialPreparation, props)
+            preparation
           )
         )
       }

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type ComponentProps } from 'react'
+import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { Brain, MessageSquare, Plus, Settings } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { StandInIcon } from '@wegent/collaboration'
@@ -13,7 +13,7 @@ import { standInOrigin, standInState } from '@/features/notifications/standInNot
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePersonalStandIn } from './usePersonalStandIn'
-import { StandInSettingsPage } from './StandInSettingsPage'
+import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInConversation } from './StandInConversation'
 import { StandInWorkList } from './StandInWorkList'
 import { standInWorkRole } from './standInWork'
@@ -45,6 +45,8 @@ export function StandInOverviewPage({
   const [proposal, setProposal] = useState<StandInProposal | null>(null)
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
+  const panelRef = useRef<StandInSettingsHandle>(null)
+  const pressedInPanel = useRef(false)
   const { saved, setDraft, reload } = state
   const deviceId = saved?.executionDeviceId
   const api = props.services.standInApi
@@ -375,7 +377,18 @@ export function StandInOverviewPage({
         )}
         {profile &&
           createPortal(
-            <div className="fixed inset-0 z-modal bg-black/20 text-text-primary">
+            <div
+              className="fixed inset-0 z-modal bg-black/20 text-text-primary"
+              data-testid="stand-in-profile-backdrop"
+              onMouseDown={event => {
+                pressedInPanel.current = event.target !== event.currentTarget
+              }}
+              onClick={event => {
+                if (event.target === event.currentTarget && !pressedInPanel.current)
+                  panelRef.current?.requestClose()
+                pressedInPanel.current = false
+              }}
+            >
               <aside
                 role="dialog"
                 aria-modal="true"
@@ -391,13 +404,20 @@ export function StandInOverviewPage({
               >
                 {profile === 'memory' && api && saved ? (
                   <StandInMemoryPanel
+                    ref={panelRef}
                     key={saved.executionDeviceId}
                     api={api}
                     settings={saved}
+                    projects={props.projects.filter(
+                      project =>
+                        project.project_store !== 'local' ||
+                        saved.executionDeviceId === state.currentDeviceId
+                    )}
                     onClose={() => setProfile(null)}
                   />
                 ) : profile === 'primary' && state.draft ? (
                   <StandInPrimaryProfile
+                    ref={panelRef}
                     key={state.draft.executionDeviceId}
                     settings={state.draft}
                     saving={state.saving || state.loading}
@@ -422,6 +442,7 @@ export function StandInOverviewPage({
                 ) : (
                   <StandInSettingsPage
                     {...props}
+                    ref={panelRef}
                     initialProfileId={roleId}
                     initialCreate={profile === 'create'}
                     onDeleted={() => {

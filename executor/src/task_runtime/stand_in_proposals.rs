@@ -55,7 +55,6 @@ impl LocalTaskStore {
                 })
             };
             if previous["primary"] != settings["primary"]
-                || previous["autoSelect"] != settings["autoSelect"]
                 || other_roles(&previous) != other_roles(&settings)
             {
                 return Err(TaskRuntimeError::Invalid(

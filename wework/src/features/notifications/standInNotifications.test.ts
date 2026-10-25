@@ -86,6 +86,25 @@ describe('stand-in notification projection', () => {
     }
   })
 
+  it('keeps every stand-in execution visible when they share one assignment', () => {
+    const other = {
+      ...runtimeItem,
+      key: 'device\0other-task',
+      address: { deviceId: 'device', taskId: 'other-task' },
+      task: { ...runtimeItem.task, taskId: 'other-task', running: false, status: 'done' },
+    }
+    const result = mergeStandInNotifications([assignment], [runtimeItem, other])
+    expect(result).toHaveLength(2)
+    expect(result[0].id).toBe(assignment.id)
+    expect(result[0].runtimeItem?.address).toEqual(runtimeItem.address)
+    expect(result[0].payload.standIn?.status).toBe('running')
+    expect(result[1].synthetic).toBe(true)
+    expect(result[1].runtimeItem?.address).toEqual(other.address)
+    expect(result[1].payload.standIn?.status).toBe('completed')
+    expect(new Set(result.map(item => item.id)).size).toBe(2)
+    expect(mergeStandInNotifications([], [runtimeItem, other])).toHaveLength(2)
+  })
+
   it('exposes local stand-ins without a cloud inbox and ignores ordinary tasks', () => {
     const local = {
       ...runtimeItem,

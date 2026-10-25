@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { X } from 'lucide-react'
 import { dequal } from 'dequal'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
@@ -11,6 +11,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 export function StandInPrimaryProfile({
   settings,
@@ -18,6 +20,7 @@ export function StandInPrimaryProfile({
   error,
   onSave,
   onClose,
+  ref,
   api,
   localDeviceId,
   projects,
@@ -30,6 +33,7 @@ export function StandInPrimaryProfile({
   error: string | null
   onSave(settings: PersonalStandInSettings): Promise<void>
   onClose(): void
+  ref?: Ref<StandInSettingsHandle>
   api?: StandInExecutorApi
   localDeviceId: string
   projects: CollaborationProject[]
@@ -79,18 +83,13 @@ export function StandInPrimaryProfile({
     if (dirty) setDiscard(true)
     else onClose()
   }
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  useImperativeHandle(ref, () => ({ requestClose: close }))
   return (
     <div
       ref={dialogRef}
       className="flex min-h-full flex-col px-5"
       data-testid="stand-in-primary-profile"
-      onKeyDown={event => {
-        if (event.key === 'Escape') {
-          event.stopPropagation()
-          close()
-        }
-      }}
     >
       <header className="sticky top-0 z-10 mb-5 flex items-center gap-3 border-b border-border bg-background py-4">
         <h2 className="heading-sm flex-1">{t('standIn.workspace.primary_profile')}</h2>
@@ -208,29 +207,18 @@ export function StandInPrimaryProfile({
           {error}
         </p>
       )}
-      {discard && (
-        <div role="alert" className="mt-4 rounded-lg border border-border p-3">
-          <p className="text-sm">{t('standIn.personal.discard_help')}</p>
-          <div className="mt-3 flex gap-3">
-            <button
-              type="button"
-              data-testid="stand-in-primary-keep-editing"
-              onClick={() => setDiscard(false)}
-              className="min-h-8 text-sm underline"
-            >
-              {t('standIn.workspace.keep_editing')}
-            </button>
-            <button
-              type="button"
-              data-testid="stand-in-primary-discard"
-              onClick={onClose}
-              className="min-h-8 text-sm underline"
-            >
-              {t('standIn.workspace.discard')}
-            </button>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={discard}
+        destructive
+        title={t('standIn.personal.discard_help')}
+        description={t('standIn.personal.discard_description')}
+        cancelLabel={t('standIn.personal.keep_editing')}
+        confirmLabel={t('standIn.personal.discard')}
+        confirmTestId="stand-in-primary-discard"
+        cancelTestId="stand-in-primary-keep-editing"
+        onClose={() => setDiscard(false)}
+        onConfirm={onClose}
+      />
       <footer className="sticky bottom-0 z-10 mt-6 flex justify-end gap-2 border-t border-border bg-background py-4">
         <button
           type="button"
