@@ -153,7 +153,7 @@ async function seedHistory(cloud, taskId, nativeTaskId) {
   delete nativeTask.runtime_handle?.completedTranscriptThreadId
   await writeFile(indexPath, `${JSON.stringify(index)}\n`)
   await cloud.restartCloudExecutor()
-  return cachedTask
+  return { cachedTask, legacyThreadId: task.thread_id, nativeThreadId: nativeTask.thread_id }
 }
 
 async function waitForPane(control, predicate, description, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
@@ -238,13 +238,17 @@ export function createCloudHistorySearchVerification() {
         taskId = created.taskId
         assert.ok(taskId)
         const address = { deviceId: created.deviceId, taskId, workspacePath: created.workspacePath }
-        const task = await cloud.waitForRuntimeTask(address)
+        await cloud.waitForRuntimeTask(address)
         const nativeCreated = await createTask('Project-bound native history search')
         assert.equal(nativeCreated.accepted, true)
         nativeTaskId = nativeCreated.taskId
-        const nativeTask = await cloud.waitForRuntimeTask({ ...address, taskId: nativeTaskId })
-        const nativeAddress = { ...address, taskId: nativeTaskId, threadId: nativeTask.threadId }
-        const cachedTask = await seedHistory(cloud, taskId, nativeTaskId)
+        await cloud.waitForRuntimeTask({ ...address, taskId: nativeTaskId })
+        const { cachedTask, legacyThreadId, nativeThreadId } = await seedHistory(
+          cloud,
+          taskId,
+          nativeTaskId
+        )
+        const nativeAddress = { ...address, taskId: nativeTaskId, threadId: nativeThreadId }
         cachedTaskId = cachedTask.local_task_id
 
         await request('/api/admin/setup-complete', {})
@@ -266,7 +270,7 @@ export function createCloudHistorySearchVerification() {
         await request(`/api/v1/loop-items/${issue.id}/tasks`, {
           ...address,
           taskTitle: 'Project-bound cloud history search',
-          executionContext: { runtime: 'codex', workspacePath, threadId: task.threadId },
+          executionContext: { runtime: 'codex', workspacePath, threadId: legacyThreadId },
         })
         const bindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
         assert.equal(bindings.length, 1)
@@ -490,7 +494,7 @@ export function createCloudHistorySearchVerification() {
         await request(`/api/v1/loop-items/${issue.id}/tasks`, {
           ...nativeAddress,
           taskTitle: 'Project-bound native history search',
-          executionContext: { runtime: 'codex', workspacePath, threadId: nativeTask.threadId },
+          executionContext: { runtime: 'codex', workspacePath, threadId: nativeThreadId },
         })
         const nativeBinding = (await request(`/api/v1/loop-items/${issue.id}/tasks`)).find(
           binding => binding.task_id === nativeTaskId
