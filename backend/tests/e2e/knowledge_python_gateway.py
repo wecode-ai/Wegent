@@ -22,11 +22,13 @@ import secrets
 import sys
 import unittest
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from PIL import Image
 from redis import Redis
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -83,6 +85,15 @@ class KnowledgePythonGateway(unittest.TestCase):
         ]
         cls.db.add_all(cls.users)
         cls.db.commit()
+        # SQL NULL and JSON null decode differently in Rust; cover the former.
+        assert (
+            cls.db.query(User)
+            .filter(
+                User.id.in_([user.id for user in cls.users]),
+                User.git_info.is_(None),
+            )
+            .count()
+        ) == len(cls.users), "fixture must preserve SQL NULL Git configuration"
         cls.headers = []
         cls.api_headers = []
         for user in cls.users:
@@ -227,6 +238,28 @@ class KnowledgePythonGateway(unittest.TestCase):
         result = response.json()
         self.assertNotIn("error", result)
         return json.loads(result["result"]["content"][0]["text"])
+
+    def test_attachment_upload_without_git_configuration(self) -> None:
+        # Image uploads also reload the nullable owner row after processing.
+        image = BytesIO()
+        Image.new("RGB", (1, 1), "white").save(image, format="PNG")
+        upload = self.client.post(
+            "/api/attachments/upload",
+            headers=self.headers[0],
+            files={"file": ("nullable-owner.png", image.getvalue(), "image/png")},
+        )
+        self.assertEqual(upload.status_code, 200)
+        attachment_id = int(upload.json()["id"])
+        try:
+            download = self.get(f"/api/attachments/{attachment_id}/download")
+            self.assertEqual(download.status_code, 200)
+            self.assertTrue(download.content)
+        finally:
+            self.db.query(SubtaskContext).filter(
+                SubtaskContext.id == attachment_id,
+                SubtaskContext.user_id == self.users[0].id,
+            ).delete(synchronize_session=False)
+            self.db.commit()
 
     def test_protection_and_private_cache(self) -> None:
         path = f"/api/knowledge-bases/{self.kbs[0].id}/document-protection"
