@@ -336,7 +336,6 @@ export function useConversationFind(
   }, [matches, props.messages, props.searchMessages, publishedSnapshot.request])
   const candidateTarget = useMemo(() => {
     if (
-      queryPending ||
       publishedSnapshot.request !== completedRequest ||
       selected.index !== index ||
       !resolvedMatch ||
@@ -346,7 +345,6 @@ export function useConversationFind(
       return null
     return { query: publishedSnapshot.request.query, ...resolvedMatch, matchCounts }
   }, [
-    queryPending,
     completedRequest,
     resolvedMatch,
     currentHydration,

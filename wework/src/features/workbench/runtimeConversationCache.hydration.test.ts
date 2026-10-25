@@ -76,9 +76,8 @@ describe('runtime conversation hydration settlement', () => {
     }
   )
 
-  test('checks buffered completion without publishing or consuming the pending events', () => {
+  test('checks hydration settlement without changing live turns or republishing actions', () => {
     const token = beginRuntimeConversationHydration(address)
-    const committedTurns = getRuntimeConversationTurns(address)
     const listener = vi.fn()
     const unsubscribe = subscribeRuntimeConversation(address, listener)
     bufferFollowUp()
@@ -89,6 +88,14 @@ describe('runtime conversation hydration settlement', () => {
       itemId: 'new-answer',
       content: 'Completed answer',
     })
+
+    expect(listener.mock.calls.map(([action]) => action?.type)).toEqual([
+      'user_added',
+      'assistant_started',
+      'assistant_done',
+    ])
+    const committedTurns = getRuntimeConversationTurns(address)
+    listener.mockClear()
 
     expect(runtimeConversationSnapshotSettlesLatestTurn(address, [])).toBe(false)
     expect(
@@ -106,6 +113,7 @@ describe('runtime conversation hydration settlement', () => {
       { role: 'assistant', status: 'done', content: 'Completed answer' },
     ])
     expect(getRuntimeConversationTurns(address)).toHaveLength(1)
+    expect(listener.mock.calls.map(([action]) => action?.type)).toEqual([undefined])
     unsubscribe()
   })
 })

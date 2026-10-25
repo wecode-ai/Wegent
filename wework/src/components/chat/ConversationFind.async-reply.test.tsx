@@ -110,38 +110,49 @@ describe('persisted async question replies', () => {
   })
 
   test.each([
-    { query: 'first-only', count: 1 },
-    { query: 'second-only', count: 1 },
-    { query: 'needle', count: 3 },
-  ])('keeps grouped question occurrences aligned with visible $query', ({ query, count }) => {
-    const questions = ['first-only needle?', 'second-only needle?']
-    const messages = projectedReply(questions, 'yes needle\nno')
-    const { container } = renderReply(messages, 'reply')
-    expect(conversationSearchRanges(container, query, 250).map(range => range.toString())).toEqual(
-      Array(count).fill(query)
-    )
-    for (let occurrence = 0; occurrence < count; occurrence += 1) {
+    { query: 'first-only', count: 1, ranges: [{ start: 0, end: 10 }] },
+    { query: 'second-only', count: 1, ranges: [{ start: 30, end: 41 }] },
+    {
+      query: 'needle',
+      count: 3,
+      ranges: [
+        { start: 11, end: 17 },
+        { start: 23, end: 29 },
+        { start: 42, end: 48 },
+      ],
+    },
+  ])(
+    'keeps grouped question occurrences aligned with visible $query',
+    ({ query, count, ranges }) => {
+      const questions = ['first-only needle?', 'second-only needle?']
+      const messages = projectedReply(questions, 'yes needle\nno')
+      const { container } = renderReply(messages, 'reply')
+      expect(
+        conversationSearchRanges(container, query, 250).map(range => range.toString())
+      ).toEqual(Array(count).fill(query))
+      for (let occurrence = 0; occurrence < count; occurrence += 1) {
+        expect(
+          resolveConversationMatch(
+            { messageId: 'reply', replyQuestions: questions, occurrence, cursor: 'cached-reply' },
+            messages,
+            query
+          )
+        ).toEqual({ messageId: 'reply', occurrence, regionId: 'reply', range: ranges[occurrence] })
+      }
       expect(
         resolveConversationMatch(
-          { messageId: 'reply', replyQuestions: questions, occurrence, cursor: 'cached-reply' },
+          {
+            messageId: 'reply',
+            replyQuestions: questions,
+            occurrence: count,
+            cursor: 'cached-reply',
+          },
           messages,
           query
         )
-      ).toEqual({ messageId: 'reply', occurrence })
+      ).toBeNull()
     }
-    expect(
-      resolveConversationMatch(
-        {
-          messageId: 'reply',
-          replyQuestions: questions,
-          occurrence: count,
-          cursor: 'cached-reply',
-        },
-        messages,
-        query
-      )
-    ).toBeNull()
-  })
+  )
 
   test('indexes the visible implementation label instead of the hidden plan body', () => {
     const messages = projectedReply([], 'PLEASE IMPLEMENT THIS PLAN: hidden-needle')
@@ -150,6 +161,8 @@ describe('persisted async question replies', () => {
     expect(resolveConversationMatch(target, messages, '是的，执行此计划')).toEqual({
       messageId: 'reply',
       occurrence: 0,
+      regionId: 'reply',
+      range: { start: 0, end: 8 },
     })
     const { container } = renderReply(messages, 'reply')
     expect(conversationSearchRanges(container, 'hidden-needle', 250)).toHaveLength(0)
@@ -177,6 +190,8 @@ describe('persisted async question replies', () => {
     expect(resolveConversationMatch(target, messages, 'comment-question-only')).toEqual({
       messageId: 'reply',
       occurrence: 0,
+      regionId: 'reply',
+      range: { start: 0, end: 21 },
     })
     const { container } = renderReply(messages, 'reply')
     expect(conversationSearchRanges(container, 'commentNumber', 250)).toHaveLength(0)
@@ -333,18 +348,29 @@ describe('persisted async question replies', () => {
     expect(resolve('Initial', [questionMessage('Initial question')])).toEqual({
       messageId: reply.id,
       occurrence: 0,
+      regionId: reply.id,
+      range: { start: 0, end: 7 },
     })
     expect(resolve('Initial', [questionMessage('Updated question')])).toBeNull()
     expect(resolve('Updated', [questionMessage('Updated question')])).toEqual({
       messageId: reply.id,
       occurrence: 0,
+      regionId: reply.id,
+      range: { start: 0, end: 7 },
     })
     expect(resolve('**answer**', [questionMessage('Updated question')])).toEqual({
       messageId: reply.id,
       occurrence: 0,
+      regionId: reply.id,
+      range: { start: 17, end: 27 },
     })
     expect(resolve('**answer**', [])).toBeNull()
-    expect(resolve('answer', [])).toEqual({ messageId: reply.id, occurrence: 0 })
+    expect(resolve('answer', [])).toEqual({
+      messageId: reply.id,
+      occurrence: 0,
+      regionId: reply.id,
+      range: { start: 0, end: 6 },
+    })
   })
 
   test('does not borrow questions from another reading window', () => {
