@@ -46,6 +46,7 @@ export function StandInOverviewPage({
   const [proposalError, setProposalError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
+  const pressedInPanel = useRef(false)
   const { saved, setDraft, reload } = state
   const deviceId = saved?.executionDeviceId
   const api = props.services.standInApi
@@ -379,8 +380,13 @@ export function StandInOverviewPage({
             <div
               className="fixed inset-0 z-modal bg-black/20 text-text-primary"
               data-testid="stand-in-profile-backdrop"
+              onMouseDown={event => {
+                pressedInPanel.current = event.target !== event.currentTarget
+              }}
               onClick={event => {
-                if (event.target === event.currentTarget) panelRef.current?.requestClose()
+                if (event.target === event.currentTarget && !pressedInPanel.current)
+                  panelRef.current?.requestClose()
+                pressedInPanel.current = false
               }}
             >
               <aside

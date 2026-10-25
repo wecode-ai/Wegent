@@ -132,35 +132,69 @@ impl RuntimeWorkRpcHandler {
         roles: &[Value],
         state: &Value,
     ) -> Result<Value, AppIpcError> {
-        let (messages, next) = super::super::dingtalk::source_page(source, state).await?;
-        let mut failure = None;
-        for message in messages {
-            let at = message_time(&message["at"])?;
-            for role in roles.iter().filter(|role| {
-                dingtalk_connection(role, source).is_some_and(|source| {
-                    source["enabledAfter"]
-                        .as_str()
-                        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-                        .is_some_and(|enabled| at >= enabled.timestamp_millis())
-                })
-            }) {
-                if let Err(error) = self
-                    .collect_dingtalk_message(store, user, role, source, &message)
-                    .await
-                {
-                    log_executor_event(
-                        "DingTalk message collection failed",
-                        &[
-                            ("role_id", role["id"].to_string()),
-                            ("message_id", message["id"].to_string()),
-                            ("error", error.message.clone()),
-                        ],
-                    );
-                    failure.get_or_insert(error);
-                }
+        let page = super::super::dingtalk::source_page(source, state).await?;
+        self.collect_dingtalk_page(store, user, source, roles, state, page)
+            .await
+    }
+
+    async fn collect_dingtalk_page(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        source: &Value,
+        roles: &[Value],
+        state: &Value,
+        page: (Vec<Value>, Value),
+    ) -> Result<Value, AppIpcError> {
+        let (messages, mut next) = page;
+        let mut pending = Vec::new();
+        for retry in state["pending"].as_array().into_iter().flatten() {
+            if roles.iter().any(|role| role["id"] == retry["roleId"]) {
+                pending.push(retry.clone());
             }
         }
-        failure.map_or(Ok(next), Err)
+        for message in messages {
+            for role in roles {
+                pending.push(json!({"roleId":role["id"],"message":message}));
+            }
+        }
+        let mut retries = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for mut retry in pending {
+            if !seen.insert(json!([retry["roleId"], retry["message"]["id"]]).to_string()) {
+                continue;
+            }
+            let role = roles
+                .iter()
+                .find(|role| role["id"] == retry["roleId"])
+                .unwrap();
+            let at = message_time(&retry["message"]["at"])?;
+            if !dingtalk_connection(role, source).is_some_and(|connection| {
+                connection["enabledAfter"]
+                    .as_str()
+                    .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+                    .is_some_and(|enabled| at >= enabled.timestamp_millis())
+            }) {
+                continue;
+            }
+            if let Err(error) = self
+                .collect_dingtalk_message(store, user, role, source, &retry["message"])
+                .await
+            {
+                log_executor_event(
+                    "DingTalk message collection failed",
+                    &[
+                        ("role_id", role["id"].to_string()),
+                        ("message_id", retry["message"]["id"].to_string()),
+                        ("error", error.message.clone()),
+                    ],
+                );
+                retry["error"] = json!({"code":error.code,"message":error.message});
+                retries.push(retry);
+            }
+        }
+        next["pending"] = json!(retries);
+        Ok(next)
     }
 
     async fn collect_dingtalk_message(
@@ -307,6 +341,111 @@ fn message_time(value: &Value) -> Result<i64, AppIpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_role_retries_do_not_stop_shared_pagination_or_other_roles() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let source = json!({"id":"group","kind":"group","profile":"account","enabledAfter":"2026-01-01T00:00:00Z"});
+        let roles = ["broken", "good"]
+            .map(|id| json!({"id":id,"enabled":true,"dingtalk":[source.clone()]}));
+        store
+            .ingest_stand_in_message(
+                7,
+                "broken",
+                &source,
+                &json!({"id":"seed","text":"Old work","topicId":"old"}),
+                None,
+            )
+            .unwrap();
+        let first =
+            json!({"id":"first","text":"New work","topicId":"new","at":"2026-10-25T00:00:00Z"});
+        let next = handler
+            .collect_dingtalk_page(
+                &store,
+                7,
+                &source,
+                &roles,
+                &Value::Null,
+                (vec![first.clone()], json!({"cursor":"page2"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(next["cursor"], "page2");
+        assert_eq!(next["pending"].as_array().unwrap().len(), 1);
+        assert_eq!(next["pending"][0]["roleId"], "broken");
+        store.save_stand_in_source(7, &source, &next).unwrap();
+        let state = store.stand_in_source(7, &source).unwrap();
+        let second =
+            json!({"id":"second","text":"Next page","topicId":"new","at":"2026-10-25T00:01:00Z"});
+        let next = handler
+            .collect_dingtalk_page(
+                &store,
+                7,
+                &source,
+                &roles,
+                &state,
+                (vec![second], json!({"cursor":"page3"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(next["cursor"], "page3");
+        assert_eq!(next["pending"].as_array().unwrap().len(), 2);
+        let good = store.list_stand_in_work(7, Some("good")).unwrap();
+        assert_eq!(good.len(), 1);
+        assert_eq!(good[0]["messageCount"], 2);
+        let mut reconnected = roles.clone();
+        reconnected[0]["dingtalk"][0]["enabledAfter"] = json!("2026-10-26T00:00:00Z");
+        let reset = handler
+            .collect_dingtalk_page(
+                &store,
+                7,
+                &source,
+                &reconnected,
+                &next,
+                (vec![], json!({"cursor":"page4"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reset["pending"], json!([]));
+        assert!(store
+            .known_stand_in_message(7, "broken", &source, "first")
+            .unwrap()
+            .is_none());
+        store
+            .ingest_stand_in_message(
+                7,
+                "broken",
+                &source,
+                &json!({"id":"repair","text":"Group repaired","topicId":"new"}),
+                None,
+            )
+            .unwrap();
+        let recovered = handler
+            .collect_dingtalk_page(
+                &store,
+                7,
+                &source,
+                &roles,
+                &next,
+                (vec![], json!({"cursor":"page4"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(recovered["pending"], json!([]));
+        for id in ["first", "second"] {
+            assert!(store
+                .known_stand_in_message(7, "broken", &source, id)
+                .unwrap()
+                .is_some());
+        }
+        assert_eq!(
+            store.list_stand_in_work(7, Some("good")).unwrap()[0]["messageCount"],
+            2
+        );
+    }
 
     #[tokio::test]
     async fn each_connected_role_keeps_its_own_messages_and_reply_thread() {

@@ -216,6 +216,21 @@ it.each(['primary', 'role', 'memory'] as const)(
   }
 )
 
+it('keeps the drawer open when a text selection ends outside it', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await screen.findByTestId('stand-in-overview-role-default')
+  await user.click(screen.getByTestId('stand-in-settings-open'))
+  fireEvent.mouseDown(await screen.findByTestId('stand-in-primary-profile'))
+  const backdrop = screen.getByTestId('stand-in-profile-backdrop')
+  fireEvent.mouseUp(backdrop)
+  fireEvent.click(backdrop)
+  expect(screen.getByTestId('stand-in-profile-panel')).toBeInTheDocument()
+  await user.click(backdrop)
+  expect(screen.queryByTestId('stand-in-profile-panel')).not.toBeInTheDocument()
+})
+
 it.each(['primary', 'role', 'create', 'memory'] as const)(
   'uses a modal to protect unsaved %s drawer changes on outside clicks',
   async panel => {

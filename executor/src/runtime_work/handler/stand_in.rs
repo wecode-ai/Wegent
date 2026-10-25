@@ -194,6 +194,25 @@ impl RuntimeWorkRpcHandler {
                 "Choose an Issue assigned to yourself in this project",
             ));
         }
+        if payload["standInId"].as_str().is_none() {
+            config = self
+                .stand_in_project_configs(
+                    &[store
+                        .personal_stand_in(user, &self.device_id)
+                        .map_err(settings_error)?],
+                    &project,
+                    if local { "local" } else { "cloud" },
+                )
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "stand_in_unavailable",
+                        "Connect a stand-in to this project first",
+                    )
+                })?;
+            config["manual"] = json!(true);
+        }
         let human_id = if local {
             let history = issue["metadata"]["assignment_history"]
                 .as_array()
@@ -344,6 +363,13 @@ impl RuntimeWorkRpcHandler {
             let bindings = store
                 .list_task_bindings(&issue.id)
                 .map_err(settings_error)?;
+            let previous = format!(
+                "stand-in-{}",
+                binding["humanAssignmentId"].as_str().unwrap()
+            );
+            if bindings.iter().any(|row| row.task_id == previous) {
+                continue;
+            }
             for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
                 let task_id = self.stand_in_task_id(config, &binding);
@@ -450,6 +476,15 @@ impl RuntimeWorkRpcHandler {
                 None,
             )
             .await?;
+        let previous = format!(
+            "stand-in-{}",
+            binding["humanAssignmentId"].as_str().unwrap()
+        );
+        if existing.as_array().into_iter().flatten().any(|row| {
+            row["human_assignment_id"] == binding["humanAssignmentId"] && row["task_id"] == previous
+        }) {
+            return Ok(());
+        }
         let mut failure = None;
         for config in eligible {
             let result = self

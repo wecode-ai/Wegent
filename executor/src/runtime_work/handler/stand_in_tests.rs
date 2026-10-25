@@ -2,6 +2,95 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[tokio::test]
+async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Manual identity"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Work","assignee_user_id":7})).unwrap(),
+        )
+        .unwrap();
+    let payload =
+        json!({"projectId":project.id,"issueId":issue.id,"userId":7,"projectStore":"local"});
+    assert_eq!(
+        handler
+            .run_stand_in(payload.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "stand_in_unavailable"
+    );
+    store.save_stand_in_settings(&project.id, 7, json!({"id":"review","projectStore":"local","executionDeviceId":"mac","version":0,"enabled":true,"prompt":"Review carefully"})).unwrap();
+    let task_id = format!("stand-in-{}-1-review", issue.id);
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task_id.clone(),
+        status: "done".into(),
+        ..RuntimeTaskLink::default()
+    });
+    assert_eq!(
+        handler.run_stand_in(payload).await.unwrap()["taskId"],
+        task_id
+    );
+}
+
+#[tokio::test]
+async fn prior_assignment_binding_blocks_new_local_role_executions() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Existing assignment"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Work","assignee_user_id":7})).unwrap(),
+        )
+        .unwrap();
+    let human = format!("{}-1", issue.id);
+    store.bind_task(&project.id, Some(&issue.id), None, serde_json::from_value(json!({"deviceId":"other","taskId":format!("stand-in-{human}"),"humanAssignmentId":human})).unwrap(), None).unwrap();
+    let configs = ["review","docs"].map(|id| json!({"id":id,"userId":7,"projectId":project.id,"projectStore":"local","enabledAfter":"2000-01-01T00:00:00Z"}));
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert_eq!(store.list_task_bindings(&issue.id).unwrap().len(), 1);
+    assert!(handler.local_task_links(true).is_empty());
+}
+
+#[tokio::test]
+async fn prior_assignment_binding_blocks_new_cloud_role_executions() {
+    let router = Router::new()
+        .route("/api/v1/loop-items/issue/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-25T00:00:00Z"}]})) }))
+        .route("/api/v1/loop-items/issue/tasks", get(|| async { Json(json!([{"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human"}])) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let configs = ["review","docs"].map(|id| json!({"id":id,"userId":7,"projectId":"project","projectStore":"cloud","enabledAfter":"2000-01-01T00:00:00Z"}));
+    let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
+    handler
+        .start_cloud_stand_in_with_roles(&configs, &issue)
+        .await
+        .unwrap();
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
 #[test]
 fn assignment_tasks_are_owned_by_each_role_and_reuse_existing_execution_identity() {
     let root = tempfile::tempdir().unwrap();
