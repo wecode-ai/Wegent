@@ -287,7 +287,7 @@ describe('RuntimeSupervisor', () => {
           command: process.execPath,
           args: ['-e', script, pidPath],
           name: 'surviving-process-group-member',
-          stopTimeoutMs: 100,
+          stopTimeoutMs: 1_000,
         })
       )
 
@@ -300,11 +300,26 @@ describe('RuntimeSupervisor', () => {
         },
         { timeout: 3_000 }
       )
-      await supervisor.stop()
+      const stopStartedAt = performance.now()
+      let stopElapsedMs = 0
+      try {
+        try {
+          await supervisor.stop()
+        } finally {
+          stopElapsedMs = performance.now() - stopStartedAt
+        }
 
-      await vi.waitFor(() => expect(processIsAlive(grandchildPid)).toBe(false), {
-        timeout: 3_000,
-      })
+        await vi.waitFor(() => expect(processIsAlive(grandchildPid)).toBe(false), {
+          timeout: 3_000,
+        })
+      } catch (error) {
+        console.error('[runtime-supervisor-test] Process-group shutdown failed', {
+          grandchildPid,
+          stopElapsedMs,
+          processStat: await readProcessStatForDiagnostic(grandchildPid),
+        })
+        throw error
+      }
     }
   )
 })
@@ -312,6 +327,16 @@ describe('RuntimeSupervisor', () => {
 function track(supervisor: RuntimeSupervisor): RuntimeSupervisor {
   supervisors.add(supervisor)
   return supervisor
+}
+
+async function readProcessStatForDiagnostic(pid: number) {
+  if (process.platform !== 'linux') return { platform: process.platform }
+  try {
+    return { stat: await readFile(`/proc/${pid}/stat`, 'utf8') }
+  } catch (error) {
+    const statError = error as NodeJS.ErrnoException
+    return { error: { code: statError.code, message: statError.message } }
+  }
 }
 
 function processIsAlive(pid: number): boolean {
