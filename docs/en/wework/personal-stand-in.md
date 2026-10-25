@@ -24,6 +24,8 @@ Choose manual delegation, approval before operations, or automatic handling inde
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
+Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible when switching the stand-in execution device; local projects are selectable in the connection picker only when executing on the current device.
+
 ## Work associations and approvals
 
 Follow-up messages concerning the same concrete matter can join existing work. Uncertain associations wait for review. Expand related messages in the preview to split a message into separate work or move it to another item within the same role. Moving a completed message does not execute it again.

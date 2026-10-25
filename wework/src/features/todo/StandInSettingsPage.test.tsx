@@ -63,6 +63,37 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('keeps project names visible on another device without offering local projects to connect', async () => {
+    const role = newStandInRole('remote', 'review')
+    role.collaboration = {
+      ...role.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [
+        { id: 'one', store: 'local' },
+        { id: 'one', store: 'cloud' },
+      ],
+    }
+    const { props } = fixture({ executionDeviceId: 'remote', roles: [role] })
+    props.projects.push({
+      id: 'one',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    expect(screen.getByTestId('stand-in-connection-project-local-one')).toHaveTextContent(
+      'First project'
+    )
+    expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
+      'Cloud project'
+    )
+    await user.click(screen.getByTestId('stand-in-connection-project-local-one'))
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+  })
+
   it('returns the created role to its parent after the first save', async () => {
     const { props, personalSave } = fixture({ roles: [] })
     const user = userSetup()

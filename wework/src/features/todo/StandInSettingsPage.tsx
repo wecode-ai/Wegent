@@ -701,7 +701,7 @@ export function StandInSettingsPage({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   role={role}
-                  projects={availableProjects}
+                  projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
                   onChange={changeRole}
