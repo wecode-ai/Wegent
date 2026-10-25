@@ -465,6 +465,7 @@ jobs:
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
       WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
+      WEWORK_CODEX_PROFILE: ci
 
     steps:
       - name: Checkout code

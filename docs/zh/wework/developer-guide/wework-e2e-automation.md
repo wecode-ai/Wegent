@@ -254,6 +254,11 @@ ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存
 无法帮助复现问题的 Chromium 临时缓存。PNG 等已压缩文件上传时禁用二次压缩，避免
 诊断归档延长流水线尾部。
 
+Windows E2E 构建设置 `WEWORK_CODEX_PROFILE=ci`，为固定版本 Codex 和原生权限测试
+关闭编译优化与调试符号，保留 release 的条件编译和安全检查。构建配置参与产物校验标识，
+CI 与优化后的 release 产物不能混用；普通打包默认仍使用优化后的 release。五项原生
+权限回归和完整 Windows E2E 均在实际使用的配置下执行，任务和交互时限保持原值。
+
 CI 在安装、启动和后续 Cargo 调用中统一设置 `SCCACHE_IDLE_TIMEOUT=0`。
 sccache 0.16 默认在十分钟没有新请求后关闭服务，即使已有编译仍在执行；
 随后只等待十秒就退出，可能中断 Windows 上的大型 Rust 编译并返回连接重置。

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import {
   CODEX_SOURCE_COMMIT,
   configurePinnedSourceCheckout,
@@ -12,11 +12,13 @@ import {
   transferWindowsCodex,
   windowsCodexRecipe,
   verifyWorkspaceVersionRefresh,
+  verifyWindowsCodexCompilerProfile,
   CODEX_SOURCE_VERSION,
 } from './codex-windows-source.mjs'
 
 const roots = []
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -111,7 +113,8 @@ test('pinned checkout overrides CRLF conversion and enables complete Windows pat
   expect(git(['config', '--get', 'core.longpaths'])).toBe('true')
 })
 
-test('same-run artifact preserves both executable identities and the pinned recipe', async () => {
+test.each(['release', 'ci'])('%s artifact preserves both executable identities', async profile => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', profile)
   const item = await fixture()
   await transferWindowsCodex('stage', item.cache, item.bundle)
   const restored = join(item.root, 'restored')
@@ -120,6 +123,52 @@ test('same-run artifact preserves both executable identities and the pinned reci
   expect(await readFile(join(build, 'codex.exe'))).toEqual(item.binary)
   expect(await readFile(join(build, 'permissions.exe'))).toEqual(item.tests)
 })
+
+test('rejects an artifact built with a different optimization profile', async () => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', 'release')
+  const item = await fixture()
+  await transferWindowsCodex('stage', item.cache, item.bundle)
+  vi.stubEnv('WEWORK_CODEX_PROFILE', 'ci')
+  const restored = join(item.root, 'restored')
+  await expect(transferWindowsCodex('restore', restored, item.bundle)).rejects.toThrow(
+    'integrity mismatch'
+  )
+})
+
+test('rejects an unsupported Windows Codex build profile', async () => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', 'unsupported')
+  await expect(windowsCodexRecipe()).rejects.toThrow('Unsupported Windows Codex profile')
+})
+
+test('packaging defaults to the release profile', async () => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', '')
+  expect(await windowsCodexRecipe()).toBe(await windowsCodexRecipe('release'))
+  expect(await windowsCodexRecipe()).not.toBe(await windowsCodexRecipe('ci'))
+})
+
+test.each([
+  ['release', '3'],
+  ['ci', '0'],
+])('%s compiler output retains release conditions', (profile, optLevel) => {
+  expect(() =>
+    verifyWindowsCodexCompilerProfile(
+      { opt_level: optLevel, debug_assertions: false, overflow_checks: false },
+      profile
+    )
+  ).not.toThrow()
+})
+
+test.each([{ debug_assertions: true }, { overflow_checks: true }, { opt_level: '3' }])(
+  'rejects a CI compiler configuration mismatch: %j',
+  override => {
+    expect(() =>
+      verifyWindowsCodexCompilerProfile(
+        { opt_level: '0', debug_assertions: false, overflow_checks: false, ...override },
+        'ci'
+      )
+    ).toThrow('compilation profile mismatch')
+  }
+)
 
 test.each(['codex.exe', 'permissions.exe'])(
   'rejects a modified %s before restoring artifacts',

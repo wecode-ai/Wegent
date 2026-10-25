@@ -309,6 +309,14 @@ that cannot help reproduce a failure. Uploads disable redundant compression for
 PNG and other already-compressed evidence so artifact archiving does not extend
 the pipeline tail.
 
+Windows E2E builds set `WEWORK_CODEX_PROFILE=ci` to compile the pinned Codex and
+native permission tests without optimization or debug symbols, retaining release
+conditional compilation and security checks. The build profile participates in
+artifact identity, so CI and optimized release bundles cannot be mixed. Normal
+packaging still defaults to optimized release. All five native permission
+regressions and the full Windows E2E run against the selected build; job and
+interaction time limits retain their existing values.
+
 CI sets `SCCACHE_IDLE_TIMEOUT=0` during installation, daemon startup, and subsequent
 Cargo invocations. In sccache 0.16, ten minutes without a new request triggers
 shutdown even while a compile is running; the daemon then waits only ten seconds

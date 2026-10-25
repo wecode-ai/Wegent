@@ -10,6 +10,7 @@ import { isolatedGitEnvironment } from './git-environment.mjs'
 export const CODEX_SOURCE_COMMIT = 'cf4041fa09238f33cf106e3046801ed23590bae8'
 export const CODEX_SOURCE_VERSION = '0.163.0-alpha.5'
 const NATIVE_TARGET = 'x86_64-pc-windows-msvc'
+const PROFILE_OPT_LEVELS = { release: '3', ci: '0' }
 const brokerSource = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../third_party/codex/windows-read-broker.rs'
@@ -106,7 +107,45 @@ export async function configurePinnedSourceCheckout(source, environment = proces
   }
 }
 
-export async function windowsCodexRecipe() {
+function windowsCodexProfile(value = process.env.WEWORK_CODEX_PROFILE) {
+  const profile = value?.trim() || 'release'
+  if (Object.hasOwn(PROFILE_OPT_LEVELS, profile)) return profile
+  throw new Error(`Unsupported Windows Codex profile: ${profile}`)
+}
+
+export function verifyWindowsCodexCompilerProfile(actual, profile) {
+  if (
+    actual.opt_level !== PROFILE_OPT_LEVELS[windowsCodexProfile(profile)] ||
+    actual.debug_assertions !== false ||
+    actual.overflow_checks !== false
+  ) {
+    throw new Error('Windows Codex compilation profile mismatch')
+  }
+}
+
+function compilerArtifact(output, name, test) {
+  const artifact = output
+    .split('\n')
+    .flatMap(line => {
+      try {
+        return [JSON.parse(line)]
+      } catch {
+        return []
+      }
+    })
+    .find(
+      artifact =>
+        artifact.reason === 'compiler-artifact' &&
+        artifact.target.name === name &&
+        artifact.profile.test === test &&
+        artifact.executable
+    )
+  if (!artifact) throw new Error(`Missing native Codex compiler artifact: ${name}`)
+  return artifact
+}
+
+export async function windowsCodexRecipe(profile) {
+  const buildProfile = windowsCodexProfile(profile)
   const broker = await readFile(brokerSource)
   const recipe = await readFile(fileURLToPath(import.meta.url))
   const gitEnvironment = await readFile(
@@ -114,6 +153,7 @@ export async function windowsCodexRecipe() {
   )
   return createHash('sha256')
     .update(CODEX_SOURCE_COMMIT)
+    .update(buildProfile)
     .update(broker)
     .update(recipe)
     .update(gitEnvironment)
@@ -164,7 +204,8 @@ export async function transferWindowsCodex(mode, cacheRoot, bundle) {
 }
 
 export async function buildWindowsCodex(cacheRoot) {
-  const key = await windowsCodexRecipe()
+  const profile = windowsCodexProfile()
+  const key = await windowsCodexRecipe(profile)
   const root = join(cacheRoot, 'windows-source', key)
   const binary = join(root, 'codex.exe')
   await mkdir(root, { recursive: true })
@@ -201,6 +242,10 @@ export async function buildWindowsCodex(cacheRoot) {
       CARGO_TARGET_DIR: target,
       CARGO_BUILD_JOBS: '2',
       CARGO_PROFILE_RELEASE_DEBUG: '0',
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: PROFILE_OPT_LEVELS[profile],
+      // Preserve release-only security guards in the unoptimized CI build.
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'false',
+      CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'false',
       CARGO_PROFILE_RELEASE_LTO: 'false',
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16',
     }
@@ -231,26 +276,11 @@ export async function buildWindowsCodex(cacheRoot) {
       rust,
       env
     )
-    const testBinary = artifacts
-      .split('\n')
-      .flatMap(line => {
-        try {
-          return [JSON.parse(line)]
-        } catch {
-          return []
-        }
-      })
-      .find(
-        artifact =>
-          artifact.reason === 'compiler-artifact' &&
-          artifact.target.name === 'codex_exec_server' &&
-          artifact.profile.test &&
-          artifact.executable
-      )?.executable
-    if (!testBinary) throw new Error('Missing native Codex permission test binary')
-    await cp(testBinary, join(root, 'permissions.exe'))
+    const testArtifact = compilerArtifact(artifacts, 'codex_exec_server', true)
+    verifyWindowsCodexCompilerProfile(testArtifact.profile, profile)
+    await cp(testArtifact.executable, join(root, 'permissions.exe'))
     await testBroker(root)
-    await run(
+    const cliArtifacts = await run(
       'cargo',
       [
         'build',
@@ -262,9 +292,14 @@ export async function buildWindowsCodex(cacheRoot) {
         'codex-cli',
         '--bin',
         'codex',
+        '--message-format=json',
       ],
       rust,
       env
+    )
+    verifyWindowsCodexCompilerProfile(
+      compilerArtifact(cliArtifacts, 'codex', false).profile,
+      profile
     )
     await cp(join(target, NATIVE_TARGET, 'release/codex.exe'), `${binary}.partial`)
     await rename(`${binary}.partial`, binary)
