@@ -16,6 +16,8 @@ After you send a local image, Wework keeps its preview in the message. The image
 
 Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
 
+Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
+
 Stop recording to transcribe. The recognized text is inserted at the position captured when recording started, ready to review, edit, and send. Cancelling leaves the draft unchanged. If you edit the draft during recording, the transcript is retained; select **Insert text** to insert it at the current cursor position.
 
 Voice input reuses the official DSH plugin. Once downloaded, the default local recognition model transcribes on the device.
