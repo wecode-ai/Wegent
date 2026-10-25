@@ -122,17 +122,11 @@ fn local_mcp_token() -> &'static str {
 
 pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint, String> {
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
     let _guard = SPACE_MCP_START_LOCK.lock().await;
     if let Some(endpoint) = active_endpoint() {
-        if endpoint_is_reachable(&endpoint).await {
-            return Ok(endpoint);
-        }
-        discard_endpoint(&endpoint);
+        return Ok(endpoint);
     }
 
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
@@ -163,6 +157,10 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .route(
             "/notifications/mcp",
             post(handle_notifications_mcp).delete(delete_mcp_session),
+        )
+        .route(
+            "/stand-in/mcp",
+            post(handle_stand_in_mcp).delete(delete_mcp_session),
         )
         .with_state(state);
     let server_endpoint = endpoint.clone();
@@ -228,35 +226,6 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         &[("url", endpoint.url.clone())],
     );
     Ok(endpoint)
-}
-
-async fn endpoint_is_reachable(endpoint: &SpaceMcpEndpoint) -> bool {
-    let health_url = endpoint.url.trim_end_matches("/mcp").to_owned() + "/health";
-    reqwest::Client::new()
-        .get(health_url)
-        .bearer_auth(&endpoint.token)
-        .timeout(std::time::Duration::from_secs(1))
-        .send()
-        .await
-        .is_ok_and(|response| response.status().is_success())
-}
-
-fn discard_endpoint(endpoint: &SpaceMcpEndpoint) {
-    let discarded = if let Ok(mut running) = running_endpoint().lock() {
-        if running
-            .as_ref()
-            .is_some_and(|value| value.endpoint.url == endpoint.url)
-        {
-            running.take()
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    if let Some(discarded) = discarded {
-        discarded.stop();
-    }
 }
 
 fn active_endpoint() -> Option<SpaceMcpEndpoint> {
@@ -364,7 +333,7 @@ async fn handle_mcp(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    handle_mcp_for_surface(state, headers, request, false).await
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::ProjectSpace).await
 }
 
 async fn handle_notifications_mcp(
@@ -372,14 +341,22 @@ async fn handle_notifications_mcp(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    handle_mcp_for_surface(state, headers, request, true).await
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::Notifications).await
+}
+
+async fn handle_stand_in_mcp(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::StandIn).await
 }
 
 async fn handle_mcp_for_surface(
     state: SpaceMcpHttpState,
     headers: HeaderMap,
     request: Value,
-    notifications_only: bool,
+    expected_surface: WeworkMcpSurface,
 ) -> Response {
     if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -390,11 +367,6 @@ async fn handle_mcp_for_surface(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let (session_id, mut context) = if method == "initialize" {
-        let expected_surface = if notifications_only {
-            WeworkMcpSurface::Notifications
-        } else {
-            WeworkMcpSurface::ProjectSpace
-        };
         let Some(context) = registered_context(&state, &headers, expected_surface) else {
             return json_rpc_http_error(
                 request.get("id").cloned().unwrap_or(Value::Null),
@@ -429,6 +401,9 @@ async fn handle_mcp_for_surface(
         };
         (session_id, context)
     };
+    if context.surface() != expected_surface {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     context.set_cloud_collaboration_dispatcher(
         state
             .collaboration_dispatcher
@@ -603,8 +578,15 @@ mod tests {
 
     #[tokio::test]
     async fn persistent_endpoint_authenticates_and_reuses_one_mcp_session() {
+        use futures_util::FutureExt;
+
         let endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
-        let same_endpoint = ensure_space_mcp_http_endpoint().await.unwrap();
+        // Reusing an owned live server must not depend on a timed HTTP probe:
+        // discarding it on timeout invalidates concurrent turns and MCP contexts.
+        let same_endpoint = ensure_space_mcp_http_endpoint()
+            .now_or_never()
+            .expect("Reusing a live MCP endpoint must not wait for network scheduling")
+            .unwrap();
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
         let active = space_mcp_http_endpoint().unwrap();

@@ -434,6 +434,7 @@ jobs:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     needs:
       [
+        build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
@@ -447,6 +448,9 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+      options: --add-host=host.docker.internal:host-gateway
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
     defaults:
       run:
         shell: bash
@@ -600,6 +604,17 @@ jobs:
             .ci-artifacts
           chmod 0755 .ci-artifacts/wegent-executor
 
+      - name: Prepare remote workspace Executor runtime
+        env:
+          PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
+          DOCKER_BUILDKIT: "0"
+        run: |
+          uv sync --project executor_manager --frozen
+          docker build --pull=false \
+            --build-arg BASE_IMAGE="$PLATFORM_E2E_IMAGE" \
+            --file frontend/e2e/fixtures/remote-workspace-executor/Dockerfile \
+            --tag wegent/e2e-workspace-executor:latest .ci-artifacts
+
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
 
@@ -614,8 +629,7 @@ jobs:
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
         run: |
-          source .venv/bin/activate
-          alembic upgrade head
+          uv run --no-sync alembic upgrade head
 
       - name: Verify DingTalk sync MySQL transaction rollback
         if: matrix.shardIndex == 1
@@ -803,6 +817,33 @@ jobs:
             executor/platform-executor.log \
             executor/platform-executor.pid
 
+      - name: Start remote workspace Executor Manager
+        working-directory: ./executor_manager
+        env:
+          REDIS_URL: redis://redis:6379/0
+          DOCKER_HOST_ADDR: host.docker.internal
+          SERVICE_POOL: e2e-workspace
+          EXECUTOR_READY_MAX_RETRIES: "30"
+          EXECUTOR_READY_INTERVAL: "1"
+          OTEL_ENABLED: "false"
+        run: |
+          manager_ip="$(hostname -i | awk '{print $1}')"
+          export NETWORK="$(docker inspect "$(hostname)" --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}{{end}}')"
+          export TASK_API_DOMAIN="http://$manager_ip:8000"
+          export EXECUTOR_MANAGER_CALLBACK_URL="http://$manager_ip:8001/executor-manager/callback"
+          uv run --no-sync uvicorn main:app --host 0.0.0.0 --port 8001 \
+            > workspace-manager.log 2>&1 &
+          echo $! > workspace-manager.pid
+          for i in {1..60}; do
+            if curl -sf http://localhost:8001/health >/dev/null; then
+              exit 0
+            fi
+            kill -0 "$(cat workspace-manager.pid)" || { cat workspace-manager.log; exit 1; }
+            sleep 1
+          done
+          cat workspace-manager.log
+          exit 1
+
       - name: Verify backend is running
         run: |
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
@@ -819,7 +860,9 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PYTHONPATH: ..:.
-        run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
+        run: |
+          uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
+          uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
       - name: Run knowledge remote index E2E
         if: matrix.shardIndex == 1
@@ -835,6 +878,7 @@ jobs:
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_MILVUS_URL: http://milvus:19530
+          E2E_KNOWLEDGE_RUNTIME_LOG: ../knowledge_runtime/ci.log
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_BOOTSTRAP_ADMIN_USER: admin
           PYTHONPATH: ..:.
@@ -856,8 +900,12 @@ jobs:
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           E2E_USE_ISOLATED_USERS: "false"
           CI: true
+          RUNNER_PROCESS_DIAGNOSTICS: "1"
+          RUNNER_RESOURCE_LOG_PATH: ci-diagnostics/shard-${{ matrix.shardIndex }}.jsonl
         run: |
-          pnpm exec playwright test --project=chromium --project=api \
+          # Dependencies are verified; retain resource logging without pnpm's exit worker pool.
+          node ../.github/scripts/run-with-resource-logging.mjs \
+            node ./node_modules/@playwright/test/cli.js test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests
@@ -873,7 +921,7 @@ jobs:
           E2E_USE_ISOLATED_USERS: "false"
           CI: true
         run: |
-          pnpm exec playwright test \
+          node ./node_modules/@playwright/test/cli.js test \
             --project=provider-native-chromium \
             --workers=1 \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
@@ -920,6 +968,21 @@ jobs:
             rm executor/platform-executor.pid
           fi
 
+      - name: Stop remote workspace Executor Manager
+        if: always()
+        run: |
+          if [ -f executor_manager/workspace-manager.pid ]; then
+            kill "$(cat executor_manager/workspace-manager.pid)"
+          fi
+          if command -v docker >/dev/null; then
+            mapfile -t containers < <(docker ps -aq \
+              --filter ancestor=wegent/e2e-workspace-executor:latest \
+              --filter label=owner=executor_manager)
+            if ((${#containers[@]})); then
+              docker rm -f "${containers[@]}"
+            fi
+          fi
+
       - name: Stop frontend dev server
         if: always()
         working-directory: ./frontend
@@ -954,6 +1017,14 @@ jobs:
           path: frontend/test-results/
           retention-days: 7
 
+      - name: Upload process diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: e2e-process-diagnostics-${{ matrix.shardIndex }}
+          path: frontend/ci-diagnostics/
+          retention-days: 7
+
       - name: Upload backend logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -968,6 +1039,7 @@ jobs:
             frontend/next-dev.log
             frontend/mock-model-server.log
             executor/platform-executor.log
+            executor_manager/workspace-manager.log
           retention-days: 7
 
   executor-e2e-tests:
@@ -978,6 +1050,7 @@ jobs:
       packages: read
     needs:
       [
+        build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
@@ -1203,8 +1276,7 @@ jobs:
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
         run: |
-          source .venv/bin/activate
-          alembic upgrade head
+          uv run --no-sync alembic upgrade head
 
       - name: Resolve Docker bridge host
         run: |
@@ -1393,7 +1465,7 @@ jobs:
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            pnpm exec playwright test --project=executor-chromium
+            node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
 
       - name: Stop Local ClaudeCode Executor
         if: always()
@@ -1493,7 +1565,7 @@ jobs:
       - build-executor-e2e-runtime
       - e2e-tests
       - executor-e2e-tests
-    if: always()
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
 
     steps:

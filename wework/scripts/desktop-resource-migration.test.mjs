@@ -71,7 +71,7 @@ describe('desktop resource migration', () => {
       'node e2e/desktop/run-checkpoints.mjs --segment embedded-browser',
       'node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions',
       'node e2e/desktop/run-checkpoints.mjs --segment local-harness',
-      'node e2e/desktop/run-checkpoints.mjs --segment rendering-extensions',
+      'node e2e/desktop/run-checkpoints.mjs --segment streaming-text',
     ])
     expect(packageJson.scripts['build:release']).toBe(
       'pnpm run prepare:electron && pnpm --dir electron build:release'
@@ -203,7 +203,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('CARGO_TARGET_DIR: targetDirectory')
     expect(source).toContain('executorPackageBinaryPath(targetDirectory, target, profile)')
     expect(source).not.toContain("'metadata',")
-    expect(source).toContain('const [executorPath] = await Promise.all([')
+    expect(source).toContain('await cp(executorPath, packagedExecutor)')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")

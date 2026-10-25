@@ -1,14 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 
-import type { WorkbenchServices } from './workbenchServices'
-import {
-  createCloudProjectTaskRuntimeApi,
-  projectTaskTrackingApi,
-  rememberProjectTaskStore,
-} from './projectTaskTracking'
+import { createCloudProjectTaskRuntimeApi, rememberProjectTaskStore } from './projectTaskTracking'
 
-describe('projectTaskTrackingApi', () => {
+describe('project task runtime binding', () => {
   test('preserves the assigned Team through the cloud runtime binding port', async () => {
     const bindTask = vi.fn().mockResolvedValue(undefined)
     const api = createCloudProjectTaskRuntimeApi({
@@ -61,92 +56,10 @@ describe('projectTaskTrackingApi', () => {
     expect(trackProjectTask).toHaveBeenCalledWith('project-1', sharedTask, 'Task', 'Description')
   })
 
-  test('routes backend task ownership through the shared cloud runtime port', async () => {
-    const updateTrackedTaskTitle = vi.fn().mockResolvedValue(null)
-    const services = {
-      projectSpaceApis: {
-        local: { updateTaskTrackingTitle: vi.fn() },
-        defaultLocation: 'cloud',
-      },
-      workspaceRuntimePort: {
-        updateTrackedTaskTitle,
-      },
-    } as unknown as WorkbenchServices
-
-    const resolved = projectTaskTrackingApi(services, {
-      deviceId: 'local-device',
-      taskId: 'runtime-1',
-      runtimeHandle: {
-        origin: {
-          projectStore: 'backend',
-        },
-      },
-    })
-
-    await resolved?.updateTaskTrackingTitle(
-      { deviceId: 'local-device', taskId: 'runtime-1' },
-      'Renamed task'
-    )
-
-    expect(updateTrackedTaskTitle).toHaveBeenCalledOnce()
-  })
-
-  test('routes local task ownership to the local DeliveryApi', () => {
-    const local = { updateTaskTrackingTitle: vi.fn() }
-    const services = {
-      projectSpaceApis: {
-        local,
-        defaultLocation: 'cloud',
-      },
-    } as unknown as WorkbenchServices
-
-    const resolved = projectTaskTrackingApi(services, {
-      deviceId: 'local-device',
-      taskId: 'runtime-1',
-      runtimeHandle: {
-        origin: {
-          projectStore: 'local',
-        },
-      },
-    })
-
-    expect(resolved).toBe(local)
-  })
-
-  test('does not fall back to the cloud legacy DeliveryApi', () => {
-    const cloud = { updateTaskTrackingTitle: vi.fn() }
-    const services = {
-      projectSpaceApis: {
-        cloud,
-        defaultLocation: 'cloud',
-      },
-      deliveryApi: cloud,
-    } as unknown as WorkbenchServices
-
-    expect(
-      projectTaskTrackingApi(services, {
-        deviceId: 'local-device',
-        taskId: 'runtime-cloud',
-        runtimeHandle: { projectStore: 'backend' },
-      })
-    ).toBeNull()
-  })
-
-  test('routes a task through the store recorded by its completed binding', () => {
-    const local = { updateTaskTrackingTitle: vi.fn() }
-    const services = {
-      projectSpaceApis: {
-        local,
-        defaultLocation: 'cloud',
-      },
-    } as unknown as WorkbenchServices
-    const address = {
-      deviceId: 'local-device',
-      taskId: 'runtime-bound-locally',
-    }
-
-    rememberProjectTaskStore(address, 'local')
-
-    expect(projectTaskTrackingApi(services, address)).toBe(local)
+  test('records project store changes only once per binding', () => {
+    const address = { deviceId: 'local-device', taskId: 'runtime-bound-locally' }
+    expect(rememberProjectTaskStore(address, 'local')).toBe(true)
+    expect(rememberProjectTaskStore(address, 'local')).toBe(false)
+    expect(rememberProjectTaskStore(address, 'backend')).toBe(true)
   })
 })

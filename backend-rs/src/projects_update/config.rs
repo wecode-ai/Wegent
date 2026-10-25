@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::http_compat::FastApiError;
 
-use super::super::StoredProjectConfig;
+use super::super::{ProjectTaskSource, StoredProjectConfig};
 use super::request::config_error;
 
 // ============================================================================
@@ -114,6 +114,23 @@ fn valid_mode(object: &Map<String, Value>) -> Result<Option<String>, FastApiErro
             &["config", "mode"],
             "literal_error",
             "Input should be 'workspace'",
+            other,
+        )),
+    }
+}
+
+/// `taskSource: Optional[Literal["api", "dingtalk"]]`.
+fn valid_task_source(
+    object: &Map<String, Value>,
+) -> Result<Option<ProjectTaskSource>, FastApiError> {
+    match object.get("taskSource") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) if text == "api" => Ok(Some(ProjectTaskSource::Api)),
+        Some(Value::String(text)) if text == "dingtalk" => Ok(Some(ProjectTaskSource::Dingtalk)),
+        Some(other) => Err(config_error(
+            &["config", "taskSource"],
+            "literal_error",
+            "Input should be 'api' or 'dingtalk'",
             other,
         )),
     }
@@ -594,6 +611,7 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
         &["config"],
         &[
             "mode",
+            "taskSource",
             "device_id",
             "execution",
             "team",
@@ -603,6 +621,7 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
         ],
     )?;
     let mode = valid_mode(object)?;
+    let task_source = valid_task_source(object)?;
     let device_id = field_str(object, &["config"], "device_id")?;
     let mut execution = valid_execution(object)?;
     let team = valid_team(object)?;
@@ -650,9 +669,9 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
                     }
                 }
                 "local_path" => {
-                    if !execution
+                    if execution
                         .as_ref()
-                        .is_some_and(|execution| execution.target_type == "local")
+                        .is_none_or(|execution| execution.target_type != "local")
                     {
                         return Err(config_error(
                             &["config"],
@@ -725,6 +744,7 @@ pub(super) fn validate_project_config(value: &Value) -> Result<StoredProjectConf
 
     Ok(StoredProjectConfig {
         mode,
+        task_source,
         device_id,
         execution: execution.map(|execution| super::super::ProjectExecutionConfig {
             target_type: execution.target_type,

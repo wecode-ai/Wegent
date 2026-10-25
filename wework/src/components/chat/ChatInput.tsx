@@ -149,7 +149,7 @@ export interface ProjectWorkControls {
 
 export interface ChatInputProps {
   predictionAddress?: RuntimeTaskAddress | null
-  presentation?: 'chat' | 'document'
+  presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
@@ -163,6 +163,7 @@ export interface ChatInputProps {
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
+  allowEmptySubmit?: boolean
   error?: string | null
   disabledReason?: string
   placeholder?: string
@@ -178,6 +179,7 @@ export interface ChatInputProps {
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
@@ -318,6 +320,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     pluginPickerIconOnly = false,
     submitDisabled = false,
     requireText = false,
+    allowEmptySubmit = false,
     error,
     disabledReason,
     placeholder,
@@ -333,6 +336,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     projectWork,
     showProjectWorkBar = true,
     showExecutionTools = true,
+    showModelSelector,
     queuedMessages = [],
     guidanceMessages = [],
     codeComments = [],
@@ -595,6 +599,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     disabled,
     submitDisabled,
     requireText,
+    allowEmptySubmit,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,
@@ -710,6 +715,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             </div>
           )}
           <ProjectChatComposer
+            composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
             pluginPickerIconOnly={pluginPickerIconOnly}
@@ -767,6 +773,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             projectPhrases={projectQuickPhrases}
             showProjectWorkBar={showProjectWorkBar}
             showExecutionTools={showExecutionTools}
+            showModelSelector={showModelSelector}
             projectWorkBarMiddleContext={projectWorkBarMiddleContext}
             projectWorkBar={projectWorkBar}
             projectWorkBarTrailingContext={projectWorkBarTrailingContext}

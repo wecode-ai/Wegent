@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.schemas.runtime_transcript_transport import RuntimeTranscriptChunkResponse
 from app.schemas.runtime_work import (
     ArchivedConversationsListRequest,
     ArchivedConversationsListResponse,
@@ -331,7 +332,7 @@ async def search_runtime_workspace_endpoint(
 
 @router.post(
     "/transcript",
-    response_model=RuntimeTranscriptResponse,
+    response_model=RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse,
     response_model_by_alias=True,
 )
 async def get_runtime_transcript_endpoint(
@@ -811,7 +812,8 @@ async def materialize_runtime_task_endpoint(
     )
 
 
-@router.post("/llm-responses-proxy/responses")
+# MIGRATION-CANDIDATE(api="POST /api/runtime-work/llm-responses-proxy/responses"): remove after final confirmation.
+# @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
 @router.post("/llm-responses-proxy/v1/messages")

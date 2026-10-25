@@ -1,5 +1,6 @@
 """Reconcile account-managed plugins without changing independent capabilities."""
 
+import asyncio
 from typing import Any
 
 from fastapi import HTTPException
@@ -8,15 +9,22 @@ from app.db.session import get_db_session
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.schemas.installed_plugin import PluginDeviceSyncResponse
 from app.services.device.capability_sync_service import device_capability_sync_service
+from app.services.device.plugin_change_sync import dispatch_snapshot
+from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
 from shared.telemetry.decorators import trace_async
 
 
 def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
     with get_db_session() as db:
+        configure_plugin_session(db)
         changed = plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
             db, user_id=user_id
         )
@@ -28,6 +36,29 @@ def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
         return device_capability_sync_service.build_desired_plugins(
             db, user_id=user_id, device_id=device_id
         )
+
+
+def record_reconciliation_result(
+    user_id: int,
+    device_id: str,
+    payload: dict[str, Any],
+    result: DeviceCapabilitySyncResult,
+) -> dict[str, Any] | None:
+    """Validate and persist the acknowledged snapshot under one write lease."""
+    with get_db_session() as db:
+        configure_plugin_session(db)
+        acquire_plugin_write_lock(db, user_id)
+        latest = device_capability_sync_service.build_desired_plugins(
+            db, user_id=user_id, device_id=device_id
+        )
+        if plugin_snapshot(latest) != plugin_snapshot(payload) or any(
+            item.status == "superseded" for item in result.plugins
+        ):
+            return latest
+        plugin_device_installation_service.record_device_sync_result(
+            db, user_id=user_id, result=result
+        )
+    return None
 
 
 def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -62,12 +93,37 @@ def reconciliation_failure_detail(result: DeviceCapabilitySyncResult) -> str:
 async def reconcile_device_plugins(
     user_id: int, device_id: str
 ) -> PluginDeviceSyncResponse:
-    payload = desired_plugins(user_id, device_id)
+    versioned = await device_capability_sync_service.supports_plugin_delta(
+        user_id, device_id
+    )
+
+    def load_payload() -> dict[str, Any]:
+        if not versioned:
+            return desired_plugins(user_id, device_id)
+        return load_versioned_plugin_payload(
+            get_db_session,
+            user_id=user_id,
+            complete=True,
+            load_payload=lambda db: device_capability_sync_service.build_desired_plugins(
+                db,
+                user_id=user_id,
+                device_id=device_id,
+            ),
+        )
+
+    # Repair catalog references before taking the ordered complete snapshot.
+    if versioned:
+        await asyncio.to_thread(desired_plugins, user_id, device_id)
+    payload = await asyncio.to_thread(load_payload)
     # Re-read after the device round trip. An install/uninstall may have committed
     # while a package was downloading; never acknowledge an obsolete snapshot.
     for _ in range(3):
-        result = await device_capability_sync_service.sync_device_payload(
-            user_id=user_id, device_id=device_id, payload=payload
+        result = await dispatch_snapshot(
+            device_capability_sync_service,
+            user_id=user_id,
+            device_id=device_id,
+            payload=payload,
+            timeout_seconds=180,
         )
         if (
             not result.success
@@ -77,14 +133,12 @@ async def reconcile_device_plugins(
             raise HTTPException(502, reconciliation_failure_detail(result))
         if result.scope != "plugins":
             raise HTTPException(409, "Update the desktop runtime to reconcile plugins")
-        latest = desired_plugins(user_id, device_id)
-        if plugin_snapshot(latest) != plugin_snapshot(payload):
-            payload = latest
+        latest = await asyncio.to_thread(
+            record_reconciliation_result, user_id, device_id, payload, result
+        )
+        if latest is not None:
+            payload = await asyncio.to_thread(load_payload) if versioned else latest
             continue
-        with get_db_session() as db:
-            plugin_device_installation_service.record_device_sync_result(
-                db, user_id=user_id, result=result
-            )
         return PluginDeviceSyncResponse(
             deviceId=device_id,
             pendingCount=0,

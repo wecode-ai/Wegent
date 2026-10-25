@@ -6,6 +6,10 @@ import {
   type ConversationScrollSnapshot,
 } from './conversationViewportCache'
 import { getDistanceFromBottom } from './bottomOriginScroll'
+import {
+  CONVERSATION_SCROLL_WRITE_SOURCE,
+  recordConversationScrollWrite,
+} from './conversationScrollWrite'
 
 import {
   SCROLLED_TO_BOTTOM_THRESHOLD,
@@ -158,10 +162,68 @@ export function createScrollSnapshot(
   bottomOrigin: boolean
 ): ConversationScrollSnapshot {
   const distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
+  const pinnedToBottom = distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD
+  const sample = pinnedToBottom ? null : createUserViewportAnchor(scroller, scroller)
+  const root = sample?.element.closest<HTMLElement>(
+    '[data-runtime-item-id], [data-processing-block-id], [data-message-id]'
+  )
+  const viewport = root ? scroller.getBoundingClientRect() : null
+  const textPosition = root && viewport ? getViewportTextPosition(root, viewport) : null
   return {
     distanceFromBottomPx,
-    pinnedToBottom: distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD,
+    pinnedToBottom,
+    ...(sample && root && viewport
+      ? {
+          anchor: {
+            messageId: sample.messageId,
+            itemId: root.dataset.runtimeItemId ?? root.dataset.processingBlockId ?? null,
+            textOffset: textPosition?.offset ?? null,
+            offsetFromScrollerTop:
+              (textPosition?.rect.top ?? root.getBoundingClientRect().top) - viewport.top,
+          },
+        }
+      : {}),
   }
+}
+
+export function restoreConversationAnchor(
+  scroller: HTMLElement,
+  snapshot: ConversationScrollSnapshot
+): boolean {
+  const anchor = snapshot.anchor
+  if (!anchor || snapshot.pinnedToBottom) return false
+  const message = Array.from(scroller.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+    element => element.dataset.messageId === anchor.messageId
+  )
+  if (!message) return false
+  const root =
+    anchor.itemId === null
+      ? message
+      : Array.from(
+          message.querySelectorAll<HTMLElement>(
+            '[data-runtime-item-id], [data-processing-block-id]'
+          )
+        ).find(
+          element =>
+            (element.dataset.runtimeItemId ?? element.dataset.processingBlockId) === anchor.itemId
+        )
+  if (!root) return false
+  const rect =
+    anchor.textOffset === null
+      ? root.getBoundingClientRect()
+      : getTextOffsetRect(root, anchor.textOffset)
+  if (!rect) return false
+  const correction = rect.top - scroller.getBoundingClientRect().top - anchor.offsetFromScrollerTop
+  const target = scroller.scrollTop + correction
+  recordConversationScrollWrite(
+    scroller,
+    CONVERSATION_SCROLL_WRITE_SOURCE.contentPosition,
+    target,
+    () => {
+      scroller.scrollTop = target
+    }
+  )
+  return true
 }
 
 export function findLatestUserMessageId(messages: WorkbenchMessage[]): string | null {

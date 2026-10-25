@@ -18,6 +18,7 @@ from pydantic import (
 
 from app.schemas.cloud_project import SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.loop_item_position import LoopItemPosition
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
@@ -70,6 +71,7 @@ class LoopItemCreate(BaseModel):
 
 
 class LoopItemUpdate(BaseModel):
+    position: LoopItemPosition | None = None
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     version: int = Field(ge=1)
@@ -114,10 +116,10 @@ class LoopItemUpdate(BaseModel):
 
 
 class LoopItemReorder(BaseModel):
-    """Manual order of the TODOs inside one board lane (parent + status)."""
+    """Manual sibling order, optionally restricted to a status lane."""
 
     parent_id: str | None = Field(default=None, max_length=64)
-    status: str = Field(max_length=32)
+    status: str | None = Field(default=None, max_length=32)
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
@@ -130,6 +132,15 @@ class LoopItemPermissions(BaseModel):
 
 class LoopItemRead(BaseModel):
     activity_sequence: int | None = Field(default=None, ge=0)
+
+
+class IssueBadge(BaseModel):
+    id: str
+    label: str
+    url: str = ""
+    icon: str = ""
+    tone: Literal["neutral", "success", "warning", "danger"] = "neutral"
+    tooltip: str = ""
 
 
 class LoopItemResponse(BaseModel):
@@ -162,7 +173,7 @@ class LoopItemResponse(BaseModel):
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
-    human_work: dict[str, Any] | None = None
+    human_task_binding: dict[str, str] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
@@ -181,6 +192,7 @@ class LoopItemResponse(BaseModel):
     can_edit: bool = True
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
+    badges: list[IssueBadge] = Field(default_factory=list)
     content_revision: int = 1
     activity_read_sequence: int = 0
     is_unread: bool = False
@@ -260,6 +272,7 @@ class LoopItemResponse(BaseModel):
                 queued_at = metadata.get("queued_at")
             return {
                 **value,
+                "badges": value.get("badges", metadata.get("badges", [])),
                 "tags": _normalize_tags(metadata.get("tags")),
                 "ai_state": ai_state,
                 "execution_state": (

@@ -144,7 +144,7 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
             showWorkspaceMenu={false}
             showExecutionTools={false}
             toolbarLeadingContext={
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1">
                 {(
                   [
                     { symbol: '@', Icon: AtSign, label: 'mention_member' },

@@ -7,6 +7,7 @@ import type {
   CloudLoopItem,
   CloudLoopItemCollaborator,
   CloudProject,
+  CloudProjectMember,
   CloudProjectFile,
   Delivery,
   DeliveryAsset,
@@ -198,7 +199,6 @@ function createMockDeliveryApi() {
     unbindTask: vi.fn().mockResolvedValue(undefined),
     unbindCloudContext: vi.fn().mockResolvedValue(undefined),
     trackProjectTask: vi.fn().mockResolvedValue({ item: issue }),
-    updateTaskTrackingTitle: vi.fn().mockResolvedValue(issue),
     getWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowReview: vi.fn().mockResolvedValue(workflowPlan),
@@ -238,6 +238,45 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it('preserves current project authority and member override provenance', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const authoritative: CloudProject = {
+      ...project,
+      current_user_id: 8,
+      access_role: 'Viewer',
+      workspace_access_role: 'Developer',
+      permission_sources: [
+        { type: 'workspace', role: 'Developer', workspace_id: 'space-1' },
+        { type: 'direct', role: 'Viewer' },
+      ],
+    }
+    const member: CloudProjectMember = {
+      id: 9,
+      user_id: 8,
+      user_name: 'User',
+      email: null,
+      role: 'Viewer',
+      direct_role: 'Viewer',
+      inherited_role: 'Developer',
+      inherited_from_workspace_id: 'space-1',
+      permission_sources: authoritative.permission_sources,
+      capability_description: 'Reviewer',
+    }
+    vi.mocked(deliveryApi.listCloudProjects).mockResolvedValue({ items: [authoritative] })
+    vi.mocked(deliveryApi.listCloudProjectMembers).mockResolvedValue([member])
+    vi.mocked(deliveryApi.updateCloudProjectMember).mockResolvedValue(member)
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+    await expect(api.projects.get('project-1')).resolves.toEqual(authoritative)
+    await expect(api.members.list('project-1')).resolves.toEqual([member])
+    await expect(
+      api.members.update('project-1', 8, { capabilityDescription: 'Reviewer' })
+    ).resolves.toEqual(member)
+    expect(deliveryApi.updateCloudProjectMember).toHaveBeenCalledWith('project-1', 8, {
+      capability_description: 'Reviewer',
+    })
+  })
+
   it('maps project and issue methods and converts transport casing', async () => {
     const deliveryApi = createMockDeliveryApi()
     const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
@@ -380,6 +419,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       startAt: null,
       dueAt: null,
       automationRuleId: null,
+      position: { beforeItemId: 'anchor' },
     })
     expect(deliveryApi.updateLoopItem).toHaveBeenCalledWith(
       'issue-1',
@@ -388,6 +428,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         assignee_user_id: 8,
         start_at: null,
         due_at: null,
+        position: { beforeItemId: 'anchor' },
       })
     )
     await api.issues.assign('project-1', 'issue-1', {
@@ -1220,7 +1261,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
     await expect(port.trackProjectTask(project.id, task, 'Task', 'Description')).resolves.toEqual({
       issue,
     })
-    await expect(port.updateTrackedTaskTitle(task, 'Renamed')).resolves.toEqual(issue)
 
     expect(deliveryApi.bindTask).toHaveBeenCalledWith(
       issue.id,

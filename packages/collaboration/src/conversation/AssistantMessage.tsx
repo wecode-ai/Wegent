@@ -12,7 +12,6 @@ import type {
   RuntimeConversationTurn,
 } from "@wegent/chat-core/runtime-conversation";
 import { getRuntimeMessageActiveThinking } from "@wegent/chat-core/runtime-thinking";
-import { stripPluginWorkspaceResultMarkers } from "@wegent/chat-core/plugin-workspace-result";
 import {
   AssistantMarkdown,
   type AssistantMarkdownProps,
@@ -47,13 +46,10 @@ import {
   getStoppedElapsedDuration,
   getProcessingSummaryStartMs,
   isCancelledAssistantMessage,
-  isCancelledPlaceholderContent,
-  shouldHideFailedAssistantContent,
-  getDisplayProcessingBlocks,
+  getAssistantRenderProjection,
   getWebSearchToolBlocks,
   getMessageDisplayStateKey,
   hasRunningProcessingBlocks,
-  getOrderedRuntimeDisplaySegments,
   getProcessingPhase,
   splitProcessingBlocks,
   hasProcessingDisplayBlock,
@@ -134,21 +130,19 @@ export function AssistantMessage({
       : null;
   const shouldShowStoppedNotice =
     isCancelled && message.stoppedNotice !== false;
-  const shouldHideContent =
-    shouldHideFailedAssistantContent(message) ||
-    (isCancelled && isCancelledPlaceholderContent(message.content));
-  const visibleContent = shouldHideContent
-    ? ""
-    : stripPluginWorkspaceResultMarkers(message.content);
+  const renderProjection = useMemo(
+    () => getAssistantRenderProjection(message),
+    [message],
+  );
+  const {
+    content: visibleContent,
+    hidden: shouldHideContent,
+    blocks: displayBlocks,
+  } = renderProjection;
   const hiddenErrorContent =
     message.status === "failed" && shouldHideContent
       ? message.content.trim()
       : undefined;
-  const displayBlocks = useMemo(
-    () =>
-      getDisplayProcessingBlocks(message.blocks, isCancelled, visibleContent),
-    [isCancelled, message.blocks, visibleContent],
-  );
   const fileEditDurationsBySourceBlock = useMemo(
     () => getFileEditDurationsBySourceBlock(displayBlocks),
     [displayBlocks],
@@ -180,22 +174,8 @@ export function AssistantMessage({
   const hasPlanResponse = displayBlocks.some(
     (block) => block.type === "plan" && Boolean(block.content.trim()),
   );
-  const orderedRuntimeSegments = getOrderedRuntimeDisplaySegments(
-    message.runtimeDisplayItems,
-    displayBlocks,
-  );
-  const orderedRuntimeContent = orderedRuntimeSegments
-    .flatMap((segment) => (segment.kind === "content" ? [segment.content] : []))
-    .join("\n\n");
-  const hasProcessingAfterContent = orderedRuntimeSegments.some(
-    (segment, index) =>
-      hasVisibleContent &&
-      orderedRuntimeContent === visibleContent &&
-      segment.kind === "content" &&
-      orderedRuntimeSegments
-        .slice(index + 1)
-        .some((candidate) => candidate.kind === "processing"),
-  );
+  const orderedRuntimeSegments = renderProjection.segments;
+  const hasProcessingAfterContent = renderProjection.interleaved;
   const expandedToolDetailStateKeys = displayBlocks.map((block) =>
     getProcessingDetailStateKey(processingStateKey, block.id),
   );
@@ -310,9 +290,11 @@ export function AssistantMessage({
         if (segment.kind === "content") {
           return (
             <div
-              key={`content:${segmentIndex}`}
+              key={`content:${segment.id}`}
+              data-runtime-item-id={segment.id}
               data-message-selectable-text
               data-testid="assistant-message-content"
+              data-search-region-id={segment.id}
             >
               <AssistantMarkdown
                 content={segment.content}
@@ -326,10 +308,10 @@ export function AssistantMessage({
 
         const segments = splitProcessingBlocks(segment.blocks);
         return (
-          <Fragment key={`processing:${segmentIndex}`}>
+          <Fragment key={`processing:${segment.id}`}>
             {segments.map((processingSegment, processingIndex) => (
               <ToolBlocksDisplay
-                key={`${processingSegment.kind}:${processingIndex}`}
+                key={`${processingSegment.kind}:${processingSegment.blocks[0]?.id}`}
                 blocks={processingSegment.blocks}
                 fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
                 isStreaming={isStreaming}
@@ -352,7 +334,7 @@ export function AssistantMessage({
                 }
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
-                stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                stateKey={`${processingStateKey}:ordered:${processingSegment.blocks[0]?.id}`}
                 detailStateScopeKey={processingStateKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
@@ -471,8 +453,14 @@ export function AssistantMessage({
           ) : null}
           {hasVisibleContent && !hasProcessingAfterContent ? (
             <div
+              data-runtime-item-id={
+                message.runtimeDisplayItems
+                  ?.filter((item) => item.type === "assistant_text")
+                  .at(-1)?.id
+              }
               data-message-selectable-text
               data-testid="assistant-message-content"
+              data-search-region-id={renderProjection.finalRegion.id}
             >
               <AssistantMarkdown
                 content={visibleContent}

@@ -4,6 +4,7 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   mcpToolRequestEvents,
   readRequestBody,
   responseCompleted,
@@ -107,13 +108,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
   assert.equal(
     response.ok,
     true,
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
-  return body
+  return text ? JSON.parse(text) : null
 }
 
 async function waitForValue(load, predicate, message, timeoutMs) {
@@ -341,7 +341,7 @@ async function createCoordinateGroup(control, request, projectId, timeoutMs) {
 
 async function createIssue(control, request, projectId, timeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,
   })
@@ -541,6 +541,7 @@ export async function createDesktopScenario({
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const requestText = JSON.stringify(body)
       const responseId = `remote-group-coordinate-${Date.now()}-${childRequests}`
       const kind = codexRequestKind(body)

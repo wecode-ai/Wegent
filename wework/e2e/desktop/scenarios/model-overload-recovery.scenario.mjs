@@ -1,8 +1,10 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -103,7 +105,12 @@ async function waitUntil(predicate, timeoutMs, message) {
   throw new Error(message)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let active = false
   let cancelling = false
   const requests = []
@@ -123,9 +130,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
     async handleHttp(request, response, url) {
       if (!active || request.method !== 'POST') return false
       if (!['/responses', '/v1/responses'].includes(url.pathname)) return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const id = `wework-model-overload-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.write(sse([{ type: 'response.created', response: { id } }]))
@@ -271,9 +277,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
       await selectE2EModel(control, undefined, 'GPT-5.6 Luna', WORKBENCH)
       await control.command('fill', COMPOSER, { value: CANCEL_PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
+      // Model admission includes runtime startup; only then does backoff observation begin.
+      await waitUntil(
+        () => cancelRequests.length > 0,
+        modelResponseTimeoutMs,
+        'The cancellation task did not request its model response'
+      )
       await waitUntil(
         async () => {
-          if (cancelRequests.length === 0) return false
           const currentLog = await readFile(join(resultDir, 'executor.log'), 'utf8')
           return (currentLog.match(/codex overloaded turn recovery/g) ?? []).length === 2
         },

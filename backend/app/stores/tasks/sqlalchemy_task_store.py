@@ -20,6 +20,7 @@ from app.models.task import TaskResource
 from app.stores.tasks.interfaces import (
     ProjectTaskSummary,
     RecentTaskTeamRef,
+    RecentTeamMode,
     WorkspaceRefLookup,
 )
 from app.stores.tasks.project_task_summaries import list_project_task_summaries
@@ -796,12 +797,14 @@ class SqlAlchemyTaskStore:
         *,
         user_id: int,
         limit: int,
+        mode: RecentTeamMode | None = None,
     ) -> list[RecentTaskTeamRef]:
         return list_recent_task_team_refs(
             db,
             TaskResource,
             user_id=user_id,
             limit=limit,
+            mode=mode,
         )
 
     def list_recent_owner_only_used_tasks(

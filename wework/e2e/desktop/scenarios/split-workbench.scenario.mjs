@@ -1,6 +1,8 @@
+import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
@@ -47,12 +49,6 @@ function assistantMessage(text) {
       content: [{ type: 'output_text', text, annotations: [] }],
     },
   }
-}
-
-async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 function json(response, status, body) {
@@ -573,6 +569,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let active = false
   let nextAttachmentId = 1
   return {
+    appEnvironment: {
+      // This scenario authenticates no cloud session; keep model fixtures local.
+      WEWORK_E2E_CLOUD_BACKEND_URL: '',
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
         json(response, 200, {
@@ -697,6 +697,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
       await verifyMultilineComposerCaret(control, captureScreenshot)
+      await selectE2EModel(
+        control,
+        'local-model:desktop-e2e-responses',
+        'Desktop E2E Responses',
+        ACTIVE_SURFACE
+      )
       const firstTaskRow = await createTask(control, FIRST_PROMPT, taskTimeoutMs)
       const firstTaskId = firstTaskRow.replace('runtime-local-task-row-', '')
       const completedTaskSnapshot = await waitForWorkbenchDebugState(
@@ -832,6 +838,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         })
       )
+      console.log(`[split-workbench] sidebar drag timings: ${JSON.stringify(splitResult)}`)
       const splitDurationMs = splitResult.durationMs
       assert.equal(
         typeof splitDurationMs,

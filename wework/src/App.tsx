@@ -16,6 +16,7 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react'
 import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
@@ -37,7 +38,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
-import { AppearanceProvider } from '@/features/appearance'
+import { AppearanceProvider, useAppearance } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
@@ -68,6 +69,7 @@ import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecu
 import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
+import { isSettingsRoute } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createHttpClient } from '@/api/http'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
@@ -112,6 +114,7 @@ import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { HarnessAppAutoLauncher } from '@/features/harness-apps/HarnessAppAutoLauncher'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
@@ -378,6 +381,16 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     hasMountedProvider: !iframe,
     hasMountedWorkbench: nativeWorkbenchActive,
   }))
+  // Retained tabs keep their workbench state while hidden. Track each reveal so
+  // the provider can revalidate data that another tab may have changed.
+  const [workspaceTabRevealRevision, setWorkspaceTabRevealRevision] = useState(0)
+  const wasActiveRef = useRef(active)
+  useEffect(() => {
+    if (active && !wasActiveRef.current) {
+      setWorkspaceTabRevealRevision(value => value + 1)
+    }
+    wasActiveRef.current = active
+  }, [active])
   const nextIframe =
     iframe &&
     surfaceHistory.iframe?.src === iframe.src &&
@@ -476,6 +489,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              workspaceTabRevealRevision={workspaceTabRevealRevision}
               composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
@@ -744,7 +758,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           cloudWebUrl={cloudWebUrl}
           onOpenWeworkForAppshot={onOpenWeworkForAppshot}
           onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-          tab={tab}
+          tab={
+            tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
+              ? { ...tab, contentRoute: `${path}${search}` }
+              : tab
+          }
           user={user}
         />
       ))}
@@ -754,7 +772,16 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
 export default function App() {
   const path = useCurrentPath()
-  const content = isDesktopRuntime() && path === '/system-drag' ? <SystemDragPanel /> : <MainApp />
+  const content =
+    isDesktopRuntime() && path === '/system-drag' ? (
+      <SystemDragPanel />
+    ) : isDesktopRuntime() && path === '/process-explorer' ? (
+      <AppEnvironment persistAppearance={false} syncAppearanceFromPreferences>
+        <ProcessExplorerPage />
+      </AppEnvironment>
+    ) : (
+      <MainApp />
+    )
   return (
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
@@ -778,21 +805,50 @@ function MainApp() {
   }, [])
 
   return (
-    <AppearanceProvider>
+    <AppEnvironment>
+      <AppUpdateProvider>
+        <CloudConnectionProvider>
+          <AuthProvider>
+            <TelemetryBridge />
+            <TelemetryAgent />
+            <AppShell />
+          </AuthProvider>
+        </CloudConnectionProvider>
+      </AppUpdateProvider>
+    </AppEnvironment>
+  )
+}
+
+function AppEnvironment({
+  children,
+  persistAppearance = true,
+  syncAppearanceFromPreferences = false,
+}: {
+  children: ReactNode
+  persistAppearance?: boolean
+  syncAppearanceFromPreferences?: boolean
+}) {
+  return (
+    <AppearanceProvider persist={persistAppearance}>
       <AppPreferencesProvider>
+        {syncAppearanceFromPreferences ? <AppearancePreferenceSync /> : null}
         <LanguagePreferenceInitializer />
-        <AppUpdateProvider>
-          <CloudConnectionProvider>
-            <AuthProvider>
-              <TelemetryBridge />
-              <TelemetryAgent />
-              <AppShell />
-            </AuthProvider>
-          </CloudConnectionProvider>
-        </AppUpdateProvider>
+        {children}
       </AppPreferencesProvider>
     </AppearanceProvider>
   )
+}
+
+function AppearancePreferenceSync() {
+  const appPreferences = useAppPreferencesState()
+  const { setAppearance } = useAppearance()
+
+  useEffect(() => {
+    if (!appPreferences?.loaded) return
+    setAppearance({ mode: appPreferences.preferences.appearanceMode })
+  }, [appPreferences?.loaded, appPreferences?.preferences.appearanceMode, setAppearance])
+
+  return null
 }
 
 function LanguagePreferenceInitializer() {

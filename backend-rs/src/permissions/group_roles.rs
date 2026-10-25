@@ -128,6 +128,29 @@ pub async fn list_resources_by_entity_match(
     Ok(rows.into_iter().map(|row| row.resource_id).collect())
 }
 
+/// `iter_user_groups_with_roles`'s entity-derived member read: the resource
+/// ids are `bigint` values the source renders as unquoted integer literals
+/// (`IN (92)`), so the target renders them the same way; `entity_type` stays
+/// the bound string parameter. Binding the ids as strings is a different
+/// value type and never matches the recorded read.
+fn entity_member_statement(resource_ids: &[i64]) -> String {
+    let joined = resource_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "SELECT resource_members.resource_id AS resource_id, \
+         resource_members.entity_id AS entity_id, \
+         resource_members.`role` AS role \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'Namespace' \
+         AND resource_members.resource_id IN ({joined}) \
+         AND resource_members.entity_type = ? \
+         AND resource_members.status = 'approved'"
+    )
+}
+
 /// `iter_user_groups_with_roles`: the user's namespace groups, their highest
 /// role, and the winning source, from direct user memberships plus each
 /// registered external entity type's bindings.
@@ -165,28 +188,20 @@ pub async fn iter_user_groups_with_roles<R: Redis>(
         }
     }
 
-    // 2) Entity-derived memberships.
-    for entity_type in resolvers.external_types() {
+    // 2) Entity-derived memberships. `get_all_entity_types` includes the
+    // built-in `namespace` resolver first, then each registered external
+    // type; `namespace` delegates to every external type again, so one call
+    // reaches the ERP resolver twice (`group_member_helper.py:579-583`).
+    for entity_type in resolvers.types() {
         let matched = resolvers
             .resource_ids_by_entity(mysql, redis, user_id, entity_type, NAMESPACE_RESOURCE_TYPE)
             .await?;
         if matched.is_empty() {
             continue;
         }
-        let placeholders = vec!["?"; matched.len()].join(", ");
-        let sql = format!(
-            "SELECT resource_members.resource_id AS resource_id, \
-             resource_members.entity_id AS entity_id, \
-             resource_members.`role` AS role \n\
-             FROM resource_members \n\
-             WHERE resource_members.resource_type = 'Namespace' \
-             AND resource_members.resource_id IN ({placeholders}) \
-             AND resource_members.entity_type = ? \
-             AND resource_members.status = 'approved'"
-        );
-        let mut args: Vec<String> = matched.iter().map(i64::to_string).collect();
-        args.push(entity_type.to_string());
-        let members: Vec<EntityMemberRow> = mysql.fetch_all(&sql, args).await?;
+        let sql = entity_member_statement(&matched);
+        let members: Vec<EntityMemberRow> =
+            mysql.fetch_all(&sql, (entity_type.to_string(),)).await?;
         let member_ids: Vec<i64> = members.iter().map(|row| row.resource_id).collect();
         let names = namespace_names(mysql, &member_ids).await?;
         for row in &members {
@@ -423,5 +438,65 @@ mod tests {
     #[test]
     fn an_all_unknown_group_is_dropped() {
         assert!(dedupe_group_roles(vec![entry("g", "nonsense", "1")]).is_empty());
+    }
+
+    /// `resource_members.resource_id` is a bigint column: the recorded read
+    /// renders the ids as unquoted integer literals, so the target must not
+    /// bind stringified ids (the replay matcher compares types).
+    #[test]
+    fn entity_member_statement_keeps_integer_resource_ids_unquoted() {
+        let sql = entity_member_statement(&[92, 386]);
+        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains(
+            "AND resource_members.resource_id IN (92, 386) \
+             AND resource_members.entity_type = ?"
+        ));
+        assert!(!normalized.contains("IN ('92'"));
+    }
+
+    /// `iter_user_groups_with_roles` iterates `get_all_entity_types`, which
+    /// includes the built-in `namespace` resolver registered by
+    /// `app/services/share/__init__.py:29`. The namespace pass delegates to
+    /// every external type again, so dropping it loses one ERP resolution per
+    /// call (`group_member_helper.py:580`).
+    #[tokio::test]
+    async fn entity_iteration_includes_the_builtin_namespace_resolver() {
+        struct Stub;
+        #[async_trait::async_trait]
+        impl crate::permissions::EntityResolver<brz_redis::RedisService> for Stub {
+            async fn match_bindings(
+                &self,
+                _: &EntityResolvers<brz_redis::RedisService>,
+                _: Option<&brz_redis::RedisService>,
+                _: i64,
+                _: &[String],
+                _: crate::permissions::ResolutionPurpose,
+            ) -> MysqlResult<Vec<String>> {
+                Ok(Vec::new())
+            }
+            async fn get_resource_ids_by_entity(
+                &self,
+                _: &EntityResolvers<brz_redis::RedisService>,
+                _: &MysqlService,
+                _: Option<&brz_redis::RedisService>,
+                _: i64,
+                _: &str,
+                _: &str,
+            ) -> MysqlResult<Vec<i64>> {
+                Ok(Vec::new())
+            }
+        }
+        let mysql =
+            MysqlService::connect_lazy("mysql://unused@127.0.0.1/unused").expect("lazy client");
+        let mut registry = EntityResolvers::public(mysql);
+        registry.register("org_department", Stub);
+        assert_eq!(
+            registry.types().collect::<Vec<_>>(),
+            vec!["namespace", "org_department"]
+        );
+        assert_eq!(
+            registry.external_types().collect::<Vec<_>>(),
+            vec!["org_department"]
+        );
     }
 }

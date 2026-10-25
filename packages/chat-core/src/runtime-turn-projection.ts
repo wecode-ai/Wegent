@@ -15,6 +15,8 @@ export function projectRuntimeConversationTurn(
   const messages: WorkbenchMessage[] = [];
   let assistantItems: RuntimeConversationItem[] = [];
   let followsGuidance = false;
+  let assistantAnchor = "assistant";
+  let hasUser = false;
 
   const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
     const shouldProjectEmptyAssistant =
@@ -28,14 +30,11 @@ export function projectRuntimeConversationTurn(
       (item) => item.type === "assistant_text",
     );
     const blocks = processingBlocks(assistantItems);
-    const firstItem = assistantItems[0];
     const createdAt =
       textItems[0]?.createdAt ??
       (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : "");
     messages.push({
-      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:${
-        firstItem?.id ?? "assistant"
-      }`,
+      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? "pending"}:${assistantAnchor}`,
       role: "assistant",
       content: textItems.map((item) => item.content).join("\n\n"),
       status: isLast ? turnStatus(turn) : "done",
@@ -73,20 +72,34 @@ export function projectRuntimeConversationTurn(
   for (const item of turn.items) {
     if (item.type === "user_message") {
       const hadAssistant = assistantItems.length > 0;
-      flushAssistant(false, hadAssistant);
+      const splitsReply =
+        hasUser ||
+        item.message.runtimeGuidance === true ||
+        assistantItems.some((item) => item.type === "assistant_text");
+      if (splitsReply) flushAssistant(false, hadAssistant);
+      hasUser = true;
       const parsedContexts = parseCodeCommentContexts(item.message.content);
       messages.push(
         parsedContexts
           ? {
               ...item.message,
+              runtimeItemId: item.id,
               content: parsedContexts.content,
               codeComments: item.message.codeComments?.length
                 ? item.message.codeComments
                 : parsedContexts.codeComments,
             }
-          : item.message,
+          : { ...item.message, runtimeItemId: item.id },
       );
       followsGuidance = item.message.runtimeGuidance === true;
+      // Output items can be reordered or recovered while the same reply streams.
+      // Only user boundaries establish another assistant view within a turn.
+      if (
+        splitsReply &&
+        (hadAssistant || followsGuidance || assistantAnchor !== "assistant")
+      ) {
+        assistantAnchor = `after:${item.id}`;
+      }
       if (followsGuidance && turn.id !== null) {
         const block = projectedGuidanceBlock(item.message, turn.id);
         assistantItems.push({ id: block.id, type: "block", block });

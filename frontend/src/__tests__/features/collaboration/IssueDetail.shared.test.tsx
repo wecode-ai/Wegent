@@ -209,6 +209,7 @@ describe('shared IssueDetail', () => {
         messages={collaborationMessages['zh-CN']}
         onClose={jest.fn()}
         onChange={jest.fn()}
+        onRead={jest.fn()}
         onCommentsChange={jest.fn()}
         onConflict={jest.fn()}
         onError={jest.fn()}
@@ -315,11 +316,31 @@ describe('shared IssueDetail', () => {
     expect(nextApi.attachments.list).toHaveBeenCalledTimes(1)
   })
 
-  it.each([409, 500])('uses the latest callbacks after a %s save failure', async status => {
+  it.each([
+    {
+      name: 'version conflict',
+      error: Object.assign(new Error('Save failed'), {
+        status: 409,
+        detail: { code: 'version_conflict', message: 'TODO changed' },
+      }),
+      conflict: true,
+    },
+    {
+      name: 'business rejection',
+      error: Object.assign(new Error('Save failed'), {
+        status: 409,
+        detail: 'This action is unavailable',
+      }),
+      conflict: false,
+    },
+    {
+      name: 'server failure',
+      error: Object.assign(new Error('Save failed'), { status: 500 }),
+      conflict: false,
+    },
+  ])('uses the latest callbacks after a $name', async ({ error, conflict }) => {
     const api = createApi()
-    jest
-      .mocked(api.issues.update)
-      .mockRejectedValue(Object.assign(new Error('Save failed'), { status }))
+    jest.mocked(api.issues.update).mockRejectedValue(error)
     const original = { onError: jest.fn(), onConflict: jest.fn() }
     const latest = { onError: jest.fn(), onConflict: jest.fn() }
     const view = renderDetail(api, original)
@@ -331,8 +352,9 @@ describe('shared IssueDetail', () => {
     })
     fireEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
-      expect(status === 409 ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
+      expect(conflict ? latest.onConflict : latest.onError).toHaveBeenCalledTimes(1)
     )
+    expect(conflict ? latest.onError : latest.onConflict).not.toHaveBeenCalled()
     expect(original.onError).not.toHaveBeenCalled()
     expect(original.onConflict).not.toHaveBeenCalled()
     expect(api.attachments.list).toHaveBeenCalledTimes(1)
@@ -617,8 +639,9 @@ describe('shared IssueDetail', () => {
     await waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
     fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
     fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
-    fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
         version: 2,
@@ -632,25 +655,37 @@ describe('shared IssueDetail', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assignee_user_id: 5 }))
   })
 
-  it('allows assignment without granting permission to edit Issue content', async () => {
-    const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
-    const update = jest.fn()
-    const api = createApi({ issues: { assign, update } })
-    renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
-    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
-    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
-    fireEvent.click(screen.getByTestId('wework-assignment-notify-confirm'))
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
-    await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
-        version: 1,
-        assigneeType: 'user',
-        assigneeId: '5',
-        notifyAssignee: true,
-      })
-    )
-    expect(update).not.toHaveBeenCalled()
-  })
+  it.each([true, false])(
+    'allows assignment with notifyAssignee=%s without granting permission to edit Issue content',
+    async notifyAssignee => {
+      const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
+      const update = jest.fn()
+      const api = createApi({ issues: { assign, update } })
+      renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
+      fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+      fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+      expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-save')).toHaveTextContent('保存并通知')
+      if (notifyAssignee) {
+        await userEvent.click(screen.getByTestId('cloud-todo-save'))
+      } else {
+        await userEvent.click(screen.getByTestId('cloud-todo-save-options'))
+        expect(screen.getByTestId('cloud-todo-save-without-notification')).toHaveTextContent(
+          '仅保存不通知'
+        )
+        await userEvent.click(screen.getByTestId('cloud-todo-save-without-notification'))
+      }
+      await waitFor(() =>
+        expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+          version: 1,
+          assigneeType: 'user',
+          assigneeId: '5',
+          notifyAssignee,
+        })
+      )
+      expect(update).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps an uploaded attachment when an older list request resolves afterward', async () => {
     let resolveAttachments: (attachments: []) => void = () => undefined
@@ -1176,7 +1211,6 @@ describe('shared IssueDetail', () => {
 
     renderDetail(api)
 
-    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('实现任务')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-1'))

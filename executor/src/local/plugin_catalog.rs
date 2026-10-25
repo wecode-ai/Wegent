@@ -14,6 +14,9 @@ use serde_json::{json, Value};
 
 use super::bundled_plugins::BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV;
 
+mod managed_paths;
+pub(crate) use managed_paths::{managed_plugin_root, ManagedPluginPathError};
+
 const COMPONENT_RESOURCES_ROOT_ENV: &str = "WEWORK_COMPONENT_RESOURCES_ROOT";
 const BUNDLED_PLUGINS_DIRECTORY: &str = "bundled-plugins";
 const PLUGIN_EXAMPLE_DIRECTORY: &str = "wework-plugin-example";
@@ -50,6 +53,7 @@ pub struct WegentStorePluginSummary {
     category: Option<String>,
     plugin_path: String,
     default_prompt: Option<Value>,
+    runtime_recovery_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -128,11 +132,24 @@ fn list_wegent_store_plugins_from_roots(
             )
         })?;
     let mut plugins = Vec::new();
-    for entry in installed.values() {
-        let Ok(plugin_root) = managed_plugin_root(capabilities_root, shared_plugins, entry) else {
-            continue;
+    for (key, entry) in installed {
+        let summary = if let Some(error) = entry["runtime_recovery_error"].as_str() {
+            managed_paths::unavailable_plugin_summary(key, entry, error)
+        } else {
+            match managed_plugin_root(capabilities_root, shared_plugins, entry) {
+                Ok(root) => wegent_store_plugin_summary(entry, &root).or_else(|| {
+                    managed_paths::unavailable_plugin_summary(
+                        key,
+                        entry,
+                        "Plugin manifest is unavailable",
+                    )
+                }),
+                Err(error) => {
+                    managed_paths::unavailable_plugin_summary(key, entry, &error.to_string())
+                }
+            }
         };
-        if let Some(summary) = wegent_store_plugin_summary(entry, &plugin_root) {
+        if let Some(summary) = summary {
             plugins.push(summary);
         }
     }
@@ -146,53 +163,6 @@ fn list_wegent_store_plugins_from_roots(
         store_path,
         plugins,
     })
-}
-
-/// Accept legacy managed packages or exact content-addressed packages, never a store root.
-pub(crate) fn managed_plugin_root(
-    capabilities_root: &Path,
-    shared_plugins: &Path,
-    entry: &Value,
-) -> Result<PathBuf, String> {
-    let path = entry["store_path"]
-        .as_str()
-        .ok_or("Missing managed plugin path")?;
-    let path = capabilities_root.join(path);
-    let root = path
-        .canonicalize()
-        .map_err(|_| "Managed plugin is missing")?;
-    if !root.is_dir() {
-        return Err("Managed plugin must be a directory".into());
-    }
-    if let Ok(store) = capabilities_root.join("store/plugins").canonicalize() {
-        if root != store && root.starts_with(&store) {
-            return Ok(root);
-        }
-    }
-    let checksum = entry["checksum"]
-        .as_str()
-        .ok_or("Missing plugin checksum")?;
-    let digest = checksum.strip_prefix("sha256:").unwrap_or(checksum);
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("Invalid plugin checksum".into());
-    }
-    // A hash-named symlink must not redirect credential operations to another package.
-    reject_symbolic_link(shared_plugins, "Shared plugin store")?;
-    let expected = shared_plugins.join(digest.to_ascii_lowercase());
-    reject_symbolic_link(&expected, "Shared plugin package")?;
-    reject_symbolic_link(&path, "Managed plugin package")?;
-    let store = shared_plugins
-        .canonicalize()
-        .map_err(|_| "Shared plugin store is missing")?;
-    if root.parent() != Some(store.as_path())
-        || root
-            != expected
-                .canonicalize()
-                .map_err(|_| "Shared plugin package is missing")?
-    {
-        return Err("Plugin is outside its managed package store".into());
-    }
-    Ok(root)
 }
 
 fn wegent_store_plugin_summary(
@@ -227,6 +197,7 @@ fn wegent_store_plugin_summary(
         default_prompt: interface
             .and_then(|value| value.get("defaultPrompt"))
             .cloned(),
+        runtime_recovery_error: optional_trimmed_string(installed.get("runtime_recovery_error")),
     })
 }
 
@@ -316,12 +287,14 @@ fn registered_store_plugin_roots(
     Ok(roots)
 }
 
-pub(super) fn registered_codex_cache(
+pub(crate) fn registered_codex_cache(
     codex_home: &Path,
     marketplace: &str,
     plugin_name: &str,
     entry: &Value,
 ) -> Option<PathBuf> {
+    validate_plugin_name(marketplace).ok()?;
+    validate_plugin_name(plugin_name).ok()?;
     let version = entry["version"].as_str()?;
     let version_path = Path::new(version);
     if version_path.components().count() != 1
@@ -332,16 +305,24 @@ pub(super) fn registered_codex_cache(
     let cache = codex_home.join("plugins/cache");
     let plugin = cache.join(marketplace).join(plugin_name);
     let expected = plugin.join(version);
-    for path in [&cache, &cache.join(marketplace), &plugin, &expected] {
+    let recorded = Path::new(entry["runtime"]["codex_link"].as_str()?);
+    if recorded != expected {
+        return None;
+    }
+    for path in [
+        codex_home,
+        &cache,
+        &cache.join(marketplace),
+        &plugin,
+        &expected,
+    ] {
         reject_symbolic_link(path, "Managed Codex plugin cache").ok()?;
     }
     let expected = expected.canonicalize().ok()?;
     if !expected.starts_with(codex_home.canonicalize().ok()?) {
         return None;
     }
-    let recorded = Path::new(entry["runtime"]["codex_link"].as_str()?);
-    reject_symbolic_link(recorded, "Managed Codex plugin cache").ok()?;
-    (recorded.canonicalize().ok()? == expected).then_some(expected)
+    Some(expected)
 }
 
 pub(super) fn resolve_local_plugin_root(

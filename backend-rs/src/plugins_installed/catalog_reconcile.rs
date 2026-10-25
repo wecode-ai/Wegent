@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use brz_mysql::{Mysql, MysqlResult};
+use brz_mysql::MysqlResult;
 use serde_json::Value;
 
 use crate::permissions::EntityResolvers;
@@ -29,8 +29,11 @@ use crate::plugins_marketplace::db::{
     DEVICE_COLUMNS, DeviceInstallationRow, GRANT_COLUMNS, InstalledKindRow, KIND_COLUMNS,
     PLUGIN_COLUMNS, PluginReleaseRow, PluginRow, RELEASE_COLUMNS, ResourceMemberRow,
 };
+use crate::plugins_marketplace::query::PluginQuery;
 
-use super::auto_update::{can_access_plugin, load_access_context, marketplace_name_for_visibility};
+use super::auto_update::{
+    can_access_plugin, load_access_context_on, marketplace_name_for_visibility,
+};
 use super::catalog_write::{
     apply_catalog_ref_to_installed_kind, clear_device_installations,
     deactivate_duplicate_installed_kind, deactivate_orphaned_catalog_install,
@@ -94,9 +97,9 @@ pub(super) const FAILED_DEVICE_ROWS_QUERY: &str = "SELECT plugin_device_installa
 /// never referenced between helper calls; `get_release` always queries, and
 /// `_latest_release` only reuses the caller's `release` local when both read
 /// the same id.
-async fn get_plugin<M: Mysql>(
+async fn get_plugin<Q: PluginQuery>(
     alive: &[Option<&PluginRow>],
-    mysql: &M,
+    mysql: &mut Q,
     id: i64,
 ) -> MysqlResult<Option<PluginRow>> {
     for row in alive.iter().flatten() {
@@ -112,7 +115,10 @@ async fn get_plugin<M: Mysql>(
 
 /// `db.get(PluginRelease, id)`: never an identity-map hit between helper
 /// calls, because no strong reference to a release row survives them.
-async fn get_release<M: Mysql>(mysql: &M, id: i64) -> MysqlResult<Option<PluginReleaseRow>> {
+async fn get_release<Q: PluginQuery>(
+    mysql: &mut Q,
+    id: i64,
+) -> MysqlResult<Option<PluginReleaseRow>> {
     let row: Option<PluginReleaseRow> = mysql
         .fetch_optional(
             RELEASE_BY_ID_QUERY.replace("{cols}", RELEASE_COLUMNS),
@@ -126,9 +132,9 @@ async fn get_release<M: Mysql>(mysql: &M, id: i64) -> MysqlResult<Option<PluginR
 /// an identity-map hit only when the caller's `release` local already holds
 /// that row (both reads use the same id inside one
 /// `_reconcile_installed_kind_catalog_ref` call).
-async fn get_release_or_alive<M: Mysql>(
+async fn get_release_or_alive<Q: PluginQuery>(
     alive_release: Option<&PluginReleaseRow>,
-    mysql: &M,
+    mysql: &mut Q,
     id: i64,
 ) -> MysqlResult<Option<PluginReleaseRow>> {
     if alive_release.is_some_and(|release| release.id == id) {
@@ -185,15 +191,15 @@ fn sql(template: &str, cols: &str) -> String {
 }
 
 /// `_can_access_plugin` when the caller passes no preloaded grants/context.
-async fn plugin_can_access<M, R>(
-    mysql: &M,
+async fn plugin_can_access<Q, R>(
+    mysql: &mut Q,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     plugin: &PluginRow,
     user_id: i64,
 ) -> MysqlResult<bool>
 where
-    M: Mysql,
+    Q: PluginQuery,
     R: brz_redis::Redis,
 {
     if plugin.visibility == "public" {
@@ -225,7 +231,7 @@ where
     }
     let mut by_plugin: HashMap<i64, Vec<ResourceMemberRow>> = HashMap::new();
     by_plugin.insert(plugin.id, grants);
-    let context = load_access_context(mysql, redis, resolvers, user_id, &by_plugin).await?;
+    let context = load_access_context_on(mysql, redis, resolvers, user_id, &by_plugin).await?;
     let grants = by_plugin.get(&plugin.id).map(Vec::as_slice).unwrap_or(&[]);
     Ok(can_access_plugin(
         plugin,
@@ -236,8 +242,8 @@ where
 }
 
 /// `_published_plugin_by_key`.
-async fn published_plugin_by_key<M, R>(
-    mysql: &M,
+async fn published_plugin_by_key<Q, R>(
+    mysql: &mut Q,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     user_id: i64,
@@ -245,7 +251,7 @@ async fn published_plugin_by_key<M, R>(
     marketplace: &str,
 ) -> MysqlResult<Option<PluginRow>>
 where
-    M: Mysql,
+    Q: PluginQuery,
     R: brz_redis::Redis,
 {
     let normalized = plugin_key.trim();
@@ -287,16 +293,16 @@ struct PluginMatch<'a> {
 /// before matching); `matched_alive` is the enclosing function's `matched`
 /// local. During the call both are strong references, so `db.get(Plugin, id)`
 /// hits the identity map for either.
-async fn matching_published_plugin<M, R>(
+async fn matching_published_plugin<Q, R>(
     matched_alive: Option<&PluginRow>,
     caller_plugin: Option<&PluginRow>,
-    mysql: &M,
+    mysql: &mut Q,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     request: &PluginMatch<'_>,
 ) -> MysqlResult<Option<PluginRow>>
 where
-    M: Mysql,
+    Q: PluginQuery,
     R: brz_redis::Redis,
 {
     let alive = [matched_alive, caller_plugin];
@@ -333,9 +339,9 @@ where
 /// `caller_release` is the caller's live `release` local, which keeps the row
 /// in the identity map for the duration of one
 /// `_reconcile_installed_kind_catalog_ref` call.
-async fn latest_release<M: Mysql>(
+async fn latest_release<Q: PluginQuery>(
     caller_release: Option<&PluginReleaseRow>,
-    mysql: &M,
+    mysql: &mut Q,
     plugin: &PluginRow,
 ) -> MysqlResult<Option<PluginReleaseRow>> {
     if plugin.latest_release_id == 0 {
@@ -348,9 +354,9 @@ async fn latest_release<M: Mysql>(
 /// `_installed_kind_catalog_score`: catalog-match scoring for the keeper
 /// choice. The call's own `plugin`/`release` locals die at return, so only the
 /// enclosing function's `matched` local can serve a plugin without a query.
-async fn installed_kind_catalog_score<M: Mysql>(
+async fn installed_kind_catalog_score<Q: PluginQuery>(
     matched_alive: Option<&PluginRow>,
-    mysql: &M,
+    mysql: &mut Q,
     json: &Value,
     row_id: i64,
 ) -> MysqlResult<(i64, i64, i64)> {
@@ -388,9 +394,9 @@ async fn installed_kind_catalog_score<M: Mysql>(
 ///
 /// The call's `plugin`, `release`, and `matched` locals keep their rows in the
 /// identity map for the duration of the call; all of them die at return.
-async fn reconcile_installed_kind_catalog_ref<M, R>(
+async fn reconcile_installed_kind_catalog_ref<Q, R>(
     matched_alive: Option<&PluginRow>,
-    mysql: &M,
+    mysql: &mut Q,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     user_id: i64,
@@ -398,7 +404,7 @@ async fn reconcile_installed_kind_catalog_ref<M, R>(
     plugin_key: &str,
 ) -> MysqlResult<bool>
 where
-    M: Mysql,
+    Q: PluginQuery,
     R: brz_redis::Redis,
 {
     let json = row.json.0.to_value();
@@ -491,14 +497,14 @@ where
 }
 
 /// Source `reconcile_stale_installed_catalog_refs`. Returns the changed count.
-pub(super) async fn reconcile_stale_installed_catalog_refs<M, R>(
-    mysql: &M,
+pub(super) async fn reconcile_stale_installed_catalog_refs<Q, R>(
+    mysql: &mut Q,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
     user_id: i64,
 ) -> MysqlResult<usize>
 where
-    M: Mysql,
+    Q: PluginQuery,
     R: brz_redis::Redis,
 {
     let rows: Vec<InstalledKindRow> = mysql
@@ -703,8 +709,8 @@ mod tests {
         // MySQL. The capture harness returns no rows, so each pass must issue
         // its own query for the same id.
         let mysql = crate::sql_test_support::KindQueryCapture::default();
-        assert!(get_release(&mysql, 38).await.unwrap().is_none());
-        assert!(get_release(&mysql, 38).await.unwrap().is_none());
+        assert!(get_release(&mut &mysql, 38).await.unwrap().is_none());
+        assert!(get_release(&mut &mysql, 38).await.unwrap().is_none());
         let queries = mysql.queries();
         assert_eq!(queries.len(), 2);
         assert!(queries.iter().all(|query| {
@@ -723,7 +729,7 @@ mod tests {
         // once for both the spec release and the plugin's latest release).
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let release = release_row(150, 18);
-        let resolved = get_release_or_alive(Some(&release), &mysql, 150)
+        let resolved = get_release_or_alive(Some(&release), &mut &mysql, 150)
             .await
             .unwrap()
             .unwrap();
@@ -731,7 +737,7 @@ mod tests {
         assert_eq!(mysql.queries().len(), 0);
         // A different latest id must re-query.
         assert!(
-            get_release_or_alive(Some(&release), &mysql, 144)
+            get_release_or_alive(Some(&release), &mut &mysql, 144)
                 .await
                 .unwrap()
                 .is_none()
@@ -749,15 +755,15 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let alive = plugin_row(18);
         // Identity-map hit while the local is alive.
-        let hit = get_plugin(&[Some(&alive)], &mysql, 18).await.unwrap();
+        let hit = get_plugin(&[Some(&alive)], &mut &mysql, 18).await.unwrap();
         assert!(hit.is_some());
         assert_eq!(mysql.queries().len(), 0);
         // No strong reference: re-read.
-        assert!(get_plugin(&[], &mysql, 18).await.unwrap().is_none());
+        assert!(get_plugin(&[], &mut &mysql, 18).await.unwrap().is_none());
         assert_eq!(mysql.queries().len(), 1);
         // A different id than the referenced row: re-read.
         assert!(
-            get_plugin(&[Some(&alive)], &mysql, 10)
+            get_plugin(&[Some(&alive)], &mut &mysql, 10)
                 .await
                 .unwrap()
                 .is_none()

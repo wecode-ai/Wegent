@@ -225,3 +225,12 @@ def test_internal_chat_history_includes_failed_only_when_value_exists(
         "completed-message",
         "partial-failed-message",
     ]
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("chat_history",)) as client:
+        yield client

@@ -7,8 +7,15 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.security import create_access_token
+from app.models.cloud_project import CloudProject
+from app.models.resource_member import ResourceMember
 from app.models.user import User
-from app.services.cloud_projects.responses import project_response
+from app.schemas.base_role import BaseRole
+from app.services.cloud_project_visibility import project_participant_ids
+from app.services.cloud_projects.responses import (
+    list_project_responses,
+    project_response,
+)
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
 
@@ -71,12 +78,65 @@ def invite(client, scope, role, *, project=False):
     assert response.status_code == 201, response.text
 
 
+@pytest.mark.parametrize("space_role", ["Developer", "Viewer"])
+@pytest.mark.parametrize("direct_role", ["Maintainer", "Developer", "Viewer"])
+def test_cp08_patch_creates_project_override_for_inherited_member(
+    test_client, test_db, scope, space_role, direct_role
+):
+    invite(test_client, scope, space_role)
+    pid = scope["project"]["id"]
+    workspace_grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Workspace",
+            resource_id=int(scope["space"]["id"]),
+            entity_type="user",
+            entity_id=str(scope["user"].id),
+        )
+        .one()
+    )
+    stored_role = workspace_grant.role
+    response = test_client.patch(
+        f"/api/v1/cloud-projects/{pid}/members/{scope['user'].id}",
+        headers=scope["owner"],
+        json={"role": direct_role},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == direct_role
+    assert response.json()["direct_role"] == direct_role
+    assert response.json()["inherited_role"] == space_role
+    test_db.refresh(workspace_grant)
+    assert workspace_grant.role == stored_role
+    assert workspace_grant.status == "approved"
+
+
+def test_cp05_direct_viewer_overrides_ordinary_inheritance_everywhere(
+    test_client, test_db, scope
+):
+    invite(test_client, scope, "Developer")
+    invite(test_client, scope, "Viewer", project=True)
+    pid = scope["project"]["id"]
+    decision = collaboration_permission_service.check(
+        test_db, scope["user"].id, "edit", pid
+    )
+    assert decision.role == BaseRole.Viewer
+    assert not decision.allowed
+    assert (
+        list_project_responses(test_db, scope["user"])[0].access_role == BaseRole.Viewer
+    )
+    assert scope["user"].id not in project_participant_ids(
+        test_db,
+        test_db.get(CloudProject, pid),
+        required_role=BaseRole.Developer,
+    )
+
+
 @pytest.mark.parametrize(
     "space_role", [None, "Owner", "Maintainer", "Developer", "Viewer"]
 )
 @pytest.mark.parametrize("direct_role", [None, "Maintainer", "Developer", "Viewer"])
 @pytest.mark.parametrize("mode", ["inherit", "restricted"])
-def test_cp02_cp03_cp05_role_union_and_restricted_projects(
+def test_cp02_cp03_cp05_role_precedence_and_restricted_projects(
     test_client, test_db, scope, space_role, direct_role, mode
 ):
     pid, wid = scope["project"]["id"], scope["space"]["id"]
@@ -97,24 +157,36 @@ def test_cp02_cp03_cp05_role_union_and_restricted_projects(
         assert changed.status_code == 200, changed.text
     elif space_role:
         invite(test_client, scope, space_role)
-    expected_sources = []
     inherited = (
         "Maintainer"
         if space_role in {"Owner", "Maintainer"}
         else space_role if mode == "inherit" else None
     )
-    if inherited:
-        expected_sources.append(inherited)
-    if direct_role:
-        expected_sources.append(direct_role)
     ranks = {"Maintainer": 0, "Developer": 1, "Viewer": 2}
-    expected = (
-        min(expected_sources, key=ranks.__getitem__) if expected_sources else None
-    )
+    expected = "Maintainer" if inherited == "Maintainer" else direct_role or inherited
     detail_status, detail = read_project(test_db, pid, scope["user"])
     assert detail_status == (200 if expected else 404)
     if expected:
         assert detail["access_role"] == expected
+    projects = {row.id: row for row in list_project_responses(test_db, scope["user"])}
+    assert (pid in projects) == (expected is not None)
+    if expected:
+        assert projects[pid].access_role.value == expected
+    roster = test_client.get(
+        f"/api/v1/cloud-projects/{pid}/members", headers=scope["owner"]
+    )
+    assert roster.status_code == 200, roster.text
+    rows = [row for row in roster.json() if row["user_id"] == scope["user"].id]
+    assert len(rows) == int(expected is not None)
+    if rows:
+        assert rows[0]["role"] == expected
+        assert rows[0]["can_be_assignee"] == (ranks[expected] <= 1)
+    project = test_db.get(CloudProject, pid)
+    for required_role in (BaseRole.Viewer, BaseRole.Developer, BaseRole.Maintainer):
+        assert (
+            scope["user"].id
+            in project_participant_ids(test_db, project, required_role=required_role)
+        ) == (expected is not None and ranks[expected] <= ranks[required_role.value])
     for action in ("read", "manage", "edit", "comment", "assign", "execute"):
         decision = collaboration_permission_service.check(
             test_db, scope["user"].id, action, pid
@@ -154,8 +226,6 @@ def test_cp04_project_guest_does_not_inherit_upward(test_client, test_db, scope,
         json={"name": "Sibling"},
     ).json()
     assert read_project(test_db, sibling["id"], scope["user"])[0] == 404
-    from app.services.cloud_projects.responses import list_project_responses
-
     # HTTP list ownership moved to Rust; retain source-service contract coverage.
     listed_projects = [
         row.model_dump() for row in list_project_responses(test_db, scope["user"])
@@ -198,6 +268,35 @@ def test_cp07_cp08_cp20_viewer_and_membership_provenance(test_client, scope):
             json={"title": "Forbidden"},
         ).status_code
         == 403
+    )
+
+
+@pytest.mark.parametrize("target_status", ["in_progress", "in_review", "completed"])
+def test_cp07_viewer_cannot_change_issue_status(test_client, scope, target_status):
+    invite(test_client, scope, "Viewer")
+    pid = scope["project"]["id"]
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{pid}/loop-items",
+        headers=scope["owner"],
+        json={"title": "Status permission contract"},
+    )
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    changed = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=scope["member"],
+        json={
+            "version": issue["version"],
+            "status": target_status,
+        },
+    )
+    assert changed.status_code == 403, changed.text
+    current = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}", headers=scope["owner"]
+    ).json()
+    assert (current["status"], current["version"]) == (
+        issue["status"],
+        issue["version"],
     )
 
 
@@ -340,3 +439,12 @@ def test_cp09_cp13_enabled_agents_and_assignment_entry_points(test_client, scope
             test_client.post(path, headers=scope["member"], json=body).status_code
             == 403
         )
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("project_members", "workspaces")) as client:
+        yield client

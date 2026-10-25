@@ -79,3 +79,14 @@ describe('resolveReleaseVersion', () => {
     ).toThrow('Invalid stable Wework version')
   })
 })
+
+test('rejects reusing a published stable version for another publication', () => {
+  expect(() =>
+    resolveReleaseVersion({
+      tags: ['wework-v1.2.4'],
+      inputChannel: 'stable',
+      inputVersion: '1.2.4',
+      publishRelease: true,
+    })
+  ).toThrow('already exists')
+})

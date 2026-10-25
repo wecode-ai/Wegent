@@ -544,6 +544,15 @@
   white-space: nowrap;
 }
 
+.collaboration-workspace-project > .collaboration-project-sidebar-badge {
+  position: absolute;
+  left: -4px;
+  display: flex;
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+}
+
 .collaboration-workspace-project-row {
   position: relative;
   width: 100%;

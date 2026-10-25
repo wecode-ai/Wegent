@@ -42,6 +42,7 @@ from app.services.cloud_projects.access import (
     require_issue_action,
 )
 from app.services.delivery.storage import delivery_storage
+from app.services.issue_badges import issue_badges
 from app.services.loop_item_executions.service import (
     execution_ai_state,
     execution_display_state,
@@ -51,7 +52,9 @@ from app.services.loop_items.access import default_issue_security, is_related_it
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
+from app.services.loop_items.change_requests import persist_external_badge_source
 from app.services.notification_copy import NotificationTarget
+from app.services.notification_target import board_status_label
 from app.services.project_automation_domain import runnable_wegent_team
 
 logger = logging.getLogger(__name__)
@@ -129,10 +132,13 @@ class ExternalLoopItemProvider:
                 access,
                 user_id,
                 include_description=False,
+                include_badges=False,
             )
             for issue in issues
         ]
-        return [response for response in responses if response["can_view_detail"]]
+        return self._attach_badges(
+            db, [response for response in responses if response["can_view_detail"]]
+        )
 
     def list_page(
         self,
@@ -204,11 +210,14 @@ class ExternalLoopItemProvider:
                 access,
                 user_id,
                 include_description=False,
+                include_badges=False,
             )
             for issue in matched
         ]
         return (
-            [response for response in responses if response["can_view_detail"]],
+            self._attach_badges(
+                db, [response for response in responses if response["can_view_detail"]]
+            ),
             next_cursor,
         )
 
@@ -229,13 +238,27 @@ class ExternalLoopItemProvider:
         )
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
+        _, _, response = self._visible_issue(db, item_id, user_id)
+        return response
+
+    def get_notification_target(
+        self, db: Session, item_id: str, user_id: int
+    ) -> NotificationTarget:
+        """Build a target from provider data only after recipient authorization."""
+
+        project, issue, _ = self._visible_issue(db, item_id, user_id)
+        return self._notification_target(project, issue, item_id)
+
+    def _visible_issue(
+        self, db: Session, item_id: str, user_id: int
+    ) -> tuple[CloudProject, dict[str, Any], dict[str, object]]:
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
         response = self._response(db, project, issue, access, user_id)
         if not response["can_view_detail"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        return response
+        return project, issue, response
 
     def get_many(
         self,
@@ -311,6 +334,13 @@ class ExternalLoopItemProvider:
         )
         self._invalidate_issue_page_cache(project.id)
         item_id = f"{project.project_key}-{self._number(issue)}"
+        persist_external_badge_source(
+            db,
+            project_id=str(project.id),
+            item_id=item_id,
+            source="issue",
+            content=f"{values.title}\n{values.description}",
+        )
         if values.assignee_agent_id:
             agent = db.get(ProjectChatAgent, values.assignee_agent_id)
             if agent is None:  # Already validated while building the label.
@@ -385,6 +415,7 @@ class ExternalLoopItemProvider:
                 user_id=user_id,
             )
             db.commit()
+        db.commit()
         return self._response(db, project, issue, access, user_id)
 
     def attach_gitlab_upload(
@@ -690,6 +721,11 @@ class ExternalLoopItemProvider:
     ) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        if values.position is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Manual ordering is not supported by this Issue provider",
+            )
         schedule_fields = {"start_at", "due_at"} & values.model_fields_set
         if any(getattr(values, field) is not None for field in schedule_fields):
             raise HTTPException(
@@ -775,6 +811,15 @@ class ExternalLoopItemProvider:
         if "status" in dumped:
             payload["state"] = self._open_state(project)
         issue = current if not payload else self._update_issue(project, number, payload)
+        if "title" in dumped or "description" in dumped:
+            persist_external_badge_source(
+                db,
+                project_id=str(project.id),
+                item_id=item_id,
+                source="issue",
+                content=f"{issue.get('title') or ''}\n{issue.get(self._body_key(project)) or ''}",
+            )
+            db.commit()
         if payload:
             self._invalidate_issue_page_cache(project.id)
         if (
@@ -1493,6 +1538,7 @@ class ExternalLoopItemProvider:
                     str(issue.get(self._body_key(project)) or "").strip()
                     or str(issue.get("title") or item_id)
                 ),
+                notification_target=self._notification_target(project, issue, item_id),
             )
         db.commit()
         return self._response(db, project, issue, access, user_id)
@@ -1790,7 +1836,22 @@ class ExternalLoopItemProvider:
             issue_creator_user_id=self._creator_id(self._labels(issue)),
             user_id=user_id,
         )
-        return self._create_comment(project, number, body)
+        comment = self._create_comment(project, number, body)
+        row = persist_external_badge_source(
+            db,
+            project_id=str(project.id),
+            item_id=item_id,
+            source=f"provider-comment:{comment['id']}",
+            content=body,
+        )
+        db.commit()
+        if row is not None:
+            from app.services.loop_item_events import publish_loop_item_changed
+
+            publish_loop_item_changed(
+                db, item=row, reason="badges", actor_user_id=user_id
+            )
+        return comment
 
     def list_comments(
         self, db: Session, item_id: str, user_id: int
@@ -1811,6 +1872,7 @@ class ExternalLoopItemProvider:
         user_id: int,
         *,
         include_description: bool = True,
+        include_badges: bool = True,
     ) -> dict[str, object]:
         """Provider view merged with the active Wegent-side execution run."""
 
@@ -1822,7 +1884,30 @@ class ExternalLoopItemProvider:
             user_id,
             include_description=include_description,
         )
-        return self._with_execution_state(db, values, user_id)
+        response = self._with_execution_state(db, values, user_id)
+        return self._attach_badges(db, [response])[0] if include_badges else response
+
+    @staticmethod
+    def _attach_badges(
+        db: Session, responses: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        ids = [str(value["id"]) for value in responses if value.get("can_view_detail")]
+        metadata = (
+            dict(
+                db.query(LoopItem.id, LoopItem.metadata_json)
+                .filter(LoopItem.id.in_(ids))
+                .all()
+            )
+            if ids
+            else {}
+        )
+        for value in responses:
+            value["badges"] = (
+                issue_badges(metadata.get(str(value["id"])))
+                if value.get("can_view_detail")
+                else []
+            )
+        return responses
 
     @staticmethod
     def _derived_version(updated_at: str) -> int:
@@ -2655,15 +2740,16 @@ class ExternalLoopItemProvider:
 
         labels = ExternalLoopItemProvider._labels(issue)
         priority = ExternalLoopItemProvider._priority(labels)
+        item_status = ExternalLoopItemProvider._status(
+            labels, str(issue.get("state") or "")
+        )
         return NotificationTarget(
             project_id=str(project.id),
             project_name=project.name or "",
             item_id=item_id,
             item_key=item_id,
             item_title=str(issue.get("title") or item_id),
-            item_status=ExternalLoopItemProvider._status(
-                labels, str(issue.get("state") or "")
-            ),
+            item_status=board_status_label(project, item_status),
             item_priority=None if priority == "none" else priority,
         )
 

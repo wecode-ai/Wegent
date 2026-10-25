@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Compatibility endpoint for retired execution claims from older wework clients.
+//! Execution endpoints: the retired claim compatibility route, the
+//! Executor round-barrier human status read, and the project execution queue.
 
+mod executions;
 mod handler;
+mod statuses;

@@ -1,14 +1,17 @@
+import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import { useStandInNotifications } from './useStandInNotifications'
+import { standInOrigin, type StandInNotification } from './standInNotifications'
+import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
+import { formatNotificationTime } from './notificationTime'
+import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
-  AtSign,
   Bell,
-  Bot,
   CheckCircle2,
   ChevronRight,
-  ClipboardCheck,
+  RefreshCw,
   Settings2,
-  type LucideIcon,
   UsersRound,
 } from 'lucide-react'
 import { createHttpClient } from '@/api/http'
@@ -29,7 +32,6 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AnchorPopover } from '@/features/todo/AnchorPopover'
 import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { cn } from '@/lib/utils'
@@ -39,7 +41,7 @@ import {
   useNotificationTaskSource,
   type IssueDispatchPersonalTaskAction,
 } from './NotificationTaskSourceContext'
-import { weworkIssueScheme } from './scheme'
+import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import {
   cacheNotificationPreferences,
@@ -50,13 +52,6 @@ import {
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
 const CLOUD_CATEGORIES: WeworkNotificationCategory[] = ['collaboration', 'general']
-
-/** The glyph that tells the kinds of notification apart at a glance. */
-const KIND_ICONS: Record<string, LucideIcon> = {
-  mention: AtSign,
-  assignment: ClipboardCheck,
-  execution: Bot,
-}
 
 /**
  * The preview line a category entry shows for its latest cloud notification.
@@ -121,107 +116,6 @@ function issueDispatchRequest(
     instructions,
     workflowStageId,
   }
-}
-
-function formatNotificationTime(timestamp: number): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return ''
-  const date = new Date(timestamp)
-  const today = new Date()
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  }
-  return date.toLocaleDateString(
-    undefined,
-    date.getFullYear() === today.getFullYear()
-      ? { month: 'numeric', day: 'numeric' }
-      : { year: 'numeric', month: 'numeric', day: 'numeric' }
-  )
-}
-
-function NotificationFeedRow({
-  testId,
-  kind,
-  title,
-  body,
-  summary,
-  replyPreview,
-  timestamp,
-  unread,
-  unreadLabel,
-  busy,
-  onClick,
-}: {
-  testId: string
-  /** Names the notification's glyph; a source without kinds shows none. */
-  kind?: string
-  title: string
-  body: string
-  /** The board, item and state the notification points at. */
-  summary?: string
-  /** The comment this notification answered, when it answered one. */
-  replyPreview?: string
-  timestamp: number
-  unread: boolean
-  unreadLabel: string
-  busy: boolean
-  onClick: () => void
-}) {
-  const time = formatNotificationTime(timestamp)
-  const KindIcon = kind ? (KIND_ICONS[kind] ?? Bell) : null
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      data-unread={unread ? 'true' : undefined}
-      disabled={busy}
-      className={cn(
-        'block min-h-16 w-full border-b border-border/60 px-2 py-2 text-left last:border-b-0 hover:bg-muted disabled:opacity-50',
-        unread && 'bg-muted/30'
-      )}
-      onClick={onClick}
-    >
-      <span className="grid grid-cols-[6px_minmax(0,1fr)_auto] items-center gap-x-1.5">
-        <span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full', unread && 'bg-focus')} />
-        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
-          {unread && <span className="sr-only">{unreadLabel}：</span>}
-          {KindIcon && (
-            <KindIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
-          )}
-          <span className="truncate">{title}</span>
-        </span>
-        {time && (
-          <time className="text-xs text-text-tertiary" dateTime={new Date(timestamp).toISOString()}>
-            {time}
-          </time>
-        )}
-      </span>
-      {summary && (
-        <span
-          data-testid={`${testId}-summary`}
-          className="ml-3 mt-0.5 block truncate text-xs text-text-secondary"
-        >
-          {summary}
-        </span>
-      )}
-      {body && (
-        <span
-          data-testid={`${testId}-body`}
-          className="ml-3 mt-0.5 line-clamp-2 whitespace-pre-wrap text-xs text-text-secondary"
-          title={body}
-        >
-          {body}
-        </span>
-      )}
-      {replyPreview && (
-        <span
-          data-testid={`${testId}-reply`}
-          className="ml-3 mt-1 block border-l-2 border-border pl-2 text-xs text-text-secondary"
-        >
-          {replyPreview}
-        </span>
-      )}
-    </button>
-  )
 }
 
 function NotificationSettings({
@@ -502,14 +396,23 @@ function ConnectedNotificationCenter({
     return () => window.removeEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
   }, [openSettings])
 
+  useStandInAssignmentNotifications(inboxes.collaboration, taskSource, accountKey, userId)
+
+  const collaboration = useStandInNotifications(
+    inboxes.collaboration,
+    taskSource,
+    accountKey,
+    preferences.collaboration.in_app,
+    preferences.collaboration.system === true
+  )
   const unreadTasks = useMemo(
-    () => taskSource?.items.filter(item => taskSource.unreadTaskKeys.has(item.key)) ?? [],
+    () =>
+      taskSource?.items.filter(
+        item => !standInOrigin(item) && taskSource.unreadTaskKeys.has(item.key)
+      ) ?? [],
     [taskSource]
   )
-  const cloudUnreadCount = CLOUD_CATEGORIES.reduce(
-    (count, cloudCategory) => count + (inboxes[cloudCategory]?.unread_count ?? 0),
-    0
-  )
+  const cloudUnreadCount = collaboration.unreadCount + (inboxes.general?.unread_count ?? 0)
   const unreadCount = unreadTasks.length + cloudUnreadCount
   useEffect(() => {
     if (getDesktopWindowLabel() !== 'main') return
@@ -540,26 +443,42 @@ function ConnectedNotificationCenter({
       setBusy(false)
     }
   }
+  const markNotificationRead = async (
+    notification: StandInNotification,
+    cloudCategory: WeworkNotificationCategory
+  ): Promise<StandInNotification> => {
+    if (notification.synthetic) {
+      collaboration.markRead([notification])
+      return notification
+    }
+    if (!api) throw new Error(t('notifications.cloud_unavailable'))
+    const saved = await api.read(notification.id)
+    setInboxes(current => {
+      const inbox = current[cloudCategory]
+      if (!inbox) return current
+      return {
+        ...current,
+        [cloudCategory]: {
+          ...inbox,
+          items: inbox.items.map(item => (item.id === saved.id ? saved : item)),
+          unread_count: Math.max(0, inbox.unread_count - (notification.read_at ? 0 : 1)),
+        },
+      }
+    })
+    collaboration.markRead([notification])
+    return {
+      ...saved,
+      payload: { ...saved.payload, standIn: notification.payload.standIn },
+      url: notification.payload.standIn ? notification.url : saved.url,
+    }
+  }
   const openNotification = (
-    notification: WeworkNotification,
+    notification: StandInNotification,
     cloudCategory: WeworkNotificationCategory
   ) =>
     void mutate(async () => {
-      if (!api) return
-      const read = await api.read(notification.id)
-      setInboxes(current => {
-        const inbox = current[cloudCategory]
-        if (!inbox) return current
-        return {
-          ...current,
-          [cloudCategory]: {
-            ...inbox,
-            items: inbox.items.map(item => (item.id === read.id ? read : item)),
-            unread_count: Math.max(0, inbox.unread_count - (notification.read_at ? 0 : 1)),
-          },
-        }
-      })
-      if (read.payload.action === 'create_personal_task') {
+      const read = await markNotificationRead(notification, cloudCategory)
+      if (read.payload.action === 'create_personal_task' && !read.payload.standIn) {
         const request = issueDispatchRequest(read.payload)
         if (!request) {
           throw new Error(t('notifications.invalid_link'))
@@ -613,11 +532,12 @@ function ConnectedNotificationCenter({
 
   const openTask = (item: RuntimeTaskReminderItem) => {
     taskSource?.markRuntimeTaskRead(item.address)
-    navigateTo(buildRuntimeTaskRoute(item.address))
+    openWeworkScheme(weworkTaskScheme(item.address))
     close()
   }
   const readAll = () =>
     void mutate(async () => {
+      collaboration.markRead(collaboration.items)
       if (api && cloudUnreadCount) {
         await api.readAll()
         setInboxes(current => ({
@@ -701,7 +621,12 @@ function ConnectedNotificationCenter({
 
   const selectedCloudCategory =
     category === 'collaboration' || category === 'general' ? category : null
-  const selectedCloudInbox = selectedCloudCategory ? inboxes[selectedCloudCategory] : null
+  const selectedCloudInbox =
+    selectedCloudCategory === 'collaboration'
+      ? { items: collaboration.items, next_offset: inboxes.collaboration?.next_offset ?? null }
+      : selectedCloudCategory
+        ? inboxes[selectedCloudCategory]
+        : null
   const categoryRows = [
     {
       id: 'tasks' as const,
@@ -714,15 +639,13 @@ function ConnectedNotificationCenter({
     {
       id: 'collaboration' as const,
       title: t('notifications.category_collaboration'),
-      preview: inboxes.collaboration?.items[0]
-        ? notificationPreview(inboxes.collaboration.items[0])
+      preview: collaboration.items[0]
+        ? notificationPreview(collaboration.items[0])
         : api && !inboxes.collaboration && !error
           ? t('notifications.loading')
           : undefined,
-      timestamp: inboxes.collaboration?.items[0]
-        ? cloudTimestamp(inboxes.collaboration.items[0].created_at)
-        : 0,
-      unread: inboxes.collaboration?.unread_count ?? 0,
+      timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
+      unread: collaboration.unreadCount,
       icon: UsersRound,
     },
     {
@@ -817,23 +740,24 @@ function ConnectedNotificationCenter({
               {!settingsOpen && (
                 <button
                   type="button"
-                  data-testid="wework-notifications-refresh"
-                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
-                  disabled={busy || !api}
-                  onClick={() => void refresh()}
-                >
-                  {t('notifications.refresh')}
-                </button>
-              )}
-              {!category && !settingsOpen && (
-                <button
-                  type="button"
                   data-testid="wework-notifications-read-all"
                   className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
                   disabled={busy || unreadCount === 0}
                   onClick={readAll}
                 >
-                  {t('notifications.read_all')}
+                  <span className="text-xs">{t('notifications.read_all')}</span>
+                </button>
+              )}
+              {!settingsOpen && (
+                <button
+                  type="button"
+                  data-testid="wework-notifications-refresh"
+                  aria-label={t('notifications.refresh')}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border-l border-border text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:h-7 md:w-7"
+                  disabled={busy || !api}
+                  onClick={() => void refresh()}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 </button>
               )}
               {!category && !settingsOpen && (
@@ -893,7 +817,7 @@ function ConnectedNotificationCenter({
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">
                       {row.timestamp > 0 && (
-                        <span className="text-xs text-text-tertiary">
+                        <span className="text-xs text-text-secondary">
                           {formatNotificationTime(row.timestamp)}
                         </span>
                       )}
@@ -902,7 +826,7 @@ function ConnectedNotificationCenter({
                           {row.unread > 99 ? '99+' : row.unread}
                         </span>
                       ) : (
-                        <ChevronRight className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
+                        <ChevronRight className="h-4 w-4 text-text-secondary" aria-hidden="true" />
                       )}
                     </span>
                   </button>
@@ -942,34 +866,52 @@ function ConnectedNotificationCenter({
                   {t('notifications.empty_category')}
                 </p>
               )}
-              {selectedCloudInbox?.items.map(notification => (
-                <NotificationFeedRow
-                  key={notification.id}
-                  testId={
+              {selectedCloudInbox?.items.map(notification => {
+                const rowProps: NotificationFeedRowProps = {
+                  testId:
                     notification.payload.action === 'create_personal_task'
                       ? 'issue-dispatch-notification-create-task'
-                      : 'wework-notification-' + notification.id
-                  }
-                  kind={notification.kind}
-                  title={notification.title}
-                  body={notification.body}
-                  summary={summaryParts(notification.payload).join(' · ')}
-                  replyPreview={
-                    notification.payload.replyPreview
-                      ? t('notifications.in_reply_to', {
-                          preview: notification.payload.replyPreview,
-                        })
-                      : undefined
-                  }
-                  timestamp={cloudTimestamp(notification.created_at)}
-                  unread={!notification.read_at}
-                  unreadLabel={t('notifications.unread')}
-                  busy={busy}
-                  onClick={() =>
-                    selectedCloudCategory && openNotification(notification, selectedCloudCategory)
-                  }
-                />
-              ))}
+                      : 'wework-notification-' + notification.id,
+                  kind: notification.kind,
+                  title:
+                    notification.kind === 'issue_dispatch_assignment'
+                      ? notification.payload.taskTitle || notification.title
+                      : notification.title,
+                  body: notification.body,
+                  summary: summaryParts(notification.payload).join(' · '),
+                  replyPreview: notification.payload.replyPreview
+                    ? t('notifications.in_reply_to', { preview: notification.payload.replyPreview })
+                    : undefined,
+                  timestamp:
+                    selectedCloudCategory === 'collaboration'
+                      ? collaboration.timestamp(notification)
+                      : cloudTimestamp(notification.created_at),
+                  unread:
+                    selectedCloudCategory === 'collaboration'
+                      ? collaboration.isUnread(notification)
+                      : !notification.read_at,
+                  unreadLabel: t('notifications.unread'),
+                  busy,
+                  onClick: () =>
+                    selectedCloudCategory && openNotification(notification, selectedCloudCategory),
+                }
+                return notification.kind === 'issue_dispatch_assignment' ? (
+                  <StandInNotificationProcessing
+                    key={notification.id}
+                    notification={notification}
+                    rowProps={rowProps}
+                    services={taskSource?.services}
+                    userId={userId ?? taskSource?.userId ?? null}
+                    onChanged={async () => {
+                      if (selectedCloudCategory)
+                        await markNotificationRead(notification, selectedCloudCategory)
+                      await refresh()
+                    }}
+                  />
+                ) : (
+                  <NotificationFeedRow key={notification.id} {...rowProps} />
+                )
+              })}
               {selectedCloudInbox?.next_offset != null && selectedCloudCategory && (
                 <button
                   type="button"

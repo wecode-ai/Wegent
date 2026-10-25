@@ -2817,13 +2817,32 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return requestLocalExecutor<string>('executor.plugins.example.save', { destinationPath })
     },
     readState(params = {}) {
-      return readState({
+      const observeLocalCatalog =
+        (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') &&
+        params.marketplaceKinds?.includes('local')
+      // Observe the real call before any awaits; E2E must detect an early read
+      // even if the Executor queues it behind package synchronization.
+      const startedAt = observeLocalCatalog
+        ? performance.mark('wework:plugin-local-catalog:started').startTime
+        : undefined
+      const result = readState({
         query: params.q,
         marketplaceId: params.marketplaceId,
         mergeAllMarketplaces: params.mergeAllMarketplaces,
         marketplaceKinds: params.marketplaceKinds,
         refresh: params.refresh,
       })
+      if (!observeLocalCatalog) return result
+      return result.then(
+        state => {
+          performance.mark('wework:plugin-local-catalog:completed', { detail: startedAt })
+          return state
+        },
+        error => {
+          performance.mark('wework:plugin-local-catalog:failed', { detail: startedAt })
+          throw error
+        }
+      )
     },
     async readRemoteCatalog(options = {}) {
       if (!isDesktopRuntime()) return { items: [], deviceId: '' }

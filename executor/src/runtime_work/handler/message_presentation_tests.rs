@@ -1,6 +1,156 @@
 use super::*;
 
 #[test]
+fn active_codex_text_without_phase_stays_process_text_until_completion() {
+    let (handler, root) = isolated_runtime_work_handler("unphased-live-text");
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &json!({
+        "method": "item/agentMessage/delta", "params": {"itemId": "message-1", "delta": "Live answer"}
+    }));
+    let live = handler.active_codex_transcript_messages("task-1");
+    assert_eq!(live[0]["content"], "");
+    assert_eq!(live[0]["blocks"][0]["content"], "Live answer");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed", "params": {"item": {
+                "id": "message-1", "type": "agentMessage", "text": "Live answer"
+            }}
+        }),
+    );
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    let completed = completed_transcript_messages(&handler.local_task_link("task-1").unwrap());
+    assert_eq!(completed[0]["content"], "Live answer");
+    assert!(completed[0]["blocks"].as_array().unwrap().is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
+    let (mut handler, root) = isolated_runtime_work_handler("goal-startup-terminal-identity");
+    let (event_tx, mut event_rx) = broadcast::channel(32);
+    handler.event_tx = Some(event_tx);
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, "task-1");
+    let request = ExecutionRequest {
+        task_id: "task-1".into(),
+        subtask_id: "original-subtask".into(),
+        extra: serde_json::from_value(json!({
+            "wegent_resume_goal_only": true,
+            "client_user_message_id": "original-user",
+            "clientUserMessageId": "original-user",
+            "runtime_generated_user_message": true
+        }))
+        .unwrap(),
+        ..ExecutionRequest::default()
+    };
+    handler.handle_turn_result(
+        "task-1",
+        execution_id,
+        &request,
+        None,
+        Err("startup failed".into()),
+    );
+    let mut terminal = None;
+    while let Ok(event) = event_rx.try_recv() {
+        if event["event"] == "response.failed" {
+            terminal = Some(event);
+        }
+    }
+    let event = terminal.expect("startup failure should emit its terminal event");
+    assert!(event["payload"].get("clientUserMessageId").is_none());
+    assert!(event["payload"]
+        .get("runtimeGeneratedUserMessage")
+        .is_none());
+    assert_eq!(request.extra["client_user_message_id"], "original-user");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn active_codex_text_deltas_survive_interruption() {
+    let (handler, root) = isolated_runtime_work_handler("interrupted-text-deltas");
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".into(), "/tmp/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/started", "params": {"item": {
+                "id": "message-1", "type": "agentMessage", "phase": "final_answer", "text": ""
+            }}
+        }),
+    );
+    for delta in ["Partial ", "answer"] {
+        handler.record_active_codex_transcript_item("task-1", "turn-1", &json!({
+            "method": "item/agentMessage/delta", "params": {"itemId": "message-1", "delta": delta}
+        }));
+    }
+    let mut thread = json!({"turns": []});
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["items"][0]["text"], "Partial answer");
+    assert_eq!(thread["turns"][0]["items"][0]["phase"], "final_answer");
+
+    handler.persist_and_clear_active_codex_transcript("task-1", "cancelled");
+    let link = handler.local_task_link("task-1").unwrap();
+    let messages = completed_transcript_messages(&link);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["content"], "Partial answer");
+    assert_eq!(messages[0]["runtimeItems"][0]["id"], "message-1");
+    assert_eq!(messages[0]["runtimeItems"][0]["type"], "assistant_text");
+    assert_eq!(messages[0]["runtimeItems"][0]["content"], "Partial answer");
+    assert_eq!(messages[0]["status"], "cancelled");
+    assert!(handler
+        .active_codex_transcript_messages("task-1")
+        .is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn active_codex_text_completion_does_not_duplicate_deltas() {
+    let (handler, root) = isolated_runtime_work_handler("completed-text-deltas");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item("task-1", "turn-1", &json!({
+        "method": "item/agentMessage/delta", "params": {"itemId": "message-1", "delta": "Answer"}
+    }));
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/completed", "params": {"item": {
+                "id": "message-1", "type": "agentMessage", "phase": "final_answer", "text": "Answer"
+            }}
+        }),
+    );
+    let mut thread = json!({"turns": []});
+    handler.merge_active_codex_transcript("task-1", &mut thread);
+    assert_eq!(thread["turns"][0]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(thread["turns"][0]["items"][0]["text"], "Answer");
+    handler.clear_active_codex_transcript("task-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/agentMessage/delta", "params": {"itemId": "message-1", "delta": "Late"}
+        }),
+    );
+    assert!(handler
+        .active_codex_transcript_messages("task-1")
+        .is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn overload_recovery_transcript_preserves_user_and_tools_without_terminal_failure() {
     let handle = json!({"overloadRecoveryTurnIds": ["overloaded-turn"]});
     let mut thread = json!({"turns": [

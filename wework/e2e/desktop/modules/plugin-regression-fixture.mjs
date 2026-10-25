@@ -14,11 +14,12 @@ export async function until(read, accept, message, timeoutMs = 10_000) {
   throw new Error(message)
 }
 
-export async function pluginApi(cloud, path, method = 'GET') {
+export async function pluginApi(cloud, path, method = 'GET', { signal } = {}) {
+  const timeout = AbortSignal.timeout(method === 'POST' ? 180_000 : 10_000)
   const response = await fetch(`${cloud.backendUrl}/api${path}`, {
     method,
     headers: { Authorization: `Bearer ${cloud.authToken}` },
-    signal: AbortSignal.timeout(method === 'POST' ? 180_000 : 10_000),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
   assert.ok(response.ok, `${method} ${path.split('?')[0]}: HTTP ${response.status}`)
   return response.status === 204 ? null : response.json()
@@ -94,25 +95,48 @@ export async function openComposerPluginPicker(control) {
   await control.command('waitFor', testId('composer-plugin-picker'), { visible: true })
 }
 
-export async function assertInventory(control, slug, present) {
-  await until(
-    () => inventory(control),
-    state =>
-      state.sharedInventory.installedPlugins.some(item => item.pluginKey === slug) === present &&
-      state.composerApps.some(item => item.pluginKey === slug) === present,
-    `Shared inventory and composer disagree about ${slug}: expected present=${present}`
-  )
+export async function assertInventory(control, slug, present, timeoutMs = 10_000) {
+  let lastState = null
+  try {
+    await until(
+      async () => {
+        lastState = await inventory(control)
+        return lastState
+      },
+      state =>
+        state.sharedInventory.installedPlugins.some(item => item.pluginKey === slug) === present &&
+        state.composerApps.some(item => item.pluginKey === slug) === present,
+      `Shared inventory and composer disagree about ${slug}: expected present=${present}`,
+      timeoutMs
+    )
+  } catch (error) {
+    throw new Error(
+      `${error.message}; sharedInventory=${JSON.stringify(lastState?.sharedInventory ?? null)} ` +
+        `composerApps=${JSON.stringify(lastState?.composerApps ?? null)} ` +
+        `installedPlugins=${JSON.stringify(lastState?.installedPlugins ?? null)}`
+    )
+  }
 }
 
-export async function assertSurfaces(control, fixture, present) {
-  await assertInventory(control, fixture.slug, present)
+export async function assertSurfaces(control, fixture, present, timeoutMs = 10_000) {
+  assert.ok(
+    Number.isSafeInteger(fixture.installedId) && fixture.installedId > 0,
+    'Fixture installedId must be a positive safe integer'
+  )
+  await assertInventory(control, fixture.slug, present, timeoutMs)
   await control.command('click', testId('plugins-manage-button'))
   await control.command(
     'waitFor',
     `${testId('plugin-management-installed-list')}, ${testId('plugin-management-empty-state')}`
   )
-  const manager = await control.command('getText', testId('plugin-management-page-content'))
-  assert.equal(manager.includes(fixture.slug), present, 'Manager disagrees with account membership')
+  const manager = JSON.parse(
+    await control.command('snapshot', testId('plugin-management-page-content'))
+  )
+  assert.equal(
+    manager.testIds.includes(`installed-plugin-row-${fixture.installedId}`),
+    present,
+    'Manager disagrees with account membership'
+  )
   await control.command('click', testId('new-chat-button'))
   await openComposerPluginPicker(control)
   await control.command('fill', testId('composer-plugin-picker-search'), { value: fixture.slug })

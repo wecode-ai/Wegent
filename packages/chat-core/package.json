@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./request-cache": {
+      "types": "./src/request-cache.ts",
+      "import": "./src/request-cache.ts"
+    },
     "./command-execution": {
       "types": "./src/command-execution.ts",
       "import": "./src/command-execution.ts"
@@ -335,6 +339,10 @@
     "./activity-execution-turn": {
       "types": "./src/activity-execution-turn.ts",
       "import": "./src/activity-execution-turn.ts"
+    },
+    "./conversation-search": {
+      "types": "./src/conversation-search.ts",
+      "import": "./src/conversation-search.ts"
     }
   },
   "scripts": {

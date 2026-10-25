@@ -743,7 +743,7 @@ fn interrupted_turn_keeps_commentary_visible_and_cancelled_status() {
     assert_eq!(messages.len(), 4);
     assert_eq!(messages[1]["status"], "cancelled");
     assert_eq!(messages[1]["stoppedNotice"], true);
-    assert_eq!(messages[1]["content"], "");
+    assert_eq!(messages[1]["content"], "partial answer");
     assert_eq!(messages[1]["completedAt"], 1_780_000_152_000_i64);
     assert_eq!(messages[1]["blocks"][0]["type"], "text");
     assert_eq!(
@@ -755,9 +755,15 @@ fn interrupted_turn_keeps_commentary_visible_and_cancelled_status() {
         messages[1]["blocks"][1]["tool_input"]["cmd"],
         "cat package.json"
     );
-    assert_eq!(messages[1]["blocks"][2]["type"], "text");
-    assert_eq!(messages[1]["blocks"][2]["content"], "partial answer");
-    assert_eq!(messages[1]["blocks"][2]["timestamp"], 1_780_000_152_000_i64);
+    assert_eq!(messages[1]["blocks"].as_array().unwrap().len(), 2);
+    let final_item = messages[1]["runtimeItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "final-1")
+        .unwrap();
+    assert_eq!(final_item["type"], "assistant_text");
+    assert_eq!(final_item["content"], "partial answer");
     assert_eq!(messages[2]["role"], "user");
     assert_eq!(messages[2]["createdAt"], 1_780_000_140_000_i64);
     assert!(messages[2]["content"]
@@ -777,6 +783,84 @@ fn interrupted_turn_keeps_commentary_visible_and_cancelled_status() {
     );
     assert_eq!(messages[3]["runtimeItems"][0]["id"], "commentary-2");
     assert_eq!(messages[3]["runtimeItems"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn cancelled_assistant_projection_preserves_final_and_narrative_visibility() {
+    use crate::runtime_work::transcript_search_text::{
+        codex_turn_search_regions, visible_assistant_content, AsyncReplySearchProjection,
+    };
+
+    for (status, body, narrative, visible_body) in [
+        ("interrupted", "interrupted", None, ""),
+        ("interrupted", "partial answer", None, "partial answer"),
+        ("interrupted", "aborted", Some("interrupted"), ""),
+        ("completed", "interrupted", None, "interrupted"),
+    ] {
+        let mut items = Vec::new();
+        if let Some(text) = narrative {
+            items.push(json!({
+                "id": "narrative-1", "type": "agentMessage",
+                "phase": "commentary", "text": text,
+            }));
+        }
+        items.push(json!({
+            "id": "final-1", "type": "agentMessage",
+            "phase": "final_answer", "text": body,
+        }));
+        let turn = json!({"id": "turn-1", "status": status, "items": items});
+        let messages = search_transcript_messages(&json!({"turns": [turn.clone()]}));
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message["content"], body);
+        assert_eq!(
+            message["status"],
+            if status == "interrupted" {
+                "cancelled"
+            } else {
+                "done"
+            }
+        );
+        let final_item = message["runtimeItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == "final-1")
+            .unwrap();
+        assert_eq!(final_item["type"], "assistant_text");
+        assert_eq!(final_item["content"], body);
+        let blocks = message["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), usize::from(narrative.is_some()));
+        if let Some(text) = narrative {
+            assert_eq!(blocks[0]["type"], "text");
+            assert_eq!(blocks[0]["content"], text);
+        }
+        assert_eq!(
+            visible_assistant_content(body, message["status"].as_str().unwrap(), None),
+            visible_body
+        );
+
+        let regions = codex_turn_search_regions(
+            &turn,
+            &HashMap::new(),
+            None,
+            &mut AsyncReplySearchProjection::default(),
+        );
+        let mut expected = Vec::new();
+        if let Some(text) = narrative {
+            expected.push(("narrative-1".to_owned(), text.to_owned()));
+        }
+        if !visible_body.is_empty() {
+            expected.push(("final-1".to_owned(), visible_body.to_owned()));
+        }
+        assert_eq!(
+            regions
+                .into_iter()
+                .map(|region| (region.id, region.text))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
 }
 
 #[test]

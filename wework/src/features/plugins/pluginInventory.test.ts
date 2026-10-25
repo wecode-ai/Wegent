@@ -963,7 +963,8 @@ describe('pluginInventory', () => {
     expect(readDetail).toHaveBeenCalledWith(localPlugin)
     expect(apps).toEqual([
       expect.objectContaining({
-        logoUrl: 'file:///Users/test/.codex/plugins/cache/personal/dingtalk/1/assets/icon.png',
+        logoUrl:
+          '/wework/executor/v1/plugin-image?path=%2FUsers%2Ftest%2F.codex%2Fplugins%2Fcache%2Fpersonal%2Fdingtalk%2F1%2Fassets%2Ficon.png',
       }),
     ])
   })

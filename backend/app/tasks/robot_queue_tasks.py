@@ -14,6 +14,7 @@ import socketio
 from prometheus_client import Counter, Gauge
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
@@ -25,6 +26,7 @@ from app.models.share_link import ResourceType
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import loop_item_execution_service
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,7 @@ def scan_robot_queue(self) -> dict:
 
 
 def _queued_devices(db) -> list[tuple[int, str]]:
+    loop_item_execution_service.prepare_queued_assignments(db)
     bound_rows = db.execute(
         select(
             LoopItemExecution.executor_owner_user_id,
@@ -136,6 +139,7 @@ def _unbound_queue_devices(db) -> set[tuple[int, str]]:
             LoopItemExecution.execution_environment.in_(("local", "cloud")),
             LoopItemExecution.execution_device_id == "",
             ~LoopItemExecution.uses_runner_routing,
+            ~LoopItemExecution.assignment_pending,
         )
         .distinct()
     ).all()
@@ -245,15 +249,21 @@ def _publish_work_availability(devices: list[tuple[int, str]]) -> None:
         )
 
 
+def _prepare_queue_targets() -> list[tuple[int, str]]:
+    from app.db.session import get_db_session
+
+    with get_db_session() as db:
+        return _queued_devices(db)
+
+
+@trace_async("robot_queue.consume", tracer_name="backend")
 async def consume_queues_background() -> None:
     """Notify connected Executors; the notification never carries work."""
 
     from app.core.socketio import get_sio
-    from app.db.session import get_db_session
 
     try:
-        with get_db_session() as db:
-            devices = _queued_devices(db)
+        devices = await run_in_threadpool(_prepare_queue_targets)
         if devices:
             logger.info(
                 "[RobotQueue] Publishing work availability source=api targets=%s",

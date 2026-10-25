@@ -189,3 +189,85 @@ fn quotes_literals_with_mysql_rules() {
     assert_eq!(quote_literal("a'b"), "'a\\'b'");
     assert_eq!(quote_literal("a\\b"), "'a\\\\b'");
 }
+
+fn pagination(query: Value) -> Result<(usize, usize), FastApiError> {
+    serde_json::from_value::<UnifiedParams>(query)
+        .unwrap()
+        .validated()
+}
+
+#[test]
+fn pagination_defaults_match_the_source_query_bounds() {
+    assert_eq!(pagination(json!({})).unwrap(), (0, 100));
+    assert_eq!(
+        pagination(json!({"skip": "5", "limit": "100"})).unwrap(),
+        (5, 100)
+    );
+    assert_eq!(
+        pagination(json!({"skip": "0", "limit": "1"})).unwrap(),
+        (0, 1)
+    );
+}
+
+#[test]
+fn pagination_rejects_values_outside_the_source_bounds() {
+    let cases = [
+        (
+            json!({"skip": "abc"}),
+            "skip",
+            "int_parsing",
+            "Input should be a valid integer, unable to parse string as an integer",
+        ),
+        (
+            json!({"skip": "-1"}),
+            "skip",
+            "greater_than_equal",
+            "Input should be greater than or equal to 0",
+        ),
+        (
+            json!({"limit": "0"}),
+            "limit",
+            "greater_than_equal",
+            "Input should be greater than or equal to 1",
+        ),
+        (
+            json!({"limit": "101"}),
+            "limit",
+            "less_than_equal",
+            "Input should be less than or equal to 100",
+        ),
+    ];
+    for (query, field, kind, message) in cases {
+        let error = pagination(query.clone()).unwrap_err();
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let detail: Value = serde_json::from_str(&error.validation_detail()).unwrap();
+        assert_eq!(detail[0]["type"], json!(kind), "{query}");
+        assert_eq!(detail[0]["loc"], json!(["query", field]), "{query}");
+        assert_eq!(detail[0]["msg"], json!(message), "{query}");
+    }
+}
+
+#[test]
+fn numeric_versions_render_as_strings() {
+    let kind = kind_row(1, 7, "demo", "default", json!({"spec": {"version": 1.0}}));
+    let item = user_skill_item(&kind, false, &HashSet::new());
+    assert_eq!(item.get("version"), Some(&json!("1.0")));
+    let kind = kind_row(2, 7, "demo", "default", json!({"spec": {"version": 2}}));
+    let item = user_skill_item(&kind, false, &HashSet::new());
+    assert_eq!(item.get("version"), Some(&json!("2")));
+    let kind = kind_row(
+        3,
+        7,
+        "demo",
+        "default",
+        json!({"spec": {"version": "1.0.1"}}),
+    );
+    let item = user_skill_item(&kind, false, &HashSet::new());
+    assert_eq!(item.get("version"), Some(&json!("1.0.1")));
+    let kind = kind_row(4, 7, "demo", "default", json!({"spec": {}}));
+    let item = user_skill_item(&kind, false, &HashSet::new());
+    assert_eq!(item.get("version"), Some(&json!(null)));
+}

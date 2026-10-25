@@ -238,9 +238,9 @@ fi
 wework_e2e_workflow="$workflow_dir/wework-e2e.yml"
 if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
   "$wework_e2e_workflow")" -ne 1 ]] ||
-  [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"' \
-    "$wework_e2e_workflow")" -ne 1 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
+    "$wework_e2e_workflow")" -ne 1 ]] ||
+  [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"' \
     "$wework_e2e_workflow")" -ne 2 ]] ||
   ! grep -Fq 'name: Restore Rust runtimes and build shared Wework desktop E2E runtime' \
     "$action_dir/build-wework-core-e2e/action.yml"; then
@@ -287,7 +287,7 @@ fi
 sccache_action="$action_dir/setup-sccache/action.yml"
 # Environment variables are matched literally in action source.
 # shellcheck disable=SC2016
-if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
+if ! grep -Fq 'SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"' "$sccache_action" ||
   ! grep -Fq 'continue-on-error: true' "$sccache_action" ||
   [[ "$(grep -Fc "if: steps.install.outcome == 'success'" \
     "$sccache_action")" -ne 2 ]] ||
@@ -295,7 +295,7 @@ if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
   ! grep -Fq 'continuing without Rust compiler caching' "$sccache_action" ||
   ! grep -Fq 'GitHub Actions cache credentials are unavailable for sccache' \
     "$sccache_action" ||
-  ! grep -Fq 'SCCACHE_GHA_VERSION=wegent-sccache-v1-' "$sccache_action" ||
+  ! grep -Fq 'SCCACHE_GHA_VERSION="wegent-sccache-v1-' "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$sccache_action" ||
   ! grep -Fq 'refs/heads/main' "$sccache_action"; then
   fail "sccache must degrade safely and allow cache writes only from main"
@@ -633,6 +633,7 @@ bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
+bash "$script_dir/test-configure-sccache.sh"
 bash "$script_dir/test-download-actions-artifact.sh"
 
 printf 'CI cache policy tests passed\n'

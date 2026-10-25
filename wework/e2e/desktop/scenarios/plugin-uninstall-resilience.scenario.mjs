@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
-import { PluginFaultProxy } from '../modules/plugin-fault-proxy.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyPluginCatalogBoundaries } from '../modules/plugin-catalog-boundaries.mjs'
 import { verifyPluginSourceContinuation } from '../modules/plugin-source-continuation.mjs'
 import { verifyPluginInstallUpdateResilience } from '../modules/plugin-install-update-resilience.mjs'
@@ -10,7 +10,10 @@ import { verifyPluginLateResponseResilience } from '../modules/plugin-late-respo
 import { verifyPluginDetailResilience } from '../modules/plugin-detail-resilience.mjs'
 import { verifyPluginPartialInventoryResilience } from '../modules/plugin-partial-inventory-resilience.mjs'
 import { verifyPluginScopeBoundaries } from '../modules/plugin-scope-boundaries.mjs'
-import { RealPluginObjectStorage } from '../modules/real-plugin-object-storage.mjs'
+import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
+import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
+import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
+import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import {
   accountPlugin,
   assertInstallButton,
@@ -29,6 +32,7 @@ import {
 // Real MySQL, Python API, gateway, Executor and Electron. Only the network
 // transport is faulted; no plugin responses or cache state are synthesized.
 export async function createDesktopScenario({
+  checkpoint,
   captureScreenshot,
   codexSqliteHome,
   electronUserDataDirectory,
@@ -38,16 +42,27 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const appEnvironment = { ELECTRON_ENABLE_LOGGING: '1' }
-  const frontendBoundariesOnly = process.env.WEWORK_E2E_PLUGIN_FRONTEND_BOUNDARIES_ONLY === 'true'
-  const requestedFrontendGroups = (process.env.WEWORK_E2E_PLUGIN_FRONTEND_BOUNDARY_GROUPS ?? '')
-    .split(',')
-    .map(value => value.trim())
-    .filter(Boolean)
-  assert.ok(
-    frontendBoundariesOnly || requestedFrontendGroups.length === 0,
-    'Frontend group selection requires explicit focused mode'
-  )
   const evidence = []
+  const objectStorage = ['plugin-write-coordination', 'plugin-operation-boundaries'].includes(
+    checkpoint
+  )
+    ? await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
+    : null
+  let packageProxy
+  try {
+    if (objectStorage) {
+      // Preserve the signed Host while forwarding real S3 traffic to MinIO.
+      packageProxy = await new TransportFaultProxy(
+        objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT,
+        {
+          preserveHost: true,
+        }
+      ).start()
+    }
+  } catch (error) {
+    await objectStorage?.stop()
+    throw error
+  }
   let cloud
   let apiProxy
   let deviceProxy
@@ -69,53 +84,9 @@ export async function createDesktopScenario({
     )
   const pendingRows = item =>
     cloud.queryDatabase(
-      'SELECT state FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+      'SELECT state, error_code, attempt_count, last_sync_at, updated_at, desired_release_id, actual_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
       [1, item.installedId, CLOUD_DEVICE_ID]
     )
-
-  async function catalogSourceFailure(control) {
-    const item = await fixture('catalog-source')
-    await openPlugin(control, item)
-    const startIndex = apiProxy.requests.length
-    apiProxy.rule = request =>
-      request.method === 'GET' && request.path === '/api/plugins/installed' ? 'disconnect' : null
-    try {
-      await control.command('click', testId('plugins-refresh-button'))
-      await control.command('waitFor', testId('plugin-operation-notice'))
-      await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`), {
-        enabled: true,
-      })
-      assert.ok(apiProxy.requests.slice(startIndex).some(request => request.fault === 'disconnect'))
-      await assertInventory(control, item.slug, true)
-      await control.command('click', testId('plugins-manage-button'))
-      await control.command('waitFor', testId('plugin-operation-notice'))
-      await control.command('waitFor', testId('plugin-management-installed-list'))
-      assert.ok(
-        (await control.command('getText', testId('plugin-management-page-content'))).includes(
-          item.slug
-        ),
-        'A failed cloud read erased healthy local or cached installed rows'
-      )
-      await captureScreenshot(control, 'plugin-catalog-source-failure.png', 'body')
-    } finally {
-      apiProxy.rule = () => null
-    }
-    const recoveryIndex = apiProxy.requests.length
-    await openPlugin(control, item)
-    await control.command('click', testId('plugins-refresh-button'))
-    await until(
-      () => apiProxy.requests.slice(recoveryIndex),
-      requests =>
-        requests.some(
-          request => request.path === '/api/plugins/installed' && request.status === 200
-        ),
-      'Explicit refresh did not recover the real installed source'
-    )
-    await assertSurfaces(control, item, true)
-    await uninstallInUi(control, item)
-    await assertInstallButton(control, item)
-    evidence.push({ case: 'catalog-source-failure-and-refresh-recovery' })
-  }
 
   async function lostResponse(control) {
     const item = await fixture('lost-response')
@@ -190,6 +161,8 @@ export async function createDesktopScenario({
   }
 
   async function heldCleanup(control, suffix, beforePause) {
+    // Catalog refresh must preserve removals while another install remains active.
+    const retained = await fixture(`${suffix}-retained`)
     const item = await fixture(suffix)
     const remoteHome = dirname(cloud.remoteCodexHome)
     const installed = await until(
@@ -221,6 +194,7 @@ export async function createDesktopScenario({
     await assertInstallButton(control, item)
     await assertInventory(control, item.slug, false)
     assert.ok(await pathExists(runtimePath), 'Cleanup unexpectedly finished before fault release')
+    assert.ok(await accountPlugin(cloud, retained.slug), 'Unrelated active install disappeared')
     evidence.push({ case: suffix, accountResponseMs: elapsedMs })
     return { item, runtimePath, remoteHome }
   }
@@ -228,8 +202,20 @@ export async function createDesktopScenario({
   async function restartRecovery(control) {
     const { item, runtimePath, remoteHome } = await heldCleanup(control, 'restart-pending')
     // Stop real processes, losing the in-memory in-flight set while retaining MySQL.
+    const beforeStop = await pendingRows(item)
+    const stopStartedAt = Date.now()
     await cloud.stopBackend()
-    assert.ok((await pendingRows(item)).some(row => row.state === 'uninstalling'))
+    const afterStop = await pendingRows(item)
+    evidence.push({
+      case: 'restart-persisted-state-diagnostics',
+      beforeStop,
+      afterStop,
+      stopDurationMs: Date.now() - stopStartedAt,
+    })
+    assert.ok(
+      afterStop.some(row => row.state === 'uninstalling'),
+      `Persisted cleanup changed while stopping the backend: ${JSON.stringify({ beforeStop, afterStop })}`
+    )
     await cloud.launchBackend()
     deviceProxy.pauseDeviceDelivery(false)
     await Promise.all([
@@ -257,8 +243,7 @@ export async function createDesktopScenario({
   async function reinstallRace(control) {
     let release
     const { item, remoteHome } = await heldCleanup(control, 'reinstall-pending', async fixture => {
-      // Publishing starts a real Python process. Keep it outside the held socket
-      // window so the fault targets cleanup ACKs without expiring its heartbeat.
+      // Publish before holding cleanup so process startup cannot expire its heartbeat.
       release = await cloud.publishPluginRelease({
         slug: fixture.slug,
         version: '2.0.0',
@@ -312,7 +297,7 @@ export async function createDesktopScenario({
       await openPlugin(control, item)
       await control.command('click', testId('plugins-refresh-button'))
       await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
-      await assertSurfaces(control, item, true)
+      await assertSurfaces(control, { ...item, installedId: currentId }, true)
       assert.equal(deletes(item).length, 1)
     } finally {
       deviceProxy.pauseDeviceDelivery(false)
@@ -320,22 +305,65 @@ export async function createDesktopScenario({
     }
   }
 
-  const objectStorage = new RealPluginObjectStorage({ resultDir })
-  await objectStorage.start()
+  async function verifyBoundaryGroups(control, groups) {
+    const rendererDevice = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+    assert.ok(rendererDevice.deviceId, 'The renderer has no real local device identity')
+    assert.equal(rendererDevice.deviceId, local.app_device_id)
+    const options = {
+      cloud,
+      control,
+      apiProxy,
+      deviceId: rendererDevice.deviceId,
+      executorHome,
+      codexSqliteHome,
+      electronUserDataDirectory,
+      homePath,
+      restartDesktopApp,
+      resultDir,
+      captureScreenshot,
+      workbenchReadyTimeoutMs,
+    }
+    const failures = []
+    // Every group restores its own real fault and fixtures before the next one.
+    // Keep all independent evidence, then fail the checkpoint if any group failed.
+    for (const [name, verify] of groups) {
+      try {
+        console.log(`[plugin-boundary-e2e] START ${name}`)
+        await control.command('click', testId('workspace-tab-select-fixed-task'))
+        await control.command('waitFor', testId('plugins-button'))
+        await control.command('click', testId('new-chat-button'))
+        evidence.push({ group: name, ...(await verify(options)) })
+        console.log(`[plugin-boundary-e2e] PASS ${name}`)
+      } catch (error) {
+        console.log(`[plugin-boundary-e2e] FAIL ${name}: ${error?.message ?? error}`)
+        failures.push(new Error(`${name}: ${error?.message ?? error}`, { cause: error }))
+        evidence.push({ group: name, passed: false, error: String(error?.stack ?? error) })
+      }
+    }
+    if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
+  }
 
   return {
     requiresCloudEnvironment: true,
     appEnvironment,
-    backendEnv: {
-      ATTACHMENT_S3_ENDPOINT: objectStorage.endpoint,
-      ATTACHMENT_S3_ACCESS_KEY: objectStorage.accessKey,
-      ATTACHMENT_S3_SECRET_KEY: objectStorage.secretKey,
-      ATTACHMENT_S3_USE_SSL: 'false',
-    },
+    ...(objectStorage
+      ? {
+          backendEnv: {
+            ...objectStorage.backendEnv,
+            ATTACHMENT_S3_ENDPOINT: packageProxy.url,
+          },
+        }
+      : {}),
     async prepareCloud({ backendUrl }) {
-      apiProxy = await new PluginFaultProxy(backendUrl).start()
-      deviceProxy = await new PluginFaultProxy(backendUrl).start()
+      apiProxy = await new TransportFaultProxy(backendUrl).start()
+      deviceProxy = await new TransportFaultProxy(backendUrl).start()
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = apiProxy.url
+      if (checkpoint === 'plugin-write-coordination') {
+        // Keep the real connection on the fault proxy when cloud metadata
+        // advertises the backend's direct Socket.IO endpoint during startup.
+        appEnvironment.WEWORK_BACKEND_URL = apiProxy.url
+        appEnvironment.WEWORK_SOCKET_URL = apiProxy.url
+      }
     },
     setCloudEnvironment(value) {
       cloud = value
@@ -345,7 +373,9 @@ export async function createDesktopScenario({
     },
     async verify(control) {
       controlRef = control
-      assert.equal(cloud.backendEnv.ATTACHMENT_S3_ENDPOINT, objectStorage.endpoint)
+      if (objectStorage) {
+        assert.equal(cloud.backendEnv.ATTACHMENT_S3_ENDPOINT, packageProxy.url)
+      }
       local = await cloud.waitForConnectedAppDevice()
       cloud.remoteExecutorEnv.WEGENT_SOCKET_URL = deviceProxy.url
       await cloud.restartCloudExecutor()
@@ -355,129 +385,84 @@ export async function createDesktopScenario({
         'Remote device bypassed fault proxy'
       )
       try {
-        if (frontendBoundariesOnly) {
-          console.log(
-            `[plugin-boundary-e2e] Focused run: ${requestedFrontendGroups.join(', ') || 'four frontend boundary groups'}`
-          )
-        } else {
-          evidence.push(
-            await verifyPluginSourceContinuation({
-              control,
-              resultDir,
-              executorHome,
-              captureScreenshot,
-              workbenchReadyTimeoutMs,
-            })
-          )
-          // CI runs this by default; local comparisons can stop after the same assertions.
-          if (process.env.WEWORK_E2E_PLUGIN_SOURCE_CONTINUATION_ONLY === 'true') return
-          await control.command('click', testId('workspace-tab-select-fixed-task'))
-          await control.command('waitFor', testId('plugins-button'))
-          evidence.push(
-            await verifyPluginCatalogBoundaries({
-              cloud,
-              control,
-              apiProxy,
-              captureScreenshot,
-              workbenchReadyTimeoutMs,
-              resultDir,
-              deviceId: local.device_id,
-              executorHome,
-            })
-          )
-          // The same assertions run in CI; this limits local A/B comparisons to the boundary cases.
-          if (process.env.WEWORK_E2E_PLUGIN_CATALOG_BOUNDARIES_ONLY === 'true') return
-        }
-        const failures = []
-        const rendererDevice = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
-        assert.ok(rendererDevice.deviceId, 'The renderer has no real local device identity')
-        assert.equal(rendererDevice.deviceId, local.app_device_id)
-        const boundaryOptions = {
-          cloud,
-          control,
-          apiProxy,
-          deviceId: rendererDevice.deviceId,
-          executorHome,
-          codexSqliteHome,
-          electronUserDataDirectory,
-          homePath,
-          restartDesktopApp,
-          resultDir,
-          captureScreenshot,
-          workbenchReadyTimeoutMs,
-        }
-        // Independent fixtures retain every failure while allowing the remaining
-        // boundary groups to run. The checkpoint still exits nonzero on any error.
-        const boundaryGroups = [
-          ['late-response', verifyPluginLateResponseResilience],
-          ['plugin-detail', verifyPluginDetailResilience],
-          ['partial-inventory', verifyPluginPartialInventoryResilience],
-          ['account-and-device', verifyPluginScopeBoundaries],
-          ['install-and-update', verifyPluginInstallUpdateResilience],
-        ]
-        assert.ok(
-          requestedFrontendGroups.every(name =>
-            boundaryGroups.some(
-              ([candidate]) => candidate === name && candidate !== 'install-and-update'
-            )
-          ),
-          'Unknown frontend boundary group'
-        )
-        for (const [name, verify] of boundaryGroups.filter(
-          ([name]) =>
-            (!frontendBoundariesOnly || name !== 'install-and-update') &&
-            (requestedFrontendGroups.length === 0 || requestedFrontendGroups.includes(name))
-        )) {
-          try {
-            console.log(`[plugin-boundary-e2e] START ${name}`)
-            await control.command('click', testId('workspace-tab-select-fixed-task'))
-            await control.command('waitFor', testId('plugins-button'))
-            await control.command('click', testId('new-chat-button'))
-            evidence.push({ group: name, ...(await verify(boundaryOptions)) })
-            console.log(`[plugin-boundary-e2e] PASS ${name}`)
-          } catch (error) {
-            console.log(`[plugin-boundary-e2e] FAIL ${name}: ${error?.message ?? error}`)
-            failures.push(new Error(`${name}: ${error?.message ?? error}`, { cause: error }))
-            evidence.push({ group: name, passed: false, error: String(error?.stack ?? error) })
-          }
-        }
-        if (frontendBoundariesOnly) {
-          if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
-          return
-        }
-        try {
-          for (const verify of [
-            catalogSourceFailure,
-            lostResponse,
-            unknownResult,
-            restartRecovery,
-            reinstallRace,
-          ]) {
-            console.log(`[plugin-boundary-e2e] START ${verify.name}`)
-            await verify(control)
-            console.log(`[plugin-boundary-e2e] PASS ${verify.name}`)
-          }
-          await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
-        } catch (error) {
-          failures.push(error)
-          evidence.push({
-            group: 'uninstall-recovery',
-            passed: false,
-            error: String(error?.stack ?? error),
-          })
-        }
-        if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
+        const checks = new Map([
+          [
+            'plugin-catalog-boundaries',
+            control =>
+              verifyBoundaryGroups(control, [
+                ['source-continuation', verifyPluginSourceContinuation],
+                ['catalog-sources', verifyPluginCatalogBoundaries],
+                ['late-response', verifyPluginLateResponseResilience],
+                ['plugin-detail', verifyPluginDetailResilience],
+                ['partial-inventory', verifyPluginPartialInventoryResilience],
+                ['account-and-device', verifyPluginScopeBoundaries],
+              ]),
+          ],
+          [
+            'plugin-operation-boundaries',
+            control =>
+              verifyBoundaryGroups(control, [
+                ['install-and-update', verifyPluginInstallUpdateResilience],
+              ]),
+          ],
+          [
+            'plugin-registration-coordination',
+            control =>
+              verifyPluginRegistrationCoordination({
+                cloud,
+                control,
+                deviceProxy,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              }),
+          ],
+          [
+            'plugin-write-coordination',
+            async control => {
+              await verifyPluginSyncDisconnect({
+                cloud,
+                control,
+                apiProxy,
+                packageProxy,
+                executorHome,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              })
+              await verifyPluginWriteCoordination({
+                cloud,
+                control,
+                apiProxy,
+                deviceProxy,
+                localDeviceId: local.device_id,
+                evidence,
+                timeoutMs: workbenchReadyTimeoutMs,
+              })
+            },
+          ],
+          ['plugin-uninstall-lost-response', lostResponse],
+          ['plugin-uninstall-unknown-result', unknownResult],
+          ['plugin-uninstall-restart-recovery', restartRecovery],
+          ['plugin-uninstall-reinstall-race', reinstallRace],
+        ])
+        const check = checks.get(checkpoint)
+        assert.ok(check, `Unknown uninstall checkpoint: ${checkpoint}`)
+        await check(control)
+        await captureScreenshot(control, 'plugin-uninstall-resilience.png', 'body')
       } finally {
         apiProxy.rule = () => null
+        apiProxy.disconnectWebSockets(false)
         deviceProxy.pauseDeviceDelivery(false)
+        deviceProxy.pauseDeviceAcknowledgements(false)
         await writeFile(
           join(resultDir, 'plugin-uninstall-evidence.json'),
           JSON.stringify(
             {
-              frontendBoundariesOnly,
-              requestedFrontendGroups,
+              checkpoint,
               evidence,
               requests: apiProxy.requests,
+              packageRequests: packageProxy?.requests,
             },
             null,
             2
@@ -485,9 +470,14 @@ export async function createDesktopScenario({
         )
       }
     },
-    diagnostics: () => ({ evidence, requests: apiProxy?.requests }),
+    diagnostics: () => ({
+      evidence,
+      requests: apiProxy?.requests,
+      packageRequests: packageProxy?.requests,
+    }),
     async cleanup() {
-      await Promise.all([apiProxy?.stop(), deviceProxy?.stop(), objectStorage.stop()])
+      await Promise.all([apiProxy?.stop(), deviceProxy?.stop(), packageProxy?.stop()])
+      await objectStorage?.stop()
     },
   }
 }

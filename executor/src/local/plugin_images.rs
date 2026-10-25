@@ -445,6 +445,42 @@ mod tests {
         assert!(read(&temp, &codex, &package.join("assets/logo.svg")).is_err());
     }
 
+    #[test]
+    fn stale_store_path_authorizes_only_the_current_shared_package() {
+        let (temp, codex, plugin) = fixture();
+        fs::write(codex.join("config.toml"), "[plugins]\n").unwrap();
+        let shared = temp.path().join("shared");
+        let digest = "a".repeat(64);
+        let package = shared.join(&digest);
+        fs::create_dir(&shared).unwrap();
+        fs::rename(plugin, &package).unwrap();
+        let old_package = temp.path().join("old-home/shared/plugins").join(&digest);
+        fs::create_dir_all(old_package.join(".codex-plugin")).unwrap();
+        fs::create_dir_all(old_package.join("assets")).unwrap();
+        fs::write(
+            old_package.join(".codex-plugin/plugin.json"),
+            r#"{"name":"test-logo"}"#,
+        )
+        .unwrap();
+        fs::write(old_package.join("assets/logo.svg"), SVG).unwrap();
+        fs::write(
+            temp.path().join("manifest.json"),
+            json!({"plugins": {"test-logo@personal": {
+                "name":"test-logo", "marketplace":"personal", "managed":true,
+                "store_path":old_package, "checksum":format!("sha256:{digest}")
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+
+        let image = read(&temp, &codex, &package.join("assets/logo.svg")).unwrap();
+        assert_eq!(
+            image["bytesBase64"],
+            base64::engine::general_purpose::STANDARD.encode(SVG)
+        );
+        assert!(read(&temp, &codex, &old_package.join("assets/logo.svg")).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_file_and_directory_symlink_escapes() {

@@ -30,6 +30,11 @@ export interface MarkdownServices {
 
 export const markdownMessages = {
   "zh-CN": {
+    "citation.page": "页码",
+    "citation.slide": "幻灯片",
+    "followup.idle": "复制后续问题",
+    "followup.copied": "后续问题已复制",
+    "followup.failed": "复制失败，请重试",
     "table.copy": "复制表格",
     "table.copied": "表格已复制",
     "table.failed": "复制表格失败，请重试",
@@ -48,6 +53,11 @@ export const markdownMessages = {
     "code.wrap_off": "禁用自动换行",
   },
   en: {
+    "citation.page": "page",
+    "citation.slide": "slide",
+    "followup.idle": "Copy follow-up prompt",
+    "followup.copied": "Follow-up prompt copied",
+    "followup.failed": "Could not copy. Try again.",
     "table.copy": "Copy table",
     "table.copied": "Table copied",
     "table.failed": "Could not copy table. Try again.",
@@ -67,14 +77,31 @@ export const markdownMessages = {
   },
 };
 
+async function copyBrowserText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  try {
+    textarea.select();
+    if (!document.execCommand?.("copy")) {
+      throw new Error("Clipboard copy is not supported");
+    }
+  } finally {
+    textarea.remove();
+  }
+}
+
 export const browserMarkdownServices: MarkdownServices = {
   translate: (key) =>
     markdownMessages.en[key as keyof typeof markdownMessages.en] ?? key,
-  copyText: async (text) => {
-    if (!navigator.clipboard?.writeText)
-      throw new Error("Clipboard copy is not supported");
-    await navigator.clipboard.writeText(text);
-  },
+  copyText: copyBrowserText,
   openExternalUrl: (url) => {
     const parsed = new URL(url, window.location.href);
     if (!["https:", "http:", "mailto:", "tel:"].includes(parsed.protocol))

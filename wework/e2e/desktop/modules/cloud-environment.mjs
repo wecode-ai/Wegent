@@ -189,13 +189,11 @@ async function resolveBackendRsBinary() {
     'debug',
     process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
   )
-  if (!(await pathExists(binary))) {
-    await runChecked(
-      'cargo',
-      ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
-      { cwd: repoDir }
-    )
-  }
+  await runChecked(
+    'cargo',
+    ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
+    { cwd: repoDir }
+  )
   return binary
 }
 async function waitForRedisReady(redis, logPath, fromOffset) {
@@ -500,6 +498,9 @@ class RealCloudEnvironment {
         '127.0.0.1',
         '--port',
         String(this.pythonBackendPort),
+        // Match start-hybrid-backend.sh: the gateway must not reuse expired upstream sockets.
+        '--timeout-keep-alive',
+        '2400',
       ],
       {
         cwd: join(repoDir, 'backend'),
@@ -530,6 +531,7 @@ class RealCloudEnvironment {
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         BREEZE_LOG_DIR: rustLogDirectory,
+        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',

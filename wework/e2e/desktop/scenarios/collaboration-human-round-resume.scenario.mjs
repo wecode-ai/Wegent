@@ -69,13 +69,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
   assert.equal(
     response.ok,
     true,
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
-  return body
+  return text ? JSON.parse(text) : null
 }
 
 function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
@@ -287,11 +286,16 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
     timeoutMs: uiTimeoutMs,
   })
-  await waitForValue(
+  const group = await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/collaboration-groups`),
     response => response.items?.find(value => value.name === GROUP),
     '端上创建人机协作小组未持久化',
     uiTimeoutMs
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-group-detail-${group.id}"]`),
+    { text: GROUP, timeoutMs: uiTimeoutMs }
   )
   await control.command('click', scoped('[data-testid="collaboration-group-detail-tab-rules"]'))
   await control.command('fill', scoped('[data-testid="collaboration-group-detail-instructions"]'), {
@@ -317,7 +321,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-  await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。负责人必须并发分配一个 AI 任务和一个人工任务，等待个人 Task 正式交付后继续。`,
@@ -692,6 +696,11 @@ export function createDesktopScenario({
         false,
         '人工 assignment 被错误实现为人工子 Issue'
       )
+      assert.equal(
+        humanAssignment.payload.actorName,
+        LEADER,
+        'The assigner must be the actual manager agent, not its credential owner'
+      )
       assert.equal(humanAssignment.payload.action, 'create_personal_task')
       assert.equal(humanAssignment.payload.itemId, String(rootIssue.id))
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
@@ -808,6 +817,9 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
         text: HUMAN_TASK,
         timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="issue-dispatch-notification-create-task"]', {
+        text: LEADER,
       })
       await control.command('click', '[data-testid="issue-dispatch-notification-create-task"]')
       await control.command(

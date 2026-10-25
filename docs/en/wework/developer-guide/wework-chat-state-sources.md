@@ -14,6 +14,23 @@ This document records the state sources for the Wework chat path. The goal is to
 4. `useWorkbenchPaneSession` owns pane content such as messages and queued input, but reads all task and turn lifecycle facts from the Store.
 5. `runtimePaneStatus.ts` is a read-only projection from a lifecycle snapshot to existing pane presentation fields. It must not infer execution or turn state independently.
 
+Sidebar priority filtering also reads explicit `interactionStatus` through the
+lifecycle Store projection. A stale task-list snapshot must not override an
+accepted user reply in the view layer.
+
+## New Conversations and Manual Sidebar Order
+
+Standalone conversations and project tasks share one ordering rule: when a manual
+order exists, new conversations absent from that order appear before ordered tasks,
+while ordered tasks retain their user-defined relative order. The executor returns
+`sidebarOrder` only for tasks included in the manual order. Refreshing or reloading
+the list must not append new conversations to the bottom. Model selection,
+reasoning effort, and prompt references do not change this rule.
+
+When a conversation is first dragged before another conversation, the persisted
+order must include both the moved conversation and its target. Otherwise, the
+target is treated as unordered and the drag result is lost.
+
 ## Latest Turn Identity
 
 `turn.id` identifies the active turn and may be cleared after completion. `turn.latestId` retains the latest turn identity confirmed by runtime events, transcripts, or executor snapshots. Task-list refreshes, completion timestamp precision changes, and other metadata updates must not clear it. Reply predictions use `turn.latestId` as their request identity and wait until a real turn identity is available. Starting a new turn still invalidates the previous suggestion.
@@ -48,6 +65,8 @@ The project-space board Hover task panel is a split view of the original task co
 - The board prefetches only a bounded transcript tail for running and review tasks. Increasing that range requires evidence that the UI needs it; a one-line summary must not load or copy complete tool output.
 
 ## Runtime Event Flow
+
+The conversation stream coordinator retains exactly one subscription and prefers the active page's service instance. When the active page uses a different instance, it releases the old subscription before subscribing to the new instance so a hidden page's retained device routes cannot lose events. Moving active ownership within the same service instance preserves the subscription. Only the active page handles messages.
 
 1. A new message submit sets `sendPhase` to `submitting`.
 2. After runtime accepts the request, `sendPhase` becomes `awaiting_assistant`.
@@ -366,6 +385,36 @@ The pane may therefore skip restoration only when both the loaded key and the di
 
 Cover this path with both a component race test and a real desktop scenario: keep one task running, switch rapidly between it and a completed task, then verify that every historical turn in the completed task remains visible after switching back.
 
+## Visible Text for Conversation Find
+
+Find uses a shared display-region contract: each region provides visible prose,
+the stable ID of its first native item, and source spans back to the original
+items. Continuous prose is joined before Markdown parsing; user, guidance and
+actual tool boundaries determine segmentation. Hidden failure or cancellation
+placeholders, valid plugin-result markers and annotation controls are excluded;
+meaningful partial output remains searchable. Cache, native-page and legacy
+adapters use the same contract and regression cases.
+
+The index and DOM highlighter use identical Unicode-scalar case matching. Hit
+ranges are half-open UTF-16 offsets into the visible original text, and case
+expansions cannot produce a partial-character match. The server returns the
+region ID and range for validation against the current projection; the client
+must not reparse individual items to guess their position. Source mappings do
+not invent original positions for virtual separators. Request, history-read and
+visible-location failures use distinct messages in the existing status control.
+A location failure starts a fresh search instead of reloading the stale anchor.
+
+Cached match and context pages first select a message window using `limit`, then
+expand it to the complete contiguous interval of every included canonical turn.
+Interleaved turns expand the interval until its boundaries stabilize; cursors use
+the final first and last messages. Failure, cancellation, guidance segments and
+text deduplication therefore use complete projections, so pagination preserves
+existing match identities and visibility. Isolated context reads do not change
+the original conversation identity, cache or concurrent hydration generation.
+Context pages merge in their requested direction, and closing find restores the
+original reading state. Performance diagnostics are not a functional highlight
+acceptance signal.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:
@@ -393,6 +442,25 @@ Canonical `turns` are the frontend transcript's only input, so restoring a
 message only in the compatibility `messages` array is insufficient.
 
 ### Assistant In-Turn Display Order and Typography
+
+The running transcript cache serves existing messages when reopening a task or
+restoring a page. When a cached message has `runtimeItems`, canonical `turns`
+must use those items directly, preserving native item IDs, types, and order,
+including an empty array. Rebuilding items from presentation `content` and
+`blocks` changes the text identity to an aggregate message ID and moves it
+before process messages, so later deltas with the native ID create a second
+text segment. Text extraction must also preserve raw whitespace: trailing spaces
+or newlines in a snapshot can separate the next delta and must not be trimmed
+like metadata. The `streaming-content` E2E restores the page after a paragraph
+break in a partial plain-text response and then resumes output, checking cached
+items, text uniqueness, and process placement before completion as well as the
+final state.
+
+While a Provider turn is running, assistant text without a phase must remain
+process text, even if the snapshot does not yet include a later tool. An explicit
+final phase can render as answer text immediately. Unphased trailing text can
+become the final answer only when the turn completes, so an in-flight transcript
+page cannot prematurely reclassify process text.
 
 Final text, process text, and tool blocks within one assistant turn must be
 projected in runtime item arrival order. The UI must not group them by type and

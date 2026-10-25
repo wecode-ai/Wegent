@@ -88,6 +88,7 @@ function ScrollableMessagePaneContent({
   autoScrollSuspended = false,
   searchTarget,
   searchNavigationPaused = false,
+  onSearchNavigationFailure,
   onLoadMoreBefore,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
@@ -199,6 +200,7 @@ function ScrollableMessagePaneContent({
     contentRef,
     scrollRef,
     onNavigationTargetChange: handleTurnNavigationScrollTargetChange,
+    onNavigationFailure: onSearchNavigationFailure,
   })
   useLayoutEffect(() => {
     const isInitialRender = !hasRenderedRef.current
@@ -842,7 +844,13 @@ function ScrollableMessagePaneContent({
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
                 conversationKey={conversationKey}
-                forceVirtualMessageId={searchTarget?.messageId ?? turnNavigationTargetMessageId}
+                forceVirtualMessageId={
+                  searchTarget?.messageId ??
+                  turnNavigationTargetMessageId ??
+                  (currentScrollKey
+                    ? getConversationScrollSnapshot(currentScrollKey)?.anchor?.messageId
+                    : null)
+                }
                 searchMessageId={searchTarget?.messageId}
                 isWaitingForAssistant={isWaitingForAssistant}
                 disableContentVisibility={turnNavigationLoading}

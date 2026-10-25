@@ -74,6 +74,11 @@ import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/know
 
 type SendMessageOptions = {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
+  conversationRefs?: Array<{
+    task_id: number
+    name: string
+    task_updated_at?: string
+  }>
 }
 
 interface KnowledgeDocumentViewTarget {
@@ -251,6 +256,12 @@ interface MessagesAreaProps {
   waitingMessage?: string
   /** Writable current knowledge base to preselect in notebook mode. */
   defaultSaveKnowledgeBaseId?: number
+  /** Previous tasks available from the @ menu for context handoff while editing. */
+  mentionTasks?: import('@/types/api').Task[]
+  /** Current task ID, excluded from the @ menu. */
+  currentTaskId?: number | null
+  /** Whether message editing supports @ references to previous tasks. */
+  enableTaskMentions?: boolean
 }
 
 function MessagesArea({
@@ -275,6 +286,9 @@ function MessagesArea({
   onReEdit,
   waitingMessage,
   defaultSaveKnowledgeBaseId,
+  mentionTasks,
+  currentTaskId,
+  enableTaskMentions = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -767,7 +781,10 @@ function MessagesArea({
 
   // Handle save edit - call API to edit message, then resend to trigger AI response
   const handleEditSave = useCallback(
-    async (newContent: string) => {
+    async (
+      newContent: string,
+      conversationRefs?: import('./InlineMessageEdit').InlineConversationRef[]
+    ) => {
       if (!editingMessageId) return
 
       const subtaskId = parseInt(editingMessageId, 10)
@@ -793,7 +810,7 @@ function MessagesArea({
           // Automatically resend the edited message to trigger AI response
           // This is the ChatGPT-style behavior: edit message -> delete all from edited -> resend as new
           if (onSendMessage) {
-            onSendMessage(newContent)
+            onSendMessage(newContent, { conversationRefs })
           }
         }
       } catch (error) {
@@ -1399,6 +1416,9 @@ function MessagesArea({
                   onEdit={handleEditMessage}
                   onEditSave={handleEditSave}
                   onEditCancel={handleEditCancel}
+                  mentionTasks={mentionTasks}
+                  currentTaskId={currentTaskId}
+                  enableTaskMentions={enableTaskMentions}
                   isLastAiMessage={isLastAiMessage}
                   onRegenerate={!isGroupChat ? handleRegenerate : undefined}
                   isRegenerating={isRegenerating}

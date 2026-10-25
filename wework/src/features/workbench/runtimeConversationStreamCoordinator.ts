@@ -15,14 +15,14 @@ interface Registration {
 interface Coordinator {
   registrations: Map<symbol, Registration>
   nextOrder: number
-  sourceToken: symbol | null
+  sourceStream: WorkbenchServices['chatStream'] | null
   unsubscribe: (() => void) | null
 }
 
 const coordinator: Coordinator = {
   registrations: new Map(),
   nextOrder: 1,
-  sourceToken: null,
+  sourceStream: null,
   unsubscribe: null,
 }
 
@@ -41,49 +41,39 @@ export function registerRuntimeConversationStream(
   ensureSubscription()
   return () => {
     coordinator.registrations.delete(token)
-    if (coordinator.sourceToken === token) {
-      replaceSubscription()
-    } else if (coordinator.registrations.size === 0) {
-      disposeSubscription()
-    }
+    ensureSubscription()
   }
 }
 
 function ensureSubscription(): void {
-  if (coordinator.unsubscribe) return
   const source = preferredRegistration()
-  if (!source) return
-  coordinator.sourceToken = source.token
-  coordinator.unsubscribe = source.registration.chatStream.subscribe(
-    createDelegatingHandlers(coordinator)
-  )
-}
-
-function replaceSubscription(): void {
+  if (coordinator.unsubscribe && coordinator.sourceStream === source?.chatStream) return
   disposeSubscription()
-  ensureSubscription()
+  if (!source) return
+  coordinator.sourceStream = source.chatStream
+  coordinator.unsubscribe = source.chatStream.subscribe(createDelegatingHandlers(coordinator))
 }
 
 function disposeSubscription(): void {
   coordinator.unsubscribe?.()
   coordinator.unsubscribe = null
-  coordinator.sourceToken = null
+  coordinator.sourceStream = null
 }
 
-function preferredRegistration(): { token: symbol; registration: Registration } | null {
-  let selected: { token: symbol; registration: Registration } | null = null
-  for (const [token, registration] of coordinator.registrations) {
-    if (selected && Number(selected.registration.active) > Number(registration.active)) {
+function preferredRegistration(): Registration | null {
+  let selected: Registration | null = null
+  for (const registration of coordinator.registrations.values()) {
+    if (selected && Number(selected.active) > Number(registration.active)) {
       continue
     }
     if (
       selected &&
-      selected.registration.active === registration.active &&
-      selected.registration.order > registration.order
+      selected.active === registration.active &&
+      selected.order > registration.order
     ) {
       continue
     }
-    selected = { token, registration }
+    selected = registration
   }
   return selected
 }

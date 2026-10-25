@@ -7,6 +7,10 @@ import {
   extractMarkdownLinks,
   splitMarkdownFileLineSuffix,
 } from "../markdown/assistantMarkdownLinks";
+import {
+  extractAssistantFileCitations,
+  type AssistantFileCitation,
+} from "../markdown/assistantAnnotations";
 const CODEX_REFERENCE_DOCUMENT_EXTENSIONS = new Set([
   "doc",
   "docx",
@@ -26,24 +30,36 @@ export function getAssistantReferences(
   references: CodexReference[] | null | undefined,
   content: string,
   fileChanges?: TurnFileChangesSummary | null,
+  citations: readonly AssistantFileCitation[] = extractAssistantFileCitations(
+    content,
+  ),
 ): CodexReference[] {
   const explicitReferences =
     references?.filter(
       (reference) => reference.path && reference.path.trim(),
     ) ?? [];
-  return filterCodexDocumentReferences(
+  const result = filterCodexDocumentReferences(
     uniqueCodexReferences([
       ...explicitReferences,
       ...extractFileChangeReferences(fileChanges),
       ...extractAssistantFileReferences(content),
     ]),
   );
-}
-
-export function getDisplayCodexReferences(
-  references: CodexReference[],
-): CodexReference[] {
-  return filterCodexDocumentReferences(uniqueCodexReferences(references));
+  for (const citation of citations) {
+    if (citation.purpose !== "output") continue;
+    const reference = {
+      path: citation.path,
+      title: basename(citation.path),
+      lineStart: citation.lineStart,
+      lineEnd: citation.lineEnd,
+    };
+    const index = result.findIndex((item) =>
+      referencePathsMatch(item.path, citation.path),
+    );
+    if (index < 0) result.push(reference);
+    else result[index] = mergeCodexReferences(result[index], reference);
+  }
+  return result;
 }
 
 function extractAssistantFileReferences(content: string): CodexReference[] {
@@ -62,7 +78,7 @@ function extractAssistantFileReferences(content: string): CodexReference[] {
       lineEnd: target.lineEnd,
     });
   }
-  return uniqueCodexReferences(references);
+  return references;
 }
 
 function extractFileChangeReferences(

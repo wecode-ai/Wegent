@@ -77,7 +77,7 @@ The custom template defines these 13 ordinary variables, which the backend fills
 | `secondaryLabel` | Desktop action label, "在 Wework 中打开" (Open in Wework) |
 | `secondaryUrl` | Validated Wework `wework://` desktop deep link |
 
-`tone` follows the notification type and state: mentions, assignments, and run starts are `blue`; waits for approval or a device are `orange`; completed is `green`; failed is `red`; cancelled is `gray`. The headline names the action, while the item title, key, context, and optional detail have separate areas. The card's View task action directly uses the task web URL. Stored in-app notification URLs, built-in cards, and Markdown notifications keep their original `wework://` links. Quotable local run notifications remain text messages so they can be quoted to continue the task.
+`tone` follows the notification type and state: mentions, assignments, and run starts are `blue`; waits for approval or a device are `orange`; completed is `green`; failed is `red`; cancelled is `gray`. Human dispatch and project-sourced messages use the same item fields. The headline names the action, while the item title, key, context, and optional detail have separate areas. The card's View task action directly uses the task web URL. Stored in-app notification URLs, built-in cards, and Markdown notifications keep their original `wework://` links. Quotable local run notifications remain text messages so they can be quoted to continue the task.
 
 The configuration lives in the channel's `config.notification_card`. For a custom template:
 

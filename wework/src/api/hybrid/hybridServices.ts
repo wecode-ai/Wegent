@@ -76,6 +76,7 @@ import type {
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTranscriptRequest,
+  RuntimeTranscriptSearchRequest,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
@@ -425,8 +426,8 @@ export function createHybridWorkbenchServices(
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
-  const cloudModels = createCloudModelCatalog(async signal => {
-    const response = await cloudServices.modelApi.listModels({ signal })
+  const cloudModels = createCloudModelCatalog(async (signal, forceRefresh) => {
+    const response = await cloudServices.modelApi.listModels({ signal, forceRefresh })
     console.info('[Wework] Cloud model catalog loaded', {
       count: response.data.length,
       models: response.data.map(modelIdentityForLog),
@@ -988,6 +989,14 @@ export function createHybridWorkbenchServices(
     },
   }
 
+  const standInApiForDevice = async (deviceId: string) => {
+    const identity = await getLocalRuntimeSidebarIdentity()
+    const api =
+      deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+    if (!api) throw new Error('Executor settings are unavailable')
+    return api
+  }
+
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
     materializeRuntimeTask(data) {
       return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
@@ -1057,6 +1066,11 @@ export function createHybridWorkbenchServices(
         })
         throw error
       }
+    },
+    searchRuntimeTranscript(data: RuntimeTranscriptSearchRequest) {
+      return (
+        data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+      ).searchRuntimeTranscript(data)
     },
     async searchRuntimeWork(data: RuntimeWorkSearchRequest) {
       if (data.source === 'cloud') {
@@ -1633,7 +1647,18 @@ export function createHybridWorkbenchServices(
         : undefined,
     },
     pluginApi: projectPluginApi,
-    agentResourceApi: cloudServices.agentResourceApi,
+    agentResourceApi: cloudServices.agentResourceApi
+      ? {
+          ...cloudServices.agentResourceApi,
+          listNativeModels: (environment, projectId) =>
+            isLocalDeviceId(environment.device_key)
+              ? localProjectServices.localProjectChatAgentApi!.listNativeModels(
+                  environment,
+                  projectId
+                )
+              : cloudServices.agentResourceApi!.listNativeModels(environment, projectId),
+        }
+      : undefined,
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,
@@ -1662,6 +1687,125 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    standInApi: {
+      async memories(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
+      },
+      async saveMemory(userId, deviceId, memory) {
+        return (await standInApiForDevice(deviceId)).saveMemory(userId, deviceId, memory)
+      },
+      async deleteMemory(userId, deviceId, id, version) {
+        return (await standInApiForDevice(deviceId)).deleteMemory(userId, deviceId, id, version)
+      },
+      async inbox(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).inbox(userId, deviceId)
+      },
+      async workMessages(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
+      },
+      async runWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
+      },
+      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId) {
+        return (await standInApiForDevice(deviceId)).organizeWork(
+          userId,
+          deviceId,
+          workId,
+          messageIds,
+          targetWorkId
+        )
+      },
+      async adjustMessage(userId, deviceId, workId, messageId, targetWorkId) {
+        return (await standInApiForDevice(deviceId)).adjustMessage(
+          userId,
+          deviceId,
+          workId,
+          messageId,
+          targetWorkId
+        )
+      },
+      async retrySource(userId, deviceId, source) {
+        return (await standInApiForDevice(deviceId)).retrySource(userId, deviceId, source)
+      },
+      async searchDingTalk(deviceId, kind, query, cursor) {
+        return (await standInApiForDevice(deviceId)).searchDingTalk(deviceId, kind, query, cursor)
+      },
+      async conversation(userId, deviceId, message, roleId, options) {
+        return (await standInApiForDevice(deviceId)).conversation(
+          userId,
+          deviceId,
+          message,
+          roleId,
+          options
+        )
+      },
+      async proposal(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
+      },
+      async resolveProposal(userId, deviceId, proposalId, accept) {
+        return (await standInApiForDevice(deviceId)).resolveProposal(
+          userId,
+          deviceId,
+          proposalId,
+          accept
+        )
+      },
+      async notifyAssignment(projectId, issueId, assignmentId, userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).notifyAssignment(
+          projectId,
+          issueId,
+          assignmentId,
+          userId,
+          deviceId
+        )
+      },
+      async personalAgents(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
+      },
+      async personalGet(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
+      },
+      async personalSave(userId, settings, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      },
+      async readTask(deviceId, taskId) {
+        return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
+      },
+      async catalog(deviceId) {
+        return (await standInApiForDevice(deviceId)).catalog(deviceId)
+      },
+      async run(projectId, issueId, userId, projectStore, deviceId, standInId) {
+        return (await standInApiForDevice(deviceId)).run(
+          projectId,
+          issueId,
+          userId,
+          projectStore,
+          deviceId,
+          standInId
+        )
+      },
+      async list(userId, deviceId, includeDisabled) {
+        return (await standInApiForDevice(deviceId)).list(userId, deviceId, includeDisabled)
+      },
+      async get(projectId, userId, projectStore, deviceId, standInId) {
+        return (await standInApiForDevice(deviceId)).get(
+          projectId,
+          userId,
+          projectStore,
+          deviceId,
+          standInId
+        )
+      },
+      async save(projectId, userId, projectStore, settings, deviceId) {
+        return (await standInApiForDevice(deviceId)).save(
+          projectId,
+          userId,
+          projectStore,
+          settings,
+          deviceId
+        )
+      },
+    },
     projectDevicePluginApi,
     automationApi,
     attachmentApi: {

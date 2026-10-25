@@ -31,6 +31,23 @@ function renderBadge(context: KnowledgeBaseContext) {
 }
 
 describe('ContextBadge knowledge scope label', () => {
+  it('exposes a stable test id for composer conversation references', () => {
+    render(
+      <ContextBadge
+        context={{
+          id: 'conversation:77',
+          name: 'Referenced task',
+          type: 'conversation',
+          task_id: 77,
+        }}
+        onRemove={jest.fn()}
+        disableUrlClick
+      />
+    )
+
+    expect(screen.getByTestId('input-conversation-reference-77')).toBeInTheDocument()
+  })
+
   it('uses compact labels for mixed, document-only, and whole-KB scopes', () => {
     renderBadge({
       id: 1,

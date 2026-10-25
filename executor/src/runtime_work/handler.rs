@@ -26,7 +26,7 @@ use crate::{
         bind_codex_thread_model_route, codex_notification_requires_user_input,
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -120,6 +120,7 @@ impl RestoreStartupGate {
     }
 }
 
+mod active_text;
 mod archives;
 mod automation_rpc;
 mod background_terminals;
@@ -132,6 +133,7 @@ mod context_compaction;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod personal_stand_in;
 mod plugin_install;
 mod plugin_marketplace;
 mod project_preparation;
@@ -140,10 +142,20 @@ mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
 mod sidebar;
+mod stand_in;
+mod stand_in_agent;
+mod stand_in_conversations;
+mod stand_in_dingtalk_work;
+mod stand_in_events;
+mod stand_in_ingress;
+mod stand_in_memory;
+mod stand_in_workspace;
 mod supervisor;
 mod system;
 mod tasks;
 mod text_generation;
+mod transcript_overlays;
+mod transcript_search;
 mod transcript_sync;
 mod turns;
 mod workspaces;
@@ -191,7 +203,7 @@ use super::{
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
         full_transcript_messages, normalized_user_request_content, notification_item,
-        transcript_messages,
+        project_transcript, transcript_messages,
     },
     transcript_page::transcript_page,
     util::{
@@ -615,6 +627,7 @@ pub struct RuntimeWorkRpcHandler {
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
+    codex_notification_delivery: Arc<Mutex<()>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     local_issue_scheduler_started: Arc<AtomicBool>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
@@ -686,6 +699,8 @@ struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
     items: Vec<Value>,
+    // Keep settled request IDs until the turn ends so replay cannot reopen them.
+    user_input_requests: HashMap<String, bool>,
 }
 
 #[derive(Clone)]
@@ -701,6 +716,7 @@ struct RuntimeThreadEventRoute {
     active: bool,
     nested: bool,
     generation: u64,
+    native_completed_turn_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -713,7 +729,7 @@ struct RuntimeThreadEventRouting {
 
 struct PendingCodexNotification {
     thread_id: String,
-    message: Value,
+    message: CodexNotification,
 }
 
 struct PendingCodexNotificationReplay {
@@ -787,12 +803,21 @@ impl RuntimeThreadEventRoute {
             active,
             nested: false,
             generation,
+            native_completed_turn_id: None,
         }
     }
 }
 
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
+        Self::with_optional_event_sender(device_id, codex_binary, None)
+    }
+
+    fn with_optional_event_sender(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: Option<broadcast::Sender<Value>>,
+    ) -> Self {
         let codex_binary = codex_binary.into();
         let device_id = normalize_device_id(device_id.into());
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
@@ -865,7 +890,7 @@ impl RuntimeWorkRpcHandler {
             )),
             startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
-            event_tx: None,
+            event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
@@ -887,6 +912,7 @@ impl RuntimeWorkRpcHandler {
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
+            codex_notification_delivery: Arc::new(Mutex::new(())),
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
@@ -946,10 +972,7 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        let handler = Self {
-            event_tx: Some(event_tx),
-            ..Self::new(device_id, codex_binary)
-        };
+        let handler = Self::with_optional_event_sender(device_id, codex_binary, Some(event_tx));
         if let Some(sender) = handler.event_tx.clone() {
             crate::task_runtime::mcp_http::register_runtime_event_sender(sender.clone());
             handler.hook_service.set_event_sender(sender);
@@ -967,6 +990,8 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.start_local_stand_in_scheduler();
+        self.start_dingtalk_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
@@ -1105,11 +1130,36 @@ impl RuntimeWorkRpcHandler {
             self.reconcile_and_resume_persisted_turns().await;
         }
         let result = match method {
+            "runtime.stand_in.list" => self.list_stand_in_settings(payload).await,
+            "runtime.stand_in.personal.get" => self.personal_stand_in_settings(payload, false),
+            "runtime.stand_in.personal.agents" => self.personal_stand_in_agents(payload).await,
+            "runtime.stand_in.personal.save" => self.personal_stand_in_settings(payload, true),
+            "runtime.stand_in.conversation" => self.stand_in_conversation(payload).await,
+            "runtime.stand_in.memory.list" => self.stand_in_memory(payload, "list"),
+            "runtime.stand_in.memory.save" => self.stand_in_memory(payload, "save"),
+            "runtime.stand_in.memory.delete" => self.stand_in_memory(payload, "delete"),
+            "runtime.stand_in.proposal.get" => self.stand_in_proposal(payload, false),
+            "runtime.stand_in.proposal.resolve" => self.stand_in_proposal(payload, true),
+            "runtime.stand_in.dingtalk.search" => super::dingtalk::search(&payload).await,
+            "runtime.stand_in.work.list" => self.list_dingtalk_stand_in_work(payload),
+            "runtime.stand_in.work.messages" => self.dingtalk_stand_in_messages(payload),
+            "runtime.stand_in.work.run" => self.run_dingtalk_stand_in_work(payload).await,
+            "runtime.stand_in.work.adjust" => self.adjust_dingtalk_stand_in_work(payload),
+            "runtime.stand_in.work.organize" => self.organize_dingtalk_stand_in_work(payload),
+            "runtime.stand_in.source.retry" => self.retry_dingtalk_source(payload),
+            "runtime.stand_in.get" => self.stand_in_settings(payload, false).await,
+            "runtime.stand_in.save" => self.stand_in_settings(payload, true).await,
+            "runtime.stand_in.run" => self.run_stand_in(payload).await,
+            "runtime.stand_in.assignment" => {
+                self.handle_stand_in_assignment(payload).await?;
+                Ok(json!({"success":true}))
+            }
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.search" => self.search_transcript(payload).await,
             "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
             "runtime.tasks.transcript.export" => self.export_transcript_segment(payload).await,
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,

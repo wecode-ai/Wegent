@@ -1,3 +1,4 @@
+import { readRequestBody as readJsonBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
@@ -208,12 +209,6 @@ async function waitForHarnessExit(control, harnessId, timeoutMs) {
   throw new Error(`The ${harnessId} CLI did not finish within ${timeoutMs}ms`)
 }
 
-async function readJsonBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
-
 function writeSse(response, events) {
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -398,6 +393,7 @@ async function startHarness({
   model,
   prompt,
   timeoutMs,
+  startupTimeoutMs,
   capturePage,
   runtimeMenuScreenshot,
   modelMenuScreenshot,
@@ -462,7 +458,7 @@ async function startHarness({
     { timeoutMs }
   )
   if (presentation === 'terminal') {
-    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs })
+    await control.command('waitFor', CENTRAL_HARNESS_SELECTOR, { timeoutMs: startupTimeoutMs })
   } else {
     await control.command(
       'waitFor',
@@ -619,7 +615,12 @@ async function verifyHarnessWorkbenchChrome({
   await control.command('click', rightPanelToggleSelector)
 }
 
-export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  workspacePath,
+}) {
   const executables = await resolveHarnessExecutables()
   const harnessModelRequests = []
   const capturePage = (control, name) => captureScreenshot(control, name, 'body')
@@ -702,6 +703,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await configureHarnesses(control, executables, uiTimeoutMs, capturePage)
       await startHarness({
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         control,
         harnessId: 'opencode',
         model: 'Desktop E2E Vision',
@@ -739,7 +741,8 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await waitForRequests(
         harnessModelRequests,
         requests => assertPromptRequest(requests, 'Inspect the current project', 'kimi-k3', 'chat'),
-        uiTimeoutMs
+        // The terminal mounts before OpenCode finishes its real CLI cold startup.
+        workbenchReadyTimeoutMs
       )
 
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -762,6 +765,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await startHarness({
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         control,
         harnessId: 'kimi_code',
         model: 'Desktop E2E Vision',
@@ -807,6 +811,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await startHarness({
+        startupTimeoutMs: workbenchReadyTimeoutMs,
         control,
         harnessId: 'claude_code',
         model: 'Desktop E2E DeepSeek Pro Vision Main',

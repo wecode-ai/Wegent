@@ -36,6 +36,7 @@ mod model_jpeg;
 pub(crate) mod office;
 mod overwrite;
 pub(crate) mod pdf;
+mod resample;
 mod response;
 mod store;
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! Extracted from [`super`] to keep the module within the file-size bound.
 
 use super::*;
+use crate::loop_tasks::loop_columns::CLOUD_CONTEXT_COLUMNS;
 
 #[test]
 fn splits_external_item_ids() {
@@ -17,6 +18,29 @@ fn splits_external_item_ids() {
 
 fn normalize(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[tokio::test]
+async fn related_issue_uses_the_current_collaborator_table_and_bound_item_id() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    assert!(
+        !LoopItemRepository::new(&mysql)
+            .is_related_item("EXAMPLE-'quoted", 86)
+            .await
+            .unwrap()
+    );
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].args, 1);
+    let sql = &queries[0].sql;
+    assert!(sql.contains("WHERE loop_items.id = ?"));
+    assert!(!sql.contains("EXAMPLE-'quoted"));
+    assert!(!sql.contains("loop_item_collaborators"));
+    for kind in ["execution", "collaborator", "chat_agent"] {
+        assert!(sql.contains(&format!("loop_items.resource_type IN ('{kind}')")));
+    }
+    assert!(sql.contains("loop_items.user_id = 86"));
+    assert!(sql.contains("loop_items.unlinked_at IS NULL"));
 }
 
 /// `_find_project` selects the full labeled `loop_items` projection (the
@@ -35,7 +59,7 @@ async fn find_external_project_uses_the_labeled_projection() {
     assert_eq!(
         queries[0].sql,
         normalize(&format!(
-            "SELECT {LOOP_ITEMS_COLUMNS} FROM loop_items \
+            "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS} FROM loop_items \
              WHERE loop_items.project_key = ? \
              AND loop_items.resource_type IN ('project') LIMIT 1"
         ))
@@ -50,6 +74,28 @@ async fn find_external_project_uses_the_labeled_projection() {
 fn cloud_context_projection_carries_start_at() {
     assert!(CLOUD_CONTEXT_COLUMNS.contains(
         "loop_items.priority AS loop_items_priority, loop_items.start_at AS loop_items_start_at, loop_items.due_at AS loop_items_due_at"
+    ));
+}
+
+#[tokio::test]
+async fn assignment_activities_are_scoped_to_project_and_issue_newest_first() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let activities = LoopItemRepository::new(&mysql)
+        .item_activity_metadata("41", "EXAMPLE-10")
+        .await
+        .expect("captured");
+    assert!(activities.is_empty());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].args, 2);
+    assert!(
+        queries[0]
+            .sql
+            .contains("project_chat_messages.project_id = ?")
+    );
+    assert!(queries[0].sql.contains("project_chat_messages.task_id = ?"));
+    assert!(queries[0].sql.ends_with(
+        "ORDER BY project_chat_messages.created_at DESC, project_chat_messages.id DESC"
     ));
 }
 
@@ -92,6 +138,11 @@ fn role_hierarchy() {
     assert!(has_permission("Maintainer", "Reporter"));
     assert!(!has_permission("Reporter", "Developer"));
     assert!(!has_permission("Unknown", "Reporter"));
+    // `BaseRole` orders Viewer above RestrictedAnalyst; the Viewer gate admits
+    // a Viewer and rejects a RestrictedAnalyst.
+    assert!(has_permission("Viewer", "Viewer"));
+    assert!(has_permission("Owner", "Viewer"));
+    assert!(!has_permission("RestrictedAnalyst", "Viewer"));
 }
 
 #[test]
@@ -104,7 +155,7 @@ fn workflow_node_id_reads_metadata() {
         device_id: "d".to_string(),
         task_id: "t".to_string(),
         task_title: None,
-        backend_task_id: 0,
+        backend_task_id: Some(0),
         linked_by_user_id: 1,
         linked_at: None,
         unlinked_at: None,
@@ -119,4 +170,35 @@ fn workflow_node_id_reads_metadata() {
         None
     );
     assert_eq!(binding(serde_json::json!({})).workflow_node_id(), None);
+}
+
+/// SQLAlchemy applies each model's discriminator to the single-table subqueries.
+#[tokio::test]
+async fn related_item_probe_uses_current_schema_and_all_five_permission_branches() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let related = LoopItemRepository::new(&mysql)
+        .is_related_item("item-'quoted", 17)
+        .await
+        .expect("captured");
+    assert!(!related);
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    let query = &queries[0];
+    assert_eq!(query.args, 1);
+    assert!(!query.sql.contains("item-'quoted"));
+    assert!(!query.sql.contains("loop_item_collaborators"));
+    assert_eq!(query.sql.matches("FROM loop_items").count(), 4);
+    for expected in [
+        "WHERE loop_items.id = ? AND (loop_items.created_by_user_id = 17",
+        "OR loop_items.assignee_user_id = 17",
+        "WHERE loop_items.task_user_id = 17 AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('execution')",
+        "WHERE loop_items.user_id = 17 AND loop_items.resource_type IN ('collaborator')",
+        "WHERE loop_items.created_by_user_id = 17 AND loop_items.status = 'active' AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('chat_agent')",
+        "AND loop_items.resource_type IN ('task') LIMIT 1",
+    ] {
+        assert!(
+            query.sql.contains(expected),
+            "missing permission scope: {expected}"
+        );
+    }
 }

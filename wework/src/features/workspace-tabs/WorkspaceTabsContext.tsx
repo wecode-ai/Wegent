@@ -8,7 +8,14 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { isSettingsRoute, navigateTo, replaceTo } from '@/lib/navigation'
+import {
+  isSettingsRoute,
+  navigateTo,
+  parseRuntimeTaskRoute,
+  replaceTo,
+  WORKSPACE_NAVIGATION_EVENT,
+  type WorkspaceNavigationDetail,
+} from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -36,6 +43,7 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
+import { findRuntimeTaskTab, navigateWorkspaceTab } from './workspaceNavigation'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -84,6 +92,7 @@ function validTab(value: unknown): value is WorkspaceTab {
     typeof candidate.id === 'string' &&
     typeof candidate.title === 'string' &&
     typeof candidate.contentRoute === 'string' &&
+    !isSettingsRoute(candidate.contentRoute.split('?', 1)[0]) &&
     ['task', 'board', 'agent', 'auxiliary'].includes(candidate.kind)
   )
 }
@@ -143,13 +152,16 @@ function loadPersistedTabs(
     }
   }
 
-  const kind = inferWorkspaceTabKind(pathname)
   const defaultTabs =
     fixedTabs.length > 0
       ? fixedTabs
       : (['task', 'board', 'agent'] as const).map(defaultKind =>
           createWorkspaceTab(defaultKind, labels)
         )
+  if (isSettingsRoute(pathname)) {
+    return { tabs: defaultTabs, activeTabId: defaultTabs[0].id, closedTabs: [] }
+  }
+  const kind = inferWorkspaceTabKind(pathname)
   const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
   const routeTab = createWorkspaceTab(kind, labels, {
     id: location.tabId ?? matchingDefault?.id,
@@ -176,6 +188,7 @@ function workspaceTabsReducer(
 ): WorkspaceTabsState {
   switch (action.type) {
     case 'routeChanged': {
+      if (isSettingsRoute(action.pathname)) return state
       const location = parseWorkspaceLocation(action.pathname, action.search)
       const requested = location.tabId
         ? state.tabs.find(tab => tab.id === location.tabId)
@@ -514,6 +527,28 @@ export function WorkspaceTabsProvider({
     },
     [labels]
   )
+
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const { kind, contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
+      const activeTab = stateRef.current.tabs.find(tab => tab.id === stateRef.current.activeTabId)
+      const [path, search] = contentRoute.split('?')
+      const target = parseRuntimeTaskRoute(path, search)
+      const matching = target ? findRuntimeTaskTab(stateRef.current.tabs, target) : null
+      const isTaskSurface = (value: WorkspaceTabKind) => value === 'task' || value === 'auxiliary'
+      if (
+        activeTab &&
+        (!matching || matching.id === activeTab.id) &&
+        (activeTab.kind === kind || (isTaskSurface(activeTab.kind) && isTaskSurface(kind)))
+      ) {
+        return
+      }
+      event.preventDefault()
+      navigateWorkspaceTab({ ...stateRef.current, selectTab, openTab }, kind, contentRoute)
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+  }, [selectTab, openTab])
 
   const closeTab = useCallback(
     (tabId: string) => {

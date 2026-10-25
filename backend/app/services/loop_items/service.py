@@ -66,6 +66,7 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
     delivery_storage,
 )
+from app.services.issue_badges import issue_badges
 from app.services.loop_item_executions.service import (
     execution_ai_state,
     execution_display_state,
@@ -91,6 +92,12 @@ from app.services.loop_items.access import (
     item_security,
     related_item_filter,
     visible_item_filter,
+)
+from app.services.loop_items.change_requests import update_change_request_source
+from app.services.loop_items.ordering import (
+    persist_sibling_order,
+    position_siblings,
+    sibling_items,
 )
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
@@ -253,6 +260,7 @@ class LoopItemService:
             team = db.get(Kind, item.assignee_team_id)
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        values["badges"] = issue_badges(metadata) if can_view_detail else []
         group = metadata.get("collaboration_group")
         if item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id:
             group = None
@@ -304,9 +312,9 @@ class LoopItemService:
             db, item=item, execution=execution, user_id=user_id
         )
         values["approval"] = self._approval_view(execution)
-        from app.services.human_issue_work import human_issue_work_service
+        from app.services.collaboration_human_assignments import human_task_binding
 
-        values["human_work"] = human_issue_work_service.view(db, item, user_id)
+        values["human_task_binding"] = human_task_binding(db, item, user_id)
         if execution is not None:
             values["ai_state"] = execution_ai_state(
                 db,
@@ -752,6 +760,9 @@ class LoopItemService:
                 trigger="create",
                 by_user_id=user_id,
             )
+        task_metadata = update_change_request_source(
+            task_metadata, "issue", f"{values.title}\n{values.description}"
+        )
         task_metadata = initialize_content_revision(task_metadata, user_id)
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
@@ -918,7 +929,9 @@ class LoopItemService:
                     )
                 )
             )
-        return query.order_by(LoopItem.sort_order, LoopItem.updated_at.desc()).all()
+        return query.order_by(
+            LoopItem.sort_order, LoopItem.updated_at.desc(), LoopItem.id
+        ).all()
 
     def reorder(
         self,
@@ -927,29 +940,36 @@ class LoopItemService:
         user_id: int,
         values: LoopItemReorder,
     ) -> list[LoopItem]:
-        """Persist the manual order of the TODOs in one board lane."""
+        """Persist sibling order, optionally restricted to a status lane."""
 
-        self._require_internal_task_project(
+        access = self._require_internal_task_project(
             db, cloud_project_id, user_id, BaseRole.Developer
         )
-        if values.parent_id is None:
-            # MySQL stores unset parent ids as empty strings, so match both.
-            parent_filter = or_(LoopItem.parent_id.is_(None), LoopItem.parent_id == "")
-        else:
-            parent_filter = LoopItem.parent_id == values.parent_id
-        lane = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id == cloud_project_id,
-                LoopItem.status == values.status,
-                parent_filter,
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
-            .all()
-        )
+        siblings = sibling_items(db, str(cloud_project_id), values.parent_id)
+        visible_ids = None
+        if not has_permission(access.role, BaseRole.Maintainer):
+            visible_ids = {
+                item_id
+                for (item_id,) in db.query(LoopItem.id)
+                .filter(
+                    LoopItem.cloud_project_id == cloud_project_id,
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                    visible_item_filter(user_id, access.project),
+                )
+                .all()
+            }
+            if any(item_id not in visible_ids for item_id in values.item_ids):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        lane = [
+            item
+            for item in siblings
+            if (values.status is None or item.status == values.status)
+            and (visible_ids is None or item.id in visible_ids)
+        ]
         by_id = {item.id: item for item in lane}
-        requested_ids = [item_id for item_id in values.item_ids if item_id in by_id]
+        requested_ids = list(
+            dict.fromkeys(item_id for item_id in values.item_ids if item_id in by_id)
+        )
         if not requested_ids:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "TODO not found in lane"
@@ -959,10 +979,11 @@ class LoopItemService:
         ordered = [by_id[item_id] for item_id in requested_ids] + [
             item for item in lane if item.id not in requested_ids
         ]
-        for position, item in enumerate(ordered):
-            if item.sort_order != position:
-                item.sort_order = position
-                item.version += 1
+        lane_ids = set(by_id)
+        positions = iter(ordered)
+        persist_sibling_order(
+            [next(positions) if item.id in lane_ids else item for item in siblings]
+        )
         db.commit()
         for item in ordered:
             db.refresh(item)
@@ -1040,11 +1061,25 @@ class LoopItemService:
             status="active",
         )
         db.add(comment)
+        db.flush()
+        metadata = update_change_request_source(
+            item.metadata_json, f"comment:{comment.id}", body
+        )
+        badges_changed = metadata != item.metadata_json
+        item.metadata_json = metadata
+        if badges_changed:
+            item.version += 1
         if commit:
             db.commit()
         else:
             db.flush()
         db.refresh(comment)
+        if commit and badges_changed:
+            from app.services.loop_item_events import publish_loop_item_changed
+
+            publish_loop_item_changed(
+                db, item=item, reason="badges", actor_user_id=user_id
+            )
         author = db.get(User, user_id)
         return {
             "id": comment.id,
@@ -1439,18 +1474,23 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        if "status" in values.model_fields_set and values.status != item.status:
-            from app.services.human_issue_work import human_issue_work_service
-
-            if human_issue_work_service.is_direct_human_assignment(db, item) or (
-                "assignee_user_id" in values.model_fields_set
-                and values.assignee_user_id is not None
-                and values.assignee_user_id != item.assignee_user_id
-            ):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "Use the human Issue work actions to change status",
-                )
+        position_order = None
+        if values.position is not None:
+            self._require_internal_task_project(
+                db, int(item.cloud_project_id), user_id, BaseRole.Developer
+            )
+            if values.position.before_item_id is not None:
+                self.get(db, values.position.before_item_id, user_id)
+            position_order = position_siblings(
+                db,
+                item,
+                (
+                    values.parent_id
+                    if "parent_id" in values.model_fields_set
+                    else item.parent_id
+                ),
+                values.position,
+            )
         if "security_level" in values.model_fields_set:
             require_cloud_project_role(
                 db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
@@ -1472,6 +1512,11 @@ class LoopItemService:
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
+        if item.version != values.version:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
+            )
         updates = values.model_dump(
             exclude={
                 "version",
@@ -1480,6 +1525,7 @@ class LoopItemService:
                 "runner_selection",
                 "assignee_group_id",
                 "security_level",
+                "position",
             },
             exclude_unset=True,
         )
@@ -1506,6 +1552,8 @@ class LoopItemService:
                 "security_level",
             )
         )
+        if "assignee_agent_id" in values.model_fields_set:
+            updates["assignee_agent_id"] = values.assignee_agent_id or ""
         if "assignee_team_id" in values.model_fields_set:
             team_id = values.assignee_team_id
             if team_id:
@@ -1516,7 +1564,6 @@ class LoopItemService:
                 updates["assignee_agent_id"] = ""
         elif "assignee_agent_id" in values.model_fields_set:
             agent_id = values.assignee_agent_id
-            updates["assignee_agent_id"] = agent_id or ""
             if agent_id:
                 agent = db.get(ProjectChatAgent, agent_id)
                 if (
@@ -1759,9 +1806,6 @@ class LoopItemService:
                     trigger="manual",
                 )
             if assignment_created:
-                if target_type == "user" and item.assignee_user_id != int(target_id):
-                    metadata.pop("human_work", None)
-                    updates["metadata_json"] = metadata
                 if target_type in {"agent", "team"} and (
                     "status" not in values.model_fields_set
                 ):
@@ -1822,7 +1866,8 @@ class LoopItemService:
             )
             # Reset the manual lane position so the TODO lands at the top of
             # its new lane instead of an arbitrary stale position.
-            updates["sort_order"] = 0
+            if position_order is None:
+                updates["sort_order"] = 0
         if meaningful_change:
             metadata = updates.get("metadata_json")
             if not isinstance(metadata, dict):
@@ -1839,6 +1884,12 @@ class LoopItemService:
                 previous_user_id=item.assignee_user_id,
                 notify=values.notify_assignee,
             )
+        if "title" in updates or "description" in updates:
+            updates["metadata_json"] = update_change_request_source(
+                updates.get("metadata_json", item.metadata_json),
+                "issue",
+                f"{updates.get('title', item.title)}\n{updates.get('description', item.description)}",
+            )
         updates = adapt_loop_node_values_for_dialect(
             updates,
             db.get_bind().dialect.name,
@@ -1851,7 +1902,10 @@ class LoopItemService:
         )
         if updated != 1:
             db.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
+            )
         if status_changed:
             from app.services.workspace_cleanup_intents import sync_issue_status
 
@@ -1876,6 +1930,8 @@ class LoopItemService:
                 user_id=user_id,
                 group=collaboration_group,
             )
+        if position_order is not None:
+            persist_sibling_order(position_order, updated_item_id=item.id)
         if commit:
             db.commit()
         else:
@@ -1992,6 +2048,16 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        position_order = None
+        if values.position is not None:
+            self._require_internal_task_project(
+                db, project_id, user_id, BaseRole.Developer
+            )
+            if values.position.before_item_id is not None:
+                self.get(db, values.position.before_item_id, user_id)
+            position_order = position_siblings(
+                db, item, item.parent_id, values.position
+            )
         require_issue_action(
             access,
             action=IssueAction.ASSIGN,
@@ -2124,8 +2190,6 @@ class LoopItemService:
                 trigger=values.trigger,
                 comment_id=assignment_comment_id,
             )
-            if assignment_created and previous_assignee_user_id != target_user_id:
-                metadata.pop("human_work", None)
             assignee_updates = {
                 "assignee_user_id": target_user_id,
                 "assignee_agent_id": "",
@@ -2225,6 +2289,7 @@ class LoopItemService:
                 LoopItemUpdate(
                     version=values.version,
                     assignee_group_id=values.assignee_id,
+                    position=values.position,
                     runner_selection=values.runner_selection,
                     notify_assignee=values.notify_assignee,
                 ),
@@ -2279,9 +2344,16 @@ class LoopItemService:
             item,
             values.version,
             metadata,
-            commit=commit,
+            commit=commit and position_order is None,
             **assignee_updates,
         )
+        if position_order is not None:
+            persist_sibling_order(position_order, updated_item_id=item.id)
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+            db.refresh(updated)
         if cancelled_runs:
             from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
@@ -2924,37 +2996,6 @@ class LoopItemService:
             .limit(limit)
             .all()
         )
-        from app.services.human_issue_work import human_issue_work_service
-
-        known_item_ids = {item.id for item in items}
-        review_candidates = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id.in_(project_by_id),
-                LoopItem.status == "in_review",
-                LoopItem.metadata_json["human_work"]["state"].as_string()
-                == "submitted",
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
-            .all()
-        )
-        for candidate in review_candidates:
-            if candidate.id in known_item_ids:
-                continue
-            metadata = (
-                candidate.metadata_json
-                if isinstance(candidate.metadata_json, dict)
-                else {}
-            )
-            work = metadata.get("human_work")
-            if not isinstance(work, dict) or work.get("state") != "submitted":
-                continue
-            view = human_issue_work_service.view(db, candidate, user_id)
-            if view is not None and view["can_review"]:
-                items.append(candidate)
-        items.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        items = items[:limit]
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
         active_task_items = (
@@ -3090,7 +3131,6 @@ class LoopItemService:
                     ),
                     "content_revision": content_revision(metadata),
                     "is_unread": is_unread(metadata, user_id),
-                    "human_work": human_issue_work_service.view(db, item, user_id),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": (
                         execution_display_state(execution)

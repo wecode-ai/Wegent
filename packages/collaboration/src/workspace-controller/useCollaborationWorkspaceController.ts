@@ -5,6 +5,17 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
+import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
+import {
+  mergeIssueReadConfirmation,
+  mergeIssueReadState,
+  newestIssue,
+  type IssueReadProjection,
+} from "./issueReadState";
+import {
+  mergePersistedBoardMove,
+  type ProjectBoardPosition,
+} from "../project-board/useStandardCloudBoardController";
 import type {
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
@@ -28,7 +39,7 @@ import type {
   CollaborationStatus,
 } from "../types";
 
-export interface CollaborationWorkspaceControllerState {
+export interface CollaborationWorkspaceControllerState extends IssueReadProjection {
   projects: CollaborationProject[];
   myWork: WorkspaceMyWorkItem[];
   projectItems: Record<string, CollaborationIssue[]>;
@@ -85,16 +96,17 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProject(
     projectId: string,
     showLoading?: boolean,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
-    options?: { invalidate?: boolean },
+    options?: { invalidate?: boolean; throwOnError?: boolean },
   ): Promise<WorkspaceBoardSnapshot | null>;
   loadMoreExternalColumn(status: string): Promise<void>;
   getIssue(issueId: string): Promise<CollaborationIssue | null>;
   loadSelectedIssue(issueId: string): Promise<CollaborationIssue | null>;
   markIssueRead(issue: CollaborationIssue): Promise<CollaborationIssue | null>;
+  confirmIssueRead(issue: CollaborationIssue): CollaborationIssue;
   clearProject(): void;
   clearSelectedIssue(): void;
   createProject(
@@ -124,12 +136,6 @@ export interface CollaborationWorkspaceControllerCommands {
     issueId: string,
     options?: { throwOnError?: boolean },
   ): Promise<boolean>;
-  reorderIssue(input: {
-    issue: CollaborationIssue;
-    status: string;
-    laneIds: string[];
-    optimisticItems: CollaborationIssue[];
-  }): Promise<void>;
   changeProjectGroup(input: {
     project: CollaborationProject;
     groupBy: "status" | "priority" | "assignee" | "tag";
@@ -168,6 +174,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     getIssue: async () => null,
     loadSelectedIssue: async () => null,
     markIssueRead: async () => null,
+    confirmIssueRead: (issue) => issue,
     clearProject: () => undefined,
     clearSelectedIssue: () => undefined,
     createProject: async () => null,
@@ -177,7 +184,6 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     updateIssue: async () => null,
     assignIssue: async () => null,
     archiveIssue: async () => false,
-    reorderIssue: async () => undefined,
     changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
     refreshProjectAgents: async () => undefined,
@@ -210,6 +216,7 @@ export type CollaborationWorkspaceControllerAction =
       myWork: WorkspaceMyWorkItem[];
     }
   | { type: "project-catalog-loaded"; projects: CollaborationProject[] }
+  | { type: "project-metadata-loaded"; project: CollaborationProject }
   | {
       type: "project-snapshot-loaded";
       projectId: string;
@@ -260,9 +267,13 @@ export type CollaborationWorkspaceControllerAction =
     }
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
-  | { type: "merge-reorder-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
-  | { type: "replace-issue"; issue: CollaborationIssue }
+  | {
+      type: "replace-issue";
+      issue: CollaborationIssue;
+      position?: ProjectBoardPosition;
+    }
+  | { type: "issue-read"; issue: CollaborationIssue }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
   | { type: "replace-comments"; comments: CollaborationComment[] }
@@ -273,6 +284,7 @@ export type CollaborationWorkspaceControllerAction =
 
 export const initialCollaborationWorkspaceControllerState: CollaborationWorkspaceControllerState =
   {
+    confirmedIssueReads: {},
     projects: [],
     myWork: [],
     projectItems: {},
@@ -298,31 +310,18 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
-function newestIssue(
-  current: CollaborationIssue | null | undefined,
-  incoming: CollaborationIssue,
-): CollaborationIssue {
-  return current?.id === incoming.id && current.version > incoming.version
-    ? current
-    : incoming;
-}
-
-function mergeReorderIssues(
-  current: CollaborationIssue[],
-  incoming: CollaborationIssue[],
-): CollaborationIssue[] {
-  const currentById = new Map(current.map((issue) => [issue.id, issue]));
-  const incomingIds = new Set(incoming.map((issue) => issue.id));
-  return [
-    ...incoming.map((issue) => {
-      const existing = currentById.get(issue.id);
-      return newestIssue(existing, issue);
-    }),
-    ...current.filter((issue) => !incomingIds.has(issue.id)),
-  ];
-}
-
 export function collaborationWorkspaceControllerReducer(
+  state: CollaborationWorkspaceControllerState,
+  action: CollaborationWorkspaceControllerAction,
+): CollaborationWorkspaceControllerState {
+  return mergeIssueReadState(
+    state,
+    reduceWorkspaceState(state, action),
+    action.type === "issue-read" ? action.issue : undefined,
+  );
+}
+
+function reduceWorkspaceState(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
@@ -354,19 +353,24 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
-    case "project-snapshot-loaded":
+    case "project-snapshot-loaded": {
+      const existing = new Map(
+        (state.projectItems[action.projectId] ?? []).map((item) => [
+          item.id,
+          item,
+        ]),
+      );
+      const items = action.snapshot.items.map((item) =>
+        newestIssue(existing.get(item.id), item),
+      );
       return {
         ...state,
         selectedIssue:
           state.selectedIssue && state.project?.id === action.projectId
-            ? (action.snapshot.items.find(
-                (item) => item.id === state.selectedIssue?.id,
-              ) ?? null)
+            ? (items.find((item) => item.id === state.selectedIssue?.id) ??
+              null)
             : state.selectedIssue,
-        issues:
-          state.project?.id === action.projectId
-            ? action.snapshot.items
-            : state.issues,
+        issues: state.project?.id === action.projectId ? items : state.issues,
         members:
           state.project?.id === action.projectId
             ? action.snapshot.members
@@ -381,7 +385,7 @@ export function collaborationWorkspaceControllerReducer(
             : state.taskBindings,
         projectItems: {
           ...state.projectItems,
-          [action.projectId]: action.snapshot.items,
+          [action.projectId]: items,
         },
         projectMembers: {
           ...state.projectMembers,
@@ -398,10 +402,29 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
+    }
     case "my-work-loaded":
       return {
         ...state,
         myWork: action.items,
+        error: null,
+        errorSource: null,
+      };
+    case "project-metadata-loaded":
+      return {
+        ...state,
+        project: action.project,
+        projects: state.projects.some((item) => item.id === action.project.id)
+          ? state.projects.map((item) =>
+              item.id === action.project.id ? action.project : item,
+            )
+          : [action.project, ...state.projects],
+        issues: state.projectItems[action.project.id] ?? [],
+        members: state.projectMembers[action.project.id] ?? [],
+        agents: state.projectAgents[action.project.id] ?? [],
+        taskBindings: state.projectTaskBindings[action.project.id] ?? [],
+        selectedIssue:
+          state.project?.id === action.project.id ? state.selectedIssue : null,
         error: null,
         errorSource: null,
       };
@@ -582,16 +605,6 @@ export function collaborationWorkspaceControllerReducer(
           ? { ...state.projectItems, [state.project.id]: action.issues }
           : state.projectItems,
       };
-    case "merge-reorder-issues": {
-      const issues = mergeReorderIssues(state.issues, action.issues);
-      return {
-        ...state,
-        issues,
-        projectItems: state.project
-          ? { ...state.projectItems, [state.project.id]: issues }
-          : state.projectItems,
-      };
-    }
     case "append-issue":
       return {
         ...state,
@@ -605,26 +618,32 @@ export function collaborationWorkspaceControllerReducer(
         },
       };
     case "replace-issue":
+    case "issue-read": {
+      const position =
+        action.type === "replace-issue" ? action.position : undefined;
+      const replace = (items: CollaborationIssue[]) =>
+        position
+          ? mergePersistedBoardMove(items, action.issue, position)
+          : items.map((item) =>
+              item.id === action.issue.id
+                ? newestIssue(item, action.issue)
+                : item,
+            );
       return {
         ...state,
         selectedIssue:
           state.selectedIssue?.id === action.issue.id
             ? newestIssue(state.selectedIssue, action.issue)
             : state.selectedIssue,
-        issues: state.issues.map((item) =>
-          item.id === action.issue.id ? newestIssue(item, action.issue) : item,
-        ),
+        issues: replace(state.issues),
         projectItems: {
           ...state.projectItems,
-          [action.issue.cloud_project_id]: (
-            state.projectItems[action.issue.cloud_project_id] ?? []
-          ).map((item) =>
-            item.id === action.issue.id
-              ? newestIssue(item, action.issue)
-              : item,
+          [action.issue.cloud_project_id]: replace(
+            state.projectItems[action.issue.cloud_project_id] ?? [],
           ),
         },
       };
+    }
     case "remove-issue": {
       // The server soft deletes the whole subtree, so drop descendants too.
       const removedIds = collectIssueSubtreeIds(state.issues, action.issueId);
@@ -664,6 +683,7 @@ interface CommandEnvironment {
   getSelectedIssue(): CollaborationIssue | null;
   getExternalBoardState(): Pick<
     CollaborationWorkspaceControllerState,
+    | "confirmedIssueReads"
     | "project"
     | "issues"
     | "taskBindings"
@@ -886,10 +906,39 @@ export function createCollaborationWorkspaceControllerCommands({
     homeSnapshotLoads.delete(projectId);
     homeSnapshotResults.delete(projectId);
   };
+  const reportPositionConflict = async (issueId: string, error: unknown) => {
+    if (!isIssueVersionConflict(error)) return false;
+    try {
+      const latest = await api.issues.get(issueId);
+      await loadProject(latest.cloud_project_id, false);
+      reportError(messages.conflict, "conflict");
+    } catch {
+      reportError(messages.loadFailed, "load");
+    }
+    return true;
+  };
   const pendingReadRequests = new Map<
     string,
     Promise<CollaborationIssue | null>
   >();
+  const confirmIssueRead = (
+    updated: CollaborationIssue,
+  ): CollaborationIssue => {
+    const state = getExternalBoardState();
+    const current = state.issues.find(
+      (candidate) => candidate.id === updated.id,
+    );
+    const selected = getSelectedIssue();
+    const latest =
+      selected?.id === updated.id ? newestIssue(current, selected) : current;
+    const resolved = mergeIssueReadConfirmation(
+      latest,
+      updated,
+      state.confirmedIssueReads[updated.id],
+    );
+    dispatch({ type: "issue-read", issue: updated });
+    return resolved;
+  };
   const markIssueRead = (
     issue: CollaborationIssue,
   ): Promise<CollaborationIssue | null> => {
@@ -898,33 +947,7 @@ export function createCollaborationWorkspaceControllerCommands({
     if (pending) return pending;
     const request = api.issues
       .markRead(issue.id)
-      .then((updated) => {
-        const current = getExternalBoardState().issues.find(
-          (candidate) => candidate.id === issue.id,
-        );
-        const selected = getSelectedIssue();
-        const latest =
-          selected?.id === issue.id &&
-          (!current || selected.version >= current.version)
-            ? selected
-            : current;
-        const resolved =
-          latest &&
-          (latest.version > updated.version ||
-            (latest.content_revision ?? 0) > (updated.content_revision ?? 0))
-            ? {
-                ...latest,
-                is_unread:
-                  (latest.content_revision ?? 0) >
-                  (updated.content_revision ?? 0)
-                    ? latest.is_unread
-                    : updated.is_unread,
-              }
-            : updated;
-        markProjectMutated(issue.cloud_project_id);
-        dispatch({ type: "replace-issue", issue: resolved });
-        return resolved;
-      })
+      .then(confirmIssueRead)
       .catch(() => {
         reportError(messages.saveFailed);
         return null;
@@ -938,7 +961,7 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadProject = async (
     projectId: string,
     showLoading = true,
-    options?: { isCurrent?(): boolean },
+    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
   ) => {
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
@@ -956,6 +979,10 @@ export function createCollaborationWorkspaceControllerCommands({
         return;
       if (!catalogProjects.some((item) => item.id === project.id)) {
         catalogProjects = [...catalogProjects, project];
+      }
+      if (options?.loadSnapshot === false) {
+        dispatch({ type: "project-metadata-loaded", project });
+        return;
       }
       const externalBoardOptions = getExternalBoardOptions();
       const externalBoard = isExternalGitProject(project)
@@ -1143,6 +1170,7 @@ export function createCollaborationWorkspaceControllerCommands({
         if (mutationGeneration !== projectMutationGeneration(projectId))
           return null;
         reportError(messages.loadFailed, "load");
+        if (options?.throwOnError) throw new Error(messages.loadFailed);
         return null;
       }
     },
@@ -1204,6 +1232,7 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     markIssueRead,
+    confirmIssueRead,
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
       const attachmentsRevision = collectionRevision(
@@ -1337,10 +1366,15 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         const issue = await api.issues.update(issueId, input);
         markProjectMutated(issue.cloud_project_id);
-        dispatch({ type: "replace-issue", issue });
+        dispatch({
+          type: "replace-issue",
+          issue,
+          position: input.position,
+        });
         return issue;
       } catch (error) {
-        reportError(messages.saveFailed);
+        if (!input.position || !(await reportPositionConflict(issueId, error)))
+          reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return null;
       }
@@ -1349,10 +1383,15 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         const issue = await api.issues.assign(projectId, issueId, input);
         markProjectMutated(projectId);
-        dispatch({ type: "replace-issue", issue });
+        dispatch({
+          type: "replace-issue",
+          issue,
+          position: input.position,
+        });
         return issue;
-      } catch {
-        reportError(messages.saveFailed);
+      } catch (error) {
+        if (!input.position || !(await reportPositionConflict(issueId, error)))
+          reportError(messages.saveFailed);
         return null;
       }
     },
@@ -1369,49 +1408,6 @@ export function createCollaborationWorkspaceControllerCommands({
         reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return false;
-      }
-    },
-    async reorderIssue({ issue, status, laneIds, optimisticItems }) {
-      const mergedOptimisticItems = mergeReorderIssues(
-        getExternalBoardState().issues,
-        optimisticItems,
-      );
-      dispatch({ type: "replace-issues", issues: mergedOptimisticItems });
-      try {
-        if (issue.status !== status) {
-          const movedIssue = await api.issues.update(issue.id, {
-            version: issue.version,
-            status,
-          });
-          markProjectMutated(issue.cloud_project_id);
-          dispatch({
-            type: "replace-issue",
-            issue: movedIssue,
-          });
-        }
-        const updated = await api.issues.reorder(issue.cloud_project_id, {
-          parentId: issue.parent_id,
-          status,
-          issueIds: laneIds,
-        });
-        markProjectMutated(issue.cloud_project_id);
-        const byId = new Map(updated.map((item) => [item.id, item]));
-        const reorderedItems = mergedOptimisticItems.map((item) => {
-          const reordered = byId.get(item.id);
-          if (!reordered) return item;
-          return reordered.version < item.version ? item : reordered;
-        });
-        dispatch({
-          type: "merge-reorder-issues",
-          issues: reorderedItems,
-        });
-      } catch (error) {
-        if (isVersionConflict(error)) {
-          await loadProject(issue.cloud_project_id, false);
-          reportError(messages.conflict, "conflict");
-        } else {
-          reportError(messages.saveFailed);
-        }
       }
     },
     async changeProjectGroup({ project, groupBy, defaultStatuses }) {
@@ -1525,6 +1521,43 @@ export function createCollaborationWorkspaceControllerCommands({
   };
 }
 
+interface ScopedWorkspaceState {
+  scope: object;
+  state: CollaborationWorkspaceControllerState;
+}
+
+type ScopedWorkspaceAction =
+  | {
+      type: "reset";
+      scope: object;
+      state: CollaborationWorkspaceControllerState;
+    }
+  | {
+      type: "workspace";
+      scope: object;
+      action: CollaborationWorkspaceControllerAction;
+    };
+
+function scopedWorkspaceReducer(
+  current: ScopedWorkspaceState,
+  action: ScopedWorkspaceAction,
+): ScopedWorkspaceState {
+  if (action.type === "reset") {
+    return {
+      scope: action.scope,
+      state: action.state,
+    };
+  }
+  if (action.scope !== current.scope) return current;
+  return {
+    ...current,
+    state: collaborationWorkspaceControllerReducer(
+      current.state,
+      action.action,
+    ),
+  };
+}
+
 export function useCollaborationWorkspaceController({
   api,
   location,
@@ -1541,14 +1574,33 @@ export function useCollaborationWorkspaceController({
   },
   notify,
 }: CollaborationWorkspaceControllerOptions): CollaborationWorkspaceController {
-  const [state, dispatch] = useReducer(
-    collaborationWorkspaceControllerReducer,
-    initialProject
-      ? {
-          ...initialCollaborationWorkspaceControllerState,
-          projects: [initialProject],
-        }
-      : initialCollaborationWorkspaceControllerState,
+  const scope = useMemo(() => ({ api }), [api]);
+  const initialState = useMemo(
+    () =>
+      initialProject
+        ? {
+            ...initialCollaborationWorkspaceControllerState,
+            projects: [initialProject],
+          }
+        : initialCollaborationWorkspaceControllerState,
+    [initialProject],
+  );
+  const [scopedState, scopedDispatch] = useReducer(scopedWorkspaceReducer, {
+    scope,
+    state: initialState,
+  });
+  const scopeChanged = scopedState.scope !== scope;
+  const nextScopeState = api
+    ? { ...scopedState.state, confirmedIssueReads: {} }
+    : initialCollaborationWorkspaceControllerState;
+  const state = scopeChanged ? nextScopeState : scopedState.state;
+  if (scopeChanged) {
+    scopedDispatch({ type: "reset", scope, state: nextScopeState });
+  }
+  const dispatch = useMemo(
+    () => (action: CollaborationWorkspaceControllerAction) =>
+      scopedDispatch({ type: "workspace", scope, action }),
+    [scope, scopedDispatch],
   );
   const selectedIssueRef = useRef(state.selectedIssue);
   const projectsRef = useRef(state.projects);
@@ -1591,8 +1643,11 @@ export function useCollaborationWorkspaceController({
       getExternalBoardOptions: () => externalBoardRef.current,
       notify: (message, kind) => notifyRef.current?.(message, kind),
     });
-  }, [api, messages, myWorkEnabled, preloadHomeSnapshots]);
+  }, [api, dispatch, messages, myWorkEnabled, preloadHomeSnapshots]);
 
+  const loadBoardOnLocation = location.view !== "manage";
+  const loadProjectSnapshotOnLocation =
+    loadProjectOnLocation && loadBoardOnLocation;
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
@@ -1600,7 +1655,10 @@ export function useCollaborationWorkspaceController({
     if (location.projectId) {
       const projectId = location.projectId;
       if (loadProjectOnLocation) {
-        void commands.loadProject(projectId, true, { isCurrent });
+        void commands.loadProject(projectId, true, {
+          isCurrent,
+          loadSnapshot: loadProjectSnapshotOnLocation,
+        });
       } else {
         void commands.loadProjectCatalog({ isCurrent });
       }
@@ -1619,6 +1677,7 @@ export function useCollaborationWorkspaceController({
   }, [
     commands,
     loadProjectOnLocation,
+    loadProjectSnapshotOnLocation,
     location.projectId,
     location.rootView,
     myWorkEnabled,
@@ -1627,13 +1686,13 @@ export function useCollaborationWorkspaceController({
   useEffect(() => {
     if (!commands) return;
     const projectId = location.projectId;
-    if (!projectId || pollIntervalMs <= 0) return;
+    if (!projectId || !loadBoardOnLocation || pollIntervalMs <= 0) return;
     const timer = window.setInterval(
       () => void commands.loadProject(projectId, false),
       pollIntervalMs,
     );
     return () => window.clearInterval(timer);
-  }, [commands, location.projectId, pollIntervalMs]);
+  }, [commands, loadBoardOnLocation, location.projectId, pollIntervalMs]);
 
   useEffect(() => {
     if (!commands) return;

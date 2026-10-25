@@ -58,7 +58,7 @@ pub struct LoopItemResponse {
     assignment_history: Vec<Value>,
     status_history: Vec<Value>,
     approval: Option<Value>,
-    human_work: Option<Value>,
+    human_task_binding: Option<Value>,
     queued_at: Option<String>,
     execution_note: Option<String>,
     execution_error: Option<String>,
@@ -277,9 +277,9 @@ pub async fn response_values(
         String::new()
     };
 
-    // `human_work = human_issue_work_service.view(db, item, user_id)`.
-    let human_work =
-        super::human_work::human_work_view(state, item, current_user.id, project).await?;
+    let human_task_binding =
+        super::human_task_binding::human_task_binding(state, item, current_user.id, project)
+            .await?;
 
     Ok(LoopItemResponse {
         id: item.id.clone(),
@@ -313,7 +313,7 @@ pub async fn response_values(
         approval: overlay
             .approval
             .or_else(|| json_object(metadata.approval.as_ref())),
-        human_work,
+        human_task_binding,
         queued_at: overlay
             .queued_at
             .or_else(|| json_string(metadata.queued_at.as_ref())),
@@ -364,7 +364,7 @@ fn issue_permissions(role: &str, is_creator: bool) -> Permissions {
 
 /// `item_security(item, project)`: the item's own `security_level` when it is
 /// one of the known levels, else the project default.
-fn metadata_security_level(metadata: &ItemMetadata) -> Option<&'static str> {
+pub(crate) fn metadata_security_level(metadata: &ItemMetadata) -> Option<&'static str> {
     match metadata.security_level.as_ref() {
         Some(Value::String(level)) => match level.as_str() {
             "open" => Some("open"),
@@ -870,7 +870,7 @@ fn optional_string(value: Option<String>) -> Value {
 /// database datetime is session-local UTC+8, so it is reinterpreted in that
 /// offset, converted to UTC, and rendered as pydantic's aware datetime
 /// (`...Z`, with six fractional digits only when nonzero).
-fn utc_datetime_string(value: Option<NaiveDateTime>) -> Option<String> {
+pub(crate) fn utc_datetime_string(value: Option<NaiveDateTime>) -> Option<String> {
     /// `MYSQL_SESSION_TIMEZONE` offset (`settings.DATABASE_TIMEZONE`).
     const DB_SESSION_OFFSET_SECONDS: i32 = 8 * 3600;
     value.map(|value| {
@@ -893,7 +893,7 @@ fn utc_datetime_string(value: Option<NaiveDateTime>) -> Option<String> {
 
 /// pydantic naive-datetime serialization (`isoformat()`): `YYYY-MM-DDTHH:MM:SS`
 /// plus six fractional digits when the value has sub-second precision.
-fn isoformat(value: Option<NaiveDateTime>) -> Option<String> {
+pub(crate) fn isoformat(value: Option<NaiveDateTime>) -> Option<String> {
     value.map(|value| {
         let base = value.format("%Y-%m-%dT%H:%M:%S").to_string();
         if value.and_utc().timestamp_subsec_nanos() == 0 {
@@ -929,7 +929,7 @@ fn datetime_model_is_unset(value: Option<NaiveDateTime>) -> bool {
 
 /// `iso(value)`: `_optional_datetime(value).isoformat()` — the model-variant
 /// unset datetimes render as `None`.
-fn isoformat_model_unset(value: Option<NaiveDateTime>) -> Option<String> {
+pub(crate) fn isoformat_model_unset(value: Option<NaiveDateTime>) -> Option<String> {
     if datetime_model_is_unset(value) {
         None
     } else {

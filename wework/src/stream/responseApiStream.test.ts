@@ -136,6 +136,33 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps background archive cleanup failures with workspace identity', () => {
+    const onRuntimeWorkChanged = vi.fn()
+    emitResponseApiEvent(
+      { onRuntimeWorkChanged },
+      'runtime.work.changed',
+      {
+        taskId: 'task-1',
+        deviceId: 'device-1',
+        data: {
+          archiveCleanup: {
+            workspacePath: '/managed/task-1/repo',
+            errors: ['Git metadata is missing', 42],
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+    expect(onRuntimeWorkChanged).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      deviceId: 'device-1',
+      archiveCleanup: {
+        workspacePath: '/managed/task-1/repo',
+        errors: ['Git metadata is missing'],
+      },
+    })
+  })
+
   test('maps task supervisor state updates', () => {
     const onRuntimeSupervisorUpdated = vi.fn()
     const supervisor = {

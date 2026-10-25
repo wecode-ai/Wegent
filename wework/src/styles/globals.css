@@ -2,12 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /* Search and address inputs provide their own focus feedback in the chrome. */
+  .workbench-chrome-input:focus-visible {
+    outline-color: transparent;
+  }
+}
+
 .electron-titlebar-drag-region {
   -webkit-app-region: drag;
 }
 
 .electron-titlebar-interactive-region {
   -webkit-app-region: no-drag;
+}
+
+/* The floating find field uses its text caret as the focus indicator. */
+input.content-find-input,
+input.content-find-input:focus,
+input.content-find-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 body[data-wework-anchor-popover-open] .electron-titlebar-drag-region {

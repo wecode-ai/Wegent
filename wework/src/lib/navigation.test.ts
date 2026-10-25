@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   buildRuntimeTaskRoute,
+  navigateTo,
   parseRuntimeTaskRoute,
   replaceTo,
   resolveDesktopAppRoute,
+  WORKSPACE_NAVIGATION_EVENT,
 } from './navigation'
 
 afterEach(() => {
@@ -11,6 +13,36 @@ afterEach(() => {
 })
 
 describe('browser navigation', () => {
+  test.each([
+    ['/', 'task'],
+    ['/runtime-tasks?deviceId=device&taskId=completed', 'task'],
+    ['/todo?projectId=one', 'board'],
+    ['/app/wegent', 'agent'],
+  ])('delegates %s to workspace navigation', (route, kind) => {
+    const navigate = vi.fn((event: Event) => event.preventDefault())
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, navigate)
+    const before = window.location.href
+
+    navigateTo(route)
+
+    expect(navigate).toHaveBeenCalledOnce()
+    expect((navigate.mock.calls[0][0] as CustomEvent).detail).toEqual({ kind, contentRoute: route })
+    expect(window.location.href).toBe(before)
+    window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, navigate)
+  })
+
+  test.each(['/settings/connections', '/login', '/todo?workspaceTab=explicit'])(
+    'keeps direct location navigation for %s',
+    route => {
+      const navigate = vi.fn()
+      window.addEventListener(WORKSPACE_NAVIGATION_EVENT, navigate)
+      navigateTo(route)
+      expect(navigate).not.toHaveBeenCalled()
+      expect(`${window.location.pathname}${window.location.search}`).toBe(route)
+      window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, navigate)
+    }
+  )
+
   test('notifies route subscribers after replacing the current location', () => {
     const onPopState = vi.fn()
     window.addEventListener('popstate', onPopState)

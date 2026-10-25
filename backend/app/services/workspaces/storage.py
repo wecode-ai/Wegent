@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import func
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject
@@ -139,27 +142,38 @@ def ensure_resource_grant(
     added_by_user_id: int,
     role: BaseRole,
 ) -> ResourceMember:
-    existing = resource_grant(
-        db,
-        workspace_id=workspace_id,
-        resource_type=resource_type,
-        resource_id=resource_id,
-    )
-    if existing is not None:
-        existing.role = role.value
-        return existing
-    grant = ResourceMember.create(
-        resource_type=resource_type,
-        resource_id=resource_id,
-        entity_type=WORKSPACE_ENTITY_TYPE,
-        entity_id=str(workspace_id),
-        role=role.value,
-        status=MemberStatus.APPROVED.value,
-        invited_by_user_id=added_by_user_id,
-    )
-    db.add(grant)
+    identity = {
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "entity_type": WORKSPACE_ENTITY_TYPE,
+        "entity_id": str(workspace_id),
+    }
+    updates = {
+        "role": role.value,
+        "status": MemberStatus.APPROVED.value,
+        "invited_by_user_id": added_by_user_id,
+        "updated_at": func.now(),
+    }
+    # Insert before locking: absent-row locking reads can deadlock independent
+    # grants through InnoDB gap locks. The unique identity also restores inactive
+    # grants atomically without replacing their audit history.
     db.flush()
-    return grant
+    if db.get_bind().dialect.name == "mysql":
+        statement = mysql_insert(ResourceMember).values(**identity, **updates)
+        statement = statement.on_duplicate_key_update(**updates)
+    else:
+        statement = sqlite_insert(ResourceMember).values(**identity, **updates)
+        statement = statement.on_conflict_do_update(
+            index_elements=list(identity), set_=updates
+        )
+    db.execute(statement)
+    return (
+        db.query(ResourceMember)
+        .filter_by(**identity)
+        .with_for_update()
+        .populate_existing()
+        .one()
+    )
 
 
 def workspace_id_for_project(db: Session, project_id: int | str) -> int | None:

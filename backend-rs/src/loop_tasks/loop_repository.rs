@@ -8,12 +8,14 @@
 //! `loop_items` table holds project (`resource_type='project'`), task
 //! (`'task'`), and execution/binding (`'execution'`) rows.
 use crate::board_snapshot::repository::ProjectRow as BoardProjectRow;
-use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow};
+use crate::cloud_projects::{LOOP_ITEMS_COLUMNS, ProjectListRow, WORKSPACE_ID_COLUMN};
 use crate::device_identity::owned_device_identity_ids;
 use crate::sql_support::StatementArg;
 use brz_json::JsonProjection;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
+
+use super::loop_columns::CLOUD_CONTEXT_COLUMNS;
 #[cfg(test)]
 use serde_json::Value;
 
@@ -23,11 +25,17 @@ pub struct ProjectMetadata {
     pub task_provider: Option<String>,
     pub visibility: Option<String>,
 }
+
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct BindingMetadata {
     pub workflow_node_id: Option<String>,
     pub model_selection: Option<serde_json::Value>,
+    pub execution_context: Option<serde_json::Value>,
+    pub human_assignment_id: Option<String>,
+    pub dispatch_id: Option<String>,
+    pub dispatch_round_id: Option<String>,
+    pub assignment_id: Option<String>,
     pub change_requests: Option<serde_json::Value>,
 }
 
@@ -56,8 +64,6 @@ pub struct ItemMetadata {
     pub queued_at: Option<serde_json::Value>,
     pub ai_state: Option<serde_json::Value>,
     pub tags: Option<serde_json::Value>,
-    /// `metadata["human_work"]` read by `human_issue_work_service.view`.
-    pub human_work: Option<serde_json::Value>,
     /// External-source markers that disable the direct-human view.
     pub external_index: Option<serde_json::Value>,
     pub external_shadow: Option<serde_json::Value>,
@@ -88,59 +94,35 @@ pub fn datetime_is_unset(value: Option<NaiveDateTime>) -> bool {
     }
 }
 
-/// `loop_items` project row (`CloudProject`, `resource_type='project'`),
-/// selected with the source's labeled projection.
-#[allow(dead_code)]
-#[derive(Debug, FromMysqlRow)]
-pub struct ProjectRow {
-    #[mysql(rename = "loop_items_id")]
-    pub id: String,
-    #[mysql(rename = "loop_items_project_key")]
-    pub project_key: String,
-    #[mysql(rename = "loop_items_created_by_user_id")]
-    pub created_by_user_id: i32,
-    #[mysql(rename = "loop_items_status")]
-    pub status: String,
-    #[mysql(rename = "loop_items_metadata")]
-    pub metadata: Option<Json<JsonProjection<ProjectMetadata>>>,
-}
-
-impl ProjectRow {
-    /// `CloudProject.visibility`: `public` only when metadata says so.
-    pub fn is_public(&self) -> bool {
-        self.metadata
-            .as_ref()
-            .and_then(|json| json.0.value.as_ref())
-            .and_then(|metadata| metadata.visibility.as_deref())
-            == Some("public")
-    }
-}
-
-/// `loop_items` task row (`LoopItem`, `resource_type='task'`).
-#[allow(dead_code)]
-#[derive(Debug, FromMysqlRow)]
-pub struct TaskItemRow {
-    pub id: String,
-    pub cloud_project_id: String,
-    pub created_by_user_id: i32,
-    pub deleted_at: Option<NaiveDateTime>,
-}
-
 /// `loop_items` execution/binding row (`LoopItemTaskBinding`,
-/// `resource_type='execution'`).
+/// `resource_type='execution'`), selected with the source's full labeled
+/// 60-column projection so the prepared statement matches the recorded
+/// `list_task_bindings` exchange.
 #[derive(Debug, FromMysqlRow)]
 pub struct BindingRow {
+    #[mysql(rename = "loop_items_id")]
     pub id: String,
+    #[mysql(rename = "loop_items_cloud_project_id")]
     pub cloud_project_id: String,
+    #[mysql(rename = "loop_items_loop_item_id")]
     pub loop_item_id: Option<String>,
+    #[mysql(rename = "loop_items_task_user_id")]
     pub task_user_id: i32,
+    #[mysql(rename = "loop_items_device_id")]
     pub device_id: String,
+    #[mysql(rename = "loop_items_task_id")]
     pub task_id: String,
+    #[mysql(rename = "loop_items_task_title")]
     pub task_title: Option<String>,
-    pub backend_task_id: i64,
+    #[mysql(rename = "loop_items_backend_task_id")]
+    pub backend_task_id: Option<i64>,
+    #[mysql(rename = "loop_items_linked_by_user_id")]
     pub linked_by_user_id: i32,
+    #[mysql(rename = "loop_items_linked_at")]
     pub linked_at: Option<NaiveDateTime>,
+    #[mysql(rename = "loop_items_unlinked_at")]
     pub unlinked_at: Option<NaiveDateTime>,
+    #[mysql(rename = "loop_items_metadata")]
     pub metadata: Option<Json<JsonProjection<BindingMetadata>>>,
 }
 
@@ -166,7 +148,7 @@ pub struct CloudContextBindingRow {
     #[mysql(rename = "loop_items_task_title")]
     pub task_title: Option<String>,
     #[mysql(rename = "loop_items_backend_task_id")]
-    pub backend_task_id: i64,
+    pub backend_task_id: Option<i64>,
     #[mysql(rename = "loop_items_linked_by_user_id")]
     pub linked_by_user_id: i32,
     #[mysql(rename = "loop_items_linked_at")]
@@ -190,70 +172,6 @@ impl CloudContextBindingRow {
             .filter(|value| !value.is_empty())
     }
 }
-
-/// The source's full column projection for `find_cloud_context`
-/// (`db.query(LoopItemTaskBinding)` labeled like SQLAlchemy's query rendering).
-/// Selected to match the recorded statement; the typed row consumes only the
-/// response fields.
-const CLOUD_CONTEXT_COLUMNS: &str = "loop_items.id AS loop_items_id, \
-     loop_items.resource_type AS loop_items_resource_type, \
-     loop_items.project_space AS loop_items_project_space, \
-     loop_items.cloud_project_id AS loop_items_cloud_project_id, \
-     loop_items.parent_id AS loop_items_parent_id, \
-     loop_items.loop_item_id AS loop_items_loop_item_id, \
-     loop_items.delivery_id AS loop_items_delivery_id, \
-     loop_items.public_id AS loop_items_public_id, \
-     loop_items.project_key AS loop_items_project_key, \
-     loop_items.name AS loop_items_name, \
-     loop_items.title AS loop_items_title, \
-     loop_items.description AS loop_items_description, \
-     loop_items.storage_prefix AS loop_items_storage_prefix, \
-     loop_items.sequence_number AS loop_items_sequence_number, \
-     loop_items.next_item_number AS loop_items_next_item_number, \
-     loop_items.created_by_user_id AS loop_items_created_by_user_id, \
-     loop_items.updated_by_user_id AS loop_items_updated_by_user_id, \
-     loop_items.assignee_user_id AS loop_items_assignee_user_id, \
-     loop_items.user_id AS loop_items_user_id, \
-     loop_items.added_by_user_id AS loop_items_added_by_user_id, \
-     loop_items.source AS loop_items_source, \
-     loop_items.status AS loop_items_status, \
-     loop_items.priority AS loop_items_priority, \
-     loop_items.start_at AS loop_items_start_at, \
-     loop_items.due_at AS loop_items_due_at, \
-     loop_items.sort_order AS loop_items_sort_order, \
-     loop_items.current_delivery_id AS loop_items_current_delivery_id, \
-     loop_items.local_project_id AS loop_items_local_project_id, \
-     loop_items.device_id AS loop_items_device_id, \
-     loop_items.is_default AS loop_items_is_default, \
-     loop_items.task_user_id AS loop_items_task_user_id, \
-     loop_items.assignee_agent_id AS loop_items_assignee_agent_id, \
-     loop_items.assignee_team_id AS loop_items_assignee_team_id, \
-     loop_items.task_id AS loop_items_task_id, \
-     loop_items.task_title AS loop_items_task_title, \
-     loop_items.backend_task_id AS loop_items_backend_task_id, \
-     loop_items.linked_by_user_id AS loop_items_linked_by_user_id, \
-     loop_items.linked_at AS loop_items_linked_at, \
-     loop_items.unlinked_at AS loop_items_unlinked_at, \
-     loop_items.path AS loop_items_path, \
-     loop_items.kind AS loop_items_kind, \
-     loop_items.display_name AS loop_items_display_name, \
-     loop_items.relative_path AS loop_items_relative_path, \
-     loop_items.object_key AS loop_items_object_key, \
-     loop_items.content_type AS loop_items_content_type, \
-     loop_items.size_bytes AS loop_items_size_bytes, \
-     loop_items.sha256 AS loop_items_sha256, \
-     loop_items.source_task_binding_id AS loop_items_source_task_binding_id, \
-     loop_items.source_task_snapshot AS loop_items_source_task_snapshot, \
-     loop_items.markdown_object_key AS loop_items_markdown_object_key, \
-     loop_items.chat_object_key AS loop_items_chat_object_key, \
-     loop_items.manifest_object_key AS loop_items_manifest_object_key, \
-     loop_items.metadata AS loop_items_metadata, \
-     loop_items.version AS loop_items_version, \
-     loop_items.created_at AS loop_items_created_at, \
-     loop_items.updated_at AS loop_items_updated_at, \
-     loop_items.completed_at AS loop_items_completed_at, \
-     loop_items.delivered_at AS loop_items_delivered_at, \
-     loop_items.deleted_at AS loop_items_deleted_at";
 
 fn cloud_context_binding_statement(
     user_id: i32,
@@ -361,6 +279,15 @@ impl CommentRow {
     }
 }
 
+/// One labeled `users` row from `db.query(User).filter(User.id.in_(...))`.
+#[derive(Debug, FromMysqlRow)]
+pub struct UserNameRow {
+    #[mysql(rename = "users_id")]
+    pub id: i64,
+    #[mysql(rename = "users_user_name")]
+    pub user_name: String,
+}
+
 /// The source's full column projection for `loop_item_executions`
 /// (`loop_item_execution_service.latest_for_item`).
 pub(crate) const EXECUTION_COLUMNS: &str = "loop_item_executions.id AS loop_item_executions_id, \
@@ -459,23 +386,84 @@ pub struct ExecutionFullRow {
 }
 
 impl BindingRow {
-    /// `LoopItemTaskBinding.workflow_node_id`: the metadata value when it is
-    /// a non-empty string, otherwise `None`.
-    pub fn workflow_node_id(&self) -> Option<String> {
+    fn metadata(&self) -> Option<&BindingMetadata> {
         self.metadata
             .as_ref()
             .and_then(|json| json.0.value.as_ref())
+    }
+
+    /// `LoopItemTaskBinding.workflow_node_id`: the metadata value when it is
+    /// a non-empty string, otherwise `None`.
+    pub fn workflow_node_id(&self) -> Option<String> {
+        self.metadata()
             .and_then(|metadata| metadata.workflow_node_id.as_deref())
-            .filter(|value| !value.is_empty())
+            .filter(|text| !text.is_empty())
             .map(str::to_string)
     }
-}
 
-/// `resource_members` row (`ResourceMember`).
-#[derive(Debug, FromMysqlRow)]
-pub struct MemberRow {
-    #[mysql(rename = "role")]
-    pub member_role: String,
+    /// `LoopItemTaskBinding.human_assignment_id`.
+    pub fn human_assignment_id(&self) -> Option<String> {
+        self.metadata()
+            .and_then(|metadata| metadata.human_assignment_id.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
+    /// `LoopItemTaskBinding.dispatch_id`.
+    pub fn dispatch_id(&self) -> Option<String> {
+        self.metadata()
+            .and_then(|metadata| metadata.dispatch_id.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
+    /// `LoopItemTaskBinding.dispatch_round_id`.
+    pub fn dispatch_round_id(&self) -> Option<String> {
+        self.metadata()
+            .and_then(|metadata| metadata.dispatch_round_id.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
+    /// `LoopItemTaskBinding.assignment_id`.
+    pub fn assignment_id(&self) -> Option<String> {
+        self.metadata()
+            .and_then(|metadata| metadata.assignment_id.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
+    /// `LoopItemTaskBinding.model_selection`: the stored object, or `None`
+    /// when the metadata value is not a JSON object.
+    pub fn model_selection(&self) -> Option<&serde_json::Value> {
+        self.metadata()
+            .and_then(|metadata| metadata.model_selection.as_ref())
+            .filter(|value| value.is_object())
+    }
+
+    /// `LoopItemTaskBinding.execution_context`: the stored object, or `None`
+    /// when the metadata value is not a JSON object.
+    pub fn execution_context(&self) -> Option<&serde_json::Value> {
+        self.metadata()
+            .and_then(|metadata| metadata.execution_context.as_ref())
+            .filter(|value| value.is_object())
+    }
+
+    /// `LoopItemTaskBinding.change_requests`: only the object entries of the
+    /// stored list.
+    pub fn change_requests(&self) -> Vec<serde_json::Value> {
+        self.metadata()
+            .and_then(|metadata| metadata.change_requests.as_ref())
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter(|value| value.is_object())
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Base role hierarchy (`app.schemas.base_role`); lower is more privileged.
@@ -485,7 +473,8 @@ fn role_level(role: &str) -> i32 {
         "Maintainer" => 1,
         "Developer" => 2,
         "Reporter" => 3,
-        "RestrictedAnalyst" => 4,
+        "Viewer" => 4,
+        "RestrictedAnalyst" => 5,
         _ => 999,
     }
 }
@@ -506,12 +495,19 @@ pub struct LoopItemRepository<'a, M> {
 /// form, and the single-table-inheritance subqueries over `loop_items` with
 /// their `resource_type` guards (execution bindings, collaborator rows, and
 /// owned chat agents).
-fn visible_item_filter_sql(user_id: i32, default_security: &str) -> String {
+pub(crate) fn visible_item_filter_sql(user_id: i32, default_security: &str) -> String {
+    let related = related_item_predicate_sql(user_id);
     format!(
         " AND (coalesce(CASE JSON_EXTRACT(loop_items.metadata, '$.\"security_level\"') \
          WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, \
-         '$.\"security_level\"')) END, '{default_security}') = 'open' \
-         OR loop_items.created_by_user_id = {user_id} \
+         '$.\"security_level\"')) END, '{default_security}') = 'open' OR {related})"
+    )
+}
+
+/// The five related-item branches share the current single-table schema.
+fn related_item_predicate_sql(user_id: i32) -> String {
+    format!(
+        "loop_items.created_by_user_id = {user_id} \
          OR loop_items.assignee_user_id = {user_id} \
          OR loop_items.id IN (SELECT loop_items.loop_item_id \n\
          FROM loop_items \n\
@@ -529,7 +525,7 @@ fn visible_item_filter_sql(user_id: i32, default_security: &str) -> String {
          AND loop_items.status = 'active' \
          AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-         AND loop_items.resource_type IN ('chat_agent')))"
+         AND loop_items.resource_type IN ('chat_agent'))"
     )
 }
 
@@ -555,7 +551,7 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .mysql
             .fetch_optional(
                 &format!(
-                    "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
+                    "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.project_key = ? \n\
                      AND loop_items.resource_type IN ('project') \n LIMIT 1",
                 ),
@@ -570,67 +566,23 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
         })
     }
 
-    /// `LoopItemService._get_item_row`: the task row must exist and not be
-    /// deleted (unset-datetime aware). `Ok(None)` maps to 404.
-    pub async fn get_task_item(&self, item_id: &str) -> MysqlResult<Option<TaskItemRow>> {
-        self.mysql
-            .fetch_optional(
-                "SELECT id, cloud_project_id, created_by_user_id, deleted_at \
-                 FROM loop_items \
-                 WHERE id = ? \
-                 AND (deleted_at IS NULL OR deleted_at IN \
-                     ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-                 AND resource_type IN ('task') LIMIT 1",
-                (item_id,),
-            )
-            .await
-    }
-
-    /// `require_cloud_project_role` project lookup: active project row.
-    pub async fn get_project(&self, project_id: &str) -> MysqlResult<Option<ProjectRow>> {
-        self.mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.id = ? AND loop_items.status = 'active' \n\
-                     AND loop_items.resource_type IN ('project') \n LIMIT 1",
-                ),
-                (project_id,),
-            )
-            .await
-    }
-
-    /// `require_cloud_project_role` membership lookup for a non-creator user.
-    pub async fn get_membership(
-        &self,
-        project_id: &str,
-        user_id: i32,
-    ) -> MysqlResult<Option<MemberRow>> {
-        self.mysql
-            .fetch_optional(
-                "SELECT `role` FROM resource_members \
-                 WHERE resource_type = 'CloudProject' AND resource_id = ? \
-                 AND entity_type = 'user' AND entity_id = ? \
-                 AND status = 'approved' LIMIT 1",
-                (project_id, user_id.to_string()),
-            )
-            .await
-    }
-
     /// `LoopItemService.list_task_bindings`: active bindings for the item,
-    /// newest first.
+    /// newest first, selected with the source's labeled `loop_items`
+    /// projection. The recorded contract filters `resource_type='execution'`
+    /// bindings whose `unlinked_at` is unset; it does not filter
+    /// `deleted_at`, so the statement stays compatible with the recorded
+    /// exchange.
     pub async fn list_task_bindings(&self, item_id: &str) -> MysqlResult<Vec<BindingRow>> {
         self.mysql
             .fetch_all(
-                "SELECT id, cloud_project_id, loop_item_id, task_user_id, \
-                 device_id, task_id, task_title, backend_task_id, \
-                 linked_by_user_id, linked_at, unlinked_at, metadata \
-                 FROM loop_items \
-                 WHERE loop_item_id = ? \
-                 AND (unlinked_at IS NULL OR unlinked_at IN \
-                     ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-                 AND resource_type IN ('execution') \
-                 ORDER BY linked_at DESC, id DESC",
+                &format!(
+                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.loop_item_id = ? \
+                     AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
+                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+                     AND loop_items.resource_type IN ('execution') \
+                     ORDER BY loop_items.linked_at DESC, loop_items.id DESC",
+                ),
                 (item_id,),
             )
             .await
@@ -670,6 +622,26 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
                      AND loop_items.resource_type IN ('task')",
                 ),
                 (),
+            )
+            .await
+    }
+
+    /// `LoopItemService._get_item_row`: the full entity projection for one
+    /// non-deleted task row. `Ok(None)` maps to the source's 404.
+    pub async fn get_task_item_entity(
+        &self,
+        item_id: &str,
+    ) -> MysqlResult<Option<TaskItemFullRow>> {
+        self.mysql
+            .fetch_optional(
+                &format!(
+                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.id = ? AND (loop_items.deleted_at IS NULL OR \
+                     loop_items.deleted_at IN ('1970-01-01 00:00:00', \
+                     '1970-01-01 00:00:01')) AND loop_items.resource_type IN ('task') \
+                     \n LIMIT 1",
+                ),
+                (item_id,),
             )
             .await
     }
@@ -748,13 +720,67 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .fetch_all(
                 &format!(
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.loop_item_id = '{item_id}' \
+                     WHERE loop_items.loop_item_id = ? \
                      AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
                          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
                      AND loop_items.resource_type IN ('comment') \
                      ORDER BY loop_items.created_at, loop_items.id",
                 ),
-                (),
+                (item_id,),
+            )
+            .await
+    }
+
+    /// `LoopItemService.list_comments`: the item's comment rows ordered by
+    /// `created_at ASC` (the source issues no secondary `id` ordering here).
+    pub async fn list_comments(&self, item_id: &str) -> MysqlResult<Vec<CommentRow>> {
+        self.mysql
+            .fetch_all(
+                &format!(
+                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.loop_item_id = ? \
+                     AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
+                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+                     AND loop_items.resource_type IN ('comment') \
+                     ORDER BY loop_items.created_at ASC",
+                ),
+                (item_id,),
+            )
+            .await
+    }
+
+    /// `db.query(User).filter(User.id.in_(author_ids)).all()`: the comment
+    /// authors' display names, with the source's labeled `users` projection.
+    pub async fn list_user_names(&self, ids: &[i32]) -> MysqlResult<Vec<UserNameRow>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        self.mysql
+            .fetch_all(
+                format!(
+                    "SELECT {} \nFROM users \nWHERE users.id IN ({placeholders})",
+                    crate::user_reader::users_projection(),
+                ),
+                ids.to_vec(),
+            )
+            .await
+    }
+
+    /// Manager activities, newest first, for the current round's human identity.
+    pub async fn item_activity_metadata(
+        &self,
+        project_id: &str,
+        item_id: &str,
+    ) -> MysqlResult<Vec<ItemActivityMetadataRow>> {
+        self.mysql
+            .fetch_all(
+                "SELECT project_chat_messages.metadata AS activity_metadata \
+                 FROM project_chat_messages \
+                 WHERE project_chat_messages.project_id = ? \
+                 AND project_chat_messages.task_id = ? \
+                 ORDER BY project_chat_messages.created_at DESC, project_chat_messages.id DESC",
+                (project_id, item_id),
             )
             .await
     }
@@ -773,21 +799,12 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             .mysql
             .fetch_optional(
                 &format!(
-                    "SELECT loop_items.id AS loop_items_id \nFROM loop_items \n\
-                     WHERE loop_items.id = '{item_id}' AND (loop_items.created_by_user_id = {user_id} \
-                     OR loop_items.assignee_user_id = {user_id} \
-                     OR loop_items.id IN (SELECT loop_items.loop_item_id FROM loop_items \
-                         WHERE loop_items.task_user_id = {user_id} \
-                         AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
-                             ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))) \
-                     OR loop_items.id IN (SELECT loop_item_collaborators.loop_item_id FROM loop_item_collaborators \
-                         WHERE loop_item_collaborators.user_id = {user_id}) \
-                     OR loop_items.assignee_agent_id IN (SELECT loop_items.id FROM loop_items \
-                         WHERE loop_items.created_by_user_id = {user_id} AND loop_items.status = 'active' \
-                         AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
-                             ('1970-01-01 00:00:00', '1970-01-01 00:00:01')))) \n LIMIT 1",
+                    "SELECT loop_items.id AS loop_items_id FROM loop_items \
+                     WHERE loop_items.id = ? AND ({}) \
+                     AND loop_items.resource_type IN ('task') LIMIT 1",
+                    related_item_predicate_sql(user_id),
                 ),
-                (),
+                (item_id,),
             )
             .await?;
         Ok(row.is_some())
@@ -851,6 +868,13 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
             )
             .await
     }
+}
+
+/// Raw activity metadata preserves the Python guards for malformed manager plans.
+#[derive(Debug, FromMysqlRow)]
+pub struct ItemActivityMetadataRow {
+    #[mysql(rename = "activity_metadata")]
+    pub metadata: Option<Json<serde_json::Value>>,
 }
 
 /// `ProjectChatMessage` projection consumed by `_present_cached_ai_state`.
