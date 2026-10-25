@@ -7,6 +7,12 @@ import { test } from 'vitest'
 const diagnosticsUrl = pathToFileURL(
   resolve(dirname(fileURLToPath(import.meta.url)), '../e2e/desktop/socket-diagnostics.mjs')
 ).href
+const modelConnectionsUrl = pathToFileURL(
+  resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../e2e/desktop/modules/model-server-connections.mjs'
+  )
+).href
 
 function run(script) {
   return spawnSync(
@@ -15,6 +21,7 @@ function run(script) {
       '--input-type=module',
       '-e',
       `import { installSocketDiagnostics } from ${JSON.stringify(diagnosticsUrl)}
+       import { trackModelServerConnections } from ${JSON.stringify(modelConnectionsUrl)}
        const setSocketDiagnosticPhase = installSocketDiagnostics()
        ${script}`,
     ],
@@ -112,3 +119,59 @@ test('retains server ownership and ports when an error follows socket closure', 
   assert.equal(record.phase, 'teardown:desktop application')
   assert.match(result.stderr, /Unhandled 'error' event/)
 })
+
+for (const timing of ['before shutdown', 'existing connection', 'new connection']) {
+  test(`handles a real peer reset only during application shutdown: ${timing}`, () => {
+    const result = run(`
+      import { createServer, connect } from 'node:net'
+      let client
+      const server = createServer(socket => {
+        socket.once('data', () => {
+          if (${JSON.stringify(timing)} === 'existing connection') {
+            beginShutdown()
+            beginShutdown()
+          }
+          client.resetAndDestroy()
+        })
+        socket.once('close', () => server.close())
+      })
+      const beginShutdown = trackModelServerConnections(server)
+      if (${JSON.stringify(timing)} === 'new connection') beginShutdown()
+      server.listen(0, '127.0.0.1', () => {
+        client = connect(server.address().port, '127.0.0.1', () => client.write('ready'))
+      })
+    `)
+    assert.equal(result.status, timing === 'before shutdown' ? 1 : 0, result.stderr)
+    if (timing === 'before shutdown') {
+      assert.match(result.stderr, /Unhandled 'error' event/)
+      assert.match(result.stderr, /ECONNRESET/)
+    } else {
+      assert.equal(result.stderr, '')
+    }
+  })
+}
+
+for (const code of ['ECONNRESET', 'EIO']) {
+  test(`preserves shutdown ownership after socket closure: ${code}`, () => {
+    const result = run(`
+      import { createServer, connect } from 'node:net'
+      const server = createServer(socket => {
+        beginShutdown()
+        socket.once('close', () => {
+          server.close()
+          socket.emit('error', Object.assign(new Error('late socket error'), {
+            code: ${JSON.stringify(code)},
+          }))
+        })
+        socket.destroy()
+      })
+      const beginShutdown = trackModelServerConnections(server)
+      server.listen(0, '127.0.0.1', () => {
+        connect(server.address().port, '127.0.0.1').on('error', () => {})
+      })
+    `)
+    assert.equal(result.status, code === 'ECONNRESET' ? 0 : 1, result.stderr)
+    if (code === 'ECONNRESET') assert.equal(result.stderr, '')
+    else assert.match(result.stderr, /late socket error/)
+  })
+}
